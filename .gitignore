@@ -1,0 +1,11 @@
+# Python 缓存目录
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.venv/
+.env
+artifacts/
+dist/
+build/
+.coverage

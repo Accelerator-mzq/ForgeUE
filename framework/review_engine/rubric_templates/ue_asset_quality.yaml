@@ -1,0 +1,19 @@
+name: ue_asset_quality
+description: Generic UE asset quality rubric (texture / mesh / audio).
+pass_threshold: 0.70
+criteria:
+  - name: constraint_fit
+    weight: 0.25
+    rubric_hint: Does the asset meet declared resolution / poly_count / duration constraints?
+  - name: style_consistency
+    weight: 0.20
+    rubric_hint: Does the asset visually/aurally match the run's style tags?
+  - name: production_readiness
+    weight: 0.25
+    rubric_hint: Is it importable into UE without manual cleanup?
+  - name: technical_validity
+    weight: 0.20
+    rubric_hint: UV / normals / alpha / loop points / channel count correctness.
+  - name: risk_score
+    weight: 0.10
+    rubric_hint: Higher = lower IP / safety risk.

@@ -1,0 +1,36 @@
+name: ue_character_quality
+description: >-
+  Reviews a UE character spec against the 5 production dimensions (§B.8).
+  Borrowed structural idea from open-source judges library; values tuned for UE.
+pass_threshold: 0.75
+criteria:
+  - name: constraint_fit
+    weight: 0.30
+    min_score: 0.5
+    rubric_hint: >-
+      Does every field satisfy hard constraints (level range, alignment enum,
+      abilities count)? Penalize any contradiction with the task prompt.
+  - name: style_consistency
+    weight: 0.20
+    min_score: 0.4
+    rubric_hint: >-
+      Does display_name, signature_line, bio, and faction share a coherent tone
+      and world? Flag cross-genre or tonal clashes.
+  - name: production_readiness
+    weight: 0.20
+    min_score: 0.5
+    rubric_hint: >-
+      Are mesh_asset_hint and voice_bank_hint usable as UE asset identifiers?
+      Are tags actionable downstream?
+  - name: technical_validity
+    weight: 0.20
+    min_score: 0.5
+    rubric_hint: >-
+      Are HP/MP/stats internally consistent for archetype+level? Any
+      unit-of-measure or enum typos?
+  - name: risk_score
+    weight: 0.10
+    min_score: 0.0
+    rubric_hint: >-
+      Higher score = LOWER risk. Penalize content that would require legal,
+      IP, or safety review (trademark names, real people, etc).

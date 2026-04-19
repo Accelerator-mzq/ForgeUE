@@ -1,0 +1,57 @@
+{
+  "task": {
+    "task_id": "task_p1_character",
+    "task_type": "structured_extraction",
+    "run_mode": "basic_llm",
+    "title": "Extract UE character spec",
+    "description": "basic_llm → structured UECharacter → validate",
+    "input_payload": {
+      "prompt": "A grizzled human ranger named Kaelen, level 18, legendary rarity, master of dual hand-crossbows, haunted by a fallen companion."
+    },
+    "expected_output": { "artifact_types": ["structured_answer"] },
+    "project_id": "proj_p1"
+  },
+  "workflow": {
+    "workflow_id": "wf_p1_character",
+    "name": "character_extract",
+    "version": "1.0.0",
+    "entry_step_id": "step_generate",
+    "step_ids": ["step_generate", "step_validate"]
+  },
+  "steps": [
+    {
+      "step_id": "step_generate",
+      "type": "generate",
+      "name": "extract-character",
+      "risk_level": "low",
+      "capability_ref": "text.structured",
+      "provider_policy": {
+        "capability_required": "text.structured",
+        "preferred_models": ["gpt-4o-mini"],
+        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+      },
+      "retry_policy": {
+        "max_attempts": 3,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "schema_fail", "provider_error"]
+      },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "output_schema": { "schema_ref": "ue.character" },
+      "config": {
+        "task_goal": "Extract a UE character matching the UECharacter schema.",
+        "temperature": 0.1
+      }
+    },
+    {
+      "step_id": "step_validate",
+      "type": "validate",
+      "name": "revalidate-character",
+      "risk_level": "low",
+      "capability_ref": "schema.validate",
+      "depends_on": ["step_generate"],
+      "config": { "schema_ref": "ue.character" }
+    }
+  ]
+}

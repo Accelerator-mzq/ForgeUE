@@ -1,0 +1,48 @@
+{
+  "task": {
+    "task_id": "task_mvp_001",
+    "task_type": "structured_extraction",
+    "run_mode": "basic_llm",
+    "title": "P0 mock linear acceptance",
+    "description": "generate-mock -> validate -> export-noop",
+    "input_payload": { "prompt": "hello forgeue" },
+    "expected_output": { "artifact_types": ["structured_answer"] },
+    "project_id": "proj_mvp"
+  },
+  "workflow": {
+    "workflow_id": "wf_mvp_linear",
+    "name": "mock_linear",
+    "version": "1.0.0",
+    "entry_step_id": "step_generate",
+    "step_ids": ["step_generate", "step_validate", "step_export"]
+  },
+  "steps": [
+    {
+      "step_id": "step_generate",
+      "type": "generate",
+      "name": "generate-mock",
+      "risk_level": "low",
+      "capability_ref": "mock.generate",
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "config": { "seed": 7 }
+    },
+    {
+      "step_id": "step_validate",
+      "type": "validate",
+      "name": "validate-mock",
+      "risk_level": "low",
+      "capability_ref": "mock.validate",
+      "depends_on": ["step_generate"]
+    },
+    {
+      "step_id": "step_export",
+      "type": "export",
+      "name": "export-noop",
+      "risk_level": "low",
+      "capability_ref": "mock.export",
+      "depends_on": ["step_validate"]
+    }
+  ]
+}

@@ -1,0 +1,99 @@
+{
+  "task": {
+    "task_id": "task_p2_review",
+    "task_type": "asset_review",
+    "run_mode": "standalone_review",
+    "title": "Review 3 tavern-door concept specs",
+    "description": "standalone_review: single-judge review of 3 inline candidate specs, then select applies the verdict.",
+    "input_payload": {
+      "selection_goal": "pick the strongest tavern-door concept_image spec for a medieval tavern entrance"
+    },
+    "expected_output": {
+      "artifact_types": ["review_report", "verdict", "selected_set"]
+    },
+    "project_id": "proj_p2",
+    "review_policy": {
+      "enabled": true,
+      "default_mode": "single_judge",
+      "pass_threshold": 0.70
+    }
+  },
+  "workflow": {
+    "workflow_id": "wf_p2_standalone_review",
+    "name": "review_3_images",
+    "version": "1.0.0",
+    "entry_step_id": "step_review",
+    "step_ids": ["step_review", "step_select"]
+  },
+  "steps": [
+    {
+      "step_id": "step_review",
+      "type": "review",
+      "name": "single-judge-review",
+      "risk_level": "medium",
+      "capability_ref": "review.judge",
+      "provider_policy": {
+        "capability_required": "review.judge",
+        "preferred_models": ["gpt-4o-mini"],
+        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+      },
+      "config": {
+        "review_mode": "single_judge",
+        "review_scope": "image",
+        "review_id": "rv_tavern_doors",
+        "rubric_ref": "ue_asset_quality",
+        "selection_policy": "single_best",
+        "seed": 17,
+        "candidate_payloads": [
+          {
+            "candidate_id": "cand_iron_gate",
+            "payload": {
+              "prompt_summary": "A weathered iron gate set into a medieval tavern facade, overcast dusk lighting, rivets visible, painterly.",
+              "width": 1024,
+              "height": 1024,
+              "color_space": "sRGB",
+              "style_tags": ["medieval", "fantasy", "ironwork", "painterly"],
+              "transparent_background": false,
+              "intended_use": "tavern_door_concept",
+              "variation_group_id": "tavern_entrance_v1"
+            }
+          },
+          {
+            "candidate_id": "cand_oak_slab",
+            "payload": {
+              "prompt_summary": "Heavy oak door with iron banding on a stone tavern wall, moss at base, morning light.",
+              "width": 1024,
+              "height": 1024,
+              "color_space": "sRGB",
+              "style_tags": ["medieval", "fantasy", "wood", "painterly"],
+              "transparent_background": false,
+              "intended_use": "tavern_door_concept",
+              "variation_group_id": "tavern_entrance_v1"
+            }
+          },
+          {
+            "candidate_id": "cand_copper_hinges",
+            "payload": {
+              "prompt_summary": "Ornate copper-hinged door with glass panels; lighting crisp, colors saturated, anime-adjacent line art.",
+              "width": 1024,
+              "height": 1024,
+              "color_space": "sRGB",
+              "style_tags": ["anime", "copper", "ornate"],
+              "transparent_background": false,
+              "intended_use": "tavern_door_concept",
+              "variation_group_id": "tavern_entrance_v1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "step_id": "step_select",
+      "type": "select",
+      "name": "apply-verdict",
+      "risk_level": "low",
+      "capability_ref": "select.by_verdict",
+      "depends_on": ["step_review"]
+    }
+  ]
+}

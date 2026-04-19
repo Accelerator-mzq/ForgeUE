@@ -1,0 +1,128 @@
+{
+  "task": {
+    "task_id": "task_p4_export",
+    "task_type": "ue_export",
+    "run_mode": "production",
+    "title": "P3 pipeline + P4 manifest-only export",
+    "description": "prompt → ImageSpec → ComfyUI candidates → review → export(manifest_only) drops manifest+plan+evidence under <UE>/Content/Generated/<run_id>/",
+    "input_payload": {
+      "prompt": "A weathered oak tavern door with iron banding on a stone facade, overcast dusk light, painterly medieval style."
+    },
+    "expected_output": {
+      "artifact_types": ["structured_answer", "concept_image", "candidate_bundle", "review_report", "verdict", "ue_asset_manifest", "ue_import_plan", "export_bundle"]
+    },
+    "project_id": "proj_p4",
+    "review_policy": {
+      "enabled": true,
+      "default_mode": "single_judge",
+      "pass_threshold": 0.70
+    },
+    "ue_target": {
+      "project_name": "ForgeUEDemo",
+      "project_root": "C:/Users/you/Documents/Unreal Projects/ForgeUEDemo",
+      "asset_root": "/Game/Generated/Tavern",
+      "asset_naming_policy": "house_rules",
+      "expected_asset_kinds": ["texture"],
+      "import_mode": "manifest_only",
+      "validation_hooks": []
+    },
+    "determinism_policy": {
+      "seed_propagation": true,
+      "model_version_lock": true,
+      "hash_verify_on_resume": true
+    }
+  },
+  "workflow": {
+    "workflow_id": "wf_p4_export",
+    "name": "ue_export_pipeline",
+    "version": "1.0.0",
+    "entry_step_id": "step_spec",
+    "step_ids": ["step_spec", "step_image", "step_review", "step_export"]
+  },
+  "steps": [
+    {
+      "step_id": "step_spec",
+      "type": "generate",
+      "name": "prompt-to-image-spec",
+      "risk_level": "low",
+      "capability_ref": "text.structured",
+      "provider_policy": {
+        "capability_required": "text.structured",
+        "preferred_models": ["gpt-4o-mini"],
+        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+      },
+      "retry_policy": {
+        "max_attempts": 3,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "schema_fail", "provider_error"]
+      },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "output_schema": { "schema_ref": "ue.image_spec" },
+      "config": {
+        "task_goal": "Produce an ImageSpec matching the UE tavern-door concept brief.",
+        "temperature": 0.1
+      }
+    },
+    {
+      "step_id": "step_image",
+      "type": "generate",
+      "name": "comfy-multi-candidate",
+      "risk_level": "medium",
+      "capability_ref": "image.generation",
+      "depends_on": ["step_spec"],
+      "retry_policy": {
+        "max_attempts": 2,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "provider_error"]
+      },
+      "transition_policy": {
+        "on_success": "step_review",
+        "max_retries": 1
+      },
+      "config": {
+        "num_candidates": 3,
+        "selection_goal": "pick the strongest tavern-door concept",
+        "selection_policy": "single_best",
+        "seed": 17,
+        "worker_timeout_s": 60,
+        "model_hint": "comfy-sdxl-fake"
+      }
+    },
+    {
+      "step_id": "step_review",
+      "type": "review",
+      "name": "image-review",
+      "risk_level": "medium",
+      "capability_ref": "review.judge",
+      "depends_on": ["step_image"],
+      "provider_policy": {
+        "capability_required": "review.judge",
+        "preferred_models": ["gpt-4o-mini"],
+        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+      },
+      "transition_policy": {
+        "on_approve": "step_export",
+        "on_revise": "step_image",
+        "max_revise": 2
+      },
+      "config": {
+        "review_mode": "single_judge",
+        "review_scope": "image",
+        "review_id": "rv_p4_image",
+        "rubric_ref": "ue_asset_quality",
+        "selection_policy": "single_best",
+        "seed": 23
+      }
+    },
+    {
+      "step_id": "step_export",
+      "type": "export",
+      "name": "ue-manifest-export",
+      "risk_level": "low",
+      "capability_ref": "ue.export",
+      "depends_on": ["step_review"]
+    }
+  ]
+}
