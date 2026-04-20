@@ -1,0 +1,117 @@
+{
+  "task": {
+    "task_id": "task_image_edit_demo",
+    "task_type": "asset_generation",
+    "run_mode": "production",
+    "title": "L5-A 演示：prompt → 图生 → review → image_edit（加夜景+火把）→ review → 导出",
+    "description": "L5-A 新能力端到端：先生成一张基础图，评审后用 image.edit 按 prompt 修改（变夜景、加火把等），再评审编辑结果。",
+    "input_payload": {
+      "prompt": "A weathered oak tavern door with iron banding on a stone facade, daytime, painterly medieval style.",
+      "edit_instruction": "Convert to overcast dusk with two burning torches mounted on either side of the door, keep the composition."
+    },
+    "expected_output": {
+      "artifact_types": ["structured_answer", "concept_image", "edited_image",
+                         "review_report", "verdict"]
+    },
+    "project_id": "proj_edit_demo",
+    "review_policy": {"enabled": true, "default_mode": "single_judge", "pass_threshold": 0.70}
+  },
+  "workflow": {
+    "workflow_id": "wf_image_edit_demo",
+    "name": "image_edit_pipeline",
+    "version": "1.0.0",
+    "entry_step_id": "step_spec",
+    "step_ids": ["step_spec", "step_image_base", "step_review_base",
+                 "step_image_edit", "step_review_edit"]
+  },
+  "steps": [
+    {
+      "step_id": "step_spec",
+      "type": "generate",
+      "name": "prompt-to-image-spec",
+      "risk_level": "low",
+      "capability_ref": "text.structured",
+      "provider_policy": {
+        "capability_required": "text.structured",
+        "models_ref": "text_cheap"
+      },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "output_schema": { "schema_ref": "ue.image_spec" },
+      "config": { "task_goal": "Produce an ImageSpec for a medieval tavern door concept.", "temperature": 0.1 }
+    },
+    {
+      "step_id": "step_image_base",
+      "type": "generate",
+      "name": "base-image",
+      "risk_level": "medium",
+      "capability_ref": "image.generation",
+      "depends_on": ["step_spec"],
+      "provider_policy": {
+        "capability_required": "image.generation",
+        "models_ref": "image_fast"
+      },
+      "transition_policy": { "on_success": "step_review_base", "max_retries": 1 },
+      "config": {
+        "num_candidates": 1,
+        "selection_goal": "usable base for subsequent edit pass",
+        "seed": 17
+      }
+    },
+    {
+      "step_id": "step_review_base",
+      "type": "review",
+      "name": "review-base-image",
+      "risk_level": "medium",
+      "capability_ref": "review.judge",
+      "depends_on": ["step_image_base"],
+      "provider_policy": {
+        "capability_required": "review.judge",
+        "models_ref": "review_judge_visual"
+      },
+      "transition_policy": { "on_approve": "step_image_edit", "on_revise": "step_image_base", "max_revise": 2 },
+      "config": {
+        "review_mode": "single_judge", "review_scope": "image",
+        "review_id": "rv_base_img", "rubric_ref": "ue_visual_quality",
+        "selection_policy": "single_best", "visual_mode": true
+      }
+    },
+    {
+      "step_id": "step_image_edit",
+      "type": "generate",
+      "name": "edit-image-apply-instruction",
+      "risk_level": "medium",
+      "capability_ref": "image.edit",
+      "depends_on": ["step_image_base", "step_review_base"],
+      "provider_policy": {
+        "capability_required": "image.edit",
+        "models_ref": "image_edit"
+      },
+      "retry_policy": { "max_attempts": 2, "backoff": "fixed", "retry_on": ["timeout", "provider_error"] },
+      "transition_policy": { "on_success": "step_review_edit", "max_retries": 1 },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.edit_instruction" }
+      ],
+      "config": { "num_candidates": 2, "size": "1024x1024" }
+    },
+    {
+      "step_id": "step_review_edit",
+      "type": "review",
+      "name": "review-edited-image",
+      "risk_level": "medium",
+      "capability_ref": "review.judge",
+      "depends_on": ["step_image_edit"],
+      "provider_policy": {
+        "capability_required": "review.judge",
+        "models_ref": "review_judge_visual"
+      },
+      "transition_policy": { "on_approve": null, "on_revise": "step_image_edit", "max_revise": 1 },
+      "config": {
+        "review_mode": "single_judge", "review_scope": "image",
+        "review_id": "rv_edited_img", "rubric_ref": "ue_visual_quality",
+        "selection_policy": "single_best", "visual_mode": true
+      }
+    }
+  ]
+}

@@ -16,10 +16,17 @@ from framework.providers.capability_router import CapabilityRouter
 from framework.providers.litellm_adapter import LiteLLMAdapter
 from framework.runtime.checkpoint_store import CheckpointStore
 from framework.providers.workers.comfy_worker import FakeComfyWorker, HTTPComfyWorker
+from framework.providers.workers.mesh_worker import (
+    FakeMeshWorker,
+    HunyuanMeshWorker,
+    Tripo3DWorker,
+)
 from framework.runtime.executors import (
     ExecutorRegistry,
     ExportExecutor,
+    GenerateImageEditExecutor,
     GenerateImageExecutor,
+    GenerateMeshExecutor,
     ReviewExecutor,
     SelectExecutor,
 )
@@ -28,7 +35,9 @@ from framework.runtime.executors.mock_executors import register_mock_executors
 from framework.runtime.executors.validate import SchemaValidateExecutor
 from framework.runtime.orchestrator import DryRunFailed, Orchestrator
 from framework.schemas.image_spec import register_builtin_schemas as register_image_spec_schema
+from framework.schemas.mesh_spec import register_builtin_schemas as register_mesh_spec_schema
 from framework.schemas.registry import get_schema_registry
+from framework.schemas.ue_api_answer import register_builtin_schemas as register_ue_api_answer_schema
 from framework.schemas.ue_character import register_builtin_schemas
 from framework.workflows import load_task_bundle
 
@@ -38,6 +47,7 @@ def _build_orchestrator(
     *,
     use_live_llm: bool = False,
     comfy_base_url: str | None = None,
+    tripo3d_key_env: str = "TRIPO3D_KEY",
 ) -> tuple[Orchestrator, CheckpointStore, ArtifactRepository]:
     reg = get_backend_registry(artifact_root=str(artifact_root))
     repo = ArtifactRepository(backend_registry=reg)
@@ -45,6 +55,8 @@ def _build_orchestrator(
 
     register_builtin_schemas()
     register_image_spec_schema()
+    register_mesh_spec_schema()
+    register_ue_api_answer_schema()
     schema_registry = get_schema_registry()
 
     router = CapabilityRouter()
@@ -53,13 +65,30 @@ def _build_orchestrator(
 
     worker = HTTPComfyWorker(base_url=comfy_base_url) if comfy_base_url else FakeComfyWorker()
 
+    # Mesh worker selection (priority: Hunyuan3D if creds present > Tripo3D > Fake)
+    import os as _os
+    hunyuan_id = _os.environ.get("HUNYUAN_3D_SECRET_ID")
+    hunyuan_key = _os.environ.get("HUNYUAN_3D_SECRET_KEY")
+    tripo_key = _os.environ.get(tripo3d_key_env)
+    if hunyuan_id and hunyuan_key:
+        mesh_worker = HunyuanMeshWorker(
+            secret_id=hunyuan_id, secret_key=hunyuan_key,
+            region=_os.environ.get("HUNYUAN_3D_REGION", "ap-singapore"),
+        )
+    elif tripo_key:
+        mesh_worker = Tripo3DWorker(api_key=tripo_key)
+    else:
+        mesh_worker = FakeMeshWorker()
+
     execs = ExecutorRegistry()
     register_mock_executors(execs)
     execs.register(GenerateStructuredExecutor(router=router, schema_registry=schema_registry))
     execs.register(SchemaValidateExecutor(schema_registry=schema_registry))
     execs.register(ReviewExecutor(router=router))
     execs.register(SelectExecutor())
-    execs.register(GenerateImageExecutor(worker=worker))
+    execs.register(GenerateImageExecutor(worker=worker, router=router))
+    execs.register(GenerateImageEditExecutor(router=router))
+    execs.register(GenerateMeshExecutor(worker=mesh_worker))
     execs.register(ExportExecutor())
 
     orch = Orchestrator(
@@ -118,9 +147,21 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(exc.report.model_dump(mode="json"), ensure_ascii=False, indent=2))
         return 2
 
-    # Emit a compact run summary
+    # Emit a compact run summary — include verdicts + termination info so the
+    # CLI user can see *why* a run ended without reading the repository.
     run_dir = artifact_root / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
+    verdicts_summary = []
+    for art in repo:
+        if art.artifact_type.modality == "report" and art.artifact_type.shape == "verdict":
+            payload = repo.read_payload(art.artifact_id)
+            verdicts_summary.append({
+                "artifact_id": art.artifact_id,
+                "decision": payload.get("decision"),
+                "selected": payload.get("selected_candidate_ids") or [],
+                "confidence": payload.get("confidence"),
+                "reasons": payload.get("reasons", [])[:2],
+            })
     summary = {
         "run_id": result.run.run_id,
         "status": result.run.status.value,
@@ -129,6 +170,11 @@ def main(argv: list[str] | None = None) -> int:
         "artifact_ids": result.run.artifact_ids,
         "checkpoint_ids": result.run.checkpoint_ids,
         "trace_id": result.run.trace_id,
+        "termination_reason": result.run.metrics.get("termination_reason"),
+        "last_failure_mode": result.run.metrics.get("last_failure_mode"),
+        "failure_events": result.failure_events,
+        "revise_events": result.revise_events,
+        "verdicts": verdicts_summary,
     }
     (run_dir / "run_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"

@@ -1,0 +1,142 @@
+# Test-only model registry —— 冻结测试需要的模型 id 和 fake provider 结构，
+# 不受 config/models.yaml 里用户改动的影响。所有集成/单元测试都通过
+# conftest.py 的 autouse fixture 强制使用这份 YAML。
+#
+# 三段式（D-plan），providers 不声明 api_key_env —— 测试用 FakeAdapter，
+# 不走真实认证，让 _rebind 跳过 env 变量查找。
+
+providers:
+  test_openai: {}
+  test_anthropic: {}
+  test_google: {}
+  test_xai: {}
+  test_tripo: {}
+  # 国内 provider（同样不设 auth，FakeAdapter 不需要）
+  test_zhipu: {}
+  test_dashscope: {}
+  test_hunyuan: {}
+  test_hunyuan_3d: {}
+
+models:
+  # text
+  gpt_4o_mini:
+    id: "gpt-4o-mini"
+    provider: test_openai
+    kind: text
+  gpt_4o:
+    id: "gpt-4o"
+    provider: test_openai
+    kind: text
+  claude_haiku:
+    id: "anthropic/claude-haiku-4-5-20251001"
+    provider: test_anthropic
+    kind: text
+  claude_sonnet:
+    id: "anthropic/claude-sonnet-4-6"
+    provider: test_anthropic
+    kind: text
+
+  # vision
+  gemini_flash_vision:
+    id: "gemini/gemini-3-flash"
+    provider: test_google
+    kind: vision
+  claude_sonnet_vision:
+    id: "anthropic/claude-sonnet-4-6"
+    provider: test_anthropic
+    kind: vision
+  glm_41v_flashx:
+    id: "openai/glm-4.1v-thinking-flashx"
+    provider: test_zhipu
+    kind: vision
+  qwen3_plus:
+    id: "openai/qwen-plus"
+    provider: test_dashscope
+    kind: vision
+
+  # image generation
+  dalle_3:
+    id: "openai/dall-e-3"
+    provider: test_openai
+    kind: image
+  imagen_3:
+    id: "gemini/imagen-3.0-generate-001"
+    provider: test_google
+    kind: image
+  glm_image:
+    id: "openai/cogview-3-plus"
+    provider: test_zhipu
+    kind: image
+  qwen_image_2:
+    id: "openai/wanx-v1"
+    provider: test_dashscope
+    kind: image
+  qwen_image_2_pro:
+    id: "openai/wanx-v1-turbo"
+    provider: test_dashscope
+    kind: image
+  hunyuan_image_fast:
+    id: "openai/hunyuan-image-fast"
+    provider: test_hunyuan
+    kind: image
+
+  # image edit (L5 placeholder)
+  qwen_image_edit_plus:
+    id: "openai/wanx-image-edit"
+    provider: test_dashscope
+    kind: image_edit
+  qwen_image_edit_max:
+    id: "openai/wanx-image-edit-turbo"
+    provider: test_dashscope
+    kind: image_edit
+  hunyuan_image_style:
+    id: "openai/hunyuan-image-style"
+    provider: test_hunyuan
+    kind: image_edit
+
+  # mesh generation
+  tripo_v2:
+    id: "tripo3d/v2"
+    provider: test_tripo
+    kind: mesh
+  hunyuan_3d:
+    id: "hunyuan3d/v1"
+    provider: test_hunyuan_3d
+    kind: mesh
+
+  # xai (text)
+  grok_4:
+    id: "xai/grok-4"
+    provider: test_xai
+    kind: text
+
+aliases:
+  # capability-named aliases only —— swap models freely without renaming
+
+  text_cheap:
+    preferred: [gpt_4o_mini]
+    fallback:  [claude_haiku]
+  text_strong:
+    preferred: [gpt_4o]
+    fallback:  [claude_sonnet]
+  review_judge:
+    preferred: [gpt_4o_mini]
+    fallback:  [claude_haiku]
+  ue5_api_assist:
+    preferred: [claude_sonnet]
+    fallback:  [gpt_4o]
+  review_judge_visual:
+    preferred: [gemini_flash_vision]
+    fallback:  [claude_sonnet_vision]
+  image_fast:
+    preferred: [imagen_3]
+    fallback:  [dalle_3]
+  image_strong:
+    preferred: [dalle_3]
+    fallback:  [imagen_3]
+  image_edit:
+    preferred: [qwen_image_edit_plus]
+    fallback:  [qwen_image_edit_max, hunyuan_image_style]
+  mesh_from_image:
+    preferred: [tripo_v2]
+    fallback:  [hunyuan_3d]

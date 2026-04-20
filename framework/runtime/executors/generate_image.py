@@ -1,18 +1,22 @@
-"""generate(image) step executor — routes a structured spec to ComfyWorker (§F3-2).
+"""generate(image) step executor — two routing paths (§F3-2, L2 extension).
 
-Contract:
-- Resolves an image spec from one of (priority order):
-    1. ctx.inputs["spec"]               — InputBinding supplies a dict
-    2. upstream Artifact (text.structured) whose payload is a spec dict
-    3. step.config["spec"]              — inline fallback
-- Applies *revision_hint* (set by the Orchestrator when the prior review emitted
-  Decision.revise) by shallow-merging into the spec and appending any nudge
-  phrases to prompt_summary.
-- Calls ComfyWorker.generate(spec, num_candidates, seed, timeout_s) inside a
-  RetryPolicy loop. WorkerTimeout / WorkerError are re-raised after exhaustion
-  so the orchestrator's Failure-Mode map can kick in (§C.6).
-- Writes N file-backed image Artifacts + one bundle.candidate_set referencing
-  them (so downstream review/select steps see a first-class candidate pool).
+Routing decision (per step):
+- If `step.provider_policy.prepared_routes` has `kind="image"` routes → go
+  through CapabilityRouter.image_generation (LiteLLM — DALL-E / Imagen / Flux /
+  Nano Banana / etc.). This is the "API" path.
+- Else → go through ComfyWorker (self-hosted ComfyUI workflow-graph). This
+  is the "workflow" path.
+
+Both paths yield a flat `list[ImageCandidate]`, then the rest of the
+executor persists N file-backed image Artifacts + one candidate_set bundle
+(identical shape regardless of source).
+
+Other contract pieces unchanged:
+- Spec resolution priority: ctx.inputs["spec"] → upstream text.structured →
+  step.config["spec"].
+- Revision hint shallow-merged.
+- RetryPolicy wraps the generate call; exhausted errors re-raised so the
+  orchestrator's FailureModeMap can route.
 """
 from __future__ import annotations
 
@@ -30,6 +34,8 @@ from framework.core.artifact import (
 )
 from framework.core.enums import ArtifactRole, PayloadKind, StepType
 from framework.core.policies import RetryPolicy
+from framework.providers.base import ProviderError, ProviderTimeout
+from framework.providers.capability_router import CapabilityRouter
 from framework.providers.workers.comfy_worker import (
     ComfyWorker,
     ImageCandidate,
@@ -45,8 +51,14 @@ class GenerateImageExecutor(StepExecutor):
     step_type = StepType.generate
     capability_ref = "image.generation"
 
-    def __init__(self, *, worker: ComfyWorker) -> None:
+    def __init__(
+        self,
+        *,
+        worker: ComfyWorker | None = None,
+        router: CapabilityRouter | None = None,
+    ) -> None:
         self._worker = worker
+        self._router = router
 
     def execute(self, ctx: StepContext) -> ExecutorResult:
         cfg = ctx.step.config or {}
@@ -67,18 +79,27 @@ class GenerateImageExecutor(StepExecutor):
         policy = ctx.step.retry_policy or RetryPolicy()
         attempts = max(1, policy.max_attempts)
 
+        use_api_path = self._should_use_api_path(ctx)
+
         last_exc: Exception | None = None
         candidates: list[ImageCandidate] | None = None
+        chosen_model: str | None = None
         attempt_count = 0
         for attempt in range(attempts):
             attempt_count = attempt + 1
             try:
-                candidates = self._worker.generate(
-                    spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
-                )
+                if use_api_path:
+                    candidates, chosen_model = self._generate_via_router(
+                        ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
+                    )
+                else:
+                    candidates = self._worker.generate(
+                        spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
+                    )
+                    chosen_model = cfg.get("model_hint", self._worker.name if self._worker else "comfy")
                 last_exc = None
                 break
-            except (WorkerTimeout, WorkerError) as exc:
+            except (WorkerTimeout, WorkerError, ProviderTimeout, ProviderError) as exc:
                 last_exc = exc
                 if attempt + 1 >= attempts or not _should_retry(policy, exc):
                     break
@@ -115,7 +136,8 @@ class GenerateImageExecutor(StepExecutor):
                 payload_kind=PayloadKind.file,
                 producer=ProducerRef(
                     run_id=ctx.run.run_id, step_id=ctx.step.step_id,
-                    provider=self._worker.name, model=cfg.get("model_hint", "comfy"),
+                    provider=("litellm" if use_api_path else (self._worker.name if self._worker else "fake")),
+                    model=chosen_model or cfg.get("model_hint", "unknown"),
                 ),
                 lineage=Lineage(
                     source_artifact_ids=list(ctx.upstream_artifact_ids),
@@ -146,6 +168,7 @@ class GenerateImageExecutor(StepExecutor):
             image_ids.append(aid)
 
         bundle_id = f"{ctx.run.run_id}_{ctx.step.step_id}_set_{spec_fp}"
+        _ = chosen_model  # silence unused — may be used in downstream metrics
         bundle_payload = {
             "candidate_set_id": bundle_id,
             "candidate_ids": image_ids,
@@ -167,7 +190,8 @@ class GenerateImageExecutor(StepExecutor):
             payload_kind=PayloadKind.inline,
             producer=ProducerRef(
                 run_id=ctx.run.run_id, step_id=ctx.step.step_id,
-                provider=self._worker.name, model=cfg.get("model_hint", "comfy"),
+                provider=("litellm" if use_api_path else (self._worker.name if self._worker else "fake")),
+                model=chosen_model or cfg.get("model_hint", "unknown"),
             ),
             lineage=Lineage(
                 source_artifact_ids=image_ids,
@@ -179,11 +203,68 @@ class GenerateImageExecutor(StepExecutor):
         metrics = {
             "attempts": attempt_count,
             "candidate_count": len(image_ids),
-            "worker": self._worker.name,
+            "worker": ("litellm" if use_api_path else (self._worker.name if self._worker else "fake")),
+            "chosen_model": chosen_model,
             "revised": bool(hint),
             "seed": seed,
         }
         return ExecutorResult(artifacts=[*image_arts, bundle], metrics=metrics)
+
+    # ---- path selection + API routing ----------------------------------------
+
+    def _should_use_api_path(self, ctx: StepContext) -> bool:
+        pp = ctx.step.provider_policy
+        if pp is None or not pp.prepared_routes:
+            return False
+        # At least one route must declare kind=image to eligibly use API path
+        for r in pp.prepared_routes:
+            if getattr(r, "kind", "text") == "image":
+                if self._router is None:
+                    raise RuntimeError(
+                        f"Step {ctx.step.step_id} needs API image generation but "
+                        f"executor has no CapabilityRouter injected"
+                    )
+                return True
+        return False
+
+    def _generate_via_router(
+        self, *, ctx: StepContext, spec: dict, num: int,
+        seed: int | None, timeout_s: float | None,
+    ) -> tuple[list[ImageCandidate], str]:
+        """Call CapabilityRouter.image_generation; wrap results as ImageCandidate."""
+        assert self._router is not None
+        prompt = str(spec.get("prompt_summary") or "")
+        if not prompt:
+            raise RuntimeError(
+                f"API image path requires spec.prompt_summary (step {ctx.step.step_id})"
+            )
+        width = int(spec.get("width", 1024))
+        height = int(spec.get("height", 1024))
+        size_arg = f"{width}x{height}"
+        extra: dict[str, Any] = {}
+        if seed is not None:
+            extra["seed"] = seed
+
+        results, chosen_model = self._router.image_generation(
+            policy=ctx.step.provider_policy,    # type: ignore[arg-type]
+            prompt=prompt, n=num, size=size_arg,
+            timeout_s=timeout_s, extra=extra,
+        )
+        cands = [
+            ImageCandidate(
+                data=r.data, width=width, height=height,
+                seed=(r.seed if r.seed is not None else (seed or 0) + i),
+                mime_type=r.mime_type, format=r.format,
+                metadata={
+                    "source": "litellm_image",
+                    "prompt_summary": prompt,
+                    "model": r.model,
+                    **r.raw,
+                },
+            )
+            for i, r in enumerate(results)
+        ]
+        return cands, chosen_model
 
 
 # ---------- helpers ----------------------------------------------------------
@@ -248,9 +329,9 @@ def _apply_revision_hint(spec: dict[str, Any], hint: dict[str, Any]) -> dict[str
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
-    if "timeout" in policy.retry_on and isinstance(exc, WorkerTimeout):
+    if "timeout" in policy.retry_on and isinstance(exc, (WorkerTimeout, ProviderTimeout)):
         return True
-    if "provider_error" in policy.retry_on and isinstance(exc, WorkerError):
+    if "provider_error" in policy.retry_on and isinstance(exc, (WorkerError, ProviderError)):
         return True
     return False
 

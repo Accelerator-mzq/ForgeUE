@@ -48,8 +48,7 @@
       "capability_ref": "text.structured",
       "provider_policy": {
         "capability_required": "text.structured",
-        "preferred_models": ["gpt-4o-mini"],
-        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+        "models_ref": "text_cheap"
       },
       "retry_policy": {
         "max_attempts": 3,
@@ -99,8 +98,7 @@
       "depends_on": ["step_image"],
       "provider_policy": {
         "capability_required": "review.judge",
-        "preferred_models": ["gpt-4o-mini"],
-        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+        "models_ref": "review_judge"
       },
       "transition_policy": {
         "on_approve": "step_export",

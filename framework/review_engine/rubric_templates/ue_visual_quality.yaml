@@ -1,0 +1,19 @@
+name: ue_visual_quality
+description: Visual-first rubric —— 判官真看图，打的是画面质量而非 metadata。
+pass_threshold: 0.70
+criteria:
+  - name: constraint_fit
+    weight: 0.20
+    rubric_hint: Does the image VISUALLY meet declared resolution/style/composition constraints?
+  - name: style_consistency
+    weight: 0.25
+    rubric_hint: Does the palette / lighting / level-of-detail match the declared style_tags?
+  - name: production_readiness
+    weight: 0.25
+    rubric_hint: Is the image importable as a UE texture / concept with minimal cleanup? Check artifacts, seams, noise.
+  - name: technical_validity
+    weight: 0.20
+    rubric_hint: Composition / focal subject / edges / alpha clarity correct for intended use?
+  - name: risk_score
+    weight: 0.10
+    rubric_hint: Higher = lower IP / safety risk (no obvious copied characters, trademarks, inappropriate content).

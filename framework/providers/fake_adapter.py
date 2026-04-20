@@ -20,6 +20,7 @@ from typing import Any, Callable
 from pydantic import BaseModel, ValidationError
 
 from framework.providers.base import (
+    ImageResult,
     ProviderAdapter,
     ProviderCall,
     ProviderError,
@@ -38,11 +39,16 @@ class FakeModelProgram:
     Provide either a static ``schema_value`` / ``text`` or a dynamic
     ``schema_builder`` callable that inspects the incoming ``ProviderCall`` and
     returns a raw dict (e.g. to echo candidate ids extracted from the prompt).
+
+    For image_generation calls, provide ``image_bytes_list`` (one entry per n)
+    and the adapter returns them as ImageResult. Falls back to synthesising
+    minimal PNG bytes if unset.
     """
 
     text: str | None = None
     schema_value: dict | None = None               # raw dict — validated against requested schema
     schema_builder: SchemaBuilder | None = None    # dynamic alternative to schema_value
+    image_bytes_list: list[bytes] | None = None    # for image_generation
     raise_error: BaseException | None = None
     usage: dict[str, int] = field(default_factory=lambda: {"prompt": 10, "completion": 20, "total": 30})
 
@@ -109,3 +115,86 @@ class FakeAdapter(ProviderAdapter):
             return schema.model_validate(value)
         except ValidationError as exc:
             raise SchemaValidationError(str(exc), raw=value) from exc
+
+    def image_generation(
+        self, *, prompt: str, model: str, n: int = 1,
+        size: str = "1024x1024", api_key: str | None = None,
+        api_base: str | None = None, timeout_s: float | None = None,
+        extra: dict | None = None,
+    ) -> list[ImageResult]:
+        """Pop a program and return its image_bytes_list (or synthesise stubs)."""
+        # Log the call for assertions (model-keyed like structured())
+        call = ProviderCall(model=model, messages=[{"role": "user", "content": prompt}])
+        self._calls.append((model, call))
+        p = self._pop(model)
+        if p.raise_error is not None:
+            raise p.raise_error
+
+        if p.image_bytes_list is not None:
+            payloads = list(p.image_bytes_list)
+            if len(payloads) < n:
+                payloads = (payloads * ((n // len(payloads)) + 1))[:n]
+            elif len(payloads) > n:
+                payloads = payloads[:n]
+        else:
+            payloads = [_synth_png(prompt, model, i) for i in range(n)]
+
+        return [
+            ImageResult(data=b, model=model, format="png", mime_type="image/png")
+            for b in payloads
+        ]
+
+
+    def image_edit(
+        self, *, prompt: str, source_image_bytes: bytes, model: str,
+        n: int = 1, size: str = "1024x1024",
+        api_key: str | None = None, api_base: str | None = None,
+        timeout_s: float | None = None, extra: dict | None = None,
+    ) -> list[ImageResult]:
+        """Pop a program for *model* and return its image_bytes_list.
+        Source image bytes are logged (hashed) but not actually used."""
+        import hashlib as _hashlib
+        call = ProviderCall(model=model, messages=[
+            {"role": "user", "content": prompt},
+        ])
+        self._calls.append((model, call))
+        p = self._pop(model)
+        if p.raise_error is not None:
+            raise p.raise_error
+
+        if p.image_bytes_list is not None:
+            payloads = list(p.image_bytes_list)
+            if len(payloads) < n:
+                payloads = (payloads * ((n // len(payloads)) + 1))[:n]
+            elif len(payloads) > n:
+                payloads = payloads[:n]
+        else:
+            src_hash = _hashlib.sha1(source_image_bytes).hexdigest()[:8]
+            payloads = [
+                _synth_png(f"edit:{prompt}:{src_hash}", model, i)
+                for i in range(n)
+            ]
+
+        return [
+            ImageResult(data=b, model=model, format="png", mime_type="image/png",
+                        raw={"mode": "edit", "source_hash":
+                             _hashlib.sha1(source_image_bytes).hexdigest()[:12]})
+            for b in payloads
+        ]
+
+
+def _synth_png(prompt: str, model: str, index: int) -> bytes:
+    """Minimal 1x1 PNG derived from (prompt, model, index). For offline tests."""
+    import hashlib, struct, zlib
+    digest = hashlib.sha1(f"{prompt}|{model}|{index}".encode("utf-8")).digest()
+    r, g, b = digest[0], digest[1], digest[2]
+    raw = bytes([0, r, g, b])
+    compressed = zlib.compress(raw, 9)
+
+    def chunk(tag: bytes, payload: bytes) -> bytes:
+        length = struct.pack(">I", len(payload))
+        crc = struct.pack(">I", zlib.crc32(tag + payload) & 0xFFFFFFFF)
+        return length + tag + payload + crc
+
+    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", compressed) + chunk(b"IEND", b"")

@@ -367,3 +367,68 @@ def test_p3_scheduler_risk_sort_on_runnable_set():
     runnable = scheduler.runnable_after(completed={"step_spec"}, steps=modified)
     step_ids = [s.step_id for s in runnable]
     assert step_ids.index("step_export") < step_ids.index("step_image")
+
+
+# --- T6 API image path via CapabilityRouter (L2 extension) --------------------
+
+def test_p3_api_image_path_via_router(tmp_path: Path):
+    """When step_image has provider_policy with kind=image routes, executor
+    goes through CapabilityRouter.image_generation (not ComfyWorker)."""
+    from framework.core.policies import PreparedRoute, ProviderPolicy
+
+    bundle = load_task_bundle(BUNDLE_PATH)
+    # Mutate step_image to use API path with a fake-only route
+    img_step = next(s for s in bundle.steps if s.step_id == "step_image")
+    img_step.provider_policy = ProviderPolicy(
+        capability_required="image.generation",
+        prepared_routes=[
+            PreparedRoute(model="fake-image-dalle", api_key_env=None,
+                          api_base=None, kind="image"),
+        ],
+    )
+
+    run_id = "run_p3_api_image"
+    fake = FakeAdapter()
+    fake._supported.add("fake-image-dalle")
+    # step_spec (ImageSpec text.structured)
+    fake.program("gpt-4o-mini", outputs=[FakeModelProgram(schema_value=_image_spec_payload())])
+    # step_image: 3 image_generation calls merged into one program? The router
+    # calls image_generation once with n=3; FakeAdapter returns 3 results in one pop.
+    fake.program("fake-image-dalle", outputs=[FakeModelProgram(
+        image_bytes_list=[b"\x89PNG\r\n\x1a\nAPI_" + bytes([i]) for i in range(3)]
+    )])
+    # step_review approves
+    fake.program("gpt-4o-mini", outputs=[FakeModelProgram(schema_builder=_judge_builder(
+        score_for_position=lambda i: [GOOD, LOW, LOW][i], summary="api path wins"
+    ))])
+
+    reg = get_backend_registry(artifact_root=str(tmp_path))
+    repo = ArtifactRepository(backend_registry=reg)
+    store = CheckpointStore(artifact_root=tmp_path)
+    router = CapabilityRouter()
+    router.register(fake)
+
+    execs = ExecutorRegistry()
+    register_mock_executors(execs)
+    execs.register(GenerateStructuredExecutor(router=router, schema_registry=get_schema_registry()))
+    execs.register(SchemaValidateExecutor(schema_registry=get_schema_registry()))
+    execs.register(ReviewExecutor(router=router))
+    execs.register(SelectExecutor())
+    # Only router given — no ComfyWorker. API path is the only option.
+    execs.register(GenerateImageExecutor(worker=None, router=router))
+
+    orch = Orchestrator(repository=repo, checkpoint_store=store, executor_registry=execs)
+    result = orch.run(task=bundle.task, workflow=bundle.workflow, steps=bundle.steps,
+                      run_id=run_id)
+    assert result.run.status == RunStatus.succeeded
+    assert "step_image" in result.visited_step_ids
+
+    # Image artifacts emitted with producer.provider == "litellm" (API path marker)
+    img_arts = [a for a in repo.find_by_producer(step_id="step_image")
+                if a.artifact_type.modality == "image"]
+    assert len(img_arts) == 3
+    assert all(a.producer.provider == "litellm" for a in img_arts)
+    assert all(a.producer.model == "fake-image-dalle" for a in img_arts)
+
+    # Exactly one image_generation call was made (router called adapter once with n=3)
+    assert len(fake.calls_for("fake-image-dalle")) == 1

@@ -27,8 +27,7 @@
       "capability_ref": "text.structured",
       "provider_policy": {
         "capability_required": "text.structured",
-        "preferred_models": ["gpt-4o-mini"],
-        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+        "models_ref": "text_cheap"
       },
       "retry_policy": {
         "max_attempts": 3,

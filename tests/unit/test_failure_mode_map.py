@@ -10,6 +10,7 @@ from framework.providers.base import (
     SchemaValidationError,
 )
 from framework.providers.workers.comfy_worker import WorkerError, WorkerTimeout
+from framework.providers.workers.mesh_worker import MeshWorkerError, MeshWorkerTimeout
 from framework.runtime.failure_mode_map import (
     DEFAULT_MAP,
     FailureMode,
@@ -25,6 +26,9 @@ from framework.runtime.failure_mode_map import (
     (ProviderError("x"), FailureMode.provider_error),
     (WorkerTimeout("slow"), FailureMode.worker_timeout),
     (WorkerError("oops"), FailureMode.worker_error),
+    # Mesh-modality workers reuse the same failure modes as image workers
+    (MeshWorkerTimeout("slow mesh"), FailureMode.worker_timeout),
+    (MeshWorkerError("mesh api down"), FailureMode.worker_error),
 ])
 def test_classify_known_exceptions(exc, mode):
     assert classify(exc) is mode

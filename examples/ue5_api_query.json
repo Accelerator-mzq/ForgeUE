@@ -1,0 +1,49 @@
+{
+  "task": {
+    "task_id": "task_ue5_api_query",
+    "task_type": "plan_generation",
+    "run_mode": "basic_llm",
+    "title": "UE5 Python API 查询辅助 —— 问一个具体 API 返回结构化答案",
+    "description": "用户问一个 UE5 API 问题（如何导入静态网格、某某类的签名），ue5_api_assist 别名路由到 Sonnet 给结构化答复。",
+    "input_payload": {
+      "prompt": "In Unreal Engine 5 Python, what is the exact AssetImportTask API signature used to import an FBX static mesh? Include the class name, the factory options class, and the key boolean properties on both."
+    },
+    "expected_output": {
+      "artifact_types": ["structured_answer"]
+    },
+    "project_id": "proj_ue5_api"
+  },
+  "workflow": {
+    "workflow_id": "wf_ue5_api_query",
+    "name": "ue5_api_query",
+    "version": "1.0.0",
+    "entry_step_id": "step_query",
+    "step_ids": ["step_query"]
+  },
+  "steps": [
+    {
+      "step_id": "step_query",
+      "type": "generate",
+      "name": "ue5-api-query",
+      "risk_level": "low",
+      "capability_ref": "text.structured",
+      "provider_policy": {
+        "capability_required": "text.structured",
+        "models_ref": "ue5_api_assist"
+      },
+      "retry_policy": {
+        "max_attempts": 3,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "schema_fail", "provider_error"]
+      },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "output_schema": { "schema_ref": "ue.api_answer" },
+      "config": {
+        "task_goal": "Produce a structured answer about the requested UE5 Python API. Cite the exact class name, constructor, and listed properties in the schema fields.",
+        "temperature": 0.0
+      }
+    }
+  ]
+}

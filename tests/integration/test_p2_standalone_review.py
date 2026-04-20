@@ -198,6 +198,113 @@ def test_p2_chief_judge_records_dissent(bundle_path: Path, tmp_path: Path):
     assert len(review_cp.metrics["judges"]) == 2
 
 
+# ---- T2.5: visual-mode review (L3) ------------------------------------------
+
+def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
+    """When review step config has visual_mode=true and upstream candidates
+    are image artifacts, the judge prompt becomes multimodal (content blocks
+    with image_url base64). FakeAdapter receives it and we assert on the
+    captured ProviderCall.messages shape."""
+    from framework.core.artifact import ArtifactType, Lineage, ProducerRef
+    from framework.core.enums import ArtifactRole, PayloadKind, RiskLevel, StepType
+    from framework.core.enums import RunMode, RunStatus, TaskType
+    from framework.core.policies import ProviderPolicy
+    from framework.core.task import Run, Step, Task, Workflow
+    from datetime import datetime, timezone
+
+    run_id = "run_p2_visual"
+    reg = get_backend_registry(artifact_root=str(tmp_path))
+    repo = ArtifactRepository(backend_registry=reg)
+
+    # Seed 3 file-backed image artifacts directly
+    png_bytes_list = [
+        b"\x89PNG\r\n\x1a\nVISUAL_A" * 4,
+        b"\x89PNG\r\n\x1a\nVISUAL_B" * 4,
+        b"\x89PNG\r\n\x1a\nVISUAL_C" * 4,
+    ]
+    image_ids = []
+    for i, data in enumerate(png_bytes_list):
+        aid = f"{run_id}_img_{i}"
+        repo.put(
+            artifact_id=aid, value=data,
+            artifact_type=ArtifactType(
+                modality="image", shape="raster", display_name="concept_image"),
+            role=ArtifactRole.intermediate, format="png", mime_type="image/png",
+            payload_kind=PayloadKind.file,
+            producer=ProducerRef(run_id=run_id, step_id="upstream", provider="fab"),
+            file_suffix=".png",
+        )
+        image_ids.append(aid)
+
+    fake = FakeAdapter()
+    # Dynamically echo candidate_ids back — visual mode still embeds the ids
+    # in the prompt (candidate_blob inside the text block), so builder can
+    # extract them the same way as non-visual runs.
+    import re as _re
+    def _visual_judge_builder(call, _schema):
+        # When content is a list of blocks, the text is inside the first block
+        user_content = next(m["content"] for m in call.messages if m["role"] == "user")
+        text = user_content[0]["text"] if isinstance(user_content, list) else user_content
+        ids = _re.findall(r'"candidate_id":\s*"([^"]+)"', text)
+        scores = [GOOD, MID, BAD]
+        return {"summary": "visual review",
+                "verdicts": [{"candidate_id": cid, "scores": scores[i],
+                              "issues": [], "notes": None}
+                             for i, cid in enumerate(ids)]}
+    fake.program("gpt-4o-mini", outputs=[FakeModelProgram(schema_builder=_visual_judge_builder)])
+    router = CapabilityRouter()
+    router.register(fake)
+
+    step = Step(
+        step_id="step_review", type=StepType.review, name="review",
+        risk_level=RiskLevel.medium, capability_ref="review.judge",
+        provider_policy=ProviderPolicy(
+            capability_required="review.judge",
+            preferred_models=["gpt-4o-mini"],
+        ),
+        config={
+            "review_mode": "single_judge",
+            "review_scope": "image",
+            "review_id": "rv_visual",
+            "rubric_ref": "ue_visual_quality",
+            "selection_policy": "single_best",
+            "visual_mode": True,
+        },
+    )
+    task = Task(
+        task_id="t_visual", task_type=TaskType.asset_review,
+        run_mode=RunMode.standalone_review, title="visual",
+        input_payload={}, expected_output={}, project_id="p",
+    )
+    from framework.runtime.executors.base import StepContext
+    run = Run(run_id=run_id, task_id="t", project_id="p", status=RunStatus.running,
+              started_at=datetime.now(timezone.utc), workflow_id="w", trace_id="tr")
+
+    ex = ReviewExecutor(router=router)
+    ctx = StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=image_ids,
+    )
+    result = ex.execute(ctx)
+    assert result.metrics["visual_mode"] is True
+    assert result.metrics["candidate_count"] == 3
+
+    # Inspect the FakeAdapter's captured call
+    calls = fake.calls_for("gpt-4o-mini")
+    assert len(calls) == 1
+    call = calls[0]
+    # The user message's content is now a LIST of content blocks (multimodal)
+    user_msg = next(m for m in call.messages if m["role"] == "user")
+    assert isinstance(user_msg["content"], list), "visual_mode must produce list-shaped content"
+    types = [b["type"] for b in user_msg["content"]]
+    # At minimum: one text prefix + 3 alternating text-label+image_url pairs
+    assert types.count("image_url") == 3
+    # Base64 data URL present
+    for block in user_msg["content"]:
+        if block["type"] == "image_url":
+            assert block["image_url"]["url"].startswith("data:image/png;base64,")
+
+
 # ---- T3: select step resolves real candidate artifacts -----------------------
 
 def _candidate_task_workflow() -> tuple[Task, Workflow, list[Step]]:

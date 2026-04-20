@@ -9,11 +9,11 @@ responsible for the actual file copy.
 Rules (§E.1 — framework only DECLARES; UE-side script EXECUTES):
 - One UEAssetEntry per importable Artifact
 - Mapping (modality.shape) → asset_kind:
-    image.raster         → texture
-    image.sprite_sheet   → texture
-    audio.waveform       → sound_wave
-    mesh.gltf / mesh.fbx → static_mesh
-    material.definition  → material
+    image.raster                 → texture
+    image.sprite_sheet           → texture
+    audio.waveform               → sound_wave
+    mesh.gltf / mesh.fbx / mesh.obj → static_mesh
+    material.definition          → material
 - Naming policy: `house_rules` applies UE prefix table (§E.8 convention):
     T_<base>  for texture   S_<base> for sound_wave
     SM_<base> for static_mesh
@@ -45,6 +45,7 @@ _KIND_MAP: dict[tuple[str, str], str] = {
     ("audio", "waveform"): "sound_wave",
     ("mesh", "gltf"): "static_mesh",
     ("mesh", "fbx"): "static_mesh",
+    ("mesh", "obj"): "static_mesh",
     ("material", "definition"): "material",
 }
 

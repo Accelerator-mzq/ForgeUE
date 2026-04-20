@@ -1,9 +1,10 @@
 """UE character schema used as P1 verification target (20 fields, §F.2 acceptance)."""
 from __future__ import annotations
 
-from typing import Literal
+import json
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 Rarity = Literal["common", "uncommon", "rare", "epic", "legendary"]
@@ -19,6 +20,19 @@ class Stats(BaseModel):
     strength: int = Field(ge=1, le=30)
     dexterity: int = Field(ge=1, le=30)
     intelligence: int = Field(ge=1, le=30)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_json_string(cls, value: Any) -> Any:
+        """Some tool-calling providers (e.g. MiniMax-M2.x) stringify nested
+        objects instead of passing them through. Accept that shape transparently
+        instead of forcing an Instructor retry."""
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return value
+        return value
 
 
 class UECharacter(BaseModel):

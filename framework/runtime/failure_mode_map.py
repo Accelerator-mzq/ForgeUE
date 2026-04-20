@@ -76,10 +76,17 @@ def classify(exc: BaseException) -> FailureMode | None:
         SchemaValidationError,
     )
     from framework.providers.workers.comfy_worker import WorkerError, WorkerTimeout
+    from framework.providers.workers.mesh_worker import (
+        MeshWorkerError,
+        MeshWorkerTimeout,
+    )
 
-    if isinstance(exc, WorkerTimeout):
+    # Image-modality workers (Comfy) and mesh-modality workers share the
+    # worker_timeout / worker_error failure modes so the orchestrator can route
+    # both through the same retry_same_step / fallback_model policy branches.
+    if isinstance(exc, (WorkerTimeout, MeshWorkerTimeout)):
         return FailureMode.worker_timeout
-    if isinstance(exc, WorkerError):
+    if isinstance(exc, (WorkerError, MeshWorkerError)):
         return FailureMode.worker_error
     if isinstance(exc, ProviderTimeout):
         return FailureMode.provider_timeout

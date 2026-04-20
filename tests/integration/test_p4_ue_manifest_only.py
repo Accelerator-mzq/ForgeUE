@@ -38,7 +38,13 @@ from framework.core.policies import PermissionPolicy, TransitionPolicy
 from framework.core.review import Verdict
 from framework.core.task import Step, Task, Workflow
 from framework.core.ue import UEOutputTarget
-from framework.providers import CapabilityRouter, FakeAdapter, FakeModelProgram
+from framework.providers import (
+    CapabilityRouter,
+    FakeAdapter,
+    FakeModelProgram,
+    expand_model_refs,
+    get_model_registry,
+)
 from framework.providers.workers.comfy_worker import FakeComfyWorker, ImageCandidate
 from framework.runtime.checkpoint_store import CheckpointStore
 from framework.runtime.executors import (
@@ -146,10 +152,16 @@ def _build_env(
 
 
 def _customise_bundle_for_tmp(bundle_path: Path, ue_project: Path) -> dict:
-    """Load the on-disk bundle and patch project_root to tmp path."""
+    """Load the on-disk bundle and patch project_root to tmp path.
+
+    Also resolves `models_ref` aliases against the repo model registry — this
+    test bypasses `load_task_bundle` to allow patching the raw JSON before
+    validation, so we must replicate the loader's expansion step manually.
+    """
     raw = json.loads(Path(bundle_path).read_text(encoding="utf-8"))
     raw["task"]["ue_target"]["project_root"] = str(ue_project)
     raw["task"]["ue_target"]["project_name"] = ue_project.name
+    expand_model_refs(raw, get_model_registry())
     return raw
 
 

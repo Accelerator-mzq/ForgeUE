@@ -1,11 +1,18 @@
-"""LLM-backed single judge (§B.8, F2-1).
+"""LLM-backed single judge (§B.8, F2-1, L3 visual extension).
 
 The judge is given rubric + N candidate payloads, and asked to return a
-structured JudgeBatchReport. We go through CapabilityRouter so the whole
+structured JudgeBatchReport. Goes through CapabilityRouter so the whole
 path stays swappable (fake/LiteLLM/…).
+
+L3 adds *visual mode*: when the caller sets `visual_mode=True` and any
+candidate has `image_bytes`, the judge builds multimodal content blocks
+(text + image_url base64) so vision-capable judges (Gemini 3 Flash, Claude
+Sonnet Vision, GPT-4o) can actually SEE the image instead of reviewing
+metadata alone.
 """
 from __future__ import annotations
 
+import base64
 import json
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +46,8 @@ class CandidateInput:
     payload: Any
     artifact_id: str | None = None
     source_model: str | None = None
+    image_bytes: bytes | None = None     # L3: raw PNG/JPEG for visual mode
+    image_mime: str = "image/png"
 
 
 @dataclass
@@ -49,7 +58,17 @@ class SingleJudgeResult:
 
 def _build_prompt(
     *, rubric: Rubric, candidates: list[CandidateInput], scope: str,
-) -> list[dict[str, str]]:
+    visual_mode: bool = False,
+) -> list[dict[str, Any]]:
+    """Build the chat messages for the judge call.
+
+    Text mode (default): two plain string messages (system + user).
+    Visual mode: the user message becomes a list of content blocks —
+    the rubric/candidates text followed by one image_url block per candidate
+    whose `image_bytes` is populated. Judges without vision support will
+    either error or ignore the image blocks; callers must route visual runs
+    to vision-capable models.
+    """
     rubric_lines = "\n".join(
         f"- {c.name} (weight={c.weight}, min_score={c.min_score})"
         for c in rubric.criteria
@@ -65,15 +84,32 @@ def _build_prompt(
         "For risk_score, HIGHER is SAFER. Be concise in `issues` (one short phrase each). "
         "Return a JudgeBatchReport."
     )
-    user = (
+    user_text = (
         f"Review scope: {scope}\n"
         f"Pass threshold (weighted): {rubric.pass_threshold}\n"
         f"Rubric criteria:\n{rubric_lines}\n\n"
         f"Candidates:\n{candidate_blob}"
     )
+    if not visual_mode:
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_text},
+        ]
+
+    # Visual path: text + per-candidate image_url blocks
+    blocks: list[dict[str, Any]] = [
+        {"type": "text", "text": user_text},
+    ]
+    for c in candidates:
+        if not c.image_bytes:
+            continue
+        b64 = base64.b64encode(c.image_bytes).decode("ascii")
+        data_url = f"data:{c.image_mime};base64,{b64}"
+        blocks.append({"type": "text", "text": f"Image for candidate_id={c.candidate_id}:"})
+        blocks.append({"type": "image_url", "image_url": {"url": data_url}})
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": user},
+        {"role": "user", "content": blocks},
     ]
 
 
@@ -91,10 +127,14 @@ class LLMJudge:
         judge_policy,
         scope: str = "artifact",
         seed: int | None = None,
+        visual_mode: bool = False,
     ) -> SingleJudgeResult:
         call = ProviderCall(
             model="<routed>",
-            messages=_build_prompt(rubric=rubric, candidates=candidates, scope=scope),
+            messages=_build_prompt(
+                rubric=rubric, candidates=candidates, scope=scope,
+                visual_mode=visual_mode,
+            ),
             temperature=0.0,
             seed=seed,
         )

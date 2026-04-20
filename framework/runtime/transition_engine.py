@@ -71,6 +71,14 @@ class TransitionEngine:
                                         reason=f"max_retries({policy.max_retries}) exceeded")
             return TransitionResult(next_step_id=step.step_id)
         if d == Decision.fallback_model:
+            # Reuse the retry counter to prevent infinite loops when the policy
+            # has no explicit on_fallback target and the error keeps recurring.
+            count = self.counters.inc_retry(step.step_id)
+            if count > policy.max_retries:
+                return TransitionResult(
+                    next_step_id=None, terminated=True,
+                    reason=f"max_retries({policy.max_retries}) exceeded on fallback_model",
+                )
             return TransitionResult(next_step_id=policy.on_fallback or step.step_id)
         if d == Decision.rollback:
             return TransitionResult(next_step_id=policy.on_rollback, terminated=policy.on_rollback is None,

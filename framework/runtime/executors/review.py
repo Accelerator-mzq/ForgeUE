@@ -53,8 +53,14 @@ class ReviewExecutor(StepExecutor):
         scope = str(cfg.get("review_scope", "artifact"))
         review_id = str(cfg.get("review_id") or f"rv_{ctx.step.step_id}")
         seed = cfg.get("seed")
+        # Visual mode (L3): if enabled, the executor loads image bytes for every
+        # image-modality candidate and passes them as multimodal content blocks
+        # to the judge. Requires vision-capable models in provider_policy.
+        visual_mode = bool(cfg.get("visual_mode", False))
 
         candidates = _build_candidates(ctx, cfg)
+        if visual_mode:
+            candidates = _attach_image_bytes(ctx, candidates)
         if not candidates:
             raise RuntimeError(
                 f"review step {ctx.step.step_id} found zero candidates to review"
@@ -68,6 +74,7 @@ class ReviewExecutor(StepExecutor):
             single = self._judge.judge(
                 rubric=rubric, candidates=candidates,
                 judge_policy=ctx.step.provider_policy, scope=scope, seed=seed,
+                visual_mode=visual_mode,
             )
             batch = single.report
             dissent: list[str] = []
@@ -76,7 +83,7 @@ class ReviewExecutor(StepExecutor):
             panel = _resolve_panel(cfg, ctx.step.provider_policy)
             chief_res = self._chief.judge_with_panel(
                 rubric=rubric, candidates=candidates, panel_policies=panel,
-                scope=scope, seed=seed,
+                scope=scope, seed=seed, visual_mode=visual_mode,
             )
             batch = chief_res.consensus
             dissent = list(chief_res.dissent_models)
@@ -101,6 +108,7 @@ class ReviewExecutor(StepExecutor):
             ctx, emission.verdict, report_art.artifact_id, fingerprint=review_fp,
         )
         metrics = {
+            "visual_mode": visual_mode,
             "review_mode": mode.value,
             "candidate_count": len(candidates),
             "dissent_count": len(dissent),
@@ -210,6 +218,26 @@ def _build_candidates(ctx: StepContext, cfg: dict) -> list[CandidateInput]:
             artifact_id=aid,
             source_model=art.producer.model,
         ))
+    return out
+
+
+def _attach_image_bytes(ctx: StepContext, candidates: list) -> list:
+    """For visual review: load raw bytes for every candidate whose artifact is
+    an image (modality='image'). Non-image candidates pass through unchanged."""
+    repo = ctx.repository
+    out = []
+    for c in candidates:
+        if c.artifact_id and repo.exists(c.artifact_id):
+            art = repo.get(c.artifact_id)
+            if art.artifact_type.modality == "image":
+                try:
+                    c.image_bytes = repo.read_payload(c.artifact_id)
+                    c.image_mime = art.mime_type or "image/png"
+                except Exception:
+                    # If bytes can't be read (inline text etc.), fall back to
+                    # metadata-only review for this candidate.
+                    pass
+        out.append(c)
     return out
 
 

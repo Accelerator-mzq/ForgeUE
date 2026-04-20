@@ -34,8 +34,7 @@
       "capability_ref": "review.judge",
       "provider_policy": {
         "capability_required": "review.judge",
-        "preferred_models": ["gpt-4o-mini"],
-        "fallback_models": ["anthropic/claude-haiku-4-5-20251001"]
+        "models_ref": "review_judge"
       },
       "config": {
         "review_mode": "single_judge",

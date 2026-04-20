@@ -42,6 +42,7 @@ class ChiefJudge:
         panel_policies: list,               # list[ProviderPolicy]
         scope: str = "artifact",
         seed: int | None = None,
+        visual_mode: bool = False,
     ) -> ChiefJudgeResult:
         if not panel_policies:
             raise ValueError("panel_policies must contain at least one ProviderPolicy")
@@ -51,6 +52,7 @@ class ChiefJudge:
             res = self._judge.judge(
                 rubric=rubric, candidates=candidates,
                 judge_policy=policy, scope=scope, seed=seed,
+                visual_mode=visual_mode,
             )
             per_judge.append(res)
 

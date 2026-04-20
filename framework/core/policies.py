@@ -30,12 +30,36 @@ class RetryPolicy(BaseModel):
     )
 
 
+class PreparedRoute(BaseModel):
+    """A single (model_id, auth) tuple resolved by ModelRegistry (D-plan).
+
+    Each route carries its own `api_key_env` + `api_base`, so an alias can mix
+    multiple providers in its preferred / fallback chain without sharing auth.
+
+    `kind` tags the modality (text / image / mesh / audio / vision) so
+    modality-specific executors can assert the policy points at compatible
+    models before routing.
+    """
+
+    model: str
+    api_key_env: str | None = None
+    api_base: str | None = None
+    kind: str = "text"
+
+
 class ProviderPolicy(BaseModel):
     capability_required: str
     preferred_models: list[str] = Field(default_factory=list)
     fallback_models: list[str] = Field(default_factory=list)
     cost_limit: float | None = None
     latency_limit_ms: int | None = None
+    # Legacy alias-level default (C-plan). Kept for hand-written bundles that
+    # don't go through ModelRegistry. If `prepared_routes` is populated it wins.
+    api_key_env: str | None = None
+    api_base: str | None = None
+    # D-plan per-route auth. Populated by workflow loader when a bundle uses
+    # `models_ref`. Each route carries its own key env var + endpoint.
+    prepared_routes: list[PreparedRoute] = Field(default_factory=list)
 
 
 class BudgetPolicy(BaseModel):

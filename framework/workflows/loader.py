@@ -6,6 +6,11 @@ File layout (MVP):
   "workflow": { ... Workflow fields ... },
   "steps": [ { ... Step fields ... }, ... ]
 }
+
+Any `provider_policy.models_ref: "<alias>"` inside the bundle is expanded
+against `config/models.yaml` before Pydantic validation (framework/providers/
+model_registry.py). This keeps concrete model ids out of the bundle; switching
+provider / proxy is a one-line edit in the registry YAML.
 """
 from __future__ import annotations
 
@@ -14,6 +19,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from framework.core.task import Step, Task, Workflow
+from framework.providers.model_registry import expand_model_refs, get_model_registry
 
 
 class TaskBundle(NamedTuple):
@@ -24,6 +30,7 @@ class TaskBundle(NamedTuple):
 
 def load_task_bundle(path: str | Path) -> TaskBundle:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    expand_model_refs(raw, get_model_registry())
     task = Task.model_validate(raw["task"])
     workflow = Workflow.model_validate(raw["workflow"])
     steps = [Step.model_validate(s) for s in raw["steps"]]
