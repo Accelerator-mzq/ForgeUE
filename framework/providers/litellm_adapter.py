@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from framework.observability.compactor import compact_messages
 from framework.observability.secrets import redact_mapping
 from framework.providers.base import (
     ImageResult,
@@ -54,7 +55,9 @@ def _import_instructor():
 
 
 class LiteLLMAdapter(ProviderAdapter):
-    """Wraps litellm.completion + instructor.patch for structured calls.
+    """Wraps `litellm.acompletion` + `instructor.from_litellm(acompletion)` for
+    structured calls. Async-first (Plan C Phase 3); sync callers work via the
+    base-class shim (`asyncio.run`).
 
     `supports(model)` is permissive — LiteLLM accepts a wide variety of model ids.
     Fine-grained gating should be done via ProviderPolicy.
@@ -64,18 +67,19 @@ class LiteLLMAdapter(ProviderAdapter):
 
     def __init__(self, *, default_timeout_s: float = 60.0) -> None:
         self._default_timeout_s = default_timeout_s
-        self._instructor_client = None  # lazily initialized
+        self._async_instructor_client = None  # lazily initialized
 
     # ---- surface ----
 
     def supports(self, model: str) -> bool:
         return True
 
-    def completion(self, call: ProviderCall) -> ProviderResult:
+    async def acompletion(self, call: ProviderCall) -> ProviderResult:
         litellm = _import_litellm()
+        messages = _maybe_apply_prompt_cache(call)
         kwargs: dict[str, Any] = {
             "model": call.model,
-            "messages": call.messages,
+            "messages": messages,
             "temperature": call.temperature,
             "timeout": call.timeout_s or self._default_timeout_s,
         }
@@ -87,10 +91,11 @@ class LiteLLMAdapter(ProviderAdapter):
             kwargs["api_key"] = call.api_key
         if call.api_base is not None:
             kwargs["api_base"] = call.api_base
-        kwargs.update(call.extra)
+        kwargs.update({k: v for k, v in call.extra.items()
+                       if not k.startswith("_forge_")})
         try:
-            resp = litellm.completion(**kwargs)
-        except Exception as exc:  # pragma: no cover — adapter translation
+            resp = await litellm.acompletion(**kwargs)
+        except Exception as exc:
             msg = str(exc)
             if "timeout" in msg.lower() or "timed out" in msg.lower():
                 raise ProviderTimeout(msg) from exc
@@ -103,19 +108,26 @@ class LiteLLMAdapter(ProviderAdapter):
             raw=redact_mapping(_raw_debug(resp, call)),
         )
 
-    def structured(self, call: ProviderCall, schema: type[BaseModel]) -> BaseModel:
+    async def astructured(
+        self, call: ProviderCall, schema: type[BaseModel],
+    ) -> BaseModel:
+        obj, _usage = await self.astructured_with_usage(call, schema)
+        return obj
+
+    async def astructured_with_usage(
+        self, call: ProviderCall, schema: type[BaseModel],
+    ) -> tuple[BaseModel, dict[str, int]]:
         instructor = _import_instructor()
         litellm = _import_litellm()
-        if self._instructor_client is None:
-            # Use instructor.from_litellm for transport-agnostic structured output.
-            try:
-                self._instructor_client = instructor.from_litellm(litellm.completion)
-            except AttributeError:  # pragma: no cover — older instructor API fallback
-                self._instructor_client = instructor.patch(litellm)
+        if self._async_instructor_client is None:
+            self._async_instructor_client = instructor.from_litellm(
+                litellm.acompletion,
+            )
 
+        messages = _maybe_apply_prompt_cache(call)
         kwargs: dict[str, Any] = {
             "model": call.model,
-            "messages": call.messages,
+            "messages": messages,
             "temperature": call.temperature,
             "timeout": call.timeout_s or self._default_timeout_s,
             "response_model": schema,
@@ -128,11 +140,25 @@ class LiteLLMAdapter(ProviderAdapter):
             kwargs["api_key"] = call.api_key
         if call.api_base is not None:
             kwargs["api_base"] = call.api_base
-        kwargs.update(call.extra)
+        kwargs.update({k: v for k, v in call.extra.items()
+                       if not k.startswith("_forge_")})
 
         try:
-            obj = self._instructor_client.chat.completions.create(**kwargs)
-        except Exception as exc:  # translate to our taxonomy
+            # Prefer `create_with_completion` so we can read the raw LiteLLM
+            # response for token usage — required for BudgetTracker to charge
+            # this call. Fall back to plain `create` if the installed
+            # instructor build doesn't expose it.
+            completions = self._async_instructor_client.chat.completions
+            create_with_completion = getattr(
+                completions, "create_with_completion", None,
+            )
+            if create_with_completion is not None:
+                obj, raw_completion = await create_with_completion(**kwargs)
+                usage = _extract_usage(raw_completion)
+            else:
+                obj = await completions.create(**kwargs)
+                usage = {}
+        except Exception as exc:
             msg = str(exc)
             if "timeout" in msg.lower():
                 raise ProviderTimeout(msg) from exc
@@ -144,19 +170,18 @@ class LiteLLMAdapter(ProviderAdapter):
             raise SchemaValidationError(
                 f"instructor returned {type(obj).__name__}, expected {schema.__name__}"
             )
-        return obj
+        return obj, usage
 
-
-    def image_edit(
+    async def aimage_edit(
         self, *, prompt: str, source_image_bytes: bytes, model: str,
         n: int = 1, size: str = "1024x1024",
         api_key: str | None = None, api_base: str | None = None,
         timeout_s: float | None = None, extra: dict | None = None,
     ) -> list[ImageResult]:
-        """Use litellm.image_edit when available; otherwise fall back to
-        image_generation with image in extras (ProviderAdapter default)."""
+        """Use `litellm.aimage_edit` when available; otherwise delegate to
+        `aimage_generation` with source image in extras (base-class default)."""
         litellm = _import_litellm()
-        if hasattr(litellm, "image_edit"):
+        if hasattr(litellm, "aimage_edit"):
             kwargs: dict[str, Any] = {
                 "model": model,
                 "prompt": prompt,
@@ -172,21 +197,20 @@ class LiteLLMAdapter(ProviderAdapter):
             if extra:
                 kwargs.update(extra)
             try:
-                resp = litellm.image_edit(**kwargs)
+                resp = await litellm.aimage_edit(**kwargs)
             except Exception as exc:
                 msg = str(exc)
                 if "timeout" in msg.lower():
                     raise ProviderTimeout(msg) from exc
                 raise ProviderError(msg) from exc
-            return _collect_image_results(resp, model=model)
-        # Fall back to the default base-class behavior (image_generation + image in extra)
-        return super().image_edit(
+            return await _acollect_image_results(resp, model=model)
+        return await super().aimage_edit(
             prompt=prompt, source_image_bytes=source_image_bytes, model=model,
             n=n, size=size, api_key=api_key, api_base=api_base,
             timeout_s=timeout_s, extra=extra,
         )
 
-    def image_generation(
+    async def aimage_generation(
         self, *, prompt: str, model: str, n: int = 1,
         size: str = "1024x1024", api_key: str | None = None,
         api_base: str | None = None, timeout_s: float | None = None,
@@ -208,21 +232,21 @@ class LiteLLMAdapter(ProviderAdapter):
             kwargs.update(extra)
 
         try:
-            resp = litellm.image_generation(**kwargs)
+            resp = await litellm.aimage_generation(**kwargs)
         except Exception as exc:
             msg = str(exc)
             if "timeout" in msg.lower() or "timed out" in msg.lower():
                 raise ProviderTimeout(msg) from exc
             raise ProviderError(msg) from exc
 
-        return _collect_image_results(resp, model=model)
+        return await _acollect_image_results(resp, model=model)
 
 
-def _collect_image_results(resp: Any, *, model: str) -> list[ImageResult]:
-    """Normalise LiteLLM image_generation responses.
+async def _acollect_image_results(resp: Any, *, model: str) -> list[ImageResult]:
+    """Async normaliser for LiteLLM image_generation responses.
 
-    LiteLLM returns a dict-like object with `data: [{"b64_json": ...} | {"url": ...}]`.
-    URL variants are fetched inline (best-effort; may need `requests` available).
+    URL variants are fetched via httpx.AsyncClient; `b64_json` variants are
+    decoded locally. Item-shape coercion is identical to the sync version.
     """
     import base64
 
@@ -235,14 +259,21 @@ def _collect_image_results(resp: Any, *, model: str) -> list[ImageResult]:
     results: list[ImageResult] = []
     for item in data_list:
         if not isinstance(item, dict):
-            item = dict(item) if hasattr(item, "items") else {"raw": item}
+            if hasattr(item, "model_dump"):
+                item = item.model_dump()
+            elif hasattr(item, "__dict__") and vars(item):
+                item = {k: v for k, v in vars(item).items() if not k.startswith("_")}
+            elif hasattr(item, "items"):
+                item = dict(item)
+            else:
+                item = {"raw": item}
         b64 = item.get("b64_json")
         url = item.get("url")
         raw_bytes: bytes
         if b64:
             raw_bytes = base64.b64decode(b64)
         elif url:
-            raw_bytes = _fetch_url_bytes(url)
+            raw_bytes = await _afetch_url_bytes(url)
         else:
             raise ProviderError(
                 f"image_generation item has neither b64_json nor url: keys={list(item)}"
@@ -254,19 +285,95 @@ def _collect_image_results(resp: Any, *, model: str) -> list[ImageResult]:
     return results
 
 
-def _fetch_url_bytes(url: str) -> bytes:
-    """Download an image URL to bytes (used when providers return URLs)."""
+async def _afetch_url_bytes(url: str) -> bytes:
+    """Async download an image URL to bytes (for providers that return URLs)."""
+    import httpx
     try:
-        import requests  # type: ignore
-    except ImportError as exc:  # pragma: no cover
-        raise ProviderError(
-            "Provider returned an image URL but `requests` isn't installed. "
-            "pip install requests, or switch to a provider that returns b64_json."
-        ) from exc
-    r = requests.get(url, timeout=60)
+        async with httpx.AsyncClient(timeout=60.0) as c:
+            r = await c.get(url)
+    except httpx.HTTPError as exc:
+        raise ProviderError(f"GET {url} failed: {exc}") from exc
     if r.status_code != 200:
         raise ProviderError(f"GET {url} returned {r.status_code}")
     return r.content
+
+
+def _maybe_apply_prompt_cache(call: ProviderCall) -> list[dict[str, Any]]:
+    """If caller set `extra['_forge_prompt_cache']=True` and model is Anthropic-
+    family, inject `cache_control: {"type": "ephemeral"}` on the system message
+    and first large user block. Reduces repeated long-prefix token cost by ~90%
+    (pricing: cache write 25% more, cache hit 10% of normal input cost).
+
+    For non-Anthropic models or when the flag is off, returns messages unchanged.
+    """
+    messages = _maybe_auto_compact(call)
+    if not call.extra.get("_forge_prompt_cache"):
+        return messages
+    if not _is_anthropic_family(call.model):
+        return messages
+
+    out: list[dict[str, Any]] = []
+    tagged = 0
+    for msg in messages:
+        role = msg.get("role")
+        content = msg.get("content")
+        # Only tag the first system message + first large user block
+        if tagged < 2 and role in ("system", "user"):
+            if isinstance(content, str) and len(content) >= 1024:
+                out.append({
+                    "role": role,
+                    "content": [{
+                        "type": "text", "text": content,
+                        "cache_control": {"type": "ephemeral"},
+                    }],
+                })
+                tagged += 1
+                continue
+            if isinstance(content, list):
+                # Already multimodal blocks — tag the last text block
+                new_blocks: list[dict[str, Any]] = []
+                cache_applied = False
+                for block in content:
+                    if (not cache_applied and isinstance(block, dict)
+                            and block.get("type") == "text"):
+                        b = dict(block)
+                        b["cache_control"] = {"type": "ephemeral"}
+                        new_blocks.append(b)
+                        cache_applied = True
+                    else:
+                        new_blocks.append(block)
+                if cache_applied:
+                    out.append({"role": role, "content": new_blocks})
+                    tagged += 1
+                    continue
+        out.append(dict(msg))
+    return out
+
+
+def _maybe_auto_compact(call: ProviderCall) -> list[dict[str, Any]]:
+    """Auto-compact helper (F4). Opt-in via `extra['_forge_auto_compact_tokens']=N`.
+
+    Trims the message history to ≤ N tokens (rough 4-char/token estimate)
+    while preserving the first system message and last few turns. No-op when
+    the flag is absent or zero.
+    """
+    limit = call.extra.get("_forge_auto_compact_tokens")
+    if not limit:
+        return list(call.messages)
+    try:
+        max_tokens = int(limit)
+    except (TypeError, ValueError):
+        return list(call.messages)
+    keep_tail = int(call.extra.get("_forge_auto_compact_tail", 4))
+    compacted, _ = compact_messages(
+        list(call.messages), max_tokens=max_tokens, keep_tail_turns=keep_tail,
+    )
+    return compacted
+
+
+def _is_anthropic_family(model: str) -> bool:
+    m = model.lower()
+    return m.startswith("anthropic/") or m.startswith("claude-") or "claude" in m
 
 
 def _extract_text(resp: Any) -> str:

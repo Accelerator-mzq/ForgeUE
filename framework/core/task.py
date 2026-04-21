@@ -52,6 +52,11 @@ class Workflow(BaseModel):
     transition_policy: TransitionPolicy = Field(default_factory=TransitionPolicy)
     # template_ref reserved for G-stage
     template_ref: str | None = None
+    # Free-form execution toggles read by the orchestrator — today the only
+    # key consumed is `parallel_dag` (mirror of `task.constraints`), but
+    # future workflow-level switches (cache policy overrides, per-workflow
+    # tracing level) will land here too.
+    metadata: dict = Field(default_factory=dict)
 
 
 # Late import to avoid circular refs in Task

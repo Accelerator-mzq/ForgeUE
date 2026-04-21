@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from framework.core.enums import RunMode, StepType, TaskType
+from framework.core.policies import BudgetPolicy
 from framework.core.task import InputBinding, Step, Task, Workflow
 from framework.runtime.dry_run_pass import DryRunPass
 
@@ -58,6 +59,65 @@ def test_extra_check_runs():
     rep = d.run(task=task, workflow=_wf(), steps=[step])
     assert rep.checks["provider.budget_ok"] is False
     assert not rep.passed
+
+
+def test_budget_warn_when_production_missing_cap_on_paid_step():
+    task = Task(
+        task_id="t", task_type=TaskType.asset_generation,
+        run_mode=RunMode.production, title="t",
+        input_payload={"prompt": "x"}, expected_output={}, project_id="p",
+    )
+    step = Step(step_id="s1", type=StepType.generate, name="g",
+                capability_ref="image.generation",
+                input_bindings=[InputBinding(name="prompt",
+                                              source="task.input_payload.prompt")])
+    rep = DryRunPass().run(task=task, workflow=_wf(), steps=[step])
+    assert rep.passed                            # warn, not fail
+    assert rep.checks["budget.cap_declared"] is False
+    assert any("total_cost_cap_usd" in w for w in rep.warnings)
+
+
+def test_budget_ok_when_cap_declared():
+    task = Task(
+        task_id="t", task_type=TaskType.asset_generation,
+        run_mode=RunMode.production, title="t",
+        input_payload={"prompt": "x"}, expected_output={}, project_id="p",
+        budget_policy=BudgetPolicy(total_cost_cap_usd=5.0),
+    )
+    step = Step(step_id="s1", type=StepType.generate, name="g",
+                capability_ref="image.generation",
+                input_bindings=[InputBinding(name="prompt",
+                                              source="task.input_payload.prompt")])
+    rep = DryRunPass().run(task=task, workflow=_wf(), steps=[step])
+    assert rep.passed
+    assert rep.checks["budget.cap_declared"] is True
+
+
+def test_budget_ok_when_no_paid_steps():
+    """Production run of only mock/export steps needs no cap."""
+    task = Task(
+        task_id="t", task_type=TaskType.asset_generation,
+        run_mode=RunMode.production, title="t",
+        input_payload={"prompt": "x"}, expected_output={}, project_id="p",
+    )
+    step = Step(step_id="s1", type=StepType.export, name="e",
+                capability_ref="ue.export")
+    rep = DryRunPass().run(task=task, workflow=_wf(), steps=[step])
+    assert rep.passed
+    assert rep.checks["budget.cap_declared"] is True
+
+
+def test_budget_warn_skipped_for_basic_llm_mode():
+    """basic_llm runs are exploratory and don't require caps."""
+    task = _task()
+    step = Step(step_id="s1", type=StepType.generate, name="g",
+                capability_ref="text.completion",
+                input_bindings=[InputBinding(name="prompt",
+                                              source="task.input_payload.prompt")])
+    rep = DryRunPass().run(task=task, workflow=_wf(), steps=[step])
+    assert rep.passed
+    assert rep.checks["budget.cap_declared"] is True
+    assert not any("total_cost_cap_usd" in w for w in rep.warnings)
 
 
 def test_step_lookup_accepts_upstream_reference():

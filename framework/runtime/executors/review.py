@@ -28,9 +28,10 @@ from framework.core.policies import ProviderPolicy
 from framework.core.review import Rubric
 from framework.providers.capability_router import CapabilityRouter
 from framework.review_engine.chief_judge import ChiefJudge
-from framework.review_engine.judge import CandidateInput, LLMJudge
+from framework.review_engine.judge import CandidateInput, LLMJudge, SingleJudgeResult
 from framework.review_engine.report_verdict_emitter import ReportVerdictEmitter
 from framework.review_engine.rubric_loader import built_in_rubric, load_rubric_yaml
+from framework.runtime.budget_tracker import estimate_call_cost_usd
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
 
 
@@ -66,6 +67,7 @@ class ReviewExecutor(StepExecutor):
                 f"review step {ctx.step.step_id} found zero candidates to review"
             )
 
+        judge_runs: list[SingleJudgeResult]
         if mode == ReviewMode.single_judge:
             if ctx.step.provider_policy is None:
                 raise RuntimeError(
@@ -79,6 +81,7 @@ class ReviewExecutor(StepExecutor):
             batch = single.report
             dissent: list[str] = []
             judges_used = [single.model_used]
+            judge_runs = [single]
         elif mode in (ReviewMode.chief_judge, ReviewMode.multi_judge, ReviewMode.council):
             panel = _resolve_panel(cfg, ctx.step.provider_policy)
             chief_res = self._chief.judge_with_panel(
@@ -88,6 +91,7 @@ class ReviewExecutor(StepExecutor):
             batch = chief_res.consensus
             dissent = list(chief_res.dissent_models)
             judges_used = [r.model_used for r in chief_res.per_judge]
+            judge_runs = list(chief_res.per_judge)
         else:
             raise RuntimeError(f"unsupported review_mode: {mode}")
 
@@ -107,6 +111,18 @@ class ReviewExecutor(StepExecutor):
         verdict_art = _persist_verdict(
             ctx, emission.verdict, report_art.artifact_id, fingerprint=review_fp,
         )
+        # Charge every judge call against the run's budget. Different judges
+        # may route to different models, so `estimate_call_cost_usd` is called
+        # per-run and summed — avoids baking per-model pricing into a single
+        # (model, usage) pair. Orchestrator sees `cost_usd` and records it via
+        # BudgetTracker without any extra usage/model fields needed.
+        cost_usd = 0.0
+        for r in judge_runs:
+            if r.usage or r.model_used:
+                cost_usd += estimate_call_cost_usd(
+                    model=r.model_used or "unknown",
+                    usage=r.usage or None,
+                )
         metrics = {
             "visual_mode": visual_mode,
             "review_mode": mode.value,
@@ -115,6 +131,7 @@ class ReviewExecutor(StepExecutor):
             "decision": emission.verdict.decision.value,
             "confidence": emission.verdict.confidence,
             "judges": judges_used,
+            "cost_usd": cost_usd,
         }
         return ExecutorResult(
             artifacts=[report_art, verdict_art],

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import base64
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -54,6 +54,7 @@ class CandidateInput:
 class SingleJudgeResult:
     report: JudgeBatchReport
     model_used: str
+    usage: dict[str, int] = field(default_factory=dict)
 
 
 def _build_prompt(
@@ -114,10 +115,52 @@ def _build_prompt(
 
 
 class LLMJudge:
-    """Single-judge runner. Routes through a CapabilityRouter."""
+    """Single-judge runner. Routes through a CapabilityRouter.
+
+    Provides both `ajudge` (async primary) and `judge` (sync shim) — ChiefJudge
+    uses `ajudge` for parallel panels via `asyncio.gather`.
+    """
 
     def __init__(self, router: CapabilityRouter) -> None:
         self._router = router
+
+    def _build_call(
+        self, *, rubric: Rubric, candidates: list[CandidateInput],
+        scope: str, seed: int | None, visual_mode: bool,
+    ) -> ProviderCall:
+        return ProviderCall(
+            model="<routed>",
+            messages=_build_prompt(
+                rubric=rubric, candidates=candidates, scope=scope,
+                visual_mode=visual_mode,
+            ),
+            temperature=0.0,
+            seed=seed,
+            extra={"_forge_prompt_cache": True},
+        )
+
+    async def ajudge(
+        self,
+        *,
+        rubric: Rubric,
+        candidates: list[CandidateInput],
+        judge_policy,
+        scope: str = "artifact",
+        seed: int | None = None,
+        visual_mode: bool = False,
+    ) -> SingleJudgeResult:
+        call = self._build_call(
+            rubric=rubric, candidates=candidates, scope=scope,
+            seed=seed, visual_mode=visual_mode,
+        )
+        obj, chosen, usage = await self._router.astructured(
+            policy=judge_policy, call_template=call, schema=JudgeBatchReport,
+        )
+        return SingleJudgeResult(
+            report=obj,              # type: ignore[arg-type]
+            model_used=chosen,
+            usage=usage,
+        )
 
     def judge(
         self,
@@ -129,19 +172,12 @@ class LLMJudge:
         seed: int | None = None,
         visual_mode: bool = False,
     ) -> SingleJudgeResult:
-        call = ProviderCall(
-            model="<routed>",
-            messages=_build_prompt(
-                rubric=rubric, candidates=candidates, scope=scope,
-                visual_mode=visual_mode,
-            ),
-            temperature=0.0,
-            seed=seed,
-        )
-        obj, chosen = self._router.structured(
-            policy=judge_policy, call_template=call, schema=JudgeBatchReport,
-        )
-        return SingleJudgeResult(report=obj, model_used=chosen)  # type: ignore[arg-type]
+        from framework.providers.base import _run_sync
+        return _run_sync(self.ajudge(
+            rubric=rubric, candidates=candidates,
+            judge_policy=judge_policy, scope=scope, seed=seed,
+            visual_mode=visual_mode,
+        ))
 
 
 def weighted_score(scores: DimensionScores, rubric: Rubric) -> float:

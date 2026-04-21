@@ -9,10 +9,12 @@ compute a per-candidate consensus:
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from statistics import mean
 
 from framework.core.review import DimensionScores, Rubric
+from framework.providers.base import _run_sync
 from framework.review_engine.judge import (
     CandidateInput,
     JudgeBatchReport,
@@ -34,7 +36,7 @@ class ChiefJudge:
     def __init__(self, judge: LLMJudge) -> None:
         self._judge = judge
 
-    def judge_with_panel(
+    async def ajudge_with_panel(
         self,
         *,
         rubric: Rubric,
@@ -44,68 +46,95 @@ class ChiefJudge:
         seed: int | None = None,
         visual_mode: bool = False,
     ) -> ChiefJudgeResult:
+        """Run every panel_policy concurrently via `asyncio.gather`.
+
+        Total latency ≈ slowest judge (not sum), which is the headline win of
+        Plan C: a 3-judge panel goes from ~3×T to ~1×T.
+        """
         if not panel_policies:
             raise ValueError("panel_policies must contain at least one ProviderPolicy")
 
-        per_judge: list[SingleJudgeResult] = []
-        for policy in panel_policies:
-            res = self._judge.judge(
+        per_judge: list[SingleJudgeResult] = await asyncio.gather(*[
+            self._judge.ajudge(
                 rubric=rubric, candidates=candidates,
                 judge_policy=policy, scope=scope, seed=seed,
                 visual_mode=visual_mode,
             )
-            per_judge.append(res)
+            for policy in panel_policies
+        ])
 
-        # Aggregate per candidate_id
-        by_cid: dict[str, list[JudgeCandidateVerdict]] = {}
+        return _aggregate_consensus(
+            per_judge=per_judge, rubric=rubric,
+        )
+
+    def judge_with_panel(
+        self,
+        *,
+        rubric: Rubric,
+        candidates: list[CandidateInput],
+        panel_policies: list,
+        scope: str = "artifact",
+        seed: int | None = None,
+        visual_mode: bool = False,
+    ) -> ChiefJudgeResult:
+        return _run_sync(self.ajudge_with_panel(
+            rubric=rubric, candidates=candidates,
+            panel_policies=panel_policies, scope=scope, seed=seed,
+            visual_mode=visual_mode,
+        ))
+
+
+def _aggregate_consensus(
+    *, per_judge: list[SingleJudgeResult], rubric: Rubric,
+) -> ChiefJudgeResult:
+    by_cid: dict[str, list[JudgeCandidateVerdict]] = {}
+    for run in per_judge:
+        for v in run.report.verdicts:
+            by_cid.setdefault(v.candidate_id, []).append(v)
+
+    consensus_verdicts: list[JudgeCandidateVerdict] = []
+    for cid, votes in by_cid.items():
+        averaged = DimensionScores(
+            constraint_fit=mean(v.scores.constraint_fit for v in votes),
+            style_consistency=mean(v.scores.style_consistency for v in votes),
+            production_readiness=mean(v.scores.production_readiness for v in votes),
+            technical_validity=mean(v.scores.technical_validity for v in votes),
+            risk_score=mean(v.scores.risk_score for v in votes),
+        )
+        merged_issues: list[str] = []
+        for v in votes:
+            for it in v.issues:
+                if it not in merged_issues:
+                    merged_issues.append(it)
+        consensus_verdicts.append(JudgeCandidateVerdict(
+            candidate_id=cid,
+            scores=averaged,
+            issues=merged_issues,
+            notes="; ".join(v.notes for v in votes if v.notes) or None,
+        ))
+
+    dissent_models: list[str] = []
+    if consensus_verdicts:
+        best_cid = max(
+            consensus_verdicts,
+            key=lambda v: weighted_score(v.scores, rubric),
+        ).candidate_id
         for run in per_judge:
-            for v in run.report.verdicts:
-                by_cid.setdefault(v.candidate_id, []).append(v)
-
-        consensus_verdicts: list[JudgeCandidateVerdict] = []
-        for cid, votes in by_cid.items():
-            averaged = DimensionScores(
-                constraint_fit=mean(v.scores.constraint_fit for v in votes),
-                style_consistency=mean(v.scores.style_consistency for v in votes),
-                production_readiness=mean(v.scores.production_readiness for v in votes),
-                technical_validity=mean(v.scores.technical_validity for v in votes),
-                risk_score=mean(v.scores.risk_score for v in votes),
-            )
-            merged_issues: list[str] = []
-            for v in votes:
-                for it in v.issues:
-                    if it not in merged_issues:
-                        merged_issues.append(it)
-            consensus_verdicts.append(JudgeCandidateVerdict(
-                candidate_id=cid,
-                scores=averaged,
-                issues=merged_issues,
-                notes="; ".join(v.notes for v in votes if v.notes) or None,
-            ))
-
-        # Compute dissent: judges whose best candidate differs from consensus best
-        dissent_models: list[str] = []
-        if consensus_verdicts:
-            best_cid = max(
-                consensus_verdicts,
+            if not run.report.verdicts:
+                continue
+            their_best = max(
+                run.report.verdicts,
                 key=lambda v: weighted_score(v.scores, rubric),
             ).candidate_id
-            for run in per_judge:
-                if not run.report.verdicts:
-                    continue
-                their_best = max(
-                    run.report.verdicts,
-                    key=lambda v: weighted_score(v.scores, rubric),
-                ).candidate_id
-                if their_best != best_cid:
-                    dissent_models.append(run.model_used)
+            if their_best != best_cid:
+                dissent_models.append(run.model_used)
 
-        consensus = JudgeBatchReport(
-            summary="; ".join(r.report.summary for r in per_judge if r.report.summary) or "",
-            verdicts=consensus_verdicts,
-        )
-        return ChiefJudgeResult(
-            per_judge=per_judge,
-            consensus=consensus,
-            dissent_models=dissent_models,
-        )
+    consensus = JudgeBatchReport(
+        summary="; ".join(r.report.summary for r in per_judge if r.report.summary) or "",
+        verdicts=consensus_verdicts,
+    )
+    return ChiefJudgeResult(
+        per_judge=per_judge,
+        consensus=consensus,
+        dissent_models=dissent_models,
+    )

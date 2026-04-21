@@ -17,7 +17,13 @@ from typing import Callable, Iterable
 
 from pydantic import BaseModel, Field
 
+from framework.core.enums import RunMode, TaskType
 from framework.core.task import Step, Task, Workflow
+
+
+# capability_ref prefixes that consume paid provider credits. Steps outside
+# this set (mock/schema/select/ue.export/validate) don't need a budget cap.
+_PAID_CAPABILITY_PREFIXES = ("text.", "image.", "mesh.", "review.")
 
 
 class DryRunReport(BaseModel):
@@ -83,7 +89,12 @@ class DryRunPass:
                     f"ue.asset_root should start with /Game/: {task.ue_target.asset_root}"
                 )
 
-        # 5. Extra checks (providers / budget / secrets registered by outer code)
+        # 5. Budget cap sanity (F1): production / ue_export runs that hit paid
+        # providers should declare a cap. Not an error — UI may still accept
+        # an open-ended run — but a warning so nobody burns spend silently.
+        self._check_budget_cap(report, task=task, steps=step_list)
+
+        # 6. Extra checks (providers / budget / secrets registered by outer code)
         for fn in self._extra_checks:
             try:
                 name, ok, msg = fn(task, workflow, step_list)
@@ -95,6 +106,33 @@ class DryRunPass:
         return report
 
     # ---- helpers ----
+
+    def _check_budget_cap(
+        self,
+        report: DryRunReport,
+        *,
+        task: Task,
+        steps: list[Step],
+    ) -> None:
+        is_paid_run = (
+            task.run_mode == RunMode.production
+            or task.task_type == TaskType.ue_export
+        )
+        if not is_paid_run:
+            report.checks["budget.cap_declared"] = True
+            return
+        cap = task.budget_policy.total_cost_cap_usd if task.budget_policy else None
+        has_paid_step = any(
+            (s.capability_ref or "").startswith(_PAID_CAPABILITY_PREFIXES)
+            for s in steps
+        )
+        ok = cap is not None or not has_paid_step
+        report.checks["budget.cap_declared"] = ok
+        if not ok:
+            report.warnings.append(
+                f"no total_cost_cap_usd on {task.run_mode.value} task with paid "
+                f"steps — run may spend unboundedly"
+            )
 
     def _record(
         self,

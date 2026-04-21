@@ -214,81 +214,69 @@ def test_mesh_executor_retries_on_worker_error(tmp_path: Path):
     assert result.metrics["mesh_count"] == 1
 
 
-def test_hunyuan_mesh_worker_sign_and_dispatch(monkeypatch):
-    """HunyuanMeshWorker should build a TC3-HMAC-SHA256 signed request with
-    the right action / host / headers, and normalize Hunyuan's response shape
-    into MeshCandidate bytes. We stub `requests` inside the worker module so
-    the test stays offline."""
+def test_hunyuan_mesh_worker_tokenhub_submit_poll_download(monkeypatch):
+    """HunyuanMeshWorker talks to tokenhub.tencentmaas.com with Bearer auth.
+    Verify submit → poll → download sequence. Stays offline via httpx.MockTransport."""
+    import httpx
     from framework.providers.workers.mesh_worker import HunyuanMeshWorker
 
-    captured: dict = {}
+    captured: list[dict] = []
 
-    class _FakeResp:
-        def __init__(self, status, body):
-            self.status_code = status
-            self._body = body
-            self.text = str(body)
-            self.content = body if isinstance(body, bytes) else b""
-        def json(self):
-            return self._body
-
-    class _FakeRequests:
-        @staticmethod
-        def post(url, data=None, headers=None, timeout=None, **kw):
-            captured.setdefault("posts", []).append(
-                {"url": url, "headers": dict(headers or {}),
-                 "body_len": len(data) if data else 0,
-                 "action": (headers or {}).get("X-TC-Action")}
+    def handler(req: httpx.Request) -> httpx.Response:
+        url = str(req.url)
+        try:
+            body = req.content.decode("utf-8") if req.content else ""
+        except Exception:
+            body = ""
+        captured.append({
+            "url": url, "method": req.method,
+            "auth": req.headers.get("Authorization"),
+            "body_fragment": body[:120],
+        })
+        if url.endswith("/3d/submit"):
+            return httpx.Response(200, json={"id": "3d_job_1234", "status": "queued"})
+        if url.endswith("/3d/query"):
+            return httpx.Response(200, json={
+                "status": "done",
+                "model_url": "https://mock-cdn/models/out.glb",
+            })
+        if url == "https://mock-cdn/models/out.glb":
+            return httpx.Response(
+                200, content=b"glTF\x02\x00\x00\x00FAKE-DOWNLOAD",
+                headers={"Content-Length": "21"},
             )
-            action = (headers or {}).get("X-TC-Action")
-            if action == "SubmitHunyuanTo3DRapidJob":
-                return _FakeResp(200, {"Response": {"JobId": "job_1234", "RequestId": "r1"}})
-            if action == "QueryHunyuanTo3DRapidJob":
-                return _FakeResp(200, {"Response": {
-                    "Status": "DONE",
-                    "ResultFile3Ds": [{"Url": "https://mock-cdn/models/out.glb"}],
-                }})
-            return _FakeResp(400, {"Response": {"Error": {"Code": "Unknown", "Message": action}}})
+        return httpx.Response(404, json={"error": "unexpected"})
 
-        @staticmethod
-        def get(url, timeout=None, **kw):
-            captured["download_url"] = url
-            return _FakeResp(200, b"glTF\x02\x00\x00\x00FAKE-DOWNLOAD")
+    transport = httpx.MockTransport(handler)
+    orig = httpx.AsyncClient
 
-    import framework.providers.workers.mesh_worker as mw_module
-    monkeypatch.setitem(__import__("sys").modules, "requests", _FakeRequests)
+    class _Client(orig):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("transport", transport)
+            super().__init__(*args, **kwargs)
 
-    worker = HunyuanMeshWorker(
-        secret_id="AKIDsample", secret_key="secret-xyz",
-        region="ap-singapore", poll_interval_s=0.0,
-    )
+    from framework.providers.workers import mesh_worker as _mw
+    from framework.providers import _download_async
+    monkeypatch.setattr(_mw.httpx, "AsyncClient", _Client)
+    monkeypatch.setattr(_download_async.httpx, "AsyncClient", _Client)
+
+    worker = HunyuanMeshWorker(api_key="sk-test-xyz", poll_interval_s=0.0)
     cands = worker.generate(
         source_image_bytes=b"\x89PNG\r\n\x1a\nPNG_STUB",
-        spec={"format": "GLB", "pbr": True},
-        num_candidates=1,
+        spec={"format": "GLB"}, num_candidates=1,
     )
     assert len(cands) == 1
     assert cands[0].data.startswith(b"glTF")
-    assert cands[0].metadata["job_id"] == "job_1234"
-    assert cands[0].metadata["source"] == "hunyuan_3d"
+    assert cands[0].metadata["job_id"] == "3d_job_1234"
+    assert cands[0].metadata["source"] == "hunyuan_3d_tokenhub"
+    assert cands[0].metadata["model_url"] == "https://mock-cdn/models/out.glb"
 
-    posts = captured["posts"]
-    assert len(posts) == 2
-    # Submit + Query both went to the intl endpoint
-    assert all(p["url"] == "https://hunyuan.intl.tencentcloudapi.com" for p in posts)
-    # Both requests signed with TC3-HMAC-SHA256
-    for p in posts:
-        auth = p["headers"].get("Authorization", "")
-        assert auth.startswith("TC3-HMAC-SHA256 Credential=AKIDsample/")
-        assert "SignedHeaders=content-type;host;x-tc-action" in auth
-        assert "Signature=" in auth
-    # Actions are right
-    assert [p["action"] for p in posts] == [
-        "SubmitHunyuanTo3DRapidJob",
-        "QueryHunyuanTo3DRapidJob",
-    ]
-    # Download URL came from the Query response
-    assert captured["download_url"] == "https://mock-cdn/models/out.glb"
+    assert len(captured) == 3
+    for c in captured[:2]:
+        assert c["auth"] == "Bearer sk-test-xyz"
+    assert captured[0]["url"].endswith("/3d/submit")
+    assert captured[1]["url"].endswith("/3d/query")
+    assert captured[2]["url"] == "https://mock-cdn/models/out.glb"
 
 
 def test_mesh_spec_schema_round_trip():

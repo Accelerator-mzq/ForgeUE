@@ -44,6 +44,11 @@
 | `Checkpoint`                                                 | Step 完成后的 hash 快照                                      | Claude 原创             | —                                       |
 | `DryRunPass`                                                 | Run 启动前零副作用预检阶段                                   | Claude 原创             | —                                       |
 | `DeterminismPolicy`                                          | seed 传递 + 模型版本锁                                       | 交叉评审新增            | —                                       |
+| `ModelRegistry`                                              | 三段式(providers / models / aliases)模型注册,`config/models.yaml` 为单一真源 | 实装(D-plan)           | —                                       |
+| `PreparedRoute`                                              | `(model_id, api_key_env, api_base, kind)` 四元组,ModelRegistry 产出;同一别名可混合多家 provider | 实装(D-plan)           | ProviderPolicy 直写 api_key/base        |
+| `capability_alias`                                           | 能力语义命名(`text_cheap` / `image_fast` / `mesh_from_image` 等),bundle 里通过 `models_ref` 引用 | 实装                    | —                                       |
+| `BudgetTracker`                                              | Run 级成本累加器,超 `BudgetPolicy.total_cost_cap_usd` 合成 `budget_exceeded` Verdict | 实装(F1)               | —                                       |
+| `CompactionReport`                                           | `compact_messages()` 结果对象,记录原始/最终 token 数与丢弃条数 | 实装(F4)               | —                                       |
 
 ---
 
@@ -294,6 +299,19 @@ class ProviderPolicy(BaseModel):
     fallback_models: list[str]
     cost_limit: float | None = None
     latency_limit_ms: int | None = None
+    # Legacy 单别名级 auth(手写 bundle 走这里)
+    api_key_env: str | None = None
+    api_base: str | None = None
+    # D-plan 每路由级 auth。workflows loader 在 bundle 使用
+    # `models_ref: "<alias>"` 时由 ModelRegistry 展开填充,每条路由
+    # 自带 api_key_env + api_base,使一个别名可混合多家 provider。
+    prepared_routes: list[PreparedRoute] = []
+
+class PreparedRoute(BaseModel):
+    model: str                       # LiteLLM model id
+    api_key_env: str | None = None
+    api_base: str | None = None
+    kind: str = "text"               # text / image / image_edit / mesh / vision / audio
 
 class BudgetPolicy(BaseModel):
     total_cost_cap_usd: float | None = None
@@ -440,6 +458,7 @@ class DeterminismPolicy(BaseModel):
 - UEOutputTarget.project_root 可访问，asset_root 合法
 - UE 侧路径无当前同名冲突（warn-level，不阻断）
 - Budget 估算不超 BudgetPolicy.total_cost_cap_usd
+- `budget.cap_declared` —— production / ue_export 任务若含付费步 (`capability_ref` 起自 `text./image./mesh./review.`) 却未声明 `total_cost_cap_usd`,写入 `report.warnings`（不阻断,F1 新增）
 - Secrets 齐全（所需 provider 的 API key 已注入）
 - 若 resume：所有已有 Checkpoint 的 artifact_hash 与现存 Artifact 一致
 ```
@@ -482,7 +501,51 @@ class DeterminismPolicy(BaseModel):
 | review_below_threshold | Verdict.confidence < pass_threshold | revise                           | TransitionPolicy.max_revise   |
 | ue_path_conflict       | UE Bridge 发现目标路径已有资产      | human_review_required            | import_rules.allow_overwrite  |
 | budget_exceeded        | 累计成本超 cap                      | escalate_human → stop            | EscalationPolicy.on_exhausted |
+| worker_timeout         | Comfy/Mesh worker 长任务超时        | retry_same_step                  | worker 自身 `default_timeout_s` |
+| worker_error           | Worker 异常（3D/ComfyUI 非 4xx 错误）| fallback_model                   | ProviderPolicy.fallback_models |
 | disk_full              | Artifact Store 写失败               | rollback → stop                  | —                             |
+
+每个 FailureMode 绑定一组 Exception 类族,详见 `framework/runtime/failure_mode_map.py`。`budget_exceeded` 由 `BudgetTracker.check()` 触发(每步后检查),无需 Executor 主动抛。
+
+### C.7 运行时可靠性工具集（F1–F4，实装）
+
+四项附加能力,独立于主 Workflow 语义,可按 step / Run 粒度 opt-in。
+
+| ID   | 能力                    | 位置                                                      | 触发/接入方式                                                |
+| ---- | ----------------------- | --------------------------------------------------------- | ------------------------------------------------------------ |
+| F1   | Budget 累计 + 软终止    | `framework/runtime/budget_tracker.py`                     | Task 声明 `BudgetPolicy.total_cost_cap_usd`。Orchestrator 每步后从 `exec_result.metrics[cost_usd\|usage\|model]` 累计;超 cap 合成 `budget_exceeded` Verdict 走 TransitionEngine,run 以 `termination_reason="budget_exceeded(cap=…,spent=…)"` 终止。结果写入 `RunResult.budget_summary`。 |
+| F2   | 分块下载 + Range 续传 + 轮询进度 | `framework/providers/_download.py` `chunked_download()` ; `hunyuan_tokenhub_adapter.TokenhubMixin._th_poll` | 1 MB 分块,中断走 HTTP Range 续传(最多 3 次重试)。下载进度回调 `(downloaded, total_or_none)`。轮询进度回调自适应 `(status, elapsed_s)` 或 `(status, elapsed_s, raw_resp)`,消费端可从 raw_resp 自行挖 `progress`/`percent` 字段。消费路径:Qwen / Hunyuan Image / Hunyuan3D / Tripo3D。 |
+| F3   | Anthropic Prompt Cache  | `framework/providers/litellm_adapter.py` `_maybe_apply_prompt_cache()` | `ProviderCall.extra["_forge_prompt_cache"]=True` 且模型 Anthropic 家族 → 给首条 system + 首条大 user block 注入 `cache_control: {"type": "ephemeral"}`。已默认在 `LLMJudge.judge()` 打开(rubric 前缀稳定)。 |
+| F4   | 消息自动压缩            | `framework/observability/compactor.py` `compact_messages()` | `ProviderCall.extra["_forge_auto_compact_tokens"]=N` 触发。保留首条 system + 末 `keep_tail_turns` 轮,从中段剔除最旧消息直到 ≤ N token,插入 `[auto-compact: N earlier message(s) omitted]` 占位符。默认 4 字符/token 估算,可注入真实 tokenizer。 |
+
+**瞬态重试(Plan X,F2 同族)**:`framework/providers/_retry.py` + `_retry_async.py` 提供 `with_transient_retry()` / `with_transient_retry_async()` + `is_transient_network_message()`,所有自研 adapter (Qwen / Hunyuan tokenhub / HunyuanMeshWorker) 的 POST 路径默认一次瞬态重试(SSL EOF / 超时 / 5xx → 2s 回退)。LiteLLM 路径沿用自身重试策略。
+
+### C.8 异步执行模型(Plan C,实装)
+
+**动机**:ChiefJudge 面板串行、多候选 for 循环、`time.sleep` 轮询完全阻塞事件循环 → 三类可并行场景被浪费;而且 CLI 无法取消长任务。
+
+**设计**:async-first + sync-shim 双层。`ProviderAdapter` / `CapabilityRouter` 主接口是 `acompletion / astructured / aimage_generation / aimage_edit`,同名 sync 方法自动 `asyncio.run` 桥接,旧代码零改动。
+
+**关键边界**:
+- **底层 HTTP**:`httpx.AsyncClient`(替换 urllib)+ `chunked_download_async()` 带 Range 续传
+- **轮询**:所有 `_th_poll` / `_tokenhub_poll` 的 `time.sleep(interval)` 换成 `await asyncio.sleep(interval)`,`CancelledError` 传播立即中断
+- **Instructor**:走 `instructor.from_litellm(litellm.acompletion)` 异步客户端
+- **多候选并行**:Step 配置 `parallel_candidates=True` 时 `asyncio.gather` 并发 `n=1` 调用
+- **ChiefJudge 面板**:`ajudge_with_panel` 用 `asyncio.gather` 同时跑所有 judge,总延迟 ≈ 最慢 judge
+
+**取消/超时中断(§D7)**:
+- poll 循环里每个 `await asyncio.sleep` 后不得吞 `CancelledError`;已由 adapter 保证
+- `asyncio.wait_for(adapter.acompletion(call), timeout=T)` 可外层硬超时
+- DAG 失败时级联取消用 `asyncio.wait(FIRST_EXCEPTION)` → 取消 siblings
+- **限制**:同步 Executor 内的 `time.sleep` 无法中断(Python 线程无法强制终止);仅限 async 原生路径获得即时取消
+
+### C.9 DAG 并发调度(Plan C,实装;§G #3 提前落地)
+
+**机制**:`Orchestrator.arun` 用 `asyncio.wait(FIRST_EXCEPTION)` 在 `depends_on` 入度为 0 的多个 step 间并发调度。Opt-in via `task.constraints["parallel_dag"]=True`(默认保持线性,严格向后兼容 P0–P4 测试)。
+
+**示例**:root → {leaf_a, leaf_b, leaf_c} 的 fan-out,若每个 leaf 耗时 0.2s,总墙钟从 0.6s(串行)降到 ~0.2s(并行)。
+
+**级联语义**:若任一 step raise 未分类异常,orchestrator 立刻 cancel 其他 siblings 并 re-raise。 线性 workflow 的 revise 回环、checkpoint 缓存、BudgetTracker 软终止逻辑不变。
 
 ---
 
@@ -756,7 +819,20 @@ ue_scripts/
 
 **验收闭环**：一次空白 UE 5.x 工程：框架跑完 Run → `Content/Generated/<run_id>/` 下有 manifest + 文件 → UE 侧脚本一次执行 → Content Browser 出现资产 + evidence.json 可追溯。
 
-### F.6 MVP 合计（含缓冲）：约 9 周
+### F.6 L 层能力扩展（P4 之后,按需启用,实装中）
+
+在 P0–P4 骨架之上追加四个横切能力,每层都走已有 `capability_alias` + `ProviderPolicy` + `Step` 路径,不改 §B 对象模型。
+
+| ID   | 能力                 | 新增 Executor / Worker                                    | 关键 Artifact / Schema            | capability alias        |
+| ---- | -------------------- | --------------------------------------------------------- | --------------------------------- | ----------------------- |
+| L1   | UE5 API 查询         | 复用 `generate_structured`                                | `ue.api_answer`                   | `ue5_api_assist`        |
+| L2   | 图像生成 API 路径    | `runtime/executors/generate_image.py`(非 ComfyUI 的 API 直出) | `image.raster`                    | `image_fast` / `image_strong` / `image_edit` |
+| L3   | 视觉 QA              | 复用 `review.judge` + 视觉 LLM 别名                       | `report.review`（输入含 image）   | `review_judge_visual`   |
+| L4   | image → 3D mesh      | `runtime/executors/generate_mesh.py` + `providers/workers/mesh_worker.py`(Tripo3D HTTP + Hunyuan3D tokenhub) | `mesh.gltf` / `mesh.fbx` / `mesh.obj`,spec 见 `framework/schemas/mesh_spec.py` | `mesh_from_image`       |
+
+L4 为 P4 manifest_builder 增加了 `("mesh","obj"): "static_mesh"` 映射与按扩展名选择 domain_mesh 工厂。
+
+### F.7 MVP 合计（含缓冲）：约 9 周
 
 **每阶段结束交付**：
 - 一条可复现命令
@@ -812,6 +888,25 @@ ue_scripts/
 | **UE5-MCP**                                                  | **仅思路参考**                      | 工程化不足                                            |
 | **PydanticAI / AG2 / CrewAI / Diffusers / llm-council / Microsoft Agent Framework** | **放弃**                            | 与主线不契合或重复                                    |
 
+### H.1 实装 Provider 清单（通过 ModelRegistry / 自研 Adapter 接入）
+
+文档 §H 之外,实装通过 `config/models.yaml` 接入了下列 provider。接入路径分两类:
+- **OpenAI 兼容端口(经 LiteLLM)**:只需在 registry 里填 `api_base` + `api_key_env`,bundle 写 `openai/<id>`;零新代码
+- **自研 adapter**:协议不兼容 OpenAI,在 `framework/providers/` 加 adapter,`CapabilityRouter` 按 `model.startswith(...)` 前缀匹配
+
+| Provider                     | 主用途                    | 接入路径                          | 代码                                         |
+| ---------------------------- | ------------------------- | --------------------------------- | -------------------------------------------- |
+| PackyCode                    | Claude 系聚合(opus/sonnet/haiku) | OpenAI 兼容(LiteLLM)            | —                                            |
+| MiniMax(Anthropic 兼容)    | 便宜强 LLM                | Anthropic 兼容(LiteLLM)         | —                                            |
+| 智谱 GLM                     | 文本 / 视觉 / 图像        | OpenAI 兼容(LiteLLM)            | —                                            |
+| 阿里 Qwen (DashScope 多模态) | 图像 / 视觉 / 图像编辑    | 自研                              | `providers/qwen_multimodal_adapter.py`        |
+| 腾讯 Hunyuan (OpenAI compat) | 文本                      | OpenAI 兼容(LiteLLM)            | —                                            |
+| 腾讯 Hunyuan Image (tokenhub)| 图像 / 图像编辑           | 自研(异步 submit+poll+download) | `providers/hunyuan_tokenhub_adapter.py`       |
+| 腾讯 Hunyuan 3D (tokenhub)   | image → 3D                | 自研 Worker                       | `providers/workers/mesh_worker.py` HunyuanMeshWorker |
+| Tripo3D                      | image → 3D (备选)         | 自研 Worker(requests)           | `providers/workers/mesh_worker.py` Tripo3DWorker |
+
+路由优先级:`CapabilityRouter` 注册顺序为"专用 adapter 先、LiteLLM wildcard 后",保证 Qwen/Hunyuan 前缀不会被 LiteLLM 捕获。
+
 ---
 
 ## I. 必须自研、不可复用的能力（落到代码层）
@@ -853,3 +948,119 @@ ue_scripts/
 ## L. 一句话定位
 
 **vNext 是一套以 Task/Run/Workflow/Artifact 为一等公民、Review 为合法节点、UEOutputTarget 前置、双模 UE Bridge、5 类 Policy 分离、Dry-run + Checkpoint 保障可复现的多模型运行时；基础层（LiteLLM / Instructor）直接用，StateGraph 与 rubric 仅借语义，多模态生成工具（ComfyUI/AudioCraft/TRELLIS/TripoSR）外挂为 worker，UE 领域与运行时工程化部分全自研。**
+
+---
+
+## M. 实装状态快照（2026-04-21）
+
+与 §F / §H 计划的交叉对账。所有勾选项均有测试覆盖(274 单测/集成测试全绿)。
+
+### 主线进度
+
+| 阶段 | 范围                         | 状态 | 备注                                                         |
+| ---- | ---------------------------- | ---- | ------------------------------------------------------------ |
+| P0   | 对象模型 + 运行时骨架        | ✅    | F0-1 ~ F0-7 全部                                             |
+| P1   | basic_llm + LiteLLM + Instructor | ✅    | `litellm.drop_params=True` 绕过 Anthropic 不认识 `seed`      |
+| P2   | standalone_review            | ✅    | F2-1 ~ F2-4 全部                                             |
+| P3   | production + 内嵌 review     | ✅    | revise 回环 + Checkpoint 缓存的 Verdict 回放已对齐           |
+| P4   | UE Bridge manifest_only      | ✅    | F4-1 ~ F4-6 全部                                             |
+
+### L 层能力(§F.6)
+
+| ID   | 能力            | 状态 |
+| ---- | --------------- | ---- |
+| L1   | UE5 API 查询    | ✅    |
+| L2   | 图像生成 API 路径 | ✅    |
+| L3   | 视觉 QA         | ✅    |
+| L4   | image → 3D mesh | ✅    |
+
+### F 附加能力(§C.7)
+
+| ID   | 能力                              | 状态 |
+| ---- | --------------------------------- | ---- |
+| F1   | BudgetTracker + Dry-run budget warn | ✅    |
+| F2   | Chunked download + 轮询进度 + raw_resp 透传 | ✅    |
+| F3   | Anthropic Prompt Cache            | ✅    |
+| F4   | `compact_messages()` helper       | ✅    |
+| F5   | 取消 / 超时中断(`asyncio.CancelledError`) | ✅    |
+| Plan X | 瞬态重试                        | ✅    |
+
+### Plan C:Provider 全异步 + DAG + EventBus(实装)
+
+| 能力                           | 状态 | 关键位置 |
+| ------------------------------ | ---- | -------- |
+| `ProviderAdapter` 四方法 async + sync shim | ✅    | `providers/base.py` |
+| LiteLLM `acompletion` / `aimage_generation` | ✅    | `providers/litellm_adapter.py` |
+| Qwen / Hunyuan tokenhub `httpx.AsyncClient` | ✅    | `providers/qwen_multimodal_adapter.py` / `hunyuan_tokenhub_adapter.py` |
+| HunyuanMeshWorker.agenerate + `asyncio.gather` 候选 | ✅    | `providers/workers/mesh_worker.py` |
+| CapabilityRouter 4 方法 async | ✅    | `providers/capability_router.py` |
+| ChiefJudge panel `asyncio.gather` | ✅    | `review_engine/chief_judge.py` |
+| `Orchestrator.arun` + DAG 并发(opt-in) | ✅    | `runtime/orchestrator.py` |
+| EventBus + ProgressEvent schema | ✅    | `observability/event_bus.py` |
+| WebSocket 进度推送 server | ✅    | `server/ws_server.py` |
+| `framework.run --serve` CLI | ✅    | `run.py` |
+
+### 已接入的真实 Provider
+
+MiniMax(M2.x)、PackyCode(Claude Opus/Sonnet/Haiku 4.x)、GLM 4.6v/Image、Qwen Image 2 / 2 Pro / Edit Plus / Edit Max、Hunyuan Image v3 / Style、Hunyuan 3D、Tripo3D(预留)。别名定义参见 `config/models.yaml`,实际跑通的别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image`。
+
+### 后续(未启动)
+
+- **bridge_execute 模式**(§G #1):manifest_only 稳定运行后再评估。
+- **Audio worker**(§G #2):mesh 已完,audio 保留占位。
+- **Bridge 自动 rollback**(§G #13):待 Phase C 材质创建启用后。
+- **WebSocket 鉴权 / 多租户 session**:目前 `--serve` 绑定 `127.0.0.1`,未来接入 UI 时再加。
+
+---
+
+## N. EventBus + WebSocket 进度推送(Plan C Phase 8)
+
+### 事件流拓扑
+
+```
+Adapter (poll loop) ──publish(ProgressEvent)──> EventBus (asyncio.Queue × N subscribers)
+Orchestrator (step_start/step_done) ──┘
+Workers (mesh_poll) ──────────────────┘
+                                           ↓ fan-out per subscriber
+                                  Starlette WebSocket handler
+                                           ↓ JSON
+                                   Client (UI / CLI watcher)
+```
+
+### ProgressEvent schema
+
+```python
+class ProgressEvent(BaseModel):
+    run_id: str
+    step_id: str | None = None
+    phase: str                    # "step_start" / "tokenhub_poll" / "mesh_poll" / "step_done" / ...
+    elapsed_s: float = 0.0
+    progress_pct: float | None = None
+    raw: dict[str, Any] = {}
+    timestamp: datetime            # UTC,服务器端生成
+```
+
+### 端点
+
+| 端点 | 语义 |
+|------|------|
+| `GET /healthz` | 订阅者数量探活 |
+| `WS  /ws/runs/{run_id}` | 订阅指定 run 的所有事件 |
+| `WS  /ws/runs/{run_id}/steps/{step_id}` | 订阅单 step 事件 |
+
+### CLI 用法
+
+```bash
+# 启动 run + WebSocket server(一键自包含)
+python -m framework.run --task examples/image_to_3d_pipeline.json \
+    --run-id run_01 --serve --serve-port 8080
+
+# 客户端
+wscat -c ws://127.0.0.1:8080/ws/runs/run_01
+```
+
+### 限制
+
+- 内存 `asyncio.Queue`,不跨进程。多机 / 多进程场景需替换 Redis Pub/Sub 后端
+- 无鉴权,仅适合单机开发机
+- 队列满时丢弃最旧事件(subscriber 慢 backpressure 策略)

@@ -42,6 +42,7 @@ from framework.providers.workers.comfy_worker import (
     WorkerError,
     WorkerTimeout,
 )
+from framework.runtime.budget_tracker import estimate_image_call_cost_usd
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
 
 
@@ -200,6 +201,19 @@ class GenerateImageExecutor(StepExecutor):
             ),
         )
 
+        width = int(spec.get("width", 1024))
+        height = int(spec.get("height", 1024))
+        # Only API-path calls incur real per-image spend. Comfy / Fake runs on
+        # self-hosted GPU — leave cost_usd=0 so BudgetTracker ignores them.
+        cost_usd = (
+            estimate_image_call_cost_usd(
+                model=str(chosen_model or "unknown"),
+                n=len(image_ids),
+                size=f"{width}x{height}",
+            )
+            if use_api_path and image_ids
+            else 0.0
+        )
         metrics = {
             "attempts": attempt_count,
             "candidate_count": len(image_ids),
@@ -207,6 +221,7 @@ class GenerateImageExecutor(StepExecutor):
             "chosen_model": chosen_model,
             "revised": bool(hint),
             "seed": seed,
+            "cost_usd": cost_usd,
         }
         return ExecutorResult(artifacts=[*image_arts, bundle], metrics=metrics)
 
@@ -231,7 +246,14 @@ class GenerateImageExecutor(StepExecutor):
         self, *, ctx: StepContext, spec: dict, num: int,
         seed: int | None, timeout_s: float | None,
     ) -> tuple[list[ImageCandidate], str]:
-        """Call CapabilityRouter.image_generation; wrap results as ImageCandidate."""
+        """Call CapabilityRouter.image_generation; wrap results as ImageCandidate.
+
+        Plan C Phase 6 — when *num > 1* we fan out N parallel `n=1` calls via
+        `asyncio.gather` under a single `asyncio.run`. Many image providers
+        (Hunyuan tokenhub, Qwen async jobs) submit one job at a time, so the
+        old `n=3` sync path secretly serialized candidates; parallel now.
+        """
+        import asyncio
         assert self._router is not None
         prompt = str(spec.get("prompt_summary") or "")
         if not prompt:
@@ -245,11 +267,35 @@ class GenerateImageExecutor(StepExecutor):
         if seed is not None:
             extra["seed"] = seed
 
-        results, chosen_model = self._router.image_generation(
-            policy=ctx.step.provider_policy,    # type: ignore[arg-type]
-            prompt=prompt, n=num, size=size_arg,
-            timeout_s=timeout_s, extra=extra,
-        )
+        # Opt-in fan-out: providers whose /submit takes one job at a time
+        # (Hunyuan tokenhub image, Qwen async, etc.) should set
+        # `step.config.parallel_candidates=True` to dispatch N concurrent
+        # `n=1` calls instead of one `n=N` call that would serialize.
+        # Default keeps legacy behaviour (one `n=N` call).
+        parallel = bool((ctx.step.config or {}).get("parallel_candidates"))
+        if num > 1 and parallel:
+            async def _fan_out():
+                tasks = [
+                    self._router.aimage_generation(        # type: ignore[union-attr]
+                        policy=ctx.step.provider_policy,    # type: ignore[arg-type]
+                        prompt=prompt, n=1, size=size_arg,
+                        timeout_s=timeout_s, extra=dict(extra),
+                    )
+                    for _ in range(num)
+                ]
+                return await asyncio.gather(*tasks)
+            per_call = asyncio.run(_fan_out())
+            results = []
+            chosen_model = ""
+            for per_call_results, per_call_model in per_call:
+                results.extend(per_call_results)
+                chosen_model = per_call_model
+        else:
+            results, chosen_model = self._router.image_generation(
+                policy=ctx.step.provider_policy,    # type: ignore[arg-type]
+                prompt=prompt, n=num, size=size_arg,
+                timeout_s=timeout_s, extra=extra,
+            )
         cands = [
             ImageCandidate(
                 data=r.data, width=width, height=height,

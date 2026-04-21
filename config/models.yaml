@@ -60,16 +60,23 @@ providers:
     api_key_env: DASHSCOPE_API_KEY
     api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
-  # 腾讯混元 —— Hunyuan 文本 / 混元生图 / 混元生3D
-  # OpenAI 兼容端点（文本/图片）：https://api.hunyuan.cloud.tencent.com/v1
+  # 腾讯混元 —— Hunyuan OpenAI 兼容（文本聊天用）
   tencent_hunyuan_openai_compat:
     api_key_env: HUNYUAN_API_KEY
     api_base: "https://api.hunyuan.cloud.tencent.com/v1"
 
-  # 腾讯混元生 3D（API 协议独立，走 HunyuanMesh worker，见 TODO 标注）
-  tencent_hunyuan_3d:
+  # 腾讯混元图生 —— tokenhub 代理端点（submit+query 协议，非 OpenAI）
+  # 端点: https://tokenhub.tencentmaas.com/v1/api/image/{submit,query}
+  # 认证: Authorization: Bearer <HUNYUAN_API_KEY or 单独给的 tokenhub key>
+  tencent_hunyuan_tokenhub:
+    api_key_env: HUNYUAN_API_KEY
+    api_base: "https://tokenhub.tencentmaas.com/v1/api/image"
+
+  # 腾讯混元生 3D —— tokenhub 代理端点
+  # 端点: https://tokenhub.tencentmaas.com/v1/api/3d/{submit,query}
+  tencent_hunyuan_3d_tokenhub:
     api_key_env: HUNYUAN_3D_KEY
-    api_base: "https://api.hunyuan.cloud.tencent.com/3d"
+    api_base: "https://tokenhub.tencentmaas.com/v1/api/3d"
 
 # ---------------------------------------------------------------------------
 # ② Models
@@ -139,80 +146,84 @@ models:
 
   # ============ 新增：国内便宜替代 ============
 
-  # --- 智谱 GLM 视觉 QA ---
-  # 2 元/百万 tokens，比 Claude Sonnet 输入价便宜约 90%、比 Gemini 3 Flash 便宜 41%
+  # --- 智谱 GLM 视觉（OpenAI 兼容 /chat/completions）---
+  # 端点: https://open.bigmodel.cn/api/paas/v4/chat/completions
+  # 2 元/百万 tokens，比 Claude Sonnet 输入价便宜约 90%
   glm_4_6v_flashX:
-    id: "openai/GLM-4.6V-FlashX"
+    id: "openai/glm-4.6v-flashx"     # 智谱期望 *小写* id
     provider: zhipu_openai_compat
     kind: vision
 
   glm_4_6v:
-    id: "openai/GLM-4.6V"
+    id: "openai/glm-4.6v"            # 小写
     provider: zhipu_openai_compat
     kind: vision
 
-  # --- 智谱 CogView 图生成 ---
-  # 0.1 元/次（口径是"次"），相比 Gemini 3.1 Flash Image 1024px 便宜约 78%
+  # --- 智谱图生成（待实测是否走 OpenAI /v1/images/generations 兼容）---
   glm_image:
-    id: "openai/GLM-Image"
+    id: "openai/glm-image"           # 小写
     provider: zhipu_openai_compat
     kind: image
 
-  # --- 阿里 Qwen3-Plus（视觉 + 文本都可用）---
-  # 输入 2 元/MTok，相比 Claude Sonnet 便宜约 90%、比 Gemini 3 Flash 便宜 41%
+  # --- 阿里 Qwen-Plus（视觉 + 文本）---
+  # OpenAI 兼容端点 https://dashscope.aliyuncs.com/compatible-mode/v1
   qwen3_6_plus:
-    id: "openai/qwen3.6-plus"
+    id: "openai/qwen-plus"           # DashScope compatible-mode 下的真实 id
     provider: dashscope_openai_compat
-    kind: vision                    # 支持图像/视频输入；用作 text 场景也可
+    kind: vision                     # 支持图像/视频输入
 
-  # --- 阿里通义万相图生成（便宜档）---
-  # 0.2 元/张，对比 Gemini 1024px 便宜约 56%
+  # --- 阿里通义万相图生成 ---
+  # NOTE: Qwen-Image 不走 OpenAI /v1/images/generations，而是
+  # DashScope 原生 /api/v1/services/aigc/multimodal-generation/generation 协议
+  # 需要 QwenImageWorker / QwenImageAdapter 实现才能真跑（TODO）
   qwen_image_2:
-    id: "openai/qwen-image-2.0"              # DashScope compatible-mode 下 wanx-v1/v2 命名
+    id: "qwen/qwen-image-2.0"        # 自定义命名空间，标明"非 OpenAI 路径"
     provider: dashscope_openai_compat
     kind: image
 
-  # --- 阿里通义万相图生成（高质量档）---
-  # 0.5 元/张，相比 Gemini 1024px 略贵 9%，但比 2048px/4096px 便宜
   qwen_image_2_pro:
-    id: "openai/qwen-image-2.0-pro"        # 占位，依 DashScope 实际 id 调整
+    id: "qwen/qwen-image-2.0-pro"
     provider: dashscope_openai_compat
     kind: image
 
-  # --- 阿里通义万相图像编辑（便宜档）---
-  # 0.2 元/张，对比 Gemini 编辑链路便宜约 56%
-  # NOTE: 需要 GenerateImageEditExecutor 才能真跑；当前仅占位在注册表
+  # --- 阿里通义万相图像编辑 ---
+  # 同协议，需要 QwenImageEditWorker 才能真跑（TODO）
   qwen_image_edit_plus:
-    id: "openai/qwen-image-edit-plus"
+    id: "qwen/qwen-image-edit-plus"
     provider: dashscope_openai_compat
     kind: image_edit
 
-  # --- 阿里通义万相图像编辑（高质量档）---
   qwen_image_edit_max:
-    id: "openai/qwen-image-edit-max"
+    id: "qwen/qwen-image-edit-max"
     provider: dashscope_openai_compat
     kind: image_edit
 
-  # --- 腾讯混元生图极速版 ---
-  # 0.099 元/张，相比 Gemini 1024px 便宜约 78% —— 当前最便宜档
-  hunyuan_image_fast:
-    id: "openai/hunyuan-image-fast"
-    provider: tencent_hunyuan_openai_compat
+  qwen_image_edit:
+    id: "qwen/qwen-image-edit"
+    provider: dashscope_openai_compat
+    kind: image_edit
+
+  # --- 腾讯混元图生 ---
+  # 端点 tokenhub.tencentmaas.com/v1/api/image/{submit,query} —— 非 OpenAI 协议
+  # 需要 HunyuanImageWorker（TODO）
+  hunyuan_image_v3:
+    id: "hunyuan/hy-image-v3.0"      # 非 LiteLLM 前缀，标明自定义 worker
+    provider: tencent_hunyuan_tokenhub
     kind: image
 
-  # --- 腾讯图像风格化 ---
-  # 0.099 元/张，图生图/编辑场景便宜替代
+  # --- 腾讯混元图像风格化（视同图编辑）---
   hunyuan_image_style:
-    id: "openai/hy-image-v3.0"
-    provider: tencent_hunyuan_openai_compat
+    id: "hunyuan/hy-image-v3.0"      # 同 id，不同 kind 语义
+    provider: tencent_hunyuan_tokenhub
     kind: image_edit
 
   # --- 腾讯混元生 3D ---
-  # credits 预付（980 元/10000 credits），口径与 Tripo3D 不同，先实测
-  # NOTE: 需要 HunyuanMeshWorker（类比 Tripo3DWorker）才能真跑
+  # 端点 tokenhub.tencentmaas.com/v1/api/3d/{submit,query}
+  # 用 Bearer sk-xxx 认证（对应 HUNYUAN_3D_KEY），**不是** TC3 签名
+  # 当前 HunyuanMeshWorker 走 tencentcloudapi.com + TC3，需要重写为 tokenhub 版
   hunyuan_3d:
-    id: "hy-3d-3.1"
-    provider: tencent_hunyuan_3d
+    id: "hunyuan/hy-3d-3.1"
+    provider: tencent_hunyuan_3d_tokenhub
     kind: mesh
 
 # ---------------------------------------------------------------------------
@@ -257,7 +268,7 @@ aliases:
   # 高质量图生成
   image_strong:
     preferred: [qwen_image_2_pro]
-    fallback:  [hy-image-v3.0, gemini_imagen_3]
+    fallback:  [hunyuan_image_v3]
 
   # 图像编辑：prompt + 源图 → 编辑后图（L5-A 新能力）
   # CapabilityRouter.image_edit 同时接受 kind=image_edit 和 kind=image 路由

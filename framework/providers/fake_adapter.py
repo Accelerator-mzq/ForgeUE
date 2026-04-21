@@ -81,7 +81,7 @@ class FakeAdapter(ProviderAdapter):
             raise ProviderError(f"FakeAdapter has no programmed response for model={model}")
         return queue.popleft()
 
-    def completion(self, call: ProviderCall) -> ProviderResult:
+    async def acompletion(self, call: ProviderCall) -> ProviderResult:
         self._calls.append((call.model, call))
         p = self._pop(call.model)
         if p.raise_error is not None:
@@ -93,7 +93,7 @@ class FakeAdapter(ProviderAdapter):
             text = ""
         return ProviderResult(text=text, model=call.model, usage=dict(p.usage))
 
-    def structured(self, call: ProviderCall, schema: type[BaseModel]) -> BaseModel:
+    async def astructured(self, call: ProviderCall, schema: type[BaseModel]) -> BaseModel:
         self._calls.append((call.model, call))
         p = self._pop(call.model)
         if p.raise_error is not None:
@@ -116,14 +116,24 @@ class FakeAdapter(ProviderAdapter):
         except ValidationError as exc:
             raise SchemaValidationError(str(exc), raw=value) from exc
 
-    def image_generation(
+    async def astructured_with_usage(
+        self, call: ProviderCall, schema: type[BaseModel],
+    ) -> tuple[BaseModel, dict[str, int]]:
+        """Delegates to `self.astructured` so subclasses that override only
+        `astructured` (e.g. a latency-injecting test fixture) still get their
+        override honoured. Usage is peeked from the next-in-line program
+        before `astructured` pops it, so the two stay in sync."""
+        queue = self._programs.get(call.model)
+        usage: dict[str, int] = dict(queue[0].usage) if queue else {}
+        obj = await self.astructured(call, schema)
+        return obj, usage
+
+    async def aimage_generation(
         self, *, prompt: str, model: str, n: int = 1,
         size: str = "1024x1024", api_key: str | None = None,
         api_base: str | None = None, timeout_s: float | None = None,
         extra: dict | None = None,
     ) -> list[ImageResult]:
-        """Pop a program and return its image_bytes_list (or synthesise stubs)."""
-        # Log the call for assertions (model-keyed like structured())
         call = ProviderCall(model=model, messages=[{"role": "user", "content": prompt}])
         self._calls.append((model, call))
         p = self._pop(model)
@@ -144,15 +154,12 @@ class FakeAdapter(ProviderAdapter):
             for b in payloads
         ]
 
-
-    def image_edit(
+    async def aimage_edit(
         self, *, prompt: str, source_image_bytes: bytes, model: str,
         n: int = 1, size: str = "1024x1024",
         api_key: str | None = None, api_base: str | None = None,
         timeout_s: float | None = None, extra: dict | None = None,
     ) -> list[ImageResult]:
-        """Pop a program for *model* and return its image_bytes_list.
-        Source image bytes are logged (hashed) but not actually used."""
         import hashlib as _hashlib
         call = ProviderCall(model=model, messages=[
             {"role": "user", "content": prompt},

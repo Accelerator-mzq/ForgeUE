@@ -14,6 +14,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import struct
@@ -22,6 +23,8 @@ from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
+
+import httpx
 
 
 class MeshWorkerError(RuntimeError):
@@ -257,58 +260,99 @@ class Tripo3DWorker(MeshWorker):
 
 
 # ----------------------------------------------------------------------------
-# Tencent Hunyuan3D worker —— SubmitHunyuanTo3DRapidJob + poll + GLB download
-# API doc: https://intl.cloud.tencent.com/document/api/1284/75976
+# Tencent Hunyuan3D worker —— tokenhub.tencentmaas.com 代理 (Bearer auth)
+# API 文档: docs/api_des/HunYuan.md
+#   POST /v1/api/3d/submit   body={model, prompt, image?} → {id, status}
+#       `image` carries the source as a `data:image/png;base64,...` data URL,
+#       identical to the image-generation tokenhub endpoint.
+#   POST /v1/api/3d/query    body={model, id}              → {status, ...urls}
+#
+# 注：早期本项目有一版 TC3-HMAC-SHA256 签名实现，走 hunyuan.tencentcloudapi.com；
+# 那条路径与您的 `HUNYUAN_3D_KEY`（sk-xxx bearer）不匹配，连通测试失败。这版
+# 与 HunyuanImageAdapter 共享 submit/poll/download 逻辑（通过 urllib，不依赖
+# tencentcloud-sdk-python）。
 # ----------------------------------------------------------------------------
 
 
 class HunyuanMeshWorker(MeshWorker):
-    """Tencent Hunyuan3D rapid-job client.
+    """Tencent Hunyuan3D via tokenhub.tencentmaas.com.
 
-    Authentication: TC3-HMAC-SHA256 signing (Tencent Cloud's standard).
-    Needs SecretId + SecretKey (not a bearer token).
+    Auth: `Authorization: Bearer <HUNYUAN_3D_KEY>` (sk-... token).
 
     Flow:
-      1. POST SubmitHunyuanTo3DRapidJob  -> JobId
-      2. Poll QueryHunyuanTo3DRapidJob   -> wait Status == "DONE"
-      3. GET ResultFile3Ds[0].Url        -> GLB bytes
+      1. POST <base>/submit {model, prompt, image=data-URL}  → {id, status:queued}
+      2. Poll <base>/query  {model, id}                      → eventually status=done
+      3. Download result URL → GLB bytes
 
-    Rate limits: 1 concurrent job by default, 20 req/s global.
+    The image field uses the same `data:image/png;base64,...` shape the
+    sibling HunyuanImageAdapter uses for 2D generation — tokenhub accepts
+    that form across both endpoints, so we stay consistent.
     """
 
     name = "hunyuan_3d"
-    _SERVICE = "hunyuan"
-    _HOST_INTL = "hunyuan.intl.tencentcloudapi.com"
-    _HOST_CN = "hunyuan.tencentcloudapi.com"
-    _ACTION_SUBMIT = "SubmitHunyuanTo3DRapidJob"
-    _ACTION_QUERY = "QueryHunyuanTo3DRapidJob"
-    _VERSION = "2023-09-01"
 
     def __init__(
         self,
         *,
-        secret_id: str,
-        secret_key: str,
-        region: str = "ap-singapore",
-        endpoint_host: str | None = None,
+        api_key: str,
+        base_url: str = "https://tokenhub.tencentmaas.com/v1/api/3d",
         poll_interval_s: float = 3.0,
         default_timeout_s: float = 300.0,
     ) -> None:
-        self._secret_id = secret_id
-        self._secret_key = secret_key
-        self._region = region
-        self._host = endpoint_host or self._HOST_INTL
+        self._api_key = api_key
+        self._base_url = base_url.rstrip("/")
         self._poll = poll_interval_s
         self._default_timeout_s = default_timeout_s
 
-    def _import_requests(self):
-        try:
-            import requests
-        except ImportError as exc:
-            raise MeshWorkerError(
-                "`requests` not installed. pip install requests to use HunyuanMeshWorker."
-            ) from exc
-        return requests
+    async def agenerate(
+        self,
+        *,
+        source_image_bytes: bytes,
+        spec: dict,
+        num_candidates: int = 1,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """Async variant: fan out num_candidates submit+poll+download jobs
+        in parallel via `asyncio.gather`. Overall latency ≈ slowest job."""
+        import base64
+
+        budget = timeout_s or self._default_timeout_s
+        image_b64 = base64.b64encode(source_image_bytes).decode("ascii")
+        fallback_prompt = "3D model from provided reference image"
+        prompt_text = str(
+            spec.get("prompt") or spec.get("prompt_summary") or fallback_prompt
+        )
+        on_poll_progress = spec.get("_forge_progress_cb")
+        on_download_progress = spec.get("_forge_download_cb")
+        model_id = str(spec.get("model_id", "hy-3d-3.1"))
+        fmt = str(spec.get("format", "glb")).lower()
+
+        async def _one(index: int) -> MeshCandidate:
+            submit_body = {
+                "model": model_id, "prompt": prompt_text,
+                "image": f"data:image/png;base64,{image_b64}",
+            }
+            job_id = await self._atokenhub_submit(
+                submit_body, timeout_s=min(30.0, budget),
+            )
+            done_resp = await self._atokenhub_poll(
+                job_id=job_id, budget_s=budget, model_id=model_id,
+                on_progress=on_poll_progress,
+            )
+            url = _extract_hunyuan_3d_url(done_resp)
+            glb_bytes = await self._atokenhub_download(
+                url, timeout_s=90.0, on_progress=on_download_progress,
+            )
+            return MeshCandidate(
+                data=glb_bytes, format=fmt,
+                mime_type="model/gltf-binary",
+                metadata={
+                    "job_id": job_id, "model_url": url,
+                    "source": "hunyuan_3d_tokenhub", "index": index,
+                },
+            )
+
+        return list(await asyncio.gather(*[_one(i) for i in range(num_candidates)]))
 
     def generate(
         self,
@@ -318,151 +362,156 @@ class HunyuanMeshWorker(MeshWorker):
         num_candidates: int = 1,
         timeout_s: float | None = None,
     ) -> list[MeshCandidate]:
-        import base64
-        requests = self._import_requests()
-        budget = timeout_s or self._default_timeout_s
-        image_b64 = base64.b64encode(source_image_bytes).decode("ascii")
+        """Sync shim around `agenerate`. Use for back-compat callers."""
+        return asyncio.run(self.agenerate(
+            source_image_bytes=source_image_bytes, spec=spec,
+            num_candidates=num_candidates, timeout_s=timeout_s,
+        ))
 
-        results: list[MeshCandidate] = []
-        for i in range(num_candidates):
-            job_id = self._submit(requests, image_b64=image_b64, spec=spec, budget=budget)
-            model_url = self._poll_until_done(requests, job_id=job_id, budget=budget)
-            dr = requests.get(model_url, timeout=60.0)
-            if dr.status_code != 200:
-                raise MeshWorkerError(f"model download {dr.status_code}")
-            results.append(MeshCandidate(
-                data=dr.content,
-                format=str(spec.get("format", "glb")).lower(),
-                mime_type="model/gltf-binary",
-                metadata={
-                    "job_id": job_id, "model_url": model_url,
-                    "source": "hunyuan_3d", "index": i,
-                },
-            ))
-        return results
+    # ---- async tokenhub helpers -----------------------------------------
 
-    def _submit(self, requests, *, image_b64: str, spec: dict, budget: float) -> str:
-        payload = {
-            "ImageBase64": image_b64,
-            "ResultFormat": str(spec.get("format", "GLB")).upper(),
-            "EnablePBR": bool(spec.get("pbr", True)),
-            "EnableGeometry": bool(spec.get("geometry_only", False)),
-        }
-        resp = self._signed_post(requests, action=self._ACTION_SUBMIT,
-                                 payload=payload, timeout=min(30.0, budget))
-        job_id = ((resp.get("Response") or {}).get("JobId"))
+    async def _atokenhub_submit(self, body: dict, *, timeout_s: float) -> str:
+        resp = await self._apost(f"{self._base_url}/submit", body, timeout_s=timeout_s)
+        status = str(resp.get("status", "")).lower()
+        if status in ("failed", "fail", "error"):
+            err = resp.get("error") or {}
+            raise MeshWorkerError(
+                f"tokenhub /3d/submit failed: "
+                f"{err.get('message') or err or resp}"
+            )
+        job_id = resp.get("id") or resp.get("job_id")
         if not job_id:
-            raise MeshWorkerError(
-                f"SubmitHunyuanTo3DRapidJob returned no JobId: {resp}"
-            )
-        return job_id
+            raise MeshWorkerError(f"tokenhub /3d/submit returned no id: {resp}")
+        return str(job_id)
 
-    def _poll_until_done(self, requests, *, job_id: str, budget: float) -> str:
-        start = time.monotonic()
+    async def _atokenhub_poll(self, *, job_id: str, budget_s: float,
+                                model_id: str, on_progress=None) -> dict:
+        """Async poll /query; `await asyncio.sleep` between iterations so
+        external cancellation is honoured immediately."""
+        from framework.providers.hunyuan_tokenhub_adapter import _dispatch_progress
+        loop = asyncio.get_running_loop()
+        start = loop.time()
         while True:
-            if time.monotonic() - start > budget:
+            elapsed = loop.time() - start
+            if elapsed > budget_s:
                 raise MeshWorkerTimeout(
-                    f"Hunyuan3D job {job_id} exceeded {budget}s"
+                    f"tokenhub 3d job {job_id} exceeded {budget_s}s"
                 )
-            resp = self._signed_post(
-                requests, action=self._ACTION_QUERY,
-                payload={"JobId": job_id}, timeout=20.0,
+            resp = await self._apost(
+                f"{self._base_url}/query",
+                {"model": model_id, "id": job_id}, timeout_s=30.0,
             )
-            data = resp.get("Response") or {}
-            status = data.get("Status")
-            if status == "DONE":
-                files = data.get("ResultFile3Ds") or []
-                if not files:
-                    raise MeshWorkerError(
-                        f"Hunyuan3D job {job_id} DONE but no ResultFile3Ds"
-                    )
-                url = files[0].get("Url")
-                if not url:
-                    raise MeshWorkerError(
-                        f"Hunyuan3D job {job_id}: ResultFile3Ds[0].Url missing"
-                    )
-                return url
-            if status == "FAIL":
+            status = str(resp.get("status", "")).lower()
+            if on_progress is not None:
+                _dispatch_progress(on_progress, status, elapsed, resp)
+            # Ambient EventBus (WS subscribers)
+            from framework.observability.event_bus import (
+                ProgressEvent as _PE,
+                current_run_step as _current_run_step,
+                publish as _publish,
+            )
+            from framework.providers.hunyuan_tokenhub_adapter import (
+                _extract_progress_pct as _pct,
+            )
+            _rid, _sid = _current_run_step()
+            _publish(_PE(
+                run_id=_rid, step_id=_sid, phase="mesh_poll",
+                elapsed_s=elapsed, progress_pct=_pct(resp),
+                raw={"job_id": job_id, "status": status, "model": model_id},
+            ))
+            if status in ("done", "success", "finished", "completed"):
+                return resp
+            if status in ("failed", "fail", "error", "cancelled"):
                 raise MeshWorkerError(
-                    f"Hunyuan3D job {job_id} FAIL: "
-                    f"{data.get('ErrorCode')} {data.get('ErrorMessage')}"
+                    f"tokenhub 3d job {job_id} {status}: "
+                    f"{resp.get('error') or resp.get('message') or resp}"
                 )
-            time.sleep(self._poll)
+            await asyncio.sleep(self._poll)
 
-    # ---- TC3-HMAC-SHA256 signing helper ----------------------------------
-
-    def _signed_post(
-        self, requests, *, action: str, payload: dict, timeout: float,
-    ) -> dict:
-        import hashlib
-        import hmac
+    async def _apost(self, url: str, body: dict, *, timeout_s: float) -> dict:
+        """Async POST with transient retry (SSL EOF / timeout / 5xx → 2s backoff).
+        Permanent 4xx bubbles immediately."""
+        from framework.providers._retry_async import (
+            is_transient_network_message, with_transient_retry_async,
+        )
         import json as _json
-        import time as _time
 
-        body = _json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
-        body_bytes = body.encode("utf-8")
-        ts = int(_time.time())
-        date = _time.strftime("%Y-%m-%d", _time.gmtime(ts))
+        async def _attempt() -> dict:
+            headers = {
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            }
+            try:
+                async with httpx.AsyncClient(timeout=timeout_s) as c:
+                    r = await c.post(url, headers=headers, content=_json.dumps(
+                        body, separators=(",", ":"), ensure_ascii=False,
+                    ).encode("utf-8"))
+            except httpx.TimeoutException as exc:
+                raise MeshWorkerTimeout(str(exc)) from exc
+            except httpx.HTTPError as exc:
+                raise MeshWorkerError(str(exc)) from exc
 
-        method = "POST"
-        uri = "/"
-        query = ""
-        canonical_headers = (
-            "content-type:application/json; charset=utf-8\n"
-            f"host:{self._host}\n"
-            f"x-tc-action:{action.lower()}\n"
+            if r.status_code >= 400:
+                err_body = r.text
+                raise MeshWorkerError(
+                    f"tokenhub {url} {r.status_code}: {err_body[:300]}"
+                )
+            return r.json()
+
+        return await with_transient_retry_async(
+            _attempt,
+            transient_check=lambda e: isinstance(e, MeshWorkerTimeout) or (
+                isinstance(e, MeshWorkerError)
+                and is_transient_network_message(str(e))
+            ),
+            max_attempts=2, backoff_s=2.0,
         )
-        signed_headers = "content-type;host;x-tc-action"
-        hashed_body = hashlib.sha256(body_bytes).hexdigest()
-        canonical_request = (
-            f"{method}\n{uri}\n{query}\n{canonical_headers}\n"
-            f"{signed_headers}\n{hashed_body}"
-        )
 
-        credential_scope = f"{date}/{self._SERVICE}/tc3_request"
-        hashed_canonical = hashlib.sha256(
-            canonical_request.encode("utf-8")).hexdigest()
-        string_to_sign = (
-            f"TC3-HMAC-SHA256\n{ts}\n{credential_scope}\n{hashed_canonical}"
-        )
-
-        def _hmac(key: bytes, msg: str) -> bytes:
-            return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
-
-        secret_date = _hmac(("TC3" + self._secret_key).encode("utf-8"), date)
-        secret_service = _hmac(secret_date, self._SERVICE)
-        secret_signing = _hmac(secret_service, "tc3_request")
-        signature = hmac.new(
-            secret_signing, string_to_sign.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-
-        authorization = (
-            f"TC3-HMAC-SHA256 Credential={self._secret_id}/{credential_scope}, "
-            f"SignedHeaders={signed_headers}, Signature={signature}"
-        )
-        headers = {
-            "Authorization": authorization,
-            "Content-Type": "application/json; charset=utf-8",
-            "Host": self._host,
-            "X-TC-Action": action,
-            "X-TC-Timestamp": str(ts),
-            "X-TC-Version": self._VERSION,
-            "X-TC-Region": self._region,
-        }
-        r = requests.post(
-            f"https://{self._host}", data=body_bytes,
-            headers=headers, timeout=timeout,
-        )
-        if r.status_code != 200:
-            raise MeshWorkerError(
-                f"Hunyuan3D {action} {r.status_code}: {r.text[:300]}"
+    async def _atokenhub_download(self, url: str, *, timeout_s: float,
+                                    on_progress=None) -> bytes:
+        """Async chunked download with Range resume."""
+        from framework.providers._download_async import chunked_download_async
+        try:
+            return await chunked_download_async(
+                url, timeout_s=timeout_s, on_chunk=on_progress,
             )
-        parsed = r.json()
-        err = (parsed.get("Response") or {}).get("Error")
-        if err:
-            raise MeshWorkerError(
-                f"Hunyuan3D {action} error "
-                f"{err.get('Code')}: {err.get('Message')}"
-            )
-        return parsed
+        except Exception as exc:
+            raise MeshWorkerError(f"tokenhub /3d download {url}: {exc}") from exc
+
+
+def _extract_hunyuan_3d_url(resp: dict) -> str:
+    """Find the GLB URL in a tokenhub /3d/query DONE response.
+
+    Walks the response tree recursively — tokenhub variants put URLs in
+    several places (top-level, `result.model_url`, `data[0].pbr_model`,
+    etc.). Prefer keys named like a 3D model URL over generic http strings.
+    """
+    prefer = ("model_url", "pbr_model", "result_url", "url", "file_url", "asset_url")
+    prefer_hits: list[str] = []
+    other_hits: list[str] = []
+
+    def _walk(node) -> None:
+        if isinstance(node, str):
+            if node.startswith("http"):
+                other_hits.append(node)
+            return
+        if isinstance(node, list):
+            for item in node:
+                _walk(item)
+            return
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if isinstance(v, str) and v.startswith("http"):
+                    (prefer_hits if k in prefer else other_hits).append(v)
+                else:
+                    _walk(v)
+
+    _walk(resp)
+    if prefer_hits:
+        return prefer_hits[0]
+    if other_hits:
+        return other_hits[0]
+    raise MeshWorkerError(
+        f"tokenhub 3d DONE response missing result URL: "
+        f"keys={list(resp)} sample={str(resp)[:400]}"
+    )

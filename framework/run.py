@@ -61,20 +61,26 @@ def _build_orchestrator(
 
     router = CapabilityRouter()
     if use_live_llm:
+        # Order matters: CapabilityRouter._resolve walks adapters in
+        # registration order until one reports `supports(model)=True`.
+        # LiteLLMAdapter is permissive (`supports(*)=True`), so specialized
+        # adapters (qwen/ + hunyuan/ prefix) must be registered FIRST
+        # to get first pick for their own prefixes.
+        from framework.providers.qwen_multimodal_adapter import QwenMultimodalAdapter
+        from framework.providers.hunyuan_tokenhub_adapter import HunyuanImageAdapter
+        router.register(QwenMultimodalAdapter())
+        router.register(HunyuanImageAdapter())
         router.register(LiteLLMAdapter())
 
     worker = HTTPComfyWorker(base_url=comfy_base_url) if comfy_base_url else FakeComfyWorker()
 
-    # Mesh worker selection (priority: Hunyuan3D if creds present > Tripo3D > Fake)
+    # Mesh worker selection (priority: Hunyuan3D tokenhub > Tripo3D > Fake).
+    # HunyuanMeshWorker 用 Bearer sk-xxx 单 key，通过 HUNYUAN_3D_KEY 环境变量。
     import os as _os
-    hunyuan_id = _os.environ.get("HUNYUAN_3D_SECRET_ID")
-    hunyuan_key = _os.environ.get("HUNYUAN_3D_SECRET_KEY")
+    hunyuan_3d_key = _os.environ.get("HUNYUAN_3D_KEY")
     tripo_key = _os.environ.get(tripo3d_key_env)
-    if hunyuan_id and hunyuan_key:
-        mesh_worker = HunyuanMeshWorker(
-            secret_id=hunyuan_id, secret_key=hunyuan_key,
-            region=_os.environ.get("HUNYUAN_3D_REGION", "ap-singapore"),
-        )
+    if hunyuan_3d_key:
+        mesh_worker = HunyuanMeshWorker(api_key=hunyuan_3d_key)
     elif tripo_key:
         mesh_worker = Tripo3DWorker(api_key=tripo_key)
     else:
@@ -113,6 +119,12 @@ def main(argv: list[str] | None = None) -> int:
                         "if omitted the offline FakeComfyWorker is used")
     p.add_argument("--env-file", default=".env",
                    help="path to .env file (default: .env in cwd)")
+    p.add_argument("--serve", action="store_true",
+                   help="expose a WebSocket server alongside the run so "
+                        "clients can subscribe to progress events; "
+                        "blocks until server stops (Ctrl+C)")
+    p.add_argument("--serve-host", default="127.0.0.1")
+    p.add_argument("--serve-port", type=int, default=8080)
     args = p.parse_args(argv)
 
     hydrate_env(path=args.env_file)
@@ -136,6 +148,14 @@ def main(argv: list[str] | None = None) -> int:
             # which for the mock pipeline use inline payloads — they are reconstructed at run time
             # via cache hit logic (we treat disk checkpoint as advisory when repo is empty).
             pass
+
+    # --serve: run orchestrator + WebSocket server concurrently so external
+    # UIs can subscribe to live ProgressEvent stream for this run.
+    if args.serve:
+        return _serve_run(
+            orch=orch, bundle=bundle, args=args,
+            artifact_root=artifact_root, repo=repo,
+        )
 
     try:
         result = orch.run(
@@ -181,6 +201,60 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0
+
+
+def _serve_run(*, orch: Orchestrator, bundle, args, artifact_root: Path, repo):
+    """Run orchestrator concurrently with a WebSocket progress server."""
+    import asyncio
+    from framework.observability.event_bus import (
+        EventBus, reset_current_event_bus, set_current_event_bus,
+    )
+    from framework.server.ws_server import build_app
+
+    try:
+        import uvicorn
+    except ImportError:
+        print("--serve requires: pip install 'forgeue[server]'", file=sys.stderr)
+        return 3
+
+    bus = EventBus()
+    app = build_app(bus)
+
+    print(f"progress stream: ws://{args.serve_host}:{args.serve_port}"
+          f"/ws/runs/{args.run_id}", file=sys.stderr)
+
+    async def _main() -> int:
+        token = set_current_event_bus(bus)
+        config = uvicorn.Config(
+            app, host=args.serve_host, port=args.serve_port,
+            log_level="warning",
+        )
+        server = uvicorn.Server(config)
+        server_task = asyncio.create_task(server.serve())
+        try:
+            result = await orch.arun(
+                task=bundle.task, workflow=bundle.workflow,
+                steps=bundle.steps, run_id=args.run_id,
+            )
+        except DryRunFailed as exc:
+            print("DRY-RUN FAILED:")
+            print(json.dumps(exc.report.model_dump(mode="json"),
+                             ensure_ascii=False, indent=2))
+            server.should_exit = True
+            await server_task
+            return 2
+        finally:
+            reset_current_event_bus(token)
+        server.should_exit = True
+        await server_task
+        print(json.dumps({
+            "run_id": result.run.run_id, "status": result.run.status.value,
+            "visited_steps": result.visited_step_ids,
+            "artifact_ids": result.run.artifact_ids,
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    return asyncio.run(_main())
 
 
 if __name__ == "__main__":

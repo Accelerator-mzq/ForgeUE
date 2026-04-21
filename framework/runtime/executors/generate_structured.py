@@ -96,10 +96,11 @@ class GenerateStructuredExecutor(StepExecutor):
         obj: BaseModel | None = None
         chosen_model: str | None = None
         attempt_count = 0
+        usage: dict[str, int] = {}
         for attempt in range(attempts):
             attempt_count = attempt + 1
             try:
-                obj, chosen_model = self._router.structured(
+                obj, chosen_model, usage = self._router.structured(
                     policy=ctx.step.provider_policy,
                     call_template=call,
                     schema=schema_cls,
@@ -143,7 +144,11 @@ class GenerateStructuredExecutor(StepExecutor):
             ),
             metadata={"schema_ref": schema_ref},
         )
-        metrics = {"attempts": attempt_count, "model": chosen_model or ""}
+        metrics = {
+            "attempts": attempt_count,
+            "model": chosen_model or "",
+            "usage": usage,
+        }
         return ExecutorResult(artifacts=[art], metrics=metrics)
 
 

@@ -1,18 +1,14 @@
-"""Capability router (§F1-4) — D-plan aware.
+"""Capability router (§F1-4) — D-plan aware, async-first (Plan C Phase 5).
 
-Maps a Step's ProviderPolicy to a concrete adapter + model. Tries preferred
-models first; on ProviderError (incl. timeout) falls back in order.
+Async primary: `acompletion` / `astructured` / `aimage_generation` /
+`aimage_edit`. Sync methods are thin `asyncio.run` shims for back-compat.
 
-Each routing candidate carries its own (api_key_env, api_base) pair when the
-policy was built via ModelRegistry (D plan). Hand-written bundles that set
-only `preferred_models` / `fallback_models` still work — they share a single
-alias-level auth (C plan backward compat).
-
-Adapters are registered explicitly — first adapter that reports supports(model)
-wins. RetryPolicy is honoured by the executor layer, not here.
+Preferred→fallback loop stays serial (D6): not a race, just `await` each
+adapter in turn. Fallback-race is not implemented — would waste budget.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
 
@@ -25,6 +21,7 @@ from framework.providers.base import (
     ProviderCall,
     ProviderError,
     ProviderResult,
+    _run_sync,
 )
 
 
@@ -83,70 +80,62 @@ class CapabilityRouter:
             raise ProviderError("ProviderPolicy has no routes / preferred / fallback models")
         return out
 
-    # ---- surface ----
+    # ---- Async surface (primary) ----------------------------------------
 
-    def completion(
+    async def acompletion(
         self, *, policy: ProviderPolicy, call_template: ProviderCall,
     ) -> tuple[ProviderResult, str]:
-        """Try preferred then fallback models. Returns (result, chosen_model)."""
         last: ProviderError | None = None
         for route in self._routes(policy):
             call = _rebind(call_template, route=route, policy=policy)
             adapter = self._resolve(route.model)
             try:
-                return adapter.completion(call), route.model
+                return await adapter.acompletion(call), route.model
             except ProviderError as exc:
                 last = exc
                 continue
         raise last or ProviderError("exhausted ProviderPolicy without a single call")
 
-    def structured(
+    async def astructured(
         self, *, policy: ProviderPolicy, call_template: ProviderCall,
         schema: type[BaseModel],
-    ) -> tuple[BaseModel, str]:
+    ) -> tuple[BaseModel, str, dict[str, int]]:
+        """Structured call with explicit token-usage hand-off.
+
+        Returns a 3-tuple `(obj, model, usage)`; BudgetTracker needs the
+        last element to charge the run. A previous design used a
+        thread-local to pass usage back, but that races under
+        `asyncio.gather` (chief-judge panel) since all judge tasks share
+        one event-loop thread. Returning usage explicitly has no such
+        race.
+        """
         last: ProviderError | None = None
         for route in self._routes(policy):
             call = _rebind(call_template, route=route, policy=policy)
             adapter = self._resolve(route.model)
             try:
-                return adapter.structured(call, schema), route.model
+                obj, usage = await adapter.astructured_with_usage(call, schema)
+                return obj, route.model, usage
             except ProviderError as exc:
                 last = exc
                 continue
         raise last or ProviderError("exhausted ProviderPolicy without a single call")
 
-    def image_edit(
+    async def aimage_edit(
         self, *, policy: ProviderPolicy, prompt: str,
         source_image_bytes: bytes, n: int = 1,
         size: str = "1024x1024", timeout_s: float | None = None,
         extra: dict | None = None,
     ) -> tuple[list[ImageResult], str]:
-        """Iterate kind=image_edit routes; same auth resolution as image_generation.
-
-        Accepts routes marked `kind=image` too, since some providers (DALL-E)
-        use the same model id for generation and edit modes and just switch
-        on the API endpoint.
-        """
-        import os as _os
         last: ProviderError | None = None
         accepted_kinds = {"image_edit", "image"}
         for route in self._routes(policy):
             if route.kind not in accepted_kinds:
                 continue
-            env_var = route.api_key_env or policy.api_key_env
-            api_key: str | None = None
-            if env_var:
-                resolved = _os.environ.get(env_var)
-                if not resolved:
-                    raise ProviderError(
-                        f"image_edit route for model={route.model!r} needs env "
-                        f"var {env_var!r} which is not set"
-                    )
-                api_key = resolved
-            api_base = route.api_base or policy.api_base
+            api_key, api_base = _resolve_image_auth(route, policy)
             adapter = self._resolve(route.model)
             try:
-                results = adapter.image_edit(
+                results = await adapter.aimage_edit(
                     prompt=prompt, source_image_bytes=source_image_bytes,
                     model=route.model, n=n, size=size,
                     api_key=api_key, api_base=api_base,
@@ -163,34 +152,17 @@ class CapabilityRouter:
                 continue
         raise last or ProviderError("exhausted policy without a single image_edit call")
 
-    def image_generation(
+    async def aimage_generation(
         self, *, policy: ProviderPolicy, prompt: str, n: int = 1,
         size: str = "1024x1024", timeout_s: float | None = None,
         extra: dict | None = None,
     ) -> tuple[list[ImageResult], str]:
-        """Try preferred then fallback routes (kind=image) for image generation.
-
-        Each route's api_key_env / api_base are resolved per-call, identical to
-        completion()'s auth resolution. Returns (images, chosen_model).
-        """
-        import os as _os
         last: ProviderError | None = None
         for route in self._routes(policy):
-            # Resolve per-route auth (same precedence as _rebind)
-            env_var = route.api_key_env or policy.api_key_env
-            api_key: str | None = None
-            if env_var:
-                resolved = _os.environ.get(env_var)
-                if not resolved:
-                    raise ProviderError(
-                        f"image route for model={route.model!r} requires env var "
-                        f"{env_var!r} which is not set"
-                    )
-                api_key = resolved
-            api_base = route.api_base or policy.api_base
+            api_key, api_base = _resolve_image_auth(route, policy)
             adapter = self._resolve(route.model)
             try:
-                results = adapter.image_generation(
+                results = await adapter.aimage_generation(
                     prompt=prompt, model=route.model, n=n, size=size,
                     api_key=api_key, api_base=api_base,
                     timeout_s=timeout_s, extra=extra,
@@ -205,6 +177,64 @@ class CapabilityRouter:
                 last = exc
                 continue
         raise last or ProviderError("exhausted ProviderPolicy without a single image call")
+
+    # ---- Sync shims (back-compat) ---------------------------------------
+
+    def completion(
+        self, *, policy: ProviderPolicy, call_template: ProviderCall,
+    ) -> tuple[ProviderResult, str]:
+        return _run_sync(self.acompletion(
+            policy=policy, call_template=call_template,
+        ))
+
+    def structured(
+        self, *, policy: ProviderPolicy, call_template: ProviderCall,
+        schema: type[BaseModel],
+    ) -> tuple[BaseModel, str, dict[str, int]]:
+        return _run_sync(self.astructured(
+            policy=policy, call_template=call_template, schema=schema,
+        ))
+
+    def image_edit(
+        self, *, policy: ProviderPolicy, prompt: str,
+        source_image_bytes: bytes, n: int = 1,
+        size: str = "1024x1024", timeout_s: float | None = None,
+        extra: dict | None = None,
+    ) -> tuple[list[ImageResult], str]:
+        return _run_sync(self.aimage_edit(
+            policy=policy, prompt=prompt,
+            source_image_bytes=source_image_bytes,
+            n=n, size=size, timeout_s=timeout_s, extra=extra,
+        ))
+
+    def image_generation(
+        self, *, policy: ProviderPolicy, prompt: str, n: int = 1,
+        size: str = "1024x1024", timeout_s: float | None = None,
+        extra: dict | None = None,
+    ) -> tuple[list[ImageResult], str]:
+        return _run_sync(self.aimage_generation(
+            policy=policy, prompt=prompt, n=n, size=size,
+            timeout_s=timeout_s, extra=extra,
+        ))
+
+
+def _resolve_image_auth(
+    route: PreparedRoute, policy: ProviderPolicy,
+) -> tuple[str | None, str | None]:
+    """Shared auth lookup for image_* routes. Missing required env var is a
+    hard error, never silently passed through."""
+    env_var = route.api_key_env or policy.api_key_env
+    api_key: str | None = None
+    if env_var:
+        resolved = os.environ.get(env_var)
+        if not resolved:
+            raise ProviderError(
+                f"image route for model={route.model!r} requires env var "
+                f"{env_var!r} which is not set"
+            )
+        api_key = resolved
+    api_base = route.api_base or policy.api_base
+    return api_key, api_base
 
 
 def _rebind(
