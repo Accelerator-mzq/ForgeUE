@@ -330,12 +330,27 @@ python -m pytest -v -k p3           # 关键字过滤
 
 ## 文档导航
 
-| 文档 | 作用 |
+2026-04-22 文档重构,采用五件套:
+
+| 层次 | 文档 | 作用 |
+|---|---|---|
+| 入口 | [`docs/INDEX.md`](docs/INDEX.md) | 文档索引 + 读者导览 |
+| 需求 | [`docs/requirements/SRS.md`](docs/requirements/SRS.md) | 需求规格说明书(FR/NFR/接口/约束) |
+| 概要设计 | [`docs/design/HLD.md`](docs/design/HLD.md) | 分层 / 子系统 / 对象模型概览 |
+| 详细设计 | [`docs/design/LLD.md`](docs/design/LLD.md) | 字段 / 方法 / 算法 / 异常体系 |
+| 测试 | [`docs/testing/test_spec.md`](docs/testing/test_spec.md) | 491 用例索引 + fence 清单 |
+| 验收 | [`docs/acceptance/acceptance_report.md`](docs/acceptance/acceptance_report.md) | FR/NFR 验收状态矩阵 |
+| 参考 | [`docs/api_des/`](docs/api_des/) | 五家 provider API 契约 |
+| 归档 | [`docs/archive/`](docs/archive/) | 历史方案与 plan_v1 史料(不再更新) |
+
+根目录还有两份 AI 编码代理上下文文件(协作约定 + 常踩坑点,与五件套互补):
+
+| 文件 | 读者 |
 |---|---|
-| [`docs/claude_unified_architecture_plan_v1.md`](docs/claude_unified_architecture_plan_v1.md) | **唯一权威设计**，对象模型 + 工作流 + UE Bridge + MVP 5 阶段范围 |
-| [`docs/unified_architecture_vNext.md`](docs/unified_architecture_vNext.md) | 精简版架构说明 |
-| [`docs/claude_cross_review_report_v1.md`](docs/claude_cross_review_report_v1.md) | 权威文档合并前的交叉评审记录 |
-| [`docs/assistant_plan_bundle/`](docs/assistant_plan_bundle/) | 按主题拆分的设计细则（对象字段、review 嵌入、modality metadata、Bridge 三层、开源项目映射、运行时组件）|
+| [`CLAUDE.md`](CLAUDE.md) | Claude Code |
+| [`AGENTS.md`](AGENTS.md) | Codex CLI / Cursor / Aider 等通用 agent |
+
+两份内容保持同步,修改项目约定时两份一起改。
 
 ---
 

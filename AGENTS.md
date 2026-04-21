@@ -1,4 +1,6 @@
-# ForgeUE — Claude 项目上下文
+# ForgeUE — Agent 项目上下文
+
+> 本文件与 `CLAUDE.md` 内容保持同步。CLAUDE.md 面向 Claude Code,AGENT.md 面向其他 AI 编码代理(Codex CLI / Cursor / Aider / 通义灵码等)。修改项目约定时,两份一起改。
 
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
@@ -77,7 +79,7 @@ python -m pytest <test> --basetemp=./demo_artifacts/<name>
 
 ## 手工验收
 
-P4 真实 UE 冒烟(§K 末行)必须在装了 UE 5.x 的机器上手跑一次:
+P4 真实 UE 冒烟(acceptance_report §6.1)必须在装了 UE 5.x 的机器上手跑一次:
 ```
 UE Python Console:
     exec(open('<repo>/ue_scripts/run_import.py').read())
@@ -96,3 +98,11 @@ LLD §5.7 + HLD §5.5 是权威;实装见 `framework/runtime/failure_mode_map.py
 
 DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静默吞掉,
 已修复并用 `test_cascade_cancel::test_dag_retry_same_step_reexecutes` 守门。
+
+## Agent 协作约定
+
+- 沟通用中文,技术名词保留英文(库 / API / 文件路径 / 类名 / capability key)
+- 外部事实性数据(定价 / endpoint / version)**禁止凭印象写数字**:必须 `sourced_on` + `source_url`,或保持 `null` + TODO,详见 ADR-004 与 `framework/pricing_probe/`
+- Codex / 其他外部 review 意见必须独立对照代码验证,不把 claim 当结论
+- 决策风格:先给论证 + 选项 + 代价,用户拍板后(如"全改"/"方案 A")一次执行到位,不中途 micro-confirm
+- `python -c` / heredoc 等 ad-hoc 脚本用 ASCII 标记(`[OK]` / `[FAIL]`),避免 Windows GBK stdout 吞 emoji
