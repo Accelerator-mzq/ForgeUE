@@ -20,7 +20,18 @@ sys.stdout.reconfigure(encoding="utf-8")
 # environments without the key, blocking static-analysis callers that only
 # need `inspect.getsource(mod)`. Mirrors the pattern in probe_hunyuan_3d_format.py.
 
-_OUT = Path("./demo_artifacts/probe_debug")
+_OUT_DIR_CACHE: Path | None = None
+
+
+def _get_out_dir() -> Path:
+    """Lazy per-run output dir. First call picks a timestamped subdir under
+    ./demo_artifacts/<YYYY-MM-DD>/probes/provider/glm_watermark_via_framework/<HHMMSS>/;
+    later calls reuse it so all files from one `_go()` run land together."""
+    global _OUT_DIR_CACHE
+    if _OUT_DIR_CACHE is None:
+        from probes._output import probe_output_dir
+        _OUT_DIR_CACHE = probe_output_dir("provider", "glm_watermark_via_framework")
+    return _OUT_DIR_CACHE
 
 
 async def _go() -> None:
@@ -33,7 +44,7 @@ async def _go() -> None:
     from framework.providers.capability_router import CapabilityRouter
     from framework.providers.litellm_adapter import LiteLLMAdapter
 
-    _OUT.mkdir(parents=True, exist_ok=True)   # lazy — never at import
+    out_dir = _get_out_dir()
 
     router = CapabilityRouter()
     router.register(LiteLLMAdapter())
@@ -67,7 +78,7 @@ async def _go() -> None:
             n=1, size="1024x1024", timeout_s=120.0, extra=extra,
         )
         r = results[0]
-        out = _OUT / f"framework_{label}.png"
+        out = out_dir / f"framework_{label}.png"
         out.write_bytes(r.data)
         print(f"chosen model: {chosen}")
         print(f"raw payload keys: {list(r.raw.keys())}")

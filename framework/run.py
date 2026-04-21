@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 from framework.artifact_store import ArtifactRepository, get_backend_registry
@@ -107,7 +108,11 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="framework.run")
     p.add_argument("--task", required=True, help="path to task bundle JSON")
     p.add_argument("--run-id", default="run_mvp_001")
-    p.add_argument("--artifact-root", default="artifacts")
+    # Default artifact-root auto-buckets by today's date so multi-day runs don't
+    # pile up in a single flat directory. Resume a run from an earlier day via
+    # explicit `--artifact-root artifacts/<YYYY-MM-DD>`. See CLAUDE.md §产物路径约定.
+    p.add_argument("--artifact-root",
+                   default=f"artifacts/{date.today().isoformat()}")
     p.add_argument("--resume", action="store_true",
                    help="reload checkpoints from disk before running")
     p.add_argument("--trace-console", action="store_true",

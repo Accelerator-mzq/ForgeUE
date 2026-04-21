@@ -27,7 +27,20 @@ from framework.observability.secrets import hydrate_env
 # that need to `inspect.getsource(mod)` for static checks before the probe
 # is ever invoked. Mirrors the pattern in probe_hunyuan_3d_format.py.
 
-_OUT = Path("./demo_artifacts/probe_debug")
+_OUT_DIR_CACHE: Path | None = None
+
+
+def _get_out_dir() -> Path:
+    """Lazy per-run output dir. First call picks a timestamped subdir under
+    ./demo_artifacts/<YYYY-MM-DD>/probes/provider/glm_image_debug/<HHMMSS>/;
+    later calls reuse it so all files from one `main()` land together."""
+    global _OUT_DIR_CACHE
+    if _OUT_DIR_CACHE is None:
+        from probes._output import probe_output_dir
+        _OUT_DIR_CACHE = probe_output_dir("provider", "glm_image_debug")
+    return _OUT_DIR_CACHE
+
+
 API_URL = "https://open.bigmodel.cn/api/paas/v4/images/generations"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
@@ -108,8 +121,8 @@ def _trial(label: str, body: dict) -> None:
             print(f"  {k}: {hdrs[k]}")
 
     data = _download(url)
-    _OUT.mkdir(parents=True, exist_ok=True)   # lazy — never at import
-    out = _OUT / f"{label}.png"
+    out_dir = _get_out_dir()
+    out = out_dir / f"{label}.png"
     out.write_bytes(data)
     print(f"saved → {out.as_posix()} ({len(data)} bytes)")
 

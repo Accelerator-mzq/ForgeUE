@@ -42,10 +42,31 @@ python -m pytest <test> --basetemp=./demo_artifacts/<name>
 
 ## 产物路径约定(Windows)
 
-- `./artifacts/`:CLI 正式 run 默认出口
-- `./demo_artifacts/`:手工演示、`pytest --basetemp=` 出口
-- **禁止**用 `/tmp/...`:Git-Bash 下翻译到 `C:\Users\...\AppData\Local\Temp`,脱离项目树
-- 两者都已在 `.gitignore`,不会污染仓库
+两个顶层产物目录,都按**日期分桶**。两者均在 `.gitignore`。
+
+**CLI 正式 run**:
+```
+./artifacts/<YYYY-MM-DD>/<run_id>/...
+```
+- `--artifact-root` 默认 `artifacts/<today>`(`framework.run` 启动时的日期)
+- 跨天 resume:显式 `--artifact-root artifacts/<昨天>` 指向昨天的桶
+- 集成测试走 `tmp_path`,不落 artifacts/
+
+**手工 / probe 产物**:
+```
+./demo_artifacts/<YYYY-MM-DD>/
+├── probes/<smoke|provider>/<probe_name>/<HHMMSS>/...    ← probe 脚本
+├── pricing/<HHMMSS>/...                                  ← pricing_probe apply 快照
+└── adhoc/<HHMMSS>/...                                    ← 临时调试
+
+./demo_artifacts/runs/<name>/                             ← pytest --basetemp,用户自由命名
+```
+- probe 产物由 `probes._output.probe_output_dir(tier, name)` helper 统一生成,详见 `probes/README.md` §5
+- `runs/<name>/` 不强制日期分桶,命名由用户决定(如 `p4_demo_before_fix` / `_after_fix`)
+
+**禁用**:
+- **`/tmp/...`**:Git-Bash 下翻译到 `C:\Users\...\AppData\Local\Temp`,脱离项目树
+- **项目根裸文件**(如 `test_out.png`):不落项目根
 
 ## Provider 路由顺序(易踩)
 
@@ -76,6 +97,19 @@ python -m pytest <test> --basetemp=./demo_artifacts/<name>
 - `tests/unit/test_event_bus.py` — EventBus loop-aware 跨线程安全
 
 不 mock 关键边界外的东西;bundle 里 Artifact 流是端到端的真实对象。
+
+## Probe 脚本约定
+
+手工 smoke / 诊断脚本在 `probes/`,不在项目根,不在 `tests/`。完整约定见 [`probes/README.md`](probes/README.md),要点:
+
+- 框架级冒烟 → `probes/smoke/`(无 provider key 依赖);provider 行为诊断 → `probes/provider/`
+- 命名:`probe_<domain>.py` / `probe_<provider>_<aspect>.py`
+- 运行:`python -m probes.smoke.probe_framework`(dotted path)
+- **模块顶层零副作用**:不在顶层做 `hydrate_env()` / `_OUT.mkdir()` / `os.environ[...]` —— 推迟到 `main()` 或 `_get_*()` helper(L3 fence `test_glm_probes_have_no_import_side_effects` 守门)
+- 输出用 ASCII 标记(`[OK]` / `[FAIL]` / `[SKIP]`),不用 emoji(Windows GBK stdout 崩)
+- 付费调用默认 skip,显式 opt-in 才跑(`FORGEUE_PROBE_MESH=1` 这类,不接受 `false`/`0`)
+- exit code:0 = 全 OK(含 skip);1 = 真实失败
+- 新 probe 涉及 lazy-init / opt-in / 格式检测时,在 `tests/unit/test_probe_framework.py` 加对应 fence
 
 ## 手工验收
 

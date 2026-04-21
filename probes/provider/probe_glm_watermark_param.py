@@ -28,7 +28,20 @@ from framework.observability.secrets import hydrate_env
 # blocking static-analysis callers that only need `inspect.getsource(mod)`.
 # Mirrors the pattern in probe_hunyuan_3d_format.py.
 
-_OUT = Path("./demo_artifacts/probe_debug")
+_OUT_DIR_CACHE: Path | None = None
+
+
+def _get_out_dir() -> Path:
+    """Lazy per-run output dir. First call picks a timestamped subdir under
+    ./demo_artifacts/<YYYY-MM-DD>/probes/provider/glm_watermark_param/<HHMMSS>/;
+    later calls reuse it so all files from one `main()` land together."""
+    global _OUT_DIR_CACHE
+    if _OUT_DIR_CACHE is None:
+        from probes._output import probe_output_dir
+        _OUT_DIR_CACHE = probe_output_dir("provider", "glm_watermark_param")
+    return _OUT_DIR_CACHE
+
+
 API_URL = "https://open.bigmodel.cn/api/paas/v4/images/generations"
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
@@ -87,8 +100,8 @@ def main() -> None:
         req = urllib.request.Request(url, headers={"User-Agent": UA})
         with urllib.request.urlopen(req, timeout=60) as r:
             data = r.read()
-        _OUT.mkdir(parents=True, exist_ok=True)   # lazy — never at import
-        out = _OUT / "watermark_disabled_attempt.png"
+        out_dir = _get_out_dir()
+        out = out_dir / "watermark_disabled_attempt.png"
         out.write_bytes(data)
         print(f"saved → {out.as_posix()} ({len(data)} bytes)")
         print(f"→ Open the PNG and inspect the bottom-right corner. "

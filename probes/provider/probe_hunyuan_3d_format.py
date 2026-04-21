@@ -24,7 +24,18 @@ sys.stdout.reconfigure(encoding="utf-8")
 from framework.observability.secrets import hydrate_env
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
-_OUT = Path("./demo_artifacts/probe_debug/hy3d")
+_OUT_DIR_CACHE: Path | None = None
+
+
+def _get_out_dir() -> Path:
+    """Lazy per-run output dir. First call picks a timestamped subdir under
+    ./demo_artifacts/<YYYY-MM-DD>/probes/provider/hunyuan_3d_format/<HHMMSS>/;
+    later calls reuse it so all files from one `main()` land together."""
+    global _OUT_DIR_CACHE
+    if _OUT_DIR_CACHE is None:
+        from probes._output import probe_output_dir
+        _OUT_DIR_CACHE = probe_output_dir("provider", "hunyuan_3d_format")
+    return _OUT_DIR_CACHE
 
 # NOTE: filesystem + env side-effects intentionally deferred to runtime.
 # Module-level `hydrate_env()` / `KEY = os.environ["..."]` / `_OUT.mkdir()`
@@ -203,8 +214,8 @@ def _trial(label: str, submit_body: dict) -> None:
     kind = _magic(data)
     ext = {"ZIP": "zip", "GLB": "glb", "glTF-text": "gltf",
            "FBX-binary": "fbx", "OBJ-text": "obj"}.get(kind, "bin")
-    _OUT.mkdir(parents=True, exist_ok=True)   # lazy — never at import
-    out = _OUT / f"{label}.{ext}"
+    out_dir = _get_out_dir()
+    out = out_dir / f"{label}.{ext}"
     out.write_bytes(data)
     print(f"saved -> {out.as_posix()} ({len(data):,}B, magic={kind})")
 

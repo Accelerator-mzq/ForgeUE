@@ -21,7 +21,18 @@ from pathlib import Path
 sys.stdout.reconfigure(encoding="utf-8")
 
 # Project-local scratch for probe outputs. See CLAUDE.md §产物路径约定 — never use /tmp on Windows.
-_OUT_DIR = Path("./demo_artifacts/probe")
+# First call to _get_out_dir() lazily picks a timestamped subdir under
+# ./demo_artifacts/<YYYY-MM-DD>/probes/smoke/framework/<HHMMSS>/; later calls
+# reuse it so all artifacts from one run land together.
+_OUT_DIR_CACHE: Path | None = None
+
+
+def _get_out_dir() -> Path:
+    global _OUT_DIR_CACHE
+    if _OUT_DIR_CACHE is None:
+        from probes._output import probe_output_dir
+        _OUT_DIR_CACHE = probe_output_dir("smoke", "framework")
+    return _OUT_DIR_CACHE
 
 
 def _env_flag_enabled(name: str) -> bool:
@@ -38,10 +49,11 @@ def _env_flag_enabled(name: str) -> bool:
 
 
 def _save(alias: str, model: str, ext: str, data: bytes) -> str:
-    """Write probe output bytes to demo_artifacts/probe/. Returns relative path."""
-    _OUT_DIR.mkdir(parents=True, exist_ok=True)
+    """Write probe output bytes to demo_artifacts/<date>/probes/smoke/framework/<HHMMSS>/.
+    Returns relative path."""
+    out_dir = _get_out_dir()
     safe_model = model.replace("/", "_").replace(":", "_")
-    out = _OUT_DIR / f"{alias}__{safe_model}.{ext}"
+    out = out_dir / f"{alias}__{safe_model}.{ext}"
     out.write_bytes(data)
     return out.as_posix()
 

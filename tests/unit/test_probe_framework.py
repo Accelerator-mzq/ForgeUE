@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 
-# Import the top-level script. It lives in project root, not in a package.
+# Probes live under `probes/{smoke,provider}/` as a proper package.
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
@@ -34,8 +34,8 @@ def probe_mod(monkeypatch):
     from framework.observability import secrets as _secrets
     monkeypatch.setattr(_secrets, "hydrate_env", lambda path=None: None)
     # Drop any cached import so our monkeypatch takes effect.
-    sys.modules.pop("probe_framework", None)
-    mod = importlib.import_module("probe_framework")
+    sys.modules.pop("probes.smoke.probe_framework", None)
+    mod = importlib.import_module("probes.smoke.probe_framework")
     yield mod
 
 
@@ -116,10 +116,10 @@ def test_probe_hunyuan_3d_format_uses_framework_format_detector(monkeypatch):
     from framework.observability import secrets as _secrets
     monkeypatch.setattr(_secrets, "hydrate_env", lambda path=None: None)
     monkeypatch.setenv("HUNYUAN_3D_KEY", "sk-test-fake")
-    sys.modules.pop("probe_hunyuan_3d_format", None)
+    sys.modules.pop("probes.provider.probe_hunyuan_3d_format", None)
 
     import inspect
-    import probe_hunyuan_3d_format as mod
+    from probes.provider import probe_hunyuan_3d_format as mod
 
     src = inspect.getsource(mod)
     # Positive: the probe imports the runtime format detector.
@@ -165,9 +165,9 @@ def test_probe_magic_rejects_unknown_payload_as_unknown_not_glb(monkeypatch):
     from framework.observability import secrets as _secrets
     monkeypatch.setattr(_secrets, "hydrate_env", lambda path=None: None)
     monkeypatch.setenv("HUNYUAN_3D_KEY", "sk-test-fake")
-    sys.modules.pop("probe_hunyuan_3d_format", None)
+    sys.modules.pop("probes.provider.probe_hunyuan_3d_format", None)
 
-    import probe_hunyuan_3d_format as mod
+    from probes.provider import probe_hunyuan_3d_format as mod
 
     # Real binary GLB still maps to "GLB".
     real_glb = b"glTF" + b"\x02\x00\x00\x00" + b"\x00" * 100
@@ -214,10 +214,10 @@ def test_probe_hunyuan_3d_format_uses_framework_url_picker(monkeypatch):
     monkeypatch.setattr(_secrets, "hydrate_env", lambda path=None: None)
     monkeypatch.setenv("HUNYUAN_3D_KEY", "sk-test-fake")
     # Drop any cached import so our fake env takes effect.
-    sys.modules.pop("probe_hunyuan_3d_format", None)
+    sys.modules.pop("probes.provider.probe_hunyuan_3d_format", None)
 
     import inspect
-    import probe_hunyuan_3d_format as mod
+    from probes.provider import probe_hunyuan_3d_format as mod
 
     src = inspect.getsource(mod)
     # Positive: the probe imports the framework picker.
@@ -318,7 +318,7 @@ def test_glm_probes_have_no_import_side_effects(probe_name):
     This is a source-level fence: the forbidden module-level patterns must
     not return after a future refactor."""
     import re
-    probe_path = _REPO_ROOT / f"{probe_name}.py"
+    probe_path = _REPO_ROOT / "probes" / "provider" / f"{probe_name}.py"
     src = probe_path.read_text(encoding="utf-8")
 
     module_body = re.split(r"\ndef\s+\w+|\nasync\s+def\s+\w+", src)[0]
@@ -348,7 +348,7 @@ def test_probe_hunyuan_3d_format_no_import_side_effects():
     Also `KEY = os.environ["HUNYUAN_3D_KEY"]` at top level crashed clean
     envs. Both are now deferred to runtime; this is a source-level fence."""
     import re
-    probe_path = _REPO_ROOT / "probe_hunyuan_3d_format.py"
+    probe_path = _REPO_ROOT / "probes" / "provider" / "probe_hunyuan_3d_format.py"
     src = probe_path.read_text(encoding="utf-8")
 
     # Negative fence: no unconditional side-effect at module level (outside
@@ -387,8 +387,8 @@ def test_probe_aliases_skip_returns_none_status(monkeypatch):
     # Stub env hydration so module import doesn't touch real .env.
     from framework.observability import secrets as _secrets
     monkeypatch.setattr(_secrets, "hydrate_env", lambda path=None: None)
-    sys.modules.pop("probe_aliases", None)
-    import probe_aliases as mod
+    sys.modules.pop("probes.smoke.probe_aliases", None)
+    from probes.smoke import probe_aliases as mod
 
     # Build a minimal route stand-in.
     class _Route:
