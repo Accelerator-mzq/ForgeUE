@@ -474,9 +474,19 @@ class Orchestrator:
                 model = exec_result.metrics.get(
                     "model") or exec_result.metrics.get("chosen_model")
                 if usage or model:
+                    # 2026-04 pricing wiring: CapabilityRouter.astructured
+                    # injects `_route_pricing` into the usage dict. Pull
+                    # it through to `estimate_call_cost_usd` so text
+                    # steps not on the review hot path (generate_
+                    # structured, UE5 API assist, etc.) also benefit
+                    # from yaml pricing when configured.
+                    route_pricing = None
+                    if isinstance(usage, dict):
+                        route_pricing = usage.get("_route_pricing")
                     cost_usd = estimate_call_cost_usd(
                         model=str(model or "unknown"),
                         usage=usage,
+                        route_pricing=route_pricing,
                     )
             if cost_usd is not None and cost_usd > 0:
                 budget_tracker.record(

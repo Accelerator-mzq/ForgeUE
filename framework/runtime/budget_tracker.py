@@ -96,16 +96,27 @@ class BudgetTracker:
 
 
 def estimate_call_cost_usd(*, model: str, usage: dict[str, int] | None = None,
-                            fallback_cost_per_1k: float = 0.0) -> float:
+                            fallback_cost_per_1k: float = 0.0,
+                            route_pricing: dict[str, float] | None = None) -> float:
     """Best-effort cost estimation for one completed LLM call.
 
-    Uses LiteLLM's built-in pricing table when available (most Anthropic /
-    OpenAI / Google models have entries). Falls back to `fallback_cost_per_1k`
-    applied to total usage tokens for unknown models.
+    Resolution precedence (2026-04 pricing wiring):
+    1. `route_pricing` from `models.yaml` (`input_per_1k_usd` +
+       `output_per_1k_usd`) — authoritative when both fields are
+       present. Uses `usage["prompt"]` + `usage["completion"]`
+       directly, bypasses litellm lookup entirely.
+    2. `litellm.completion_cost()` built-in table — covers most
+       Anthropic / OpenAI / Google models; misses CN providers.
+    3. `fallback_cost_per_1k` × total tokens — last-resort scalar
+       for models neither yaml nor litellm know.
 
-    Image-gen / mesh calls where usage is unknown default to a small fixed
-    estimate per call (`fallback_cost_per_1k` interpreted as per-call cost).
+    Image-gen / mesh calls where usage is unknown default to a small
+    fixed estimate per call (`fallback_cost_per_1k` interpreted as
+    per-call cost).
     """
+    yaml_cost = _yaml_text_cost(usage, route_pricing)
+    if yaml_cost is not None:
+        return yaml_cost
     try:
         from litellm import completion_cost
     except ImportError:
@@ -130,6 +141,29 @@ def estimate_call_cost_usd(*, model: str, usage: dict[str, int] | None = None,
         return _fallback_cost(usage, fallback_cost_per_1k)
 
 
+def _yaml_text_cost(
+    usage: dict[str, int] | None,
+    route_pricing: dict[str, float] | None,
+) -> float | None:
+    """Return a USD cost from yaml pricing when both input+output rates
+    are configured. None means the caller should fall through to the
+    next resolution step (litellm table, then scalar fallback).
+
+    We require BOTH rates because charging only input or only output
+    rate systematically under-estimates; partial yaml entries fall
+    through to litellm, which may have both.
+    """
+    if not route_pricing:
+        return None
+    input_rate = route_pricing.get("input_per_1k_usd")
+    output_rate = route_pricing.get("output_per_1k_usd")
+    if input_rate is None or output_rate is None:
+        return None
+    prompt = (usage or {}).get("prompt", 0) if usage else 0
+    completion = (usage or {}).get("completion", 0) if usage else 0
+    return (prompt / 1000.0) * input_rate + (completion / 1000.0) * output_rate
+
+
 def _fallback_cost(usage: dict[str, int] | None, cost_per_1k: float) -> float:
     if not usage:
         return cost_per_1k      # treated as per-call when no token info
@@ -140,16 +174,24 @@ def _fallback_cost(usage: dict[str, int] | None, cost_per_1k: float) -> float:
 def estimate_image_call_cost_usd(
     *, model: str, n: int = 1, size: str = "1024x1024",
     fallback_per_image_usd: float = 0.01,
+    route_pricing: dict[str, float] | None = None,
 ) -> float:
     """Best-effort cost estimate for one `image_generation` call producing *n* images.
 
-    LiteLLM's pricing table covers DALL-E / Flux / Imagen sizes; for
-    unknown image models (Qwen DashScope, Hunyuan tokenhub, self-hosted
-    Comfy) we fall back to a flat *fallback_per_image_usd × n* so the
-    BudgetTracker has something non-zero to accumulate.
+    Resolution precedence (2026-04 pricing wiring):
+    1. `route_pricing["per_image_usd"]` × n — authoritative flat rate
+       from `models.yaml` when configured. Size tiers deferred to a
+       future `per_image_by_size` dict (see plan "未启动").
+    2. `litellm.completion_cost(call_type="image_generation", ...)` —
+       covers DALL-E / Flux / Imagen sizes; misses CN providers.
+    3. `fallback_per_image_usd × n` — hardcoded scalar fallback
+       for unknown image models.
     """
     if n <= 0:
         return 0.0
+    yaml_per_image = (route_pricing or {}).get("per_image_usd")
+    if yaml_per_image is not None:
+        return float(yaml_per_image) * n
     try:
         from litellm import completion_cost
     except ImportError:
@@ -164,3 +206,28 @@ def estimate_image_call_cost_usd(
     except Exception:
         pass
     return fallback_per_image_usd * n
+
+
+def estimate_mesh_call_cost_usd(
+    *, model: str, num_candidates: int = 1,
+    route_pricing: dict[str, float] | None = None,
+    fallback_per_task_usd: float = 0.0,
+) -> float:
+    """Cost estimate for one mesh-generation step producing *num_candidates*
+    tasks. 2026-04 pricing wiring — before this, `GenerateMeshExecutor`
+    emitted no `cost_usd` metric at all, so BudgetTracker was blind to
+    Hunyuan 3D / Tripo3D spend regardless of cap.
+
+    LiteLLM has no mesh pricing table; yaml is the only real source.
+    `fallback_per_task_usd` stays 0.0 by default to preserve pre-PR
+    behaviour for tests / bundles that don't configure pricing — a
+    non-zero default would break `test_budget_tracker` expectations
+    for fake-mesh runs. Set explicitly when a caller wants a non-zero
+    floor for unknown mesh models.
+    """
+    if num_candidates <= 0:
+        return 0.0
+    per_task = (route_pricing or {}).get("per_task_usd")
+    if per_task is None:
+        per_task = fallback_per_task_usd
+    return float(per_task) * num_candidates

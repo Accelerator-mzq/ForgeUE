@@ -22,6 +22,7 @@ from framework.providers.base import (
     ProviderError,
     ProviderResult,
     ProviderTimeout,
+    ProviderUnsupportedResponse,
     SchemaValidationError,
 )
 
@@ -203,7 +204,10 @@ class LiteLLMAdapter(ProviderAdapter):
                 if "timeout" in msg.lower():
                     raise ProviderTimeout(msg) from exc
                 raise ProviderError(msg) from exc
-            return await _acollect_image_results(resp, model=model)
+            return await _acollect_image_results(
+                resp, model=model,
+                budget_s=timeout_s or self._default_timeout_s,
+            )
         return await super().aimage_edit(
             prompt=prompt, source_image_bytes=source_image_bytes, model=model,
             n=n, size=size, api_key=api_key, api_base=api_base,
@@ -239,22 +243,42 @@ class LiteLLMAdapter(ProviderAdapter):
                 raise ProviderTimeout(msg) from exc
             raise ProviderError(msg) from exc
 
-        return await _acollect_image_results(resp, model=model)
+        return await _acollect_image_results(
+            resp, model=model,
+            budget_s=timeout_s or self._default_timeout_s,
+        )
 
 
-async def _acollect_image_results(resp: Any, *, model: str) -> list[ImageResult]:
+async def _acollect_image_results(
+    resp: Any, *, model: str, budget_s: float | None = None,
+) -> list[ImageResult]:
     """Async normaliser for LiteLLM image_generation responses.
 
     URL variants are fetched via httpx.AsyncClient; `b64_json` variants are
     decoded locally. Item-shape coercion is identical to the sync version.
+
+    2026-04 共性平移: when `budget_s` is supplied, each URL fetch's httpx
+    timeout is clamped to the remaining wall-clock budget so a slow CDN
+    on image N can't monopolise the caller's `timeout_s`. Pre-fix every
+    fetch used a hardcoded 60s ceiling, so a 3-image response could
+    legitimately block for 180s behind a `timeout_s=60` call.
     """
+    import asyncio as _asyncio
     import base64
 
     data_list = getattr(resp, "data", None)
     if data_list is None and isinstance(resp, dict):
         data_list = resp.get("data")
     if not data_list:
-        raise ProviderError("litellm.image_generation returned no data")
+        # Deterministic empty response from the provider — retrying the same
+        # prompt has no reason to yield a different result. Route via
+        # abort_or_fallback rather than provider_error → fallback_model
+        # (which would loop the same step + rebill).
+        raise ProviderUnsupportedResponse(
+            "litellm.image_generation returned no data"
+        )
+
+    start = _asyncio.get_event_loop().time() if budget_s is not None else None
 
     results: list[ImageResult] = []
     for item in data_list:
@@ -273,9 +297,25 @@ async def _acollect_image_results(resp: Any, *, model: str) -> list[ImageResult]
         if b64:
             raw_bytes = base64.b64decode(b64)
         elif url:
-            raw_bytes = await _afetch_url_bytes(url)
+            per_url_timeout: float
+            if budget_s is None:
+                per_url_timeout = 60.0
+            else:
+                assert start is not None
+                elapsed = _asyncio.get_event_loop().time() - start
+                remaining = budget_s - elapsed
+                if remaining <= 0:
+                    raise ProviderTimeout(
+                        f"litellm.image_generation exceeded {budget_s}s budget "
+                        f"before fetching url {url!r} (collected "
+                        f"{len(results)}/{len(data_list)} items)"
+                    )
+                # Keep the 60s ceiling so a single slow CDN can't monopolise
+                # a generous budget; cap by remaining so a tight budget wins.
+                per_url_timeout = min(60.0, remaining)
+            raw_bytes = await _afetch_url_bytes(url, timeout_s=per_url_timeout)
         else:
-            raise ProviderError(
+            raise ProviderUnsupportedResponse(
                 f"image_generation item has neither b64_json nor url: keys={list(item)}"
             )
         results.append(ImageResult(
@@ -285,11 +325,17 @@ async def _acollect_image_results(resp: Any, *, model: str) -> list[ImageResult]
     return results
 
 
-async def _afetch_url_bytes(url: str) -> bytes:
-    """Async download an image URL to bytes (for providers that return URLs)."""
+async def _afetch_url_bytes(url: str, *, timeout_s: float = 60.0) -> bytes:
+    """Async download an image URL to bytes (for providers that return URLs).
+
+    `timeout_s` is the httpx client timeout for the whole request (connect +
+    read + total). Default 60s preserves pre-2026-04 behaviour for direct
+    callers; `_acollect_image_results` passes a budget-aware remaining
+    value when the caller supplied one.
+    """
     import httpx
     try:
-        async with httpx.AsyncClient(timeout=60.0) as c:
+        async with httpx.AsyncClient(timeout=timeout_s) as c:
             r = await c.get(url)
     except httpx.HTTPError as exc:
         raise ProviderError(f"GET {url} failed: {exc}") from exc

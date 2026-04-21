@@ -116,12 +116,23 @@ class ReviewExecutor(StepExecutor):
         # per-run and summed — avoids baking per-model pricing into a single
         # (model, usage) pair. Orchestrator sees `cost_usd` and records it via
         # BudgetTracker without any extra usage/model fields needed.
+        #
+        # 2026-04 pricing wiring: CapabilityRouter.astructured injects the
+        # selected route's yaml pricing under `usage["_route_pricing"]`.
+        # Forwarding it to `estimate_call_cost_usd` lets a run charge
+        # review at real provider rates (e.g. Hunyuan Claude proxy) when
+        # litellm's built-in table doesn't know the model — stops silent
+        # under-charging for CN judge models.
         cost_usd = 0.0
         for r in judge_runs:
             if r.usage or r.model_used:
+                pricing = None
+                if isinstance(r.usage, dict):
+                    pricing = r.usage.get("_route_pricing")
                 cost_usd += estimate_call_cost_usd(
                     model=r.model_used or "unknown",
                     usage=r.usage or None,
+                    route_pricing=pricing,
                 )
         metrics = {
             "visual_mode": visual_mode,

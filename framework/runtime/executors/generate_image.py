@@ -85,12 +85,13 @@ class GenerateImageExecutor(StepExecutor):
         last_exc: Exception | None = None
         candidates: list[ImageCandidate] | None = None
         chosen_model: str | None = None
+        route_pricing: dict[str, float] | None = None
         attempt_count = 0
         for attempt in range(attempts):
             attempt_count = attempt + 1
             try:
                 if use_api_path:
-                    candidates, chosen_model = self._generate_via_router(
+                    candidates, chosen_model, route_pricing = self._generate_via_router(
                         ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
                     )
                 else:
@@ -210,6 +211,7 @@ class GenerateImageExecutor(StepExecutor):
                 model=str(chosen_model or "unknown"),
                 n=len(image_ids),
                 size=f"{width}x{height}",
+                route_pricing=route_pricing,
             )
             if use_api_path and image_ids
             else 0.0
@@ -245,13 +247,19 @@ class GenerateImageExecutor(StepExecutor):
     def _generate_via_router(
         self, *, ctx: StepContext, spec: dict, num: int,
         seed: int | None, timeout_s: float | None,
-    ) -> tuple[list[ImageCandidate], str]:
+    ) -> tuple[list[ImageCandidate], str, dict[str, float] | None]:
         """Call CapabilityRouter.image_generation; wrap results as ImageCandidate.
 
         Plan C Phase 6 — when *num > 1* we fan out N parallel `n=1` calls via
         `asyncio.gather` under a single `asyncio.run`. Many image providers
         (Hunyuan tokenhub, Qwen async jobs) submit one job at a time, so the
         old `n=3` sync path secretly serialized candidates; parallel now.
+
+        2026-04 pricing wiring: returns a 3-tuple where the last element is
+        the selected route's yaml pricing dict (or None when the route
+        has no `pricing` block). Captured here rather than leaked into
+        ImageCandidate.metadata so downstream artifacts don't carry
+        framework-internal bookkeeping into persistent metadata.
         """
         import asyncio
         assert self._router is not None
@@ -296,6 +304,22 @@ class GenerateImageExecutor(StepExecutor):
                 prompt=prompt, n=num, size=size_arg,
                 timeout_s=timeout_s, extra=extra,
             )
+        # Capture the route's yaml pricing once — all results in a single
+        # call share the same chosen route. Strip the `_route_pricing`
+        # key from each result.raw before spreading into the candidate's
+        # metadata so downstream artifact metadata stays free of
+        # framework-internal bookkeeping.
+        route_pricing: dict[str, float] | None = None
+        for r in results:
+            if isinstance(r.raw, dict) and "_route_pricing" in r.raw:
+                route_pricing = r.raw.pop("_route_pricing")
+                # keep the first non-None; all should be identical
+                break
+        # Even if we didn't break above, strip stray keys from siblings
+        # (defensive against future router changes).
+        for r in results:
+            if isinstance(r.raw, dict):
+                r.raw.pop("_route_pricing", None)
         cands = [
             ImageCandidate(
                 data=r.data, width=width, height=height,
@@ -310,7 +334,7 @@ class GenerateImageExecutor(StepExecutor):
             )
             for i, r in enumerate(results)
         ]
-        return cands, chosen_model
+        return cands, chosen_model, route_pricing
 
 
 # ---------- helpers ----------------------------------------------------------

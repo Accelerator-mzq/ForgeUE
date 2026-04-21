@@ -35,7 +35,9 @@ from framework.providers.workers.mesh_worker import (
     MeshWorker,
     MeshWorkerError,
     MeshWorkerTimeout,
+    MeshWorkerUnsupportedResponse,
 )
+from framework.runtime.budget_tracker import estimate_mesh_call_cost_usd
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
 
 
@@ -152,16 +154,56 @@ class GenerateMeshExecutor(StepExecutor):
             mesh_arts.append(art)
             mesh_ids.append(aid)
 
+        # 2026-04 pricing wiring: charge mesh tasks against the run's budget.
+        # Pre-PR this executor emitted no `cost_usd` at all, so
+        # BudgetTracker was blind to Hunyuan 3D / Tripo3D spend regardless
+        # of `total_cost_cap_usd`. Pricing comes from the first eligible
+        # prepared route's yaml `pricing.per_task_usd` (mesh workers are
+        # directly injected, not routed — no CapabilityRouter involvement
+        # to stash pricing into a result's `raw`, so we source it from
+        # the step's ProviderPolicy instead).
+        route_pricing = _first_mesh_route_pricing(ctx)
+        cost_usd = estimate_mesh_call_cost_usd(
+            model=self._worker.name,
+            num_candidates=len(mesh_ids),
+            route_pricing=route_pricing,
+        )
         metrics = {
             "attempts": attempt_count,
             "mesh_count": len(mesh_ids),
             "worker": self._worker.name,
             "source_image_artifact_id": source_image_artifact_id,
+            "cost_usd": cost_usd,
         }
         return ExecutorResult(artifacts=mesh_arts, metrics=metrics)
 
 
 # ---------- helpers ---------------------------------------------------------
+
+def _first_mesh_route_pricing(ctx: StepContext) -> dict[str, float] | None:
+    """Return the yaml `pricing` dict of the first mesh-capable prepared
+    route on the step's ProviderPolicy, or None when no pricing is
+    configured (or the step has no policy at all — acceptable for
+    offline / fake runs).
+
+    Mesh workers are injected directly into `GenerateMeshExecutor`, so
+    there's no CapabilityRouter to stash the selected route's pricing
+    onto a `ProviderResult.raw`. Instead we read it from the step's
+    declared policy — the first `kind="mesh"` route wins, falling back
+    to `kind="image"` for legacy aliases that still mislabel mesh
+    routes as image, and finally `prepared_routes[0]` when neither
+    label exists.
+    """
+    pp = ctx.step.provider_policy
+    if pp is None or not pp.prepared_routes:
+        return None
+    for candidate_kind in ("mesh", "image"):
+        for route in pp.prepared_routes:
+            if getattr(route, "kind", "text") == candidate_kind and route.pricing:
+                return dict(route.pricing)
+    fallback = pp.prepared_routes[0]
+    return dict(fallback.pricing) if fallback.pricing else None
+
 
 def _resolve_spec(ctx: StepContext, cfg: dict) -> dict[str, Any]:
     inp = ctx.inputs.get("spec")
@@ -213,6 +255,12 @@ def _resolve_source_image(ctx: StepContext) -> tuple[bytes | None, str | None]:
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
+    # Deterministic "unsupported response" never retries — the provider
+    # returned the same thing it will return again. Let it bubble up so
+    # FailureModeMap routes to `worker_error` → `fallback_model` on the
+    # first try instead of burning another billable submit.
+    if isinstance(exc, MeshWorkerUnsupportedResponse):
+        return False
     if "timeout" in policy.retry_on and isinstance(exc, MeshWorkerTimeout):
         return True
     if "provider_error" in policy.retry_on and isinstance(exc, MeshWorkerError):

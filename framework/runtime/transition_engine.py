@@ -80,6 +80,22 @@ class TransitionEngine:
                     reason=f"max_retries({policy.max_retries}) exceeded on fallback_model",
                 )
             return TransitionResult(next_step_id=policy.on_fallback or step.step_id)
+        if d == Decision.abort_or_fallback:
+            # Deterministic unsupported result: honour `on_fallback` when
+            # the workflow declared one (e.g. human-review branch, second
+            # provider step) so Codex P2 recovery path is preserved.
+            # When nothing is configured we terminate — unlike
+            # `fallback_model`, we must NOT loop back to `step.step_id`
+            # because re-running the same call would reproduce the same
+            # unsupported output (and, for paid providers, rebill).
+            target = policy.on_fallback
+            return TransitionResult(
+                next_step_id=target,
+                terminated=target is None,
+                reason="abort_or_fallback"
+                if target is None
+                else None,
+            )
         if d == Decision.rollback:
             return TransitionResult(next_step_id=policy.on_rollback, terminated=policy.on_rollback is None,
                                     reason="rollback")

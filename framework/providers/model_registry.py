@@ -28,7 +28,7 @@ proxy, fallback = real Anthropic) without cross-talk.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,76 @@ class RegistryReferenceError(ValueError):
     can't be resolved at load time."""
 
 
+_PRICING_FIELDS = (
+    "input_per_1k_usd",
+    "output_per_1k_usd",
+    "per_image_usd",
+    "per_task_usd",
+)
+
+_AUTOGEN_FIELDS = (
+    "status",          # "fresh" | "stale" | "manual"
+    "sourced_on",      # ISO date string, e.g. "2026-04-21"
+    "source_url",      # provider pricing page URL the probe scraped
+    "cny_original",    # original CNY quote for audit ("¥1/次" / "¥0.8/M tokens")
+)
+_AUTOGEN_STATUSES = ("fresh", "stale", "manual")
+
+
+@dataclass(frozen=True)
+class PricingAutogen:
+    """Audit-trail metadata for `pricing:` values populated by
+    `probe_provider_pricing.py`. Lives on `ModelDef` (not `ResolvedRoute`)
+    because runtime cost accounting doesn't need it — only the probe
+    workflow and operator diffs care.
+
+    `status` tells the operator how fresh the number is:
+      - `fresh`: probe ran recently and wrote these values
+      - `stale`: probe ran but last run failed for this provider —
+        numbers are from an older run, cap enforcement may be off
+      - `manual`: human-edited contract price; probe must not overwrite
+
+    `sourced_on` + `source_url` let a reviewer re-verify against the
+    source page; `cny_original` preserves the native quote so FX-rate
+    changes can be back-computed without another probe run.
+    """
+
+    status: str = "manual"
+    sourced_on: str | None = None
+    source_url: str | None = None
+    cny_original: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelPricing:
+    """Per-model USD pricing. All fields optional — missing fields fall back
+    to `litellm.completion_cost()` or `BudgetPolicy.cost_per_1k_usd` at
+    runtime. Kept flat (no nested currency dict) because the whole project
+    is USD-only per 2026-04 共性平移 decision; CNY providers quote in
+    YAML comments next to the USD conversion.
+
+    Scope:
+    - text calls  → input_per_1k_usd + output_per_1k_usd
+    - image calls → per_image_usd (flat rate; size tiers via future
+                     `per_image_by_size` dict if needed)
+    - mesh calls  → per_task_usd
+
+    Unknown sub-field names raise RegistryReferenceError at YAML parse
+    time so a typo in `pricing.input_per_1k_uad` doesn't silently end
+    up as a zero-cost field.
+    """
+
+    input_per_1k_usd: float | None = None
+    output_per_1k_usd: float | None = None
+    per_image_usd: float | None = None
+    per_task_usd: float | None = None
+
+    def to_dict(self) -> dict[str, float]:
+        """Drop None entries so downstream consumers can cleanly check
+        `"input_per_1k_usd" in pricing_dict` without extra filtering."""
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
 @dataclass(frozen=True)
 class ProviderDef:
     name: str
@@ -57,6 +127,8 @@ class ModelDef:
     id: str                  # LiteLLM model id, e.g. "anthropic/MiniMax-M2.7"
     provider: ProviderDef
     kind: str = "text"       # "text" | "image" | "mesh" | "audio" | "vision"
+    pricing: ModelPricing | None = None
+    pricing_autogen: PricingAutogen | None = None
 
 
 @dataclass(frozen=True)
@@ -67,6 +139,7 @@ class ResolvedRoute:
     api_key_env: str | None
     api_base: str | None
     kind: str = "text"
+    pricing: ModelPricing | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +168,11 @@ class ModelAlias:
         source for D-plan runtime). `preferred_models` / `fallback_models` are
         also populated (string-only) so telemetry / dry-run code that reads
         them still sees something meaningful without understanding D plan.
+
+        2026-04 pricing wiring: every prepared route also carries an optional
+        `pricing` dict (flat USD rates per `ModelPricing`). BudgetTracker
+        consumes this to charge runs at real provider prices rather than
+        whatever `litellm.completion_cost()` happens to know.
         """
         return {
             "prepared_routes": [
@@ -103,6 +181,7 @@ class ModelAlias:
                     "api_key_env": r.api_key_env,
                     "api_base": r.api_base,
                     "kind": r.kind,
+                    "pricing": r.pricing.to_dict() if r.pricing else None,
                 }
                 for r in self.routes()
             ],
@@ -220,13 +299,101 @@ def _parse_models(
                 f"in {path} (known providers: {sorted(providers) or 'none'})"
             )
         kind = cfg.get("kind", "text")
+        pricing = _parse_pricing(cfg.get("pricing"), model=str(name), path=path)
+        autogen = _parse_pricing_autogen(
+            cfg.get("pricing_autogen"), model=str(name), path=path,
+        )
         out[str(name)] = ModelDef(
             name=str(name),
             id=str(model_id),
             provider=providers[provider_name],
             kind=str(kind),
+            pricing=pricing,
+            pricing_autogen=autogen,
         )
     return out
+
+
+def _parse_pricing_autogen(
+    raw: Any, *, model: str, path: Any,
+) -> PricingAutogen | None:
+    """Parse a `pricing_autogen:` block under a model entry. None when
+    absent. Typo-strict (unknown sub-fields raise) and status-strict
+    (only the three known values pass) so a probe-written file with
+    a garbled status doesn't silently become "valid but meaningless".
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"model {model!r} in {path}: `pricing_autogen` must be a "
+            f"mapping (got {type(raw).__name__})"
+        )
+    unknown = [k for k in raw if k not in _AUTOGEN_FIELDS]
+    if unknown:
+        raise RegistryReferenceError(
+            f"model {model!r} in {path}: unknown pricing_autogen field(s) "
+            f"{unknown} (known: {list(_AUTOGEN_FIELDS)})"
+        )
+    status = raw.get("status", "manual")
+    if status not in _AUTOGEN_STATUSES:
+        raise ValueError(
+            f"model {model!r} in {path}: pricing_autogen.status must be "
+            f"one of {_AUTOGEN_STATUSES} (got {status!r})"
+        )
+    return PricingAutogen(
+        status=str(status),
+        sourced_on=str(raw["sourced_on"]) if raw.get("sourced_on") else None,
+        source_url=str(raw["source_url"]) if raw.get("source_url") else None,
+        cny_original=str(raw["cny_original"]) if raw.get("cny_original") else None,
+    )
+
+
+def _parse_pricing(
+    raw: Any, *, model: str, path: Any,
+) -> ModelPricing | None:
+    """Parse a `pricing:` block under a model entry. None when absent.
+
+    Raises RegistryReferenceError on unknown sub-field names so typos
+    fail loudly at load time rather than silently producing zero-cost
+    estimates at run time. All known sub-field values must be numeric.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(
+            f"model {model!r} in {path}: `pricing` must be a mapping (got "
+            f"{type(raw).__name__})"
+        )
+    unknown = [k for k in raw if k not in _PRICING_FIELDS]
+    if unknown:
+        raise RegistryReferenceError(
+            f"model {model!r} in {path}: unknown pricing field(s) "
+            f"{unknown} (known: {list(_PRICING_FIELDS)})"
+        )
+    kwargs: dict[str, float | None] = {}
+    for field_name in _PRICING_FIELDS:
+        value = raw.get(field_name)
+        if value is None:
+            kwargs[field_name] = None
+            continue
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError(
+                f"model {model!r} in {path}: pricing.{field_name} must be a "
+                f"number (got {type(value).__name__}={value!r})"
+            )
+        if value < 0:
+            raise ValueError(
+                f"model {model!r} in {path}: pricing.{field_name} must be "
+                f">= 0 (got {value})"
+            )
+        kwargs[field_name] = float(value)
+    # If every field is None the whole block is effectively absent —
+    # return None so downstream `if route.pricing` checks behave
+    # identically to the "no block at all" case.
+    if all(v is None for v in kwargs.values()):
+        return None
+    return ModelPricing(**kwargs)
 
 
 def _parse_aliases(
@@ -279,6 +446,7 @@ def _resolve_alias_models(
             api_key_env=m.provider.api_key_env,
             api_base=m.provider.api_base,
             kind=m.kind,
+            pricing=m.pricing,
         ))
     return out
 

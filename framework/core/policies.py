@@ -39,12 +39,18 @@ class PreparedRoute(BaseModel):
     `kind` tags the modality (text / image / mesh / audio / vision) so
     modality-specific executors can assert the policy points at compatible
     models before routing.
+
+    `pricing` carries per-model USD rates copied from
+    `ModelRegistry.ModelPricing` at load time. Optional — when None,
+    BudgetTracker falls back to `litellm.completion_cost()` / the
+    BudgetPolicy fallback scalars. 2026-04 pricing wiring.
     """
 
     model: str
     api_key_env: str | None = None
     api_base: str | None = None
     kind: str = "text"
+    pricing: dict[str, float] | None = None
 
 
 class ProviderPolicy(BaseModel):

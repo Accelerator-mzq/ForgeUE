@@ -18,6 +18,23 @@
 #
 # 国内 provider 一般都开放 OpenAI 兼容端口，LiteLLM 用 `openai/<id>` 前缀走
 # `api_base` 覆盖即可，不用加自定义 adapter 代码。
+#
+# ------------- 定价字段（2026-04 pricing wiring + probe）-------------
+# `models.<name>.pricing` (可选) —— BudgetTracker 按此收费，优先于
+# `litellm.completion_cost()` 查表。字段单位全部 USD：
+#
+#   pricing:
+#     input_per_1k_usd:  0.0008   # 文本输入每 1K tokens
+#     output_per_1k_usd: 0.0024   # 文本输出每 1K tokens
+#     per_image_usd:     0.014    # 图像每张（扁平价，size 分档留 TODO）
+#     per_task_usd:      0.14     # mesh 每次任务
+#
+# `pricing_autogen` 是探针自动审计块（status / sourced_on / source_url /
+# cny_original）—— 探针 `python -m framework.pricing_probe --apply` 会刷新
+# fresh 状态模型，手工改过合同价的模型请把 status 改成 `manual`，探针将
+# 永不覆盖。国外 provider（OpenAI / Anthropic / Google）的 pricing 多数留空
+# 让 LiteLLM 查内置表；国内 provider（Zhipu / Qwen / Hunyuan）litellm 不认，
+# 必须声明，否则 BudgetTracker 退回 `fallback_cost_per_1k`（粗估）。
 
 # ---------------------------------------------------------------------------
 # ① Providers
@@ -83,7 +100,9 @@ providers:
 # ---------------------------------------------------------------------------
 
 models:
-  # ============ 现有（保留）============
+  # ============ 国外 big providers ============
+  # Pricing 留空 → LiteLLM 内置 completion_cost() 查表覆盖。
+
   mx_m2_7:
     id: "anthropic/MiniMax-M2.7"
     provider: minimaxi
@@ -144,92 +163,145 @@ models:
     provider: tripo3d
     kind: mesh
 
-  # ============ 新增：国内便宜替代 ============
+  # ============ 国内便宜替代 —— pricing_probe 自动维护 ============
 
   # --- 智谱 GLM 视觉（OpenAI 兼容 /chat/completions）---
   # 端点: https://open.bigmodel.cn/api/paas/v4/chat/completions
-  # 2 元/百万 tokens，比 Claude Sonnet 输入价便宜约 90%
   glm_4_6v_flashX:
     id: "openai/glm-4.6v-flashx"     # 智谱期望 *小写* id
     provider: zhipu_openai_compat
     kind: vision
-
+    pricing:
+      input_per_1k_usd: 2.1e-05
+      output_per_1k_usd: 0.000208
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://open.bigmodel.cn/pricing
+      cny_original: 输入 ¥0.15/M + 输出 ¥1.5/M (tier 输入长度 [0, 32))
   glm_4_6v:
     id: "openai/glm-4.6v"            # 小写
     provider: zhipu_openai_compat
     kind: vision
-
-  # --- 智谱图生成（待实测是否走 OpenAI /v1/images/generations 兼容）---
+    pricing:
+      input_per_1k_usd: 0.000139
+      output_per_1k_usd: 0.000417
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://open.bigmodel.cn/pricing
+      cny_original: 输入 ¥1/M + 输出 ¥3/M (tier 输入长度 [0, 32))
   glm_image:
     id: "openai/glm-image"           # 小写
     provider: zhipu_openai_compat
     kind: image
-
-  # --- 阿里 Qwen-Plus（视觉 + 文本）---
-  # OpenAI 兼容端点 https://dashscope.aliyuncs.com/compatible-mode/v1
+    pricing:
+      per_image_usd: 0.0139
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://open.bigmodel.cn/pricing
+      cny_original: ¥0.1/次
   qwen3_6_plus:
     id: "openai/qwen-plus"           # DashScope compatible-mode 下的真实 id
     provider: dashscope_openai_compat
     kind: vision                     # 支持图像/视频输入
-
-  # --- 阿里通义万相图生成 ---
-  # NOTE: Qwen-Image 不走 OpenAI /v1/images/generations，而是
-  # DashScope 原生 /api/v1/services/aigc/multimodal-generation/generation 协议
-  # 需要 QwenImageWorker / QwenImageAdapter 实现才能真跑（TODO）
+    pricing:
+      input_per_1k_usd: 0.000111
+      output_per_1k_usd: 0.000278
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://help.aliyun.com/zh/model-studio/model-pricing
+      cny_original: 输入 ¥0.8/M + 输出 ¥2/M (tier 0<Token≤128K)
   qwen_image_2:
     id: "qwen/qwen-image-2.0"        # 自定义命名空间，标明"非 OpenAI 路径"
     provider: dashscope_openai_compat
     kind: image
-
+    pricing:
+      per_image_usd: 0.0278
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://help.aliyun.com/zh/model-studio/model-pricing
+      cny_original: ¥0.2/张 (postpaid)
   qwen_image_2_pro:
     id: "qwen/qwen-image-2.0-pro"
     provider: dashscope_openai_compat
     kind: image
-
-  # --- 阿里通义万相图像编辑 ---
-  # 同协议，需要 QwenImageEditWorker 才能真跑（TODO）
+    pricing:
+      per_image_usd: 0.0694
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://help.aliyun.com/zh/model-studio/model-pricing
+      cny_original: ¥0.5/张 (postpaid)
   qwen_image_edit_plus:
     id: "qwen/qwen-image-edit-plus"
     provider: dashscope_openai_compat
     kind: image_edit
-
+    pricing:
+      per_image_usd: 0.0278
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://help.aliyun.com/zh/model-studio/model-pricing
+      cny_original: ¥0.2/张 (postpaid)
   qwen_image_edit_max:
     id: "qwen/qwen-image-edit-max"
     provider: dashscope_openai_compat
     kind: image_edit
-
+    pricing:
+      per_image_usd: 0.0694
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://help.aliyun.com/zh/model-studio/model-pricing
+      cny_original: ¥0.5/张 (postpaid)
   qwen_image_edit:
     id: "qwen/qwen-image-edit"
     provider: dashscope_openai_compat
     kind: image_edit
-
-  # --- 腾讯混元图生 ---
-  # 端点 tokenhub.tencentmaas.com/v1/api/image/{submit,query} —— 非 OpenAI 协议
-  # 需要 HunyuanImageWorker（TODO）
+    pricing:
+      per_image_usd: 0.0417
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://help.aliyun.com/zh/model-studio/model-pricing
+      cny_original: ¥0.3/张 (postpaid)
   hunyuan_image_v3:
     id: "hunyuan/hy-image-v3.0"      # 非 LiteLLM 前缀，标明自定义 worker
     provider: tencent_hunyuan_tokenhub
     kind: image
-
-  # --- 腾讯混元图像风格化（视同图编辑）---
+    pricing:
+      per_image_usd: 0.0694
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://cloud.tencent.com/document/product/1729/105925
+      cny_original: ¥0.5/张 (postpaid, <1万/月 tier)
   hunyuan_image_style:
     id: "hunyuan/hy-image-v3.0"      # 同 id，不同 kind 语义
     provider: tencent_hunyuan_tokenhub
     kind: image_edit
-
-  # --- 腾讯混元生 3D ---
-  # 端点 tokenhub.tencentmaas.com/v1/api/3d/{submit,query}
-  # 用 Bearer sk-xxx 认证（对应 HUNYUAN_3D_KEY），**不是** TC3 签名
-  # 当前 HunyuanMeshWorker 走 tencentcloudapi.com + TC3，需要重写为 tokenhub 版
+    pricing:
+      per_image_usd: 0.0694
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://cloud.tencent.com/document/product/1729/105925
+      cny_original: ¥0.5/张 (postpaid, <1万/月 tier)
   hunyuan_3d:
     id: "hunyuan/hy-3d-3.1"
     provider: tencent_hunyuan_3d_tokenhub
     kind: mesh
-
-# ---------------------------------------------------------------------------
-# ③ Aliases
-# ---------------------------------------------------------------------------
-
+    pricing:
+      per_task_usd: 0.25
+    pricing_autogen:
+      status: fresh
+      sourced_on: '2026-04-22'
+      source_url: https://cloud.tencent.com/document/product/1804/123461
+      cny_original: 15 积分/次 x ¥0.12/积分 (后付费) = ¥1.80/次
 aliases:
   # 别名按「场景能力」命名，不按厂商 / 成本档位命名。想换模型（国内国外、
   # 便宜强力）直接改 preferred / fallback 里引用的 model 名字即可 ——
@@ -238,46 +310,46 @@ aliases:
   # 轻量文本：结构化抽取 / 任务规划 / spec 组装
   text_cheap:
     preferred: [mx_m2_7]
-    fallback:  [pc_sonnet_4_6]
+    fallback: [pc_sonnet_4_6]
 
   # 强文本：复杂推理 / 长程规划
   text_strong:
     preferred: [pc_opus_4_6]
-    fallback:  [pc_sonnet_4_6]
+    fallback: [pc_sonnet_4_6]
 
   # 评审判官：rubric 打分 / Verdict 决策（文本 / metadata 级别）
   review_judge:
     preferred: [pc_opus_4_6]
-    fallback:  [pc_sonnet_4_6]
+    fallback: [pc_sonnet_4_6]
 
   # UE5 Python API 查询辅助（代码级问答）
   ue5_api_assist:
     preferred: [pc_sonnet_4_6]
-    fallback:  [pc_opus_4_6]
+    fallback: [pc_opus_4_6]
 
   # 视觉评审判官：多模态，真看图打分
   review_judge_visual:
     preferred: [glm_4_6v_flashX, glm_4_6v]
-    fallback:  [qwen3_6_plus]
+    fallback: [qwen3_6_plus]
 
   # 快速图生成
   image_fast:
-    preferred: [glm_image]
-    fallback:  [qwen_image_2]
+    preferred: [qwen_image_2]
+    fallback: [glm_image]
 
   # 高质量图生成
   image_strong:
     preferred: [qwen_image_2_pro]
-    fallback:  [hunyuan_image_v3]
+    fallback: [hunyuan_image_v3]
 
   # 图像编辑：prompt + 源图 → 编辑后图（L5-A 新能力）
   # CapabilityRouter.image_edit 同时接受 kind=image_edit 和 kind=image 路由
   # （kind=image 的 DALL-E 等通过 b64 source 在 image_generation 里做 edit）
   image_edit:
     preferred: [qwen_image_edit_plus]
-    fallback:  [qwen_image_edit_max, hunyuan_image_style]
+    fallback: [qwen_image_edit_max, hunyuan_image_style]
 
   # image-to-3D 网格生成
   mesh_from_image:
     preferred: [hunyuan_3d]
-    fallback:  [hunyuan_3d]
+    fallback: [hunyuan_3d]

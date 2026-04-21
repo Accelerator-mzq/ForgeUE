@@ -53,6 +53,15 @@ class Decision(str, Enum):
     revise = "revise"
     retry_same_step = "retry_same_step"
     fallback_model = "fallback_model"
+    # "The current step cannot produce a usable result; route to
+    # `on_fallback` if the workflow configured one, otherwise terminate."
+    # Distinct from `fallback_model` (which re-runs the SAME step when
+    # no on_fallback is set — a valid strategy for transient worker
+    # errors but the wrong answer for deterministic unsupported
+    # responses that would just re-bill the provider) and from `reject`
+    # (which only considers `on_reject`, ignoring the conventional
+    # `on_fallback` recovery route that mesh / image pipelines wire up).
+    abort_or_fallback = "abort_or_fallback"
     rollback = "rollback"
     human_review_required = "human_review_required"
 

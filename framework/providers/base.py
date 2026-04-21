@@ -24,6 +24,21 @@ class ProviderTimeout(ProviderError):
     """Request exceeded latency budget."""
 
 
+class ProviderUnsupportedResponse(ProviderError):
+    """Provider returned a deterministically bad/empty response shape that
+    this adapter cannot consume — e.g. `/submit` with no id, `/query`
+    success with no image URLs, choices array without content.
+
+    Distinct from generic `ProviderError` so FailureModeMap routes this
+    to `unsupported_response` → `Decision.abort_or_fallback` (honours
+    `on_fallback` when configured, else terminates) rather than
+    `provider_error` → `fallback_model` → same-step retry. The latter
+    would re-bill a paid provider (Hunyuan/Qwen/Tripo3D) for the same
+    deterministic bad shape. Mirrors `MeshWorkerUnsupportedResponse`
+    on the worker side — 2026-04 共性平移 extends the pattern from
+    mesh-only to all provider surfaces."""
+
+
 class SchemaValidationError(ProviderError):
     """Provider returned content that doesn't match the requested schema."""
 

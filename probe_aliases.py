@@ -36,8 +36,13 @@ from framework.providers.model_registry import (
     reset_model_registry,
 )
 
-hydrate_env()
-reset_model_registry()
+# NOTE: `hydrate_env()` + `reset_model_registry()` are intentionally
+# deferred to runtime. Module-level env mutation + registry reset would
+# fire on `import probe_aliases` even in read-only sandboxes (CI) or
+# clean environments, blocking static-analysis callers like
+# `tests/unit/test_probe_framework.py::inspect.getsource(...)`. Mirrors
+# the pattern in probe_hunyuan_3d_format.py / probe_glm_*.py. 2026-04
+# 共性平移 PR-3.
 
 _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36")
@@ -46,6 +51,15 @@ _TINY_PNG_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+h"
     "HgAHggJ/PchI7wAAAABJRU5ErkJggg=="
 )
+
+
+def _env_flag_enabled(name: str) -> bool:
+    """Explicit opt-in parse: only "1" / "true" / "yes" / "on" (case-insensitive)
+    count as enabled. Guards against `.env` entries like `FLAG=0` or
+    `FLAG=false` being treated as truthy by plain `os.environ.get`.
+    Shared semantics with probe_framework.py."""
+    val = (os.environ.get(name) or "").strip().lower()
+    return val in {"1", "true", "yes", "on"}
 
 
 def _post(url: str, headers: dict, body: bytes, timeout: float = 40.0) -> tuple[int, str]:
@@ -169,11 +183,14 @@ def probe_tripo3d(*, base: str, key: str) -> tuple[int, str]:
 
 # ---- dispatcher --------------------------------------------------------------
 
-def _pick_probe(route, env_key: str | None) -> tuple[str, tuple[int, str]]:
+def _pick_probe(route, env_key: str | None) -> tuple[str, tuple[int | None, str]]:
+    """Return (protocol_label, (status, body)). `status=None` signals
+    deliberate skip (no key, opt-in gated, unrecognized prefix) so `main()`
+    can render ⏭️ instead of ❌ — skipping is not failure."""
     model = route.model
     api_base = route.api_base
     if not env_key:
-        return "skip(no key)", (0, "env var not set")
+        return "skip(no key)", (None, "env var not set")
 
     # Text / Anthropic (packycode / minimaxi)
     if model.startswith("anthropic/"):
@@ -182,7 +199,7 @@ def _pick_probe(route, env_key: str | None) -> tuple[str, tuple[int, str]]:
 
     # Gemini — no probe here (requires native google auth, separate flow)
     if model.startswith("gemini/"):
-        return "skip(native gemini)", (0, "native Gemini SDK path not in this probe")
+        return "skip(native gemini)", (None, "native Gemini SDK path not in this probe")
 
     # Qwen image / edit — DashScope native multimodal-generation
     if model.startswith("qwen/"):
@@ -193,6 +210,10 @@ def _pick_probe(route, env_key: str | None) -> tuple[str, tuple[int, str]]:
 
     # Hunyuan tokenhub (image + 3D)
     if model.startswith("hunyuan/"):
+        if route.kind == "mesh" and not _env_flag_enabled("FORGEUE_PROBE_MESH"):
+            # Mesh submits always bill server-side even if we don't poll;
+            # opt in via FORGEUE_PROBE_MESH=1 to avoid surprise charges.
+            return "skip(mesh opt-in)", (None, "set FORGEUE_PROBE_MESH=1 to include")
         return "hunyuan/tokenhub-submit", probe_hunyuan_tokenhub(
             base=api_base, key=env_key, model_raw=model, kind=route.kind)
 
@@ -210,10 +231,15 @@ def _pick_probe(route, env_key: str | None) -> tuple[str, tuple[int, str]]:
         return "openai-compat/chat", probe_openai_chat(
             base=api_base, key=env_key, model_raw=model)
 
-    return f"skip(unrecognized prefix {model.split('/', 1)[0]})", (0, "unrecognized")
+    return f"skip(unrecognized prefix {model.split('/', 1)[0]})", (None, "unrecognized")
 
 
 def main() -> int:
+    # Lazy init — env hydration + registry reset happen on probe invocation,
+    # not at module import. Safe for `inspect.getsource(...)` static checks
+    # in read-only / no-key sandboxes.
+    hydrate_env()
+    reset_model_registry()
     reg = get_model_registry()
 
     print(f"{'alias':<24} {'model':<42} {'kind':<11} {'status':<7} protocol / snippet")
@@ -230,10 +256,18 @@ def main() -> int:
             env_key = os.environ.get(r.api_key_env) if r.api_key_env else None
             proto, (status, body) = _pick_probe(r, env_key)
             snippet = body[:140].replace("\n", " ")
-            status_disp = (
-                "ok  " if status == 200 else f"{status:>4d}" if status else "  -  "
-            )
-            mark = "✅" if status == 200 else "⚠️ " if 200 < status < 500 else "❌"
+            # Tri-state rendering — status=None means deliberate skip (no key,
+            # mesh opt-in gated, unrecognized prefix), NOT failure. Rendering
+            # it as ❌ used to mislead users into chasing a non-existent bug.
+            if status is None:
+                status_disp = "skip"
+                mark = "⏭️"
+            elif status == 200:
+                status_disp = "ok  "
+                mark = "✅"
+            else:
+                status_disp = f"{status:>4d}"
+                mark = "⚠️ " if 200 < status < 500 else "❌"
             print(f"{alias_name:<24} {r.model:<42} {r.kind:<11} "
                   f"{mark} {status_disp} [{proto}] {snippet}")
             time.sleep(1.2)    # gentle pace; avoid rate-limit bursts

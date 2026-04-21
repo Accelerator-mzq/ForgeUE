@@ -33,6 +33,7 @@ from framework.providers.base import (
     ProviderError,
     ProviderResult,
     ProviderTimeout,
+    ProviderUnsupportedResponse,
 )
 
 
@@ -130,7 +131,14 @@ class TokenhubMixin:
             )
         job_id = resp.get("id") or resp.get("job_id")
         if not job_id:
-            raise ProviderError(f"tokenhub submit returned no id: {resp}")
+            # Deterministic protocol mismatch — resubmitting the same body
+            # will return the same no-id response and rebill the provider.
+            # Route via abort_or_fallback rather than provider_error →
+            # fallback_model (which would loop same step). Mirror of
+            # `MeshWorkerUnsupportedResponse` on the image surface.
+            raise ProviderUnsupportedResponse(
+                f"tokenhub submit returned no id: {resp}"
+            )
         return str(job_id)
 
     async def _th_poll(self, *, query_url: str, key: str, model: str, job_id: str,
@@ -179,14 +187,25 @@ class TokenhubMixin:
             await asyncio.sleep(interval)
 
     @staticmethod
-    def _extract_result_url(resp: dict, *, prefer_keys: tuple[str, ...] = (
+    def _extract_result_urls_ranked(resp: dict, *, prefer_keys: tuple[str, ...] = (
         "url", "image_url", "result_url", "model_url", "pbr_model",
         "output_url", "file_url", "asset_url",
-    )) -> str:
-        """Find the downloadable result URL inside a tokenhub /query DONE response."""
+    )) -> list[str]:
+        """Return every downloadable result URL in a tokenhub /query DONE
+        response, ranked best-first (preferred dict keys, then other
+        http strings). De-duplicates so the same URL echoed under
+        multiple keys is only tried once.
+
+        2026-04 共性平移 PR-3: returns a list rather than a single best
+        pick so callers can fall through on a failed download (404 /
+        timeout / corrupted body) to the next-best candidate — mirrors
+        `_rank_hunyuan_3d_urls` in the mesh path. Most image responses
+        carry a single URL, in which case the list is `[that_url]` and
+        behaviour matches the pre-PR `_extract_result_url` exactly.
+        """
         def _walk(node, prefer: list[str], other: list[str]) -> None:
             if isinstance(node, str):
-                if node.startswith("http"):
+                if _is_http_url(node):
                     other.append(node)
                 return
             if isinstance(node, list):
@@ -195,7 +214,7 @@ class TokenhubMixin:
                 return
             if isinstance(node, dict):
                 for k, v in node.items():
-                    if isinstance(v, str) and v.startswith("http"):
+                    if isinstance(v, str) and _is_http_url(v):
                         (prefer if k in prefer_keys else other).append(v)
                     else:
                         _walk(v, prefer, other)
@@ -203,14 +222,52 @@ class TokenhubMixin:
         prefer_hits: list[str] = []
         other_hits: list[str] = []
         _walk(resp, prefer_hits, other_hits)
-        if prefer_hits:
-            return prefer_hits[0]
-        if other_hits:
-            return other_hits[0]
-        raise ProviderError(
-            f"tokenhub response has no recognizable result URL: "
-            f"keys={list(resp)} sample={str(resp)[:400]}"
+        # Dedup preserving rank order.
+        seen: set[str] = set()
+        ranked: list[str] = []
+        for bucket in (prefer_hits, other_hits):
+            for u in bucket:
+                if u in seen:
+                    continue
+                seen.add(u)
+                ranked.append(u)
+        return ranked
+
+    @staticmethod
+    def _extract_result_url(resp: dict, *, prefer_keys: tuple[str, ...] = (
+        "url", "image_url", "result_url", "model_url", "pbr_model",
+        "output_url", "file_url", "asset_url",
+    )) -> str:
+        """Return the single best result URL. Back-compat wrapper around
+        `_extract_result_urls_ranked` — preserves the old single-URL
+        surface for probes / diagnostics that only need one candidate.
+        New callers that want download fallthrough should use
+        `_extract_result_urls_ranked` directly.
+        """
+        ranked = TokenhubMixin._extract_result_urls_ranked(
+            resp, prefer_keys=prefer_keys,
         )
+        if not ranked:
+            raise ProviderError(
+                f"tokenhub response has no recognizable result URL: "
+                f"keys={list(resp)} sample={str(resp)[:400]}"
+            )
+        return ranked[0]
+
+
+def _is_http_url(value: object) -> bool:
+    """Return True when `value` is a string whose leading scheme is
+    `http:` or `https:`. Case-insensitive per RFC 3986, mirroring the
+    `_is_data_uri` helper in mesh_worker. Pre-PR the walkers used
+    `startswith("http")` directly, which would reject `HTTP://...`
+    (legal but rare) — unifying via this predicate makes the two
+    URL-walking code paths (tokenhub image, hunyuan 3d mesh) consistent
+    with each other and with the data-URI predicate. 2026-04 共性平移 PR-3.
+    """
+    if not isinstance(value, str):
+        return False
+    head = value.lstrip().lower()
+    return head.startswith("http://") or head.startswith("https://")
 
 
 # ----------------------------------------------------------------------------
@@ -277,18 +334,45 @@ class HunyuanImageAdapter(TokenhubMixin, ProviderAdapter):
                 job_id=job_id, budget_s=budget,
                 on_progress=on_poll_progress,
             )
-            result_url = self._extract_result_url(done_resp)
-            img_bytes = await self._th_download(
-                result_url, on_progress=on_download_progress,
-            )
-            return ImageResult(
-                data=img_bytes, model=model,
-                format="png", mime_type="image/png",
-                raw={"job_id": job_id, "source_url": result_url,
-                     "provider": "hunyuan_tokenhub",
-                     "size_requested": size, "n_requested": n,
-                     "candidate_index": index},
-            )
+            # Collect every candidate URL and try them in rank order —
+            # if the first download returns 404 / times out / server
+            # error, fall through to the next URL in the same DONE
+            # response rather than failing the whole job. Most tokenhub
+            # image responses carry a single URL, in which case
+            # `ranked == [that_url]` and behaviour is unchanged. Mirrors
+            # the HunyuanMeshWorker._one() fallthrough loop that §M
+            # 2026-04 introduced for the 3D path. 共性平移 PR-3.
+            ranked = self._extract_result_urls_ranked(done_resp)
+            if not ranked:
+                raise ProviderUnsupportedResponse(
+                    f"tokenhub image job {job_id} DONE response has no "
+                    f"recognizable URL: keys={list(done_resp)} "
+                    f"sample={str(done_resp)[:400]}"
+                )
+
+            last_download_error: ProviderError | None = None
+            for result_url in ranked:
+                try:
+                    img_bytes = await self._th_download(
+                        result_url, on_progress=on_download_progress,
+                    )
+                except ProviderError as exc:
+                    # 404 / 5xx / network — may recover from a sibling URL.
+                    last_download_error = exc
+                    continue
+                return ImageResult(
+                    data=img_bytes, model=model,
+                    format="png", mime_type="image/png",
+                    raw={"job_id": job_id, "source_url": result_url,
+                         "provider": "hunyuan_tokenhub",
+                         "size_requested": size, "n_requested": n,
+                         "candidate_index": index},
+                )
+            # Every ranked URL failed to download. Raise the last
+            # download error — the orchestrator's fallback_model path
+            # handles transient CDN issues with a fresh submit.
+            assert last_download_error is not None
+            raise last_download_error
 
         if n == 1:
             return [await _one(0)]

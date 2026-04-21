@@ -24,6 +24,17 @@ class FailureMode(str, Enum):
     schema_validation_fail = "schema_validation_fail"
     worker_timeout = "worker_timeout"
     worker_error = "worker_error"
+    # Deterministic unsupported response — the provider returned something
+    # the worker can't consume (e.g. mesh ZIP bundle, non-self-contained
+    # .gltf/.obj). Retrying / "falling back to same step" just burns more
+    # quota for the same output; we classify this separately and route to
+    # `Decision.abort_or_fallback` which honours `transition_policy.
+    # on_fallback` when the workflow declared one (human-review branch,
+    # secondary provider step) but terminates cleanly when nothing is
+    # configured — NEVER loops back to the same step (unlike
+    # `fallback_model`, which would rebill the provider for the same
+    # deterministic bad output). See Codex P2 2026-04.
+    unsupported_response = "unsupported_response"
     budget_exceeded = "budget_exceeded"
     disk_full = "disk_full"
 
@@ -56,6 +67,12 @@ DEFAULT_MAP: dict[FailureMode, FailureMapEntry] = {
         FailureMode.worker_error, Decision.fallback_model,
         "worker error — transitioning via on_fallback",
     ),
+    FailureMode.unsupported_response: FailureMapEntry(
+        FailureMode.unsupported_response, Decision.abort_or_fallback,
+        "provider returned an unsupported response shape — "
+        "routing via on_fallback when configured, else terminate "
+        "(no same-step retry)",
+    ),
     FailureMode.budget_exceeded: FailureMapEntry(
         FailureMode.budget_exceeded, Decision.human_review_required,
         "budget cap exceeded — escalating",
@@ -73,17 +90,33 @@ def classify(exc: BaseException) -> FailureMode | None:
     from framework.providers.base import (
         ProviderError,
         ProviderTimeout,
+        ProviderUnsupportedResponse,
         SchemaValidationError,
     )
-    from framework.providers.workers.comfy_worker import WorkerError, WorkerTimeout
+    from framework.providers.workers.comfy_worker import (
+        WorkerError,
+        WorkerTimeout,
+        WorkerUnsupportedResponse,
+    )
     from framework.providers.workers.mesh_worker import (
         MeshWorkerError,
         MeshWorkerTimeout,
+        MeshWorkerUnsupportedResponse,
     )
 
-    # Image-modality workers (Comfy) and mesh-modality workers share the
-    # worker_timeout / worker_error failure modes so the orchestrator can route
-    # both through the same retry_same_step / fallback_model policy branches.
+    # Deterministic "unsupported response" subclasses MUST be checked before
+    # their generic parents. The orchestrator treats worker_error / provider_
+    # error as transient-enough to warrant `fallback_model` → same-step
+    # retry; rerouting an unsupported-shape exception through that path
+    # rebills paid providers (Hunyuan/Qwen/Tripo3D/DashScope) for the same
+    # bad output. 2026-04 共性平移 extended the mesh-only
+    # `MeshWorkerUnsupportedResponse` pattern to every image/worker surface.
+    if isinstance(exc, (
+        MeshWorkerUnsupportedResponse,
+        WorkerUnsupportedResponse,
+        ProviderUnsupportedResponse,
+    )):
+        return FailureMode.unsupported_response
     if isinstance(exc, (WorkerTimeout, MeshWorkerTimeout)):
         return FailureMode.worker_timeout
     if isinstance(exc, (WorkerError, MeshWorkerError)):

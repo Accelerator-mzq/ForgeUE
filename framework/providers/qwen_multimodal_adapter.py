@@ -44,6 +44,7 @@ from framework.providers.base import (
     ProviderError,
     ProviderResult,
     ProviderTimeout,
+    ProviderUnsupportedResponse,
 )
 
 
@@ -190,8 +191,15 @@ async def _aextract_image_results(resp: dict, *, model: str) -> list[ImageResult
     output = resp.get("output") or {}
     choices = output.get("choices") or []
     if not choices:
+        # Deterministic empty response — DashScope reported the job as
+        # complete but returned zero choices. Retrying the same prompt
+        # has no reason to produce a different result; route via
+        # abort_or_fallback instead of provider_error → fallback_model
+        # (which would rebill DashScope for the same empty output).
         err = resp.get("message") or resp.get("code") or str(resp)[:300]
-        raise ProviderError(f"DashScope multimodal returned no choices: {err}")
+        raise ProviderUnsupportedResponse(
+            f"DashScope multimodal returned no choices: {err}"
+        )
 
     # Collect URLs first, then download concurrently via asyncio.gather
     urls: list[str] = []
@@ -203,7 +211,10 @@ async def _aextract_image_results(resp: dict, *, model: str) -> list[ImageResult
             if isinstance(url, str):
                 urls.append(url)
     if not urls:
-        raise ProviderError(
+        # Response shape was valid but every choice lacked an image block —
+        # same deterministic class of failure as "no choices", route the
+        # same way so paid retries are avoided.
+        raise ProviderUnsupportedResponse(
             f"DashScope multimodal response had choices but no image content: "
             f"{str(choices)[:300]}"
         )

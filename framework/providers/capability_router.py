@@ -90,7 +90,9 @@ class CapabilityRouter:
             call = _rebind(call_template, route=route, policy=policy)
             adapter = self._resolve(route.model)
             try:
-                return await adapter.acompletion(call), route.model
+                result = await adapter.acompletion(call)
+                _stash_route_pricing_on_result(result, route)
+                return result, route.model
             except ProviderError as exc:
                 last = exc
                 continue
@@ -108,6 +110,15 @@ class CapabilityRouter:
         `asyncio.gather` (chief-judge panel) since all judge tasks share
         one event-loop thread. Returning usage explicitly has no such
         race.
+
+        2026-04 pricing wiring: when the selected route carries yaml
+        pricing, it's injected into the returned `usage` dict under
+        `"_route_pricing"`. Callers forward that into
+        `estimate_call_cost_usd(..., route_pricing=usage["_route_pricing"])`
+        so review / standalone paths charge at real provider rates
+        rather than whatever litellm happens to know. Keeps the
+        tuple signature stable — callers that ignore the key are
+        unaffected.
         """
         last: ProviderError | None = None
         for route in self._routes(policy):
@@ -115,6 +126,7 @@ class CapabilityRouter:
             adapter = self._resolve(route.model)
             try:
                 obj, usage = await adapter.astructured_with_usage(call, schema)
+                usage = _stash_route_pricing_on_usage(usage, route)
                 return obj, route.model, usage
             except ProviderError as exc:
                 last = exc
@@ -132,15 +144,23 @@ class CapabilityRouter:
         for route in self._routes(policy):
             if route.kind not in accepted_kinds:
                 continue
-            api_key, api_base = _resolve_image_auth(route, policy)
-            adapter = self._resolve(route.model)
             try:
+                # Auth resolution MUST be inside try — it raises ProviderError
+                # when env var is missing, and that's a per-route failure the
+                # fallback loop must recover from (not a hard-abort). Before
+                # this fix, a misconfigured preferred route (e.g. qwen with
+                # no DASHSCOPE_API_KEY) killed the whole call and never even
+                # attempted the fallback glm/hunyuan routes.
+                api_key, api_base = _resolve_image_auth(route, policy)
+                adapter = self._resolve(route.model)
                 results = await adapter.aimage_edit(
                     prompt=prompt, source_image_bytes=source_image_bytes,
                     model=route.model, n=n, size=size,
                     api_key=api_key, api_base=api_base,
                     timeout_s=timeout_s, extra=extra,
                 )
+                for item in results:
+                    _stash_route_pricing_on_result(item, route)
                 return results, route.model
             except NotImplementedError:
                 last = ProviderError(
@@ -159,14 +179,18 @@ class CapabilityRouter:
     ) -> tuple[list[ImageResult], str]:
         last: ProviderError | None = None
         for route in self._routes(policy):
-            api_key, api_base = _resolve_image_auth(route, policy)
-            adapter = self._resolve(route.model)
             try:
+                # See aimage_edit for the auth-inside-try rationale. Env-missing
+                # on a preferred route must not block fallback attempts.
+                api_key, api_base = _resolve_image_auth(route, policy)
+                adapter = self._resolve(route.model)
                 results = await adapter.aimage_generation(
                     prompt=prompt, model=route.model, n=n, size=size,
                     api_key=api_key, api_base=api_base,
                     timeout_s=timeout_s, extra=extra,
                 )
+                for item in results:
+                    _stash_route_pricing_on_result(item, route)
                 return results, route.model
             except NotImplementedError:
                 last = ProviderError(
@@ -216,6 +240,41 @@ class CapabilityRouter:
             policy=policy, prompt=prompt, n=n, size=size,
             timeout_s=timeout_s, extra=extra,
         ))
+
+
+def _stash_route_pricing_on_result(result: object, route: PreparedRoute) -> None:
+    """Attach the selected route's yaml pricing onto a `ProviderResult` /
+    `ImageResult`'s `raw` dict so downstream executors can charge the
+    run at real provider rates. No-op when the route has no yaml
+    pricing configured — `raw["_route_pricing"]` simply isn't set
+    and callers fall through to litellm / scalar fallback.
+
+    Key name is underscored to flag framework-internal (not adapter-
+    origin) metadata, matching the `_forge_*` convention elsewhere.
+    Safe to call on any object exposing a `raw` dict; silently skips
+    objects that don't (defensive — no production path hits that).
+    2026-04 pricing wiring.
+    """
+    if route.pricing is None:
+        return
+    raw = getattr(result, "raw", None)
+    if not isinstance(raw, dict):
+        return
+    raw["_route_pricing"] = dict(route.pricing)
+
+
+def _stash_route_pricing_on_usage(
+    usage: dict[str, int] | None, route: PreparedRoute,
+) -> dict:
+    """Same intent as `_stash_route_pricing_on_result` but for structured
+    calls where usage is a top-level dict rather than a `.raw` attribute.
+    Returns a new dict — never mutates the adapter-returned usage
+    so downstream caching / retry paths don't see a surprise key.
+    """
+    out: dict = dict(usage or {})
+    if route.pricing is not None:
+        out["_route_pricing"] = dict(route.pricing)
+    return out
 
 
 def _resolve_image_auth(

@@ -33,6 +33,22 @@ class WorkerTimeout(WorkerError):
     """Worker exceeded wall-clock budget."""
 
 
+class WorkerUnsupportedResponse(WorkerError):
+    """Worker observed a deterministically bad response shape that it
+    cannot consume — e.g. `/prompt` without a prompt_id, `/history`
+    outputs array with zero images, caller-supplied spec missing
+    required fields.
+
+    Distinct from generic `WorkerError` so FailureModeMap routes this
+    to `unsupported_response` → `Decision.abort_or_fallback` rather
+    than `worker_error` → `fallback_model` → same-step retry. The
+    mesh-side `MeshWorkerUnsupportedResponse` established this
+    pattern; 2026-04 共性平移 extends it to image workers. For a
+    paid ComfyUI cloud deployment the retry savings are small, but
+    the decision-routing correctness matters for workflows that
+    declared `on_fallback`."""
+
+
 @dataclass
 class ImageCandidate:
     """One image result from a ComfyWorker call."""
@@ -213,7 +229,10 @@ class HTTPComfyWorker(ComfyWorker):
         requests = self._import_requests()
         graph = spec.get("workflow_graph")
         if graph is None:
-            raise WorkerError("HTTPComfyWorker needs spec['workflow_graph'] (ComfyUI JSON)")
+            raise WorkerUnsupportedResponse(
+                "HTTPComfyWorker needs spec['workflow_graph'] (ComfyUI JSON) — "
+                "deterministic config error, retrying same step cannot recover"
+            )
 
         submit_body = {"prompt": graph, "client_id": self._client_id}
         if seed is not None:
@@ -233,21 +252,50 @@ class HTTPComfyWorker(ComfyWorker):
             raise WorkerError(f"ComfyUI /prompt {resp.status_code}: {resp.text[:200]}")
         prompt_id = resp.json().get("prompt_id")
         if not prompt_id:
-            raise WorkerError("ComfyUI /prompt did not return prompt_id")
+            raise WorkerUnsupportedResponse(
+                "ComfyUI /prompt did not return prompt_id — protocol mismatch, "
+                "same-step retry cannot fix a malformed server response"
+            )
 
         while True:
             if time.monotonic() - start > budget:
                 raise WorkerTimeout(f"ComfyUI prompt_id={prompt_id} exceeded {budget}s")
-            hist = requests.get(f"{self._base_url}/history/{prompt_id}", timeout=10.0)
+            remaining = budget - (time.monotonic() - start)
+            hist = requests.get(
+                f"{self._base_url}/history/{prompt_id}",
+                timeout=min(10.0, max(1.0, remaining)),
+            )
             if hist.status_code == 200:
                 data = hist.json().get(prompt_id)
                 if data and data.get("outputs"):
-                    return self._collect_outputs(requests, data["outputs"], spec=spec, seed=seed)
+                    return self._collect_outputs(
+                        requests, data["outputs"],
+                        spec=spec, seed=seed,
+                        budget_s=budget, start_monotonic=start,
+                    )
             time.sleep(self._poll_interval_s)
 
     def _collect_outputs(
         self, requests, outputs: dict, *, spec: dict, seed: int | None,
+        budget_s: float | None = None,
+        start_monotonic: float | None = None,
     ) -> list[ImageCandidate]:  # pragma: no cover - real network
+        """Fetch each image referenced by the `/history` outputs map.
+
+        2026-04 共性平移: every `/view` download respects the step's
+        remaining wall-clock budget. Pre-fix each image fetched with a
+        hardcoded `timeout=30.0`, so a workflow returning N images could
+        legitimately block for `30 × N` seconds past the caller's
+        `timeout_s` — a `worker_timeout_s=60` step with 9 images could
+        stall for 270s + poll, completely defeating the orchestrator's
+        timeout policy. Now each fetch clamps to `min(30, remaining)`
+        and the worker raises `WorkerTimeout` when the budget is
+        exhausted mid-collection.
+
+        `budget_s` / `start_monotonic` are optional so the low-cost
+        paths (fake worker, unit tests) that don't need budget-awareness
+        keep working with the pre-2026-04 signature.
+        """
         results: list[ImageCandidate] = []
         width = int(spec.get("width", 0))
         height = int(spec.get("height", 0))
@@ -256,11 +304,22 @@ class HTTPComfyWorker(ComfyWorker):
                 fname = image_meta.get("filename")
                 if not fname:
                     continue
+                if budget_s is not None and start_monotonic is not None:
+                    remaining = budget_s - (time.monotonic() - start_monotonic)
+                    if remaining <= 0:
+                        raise WorkerTimeout(
+                            f"ComfyUI _collect_outputs exceeded {budget_s}s "
+                            f"budget before fetching {fname!r} (collected "
+                            f"{len(results)} images)"
+                        )
+                    per_image_timeout = min(30.0, remaining)
+                else:
+                    per_image_timeout = 30.0
                 r = requests.get(
                     f"{self._base_url}/view",
                     params={"filename": fname, "type": image_meta.get("type", "output"),
                             "subfolder": image_meta.get("subfolder", "")},
-                    timeout=30.0,
+                    timeout=per_image_timeout,
                 )
                 if r.status_code != 200:
                     raise WorkerError(f"ComfyUI /view {r.status_code} for {fname}")
@@ -269,5 +328,9 @@ class HTTPComfyWorker(ComfyWorker):
                     metadata={"node_id": node_id, "filename": fname, "source": "http_comfy"},
                 ))
         if not results:
-            raise WorkerError("ComfyUI returned no images")
+            raise WorkerUnsupportedResponse(
+                "ComfyUI history outputs contained no images — deterministic "
+                "empty response, same-step retry just re-runs the same workflow "
+                "for the same empty result; route to on_fallback instead"
+            )
         return results
