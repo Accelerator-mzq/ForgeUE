@@ -58,10 +58,25 @@ class ReviewExecutor(StepExecutor):
         # image-modality candidate and passes them as multimodal content blocks
         # to the judge. Requires vision-capable models in provider_policy.
         visual_mode = bool(cfg.get("visual_mode", False))
+        # TBD-006 (2026-04-22): real provider-generated images (~320KB each)
+        # blow past every vision provider's input limit when 3+ candidates
+        # share one message. Compress by default whenever visual_mode is on;
+        # raw bytes under threshold pass through (Anthropic small-image
+        # path stays untouched).
+        compress_images = bool(cfg.get("compress_images", visual_mode))
+        compress_max_dim = int(cfg.get("compress_max_dim", 768))
+        compress_quality = int(cfg.get("compress_quality", 80))
+        compress_threshold_bytes = int(cfg.get("compress_threshold_bytes", 256 * 1024))
 
         candidates = _build_candidates(ctx, cfg)
         if visual_mode:
-            candidates = _attach_image_bytes(ctx, candidates)
+            candidates = _attach_image_bytes(
+                ctx, candidates,
+                compress=compress_images,
+                max_dim=compress_max_dim,
+                quality=compress_quality,
+                threshold_bytes=compress_threshold_bytes,
+            )
         if not candidates:
             raise RuntimeError(
                 f"review step {ctx.step.step_id} found zero candidates to review"
@@ -193,6 +208,37 @@ def _resolve_panel(cfg: dict, fallback: ProviderPolicy | None) -> list[ProviderP
     return policies
 
 
+def _summarize_image_payload(art) -> dict:
+    """Return a metadata dict instead of raw image bytes for the judge prompt.
+
+    For image-modality artifacts, the raw payload is bytes (PNG/JPEG/...).
+    Letting that flow into `CandidateInput.payload` is a 4x-bloat trap:
+    `_build_prompt` JSON-dumps every payload with `default=str`, which renders
+    a 320KB PNG as a ~1.28M-char `b'\\x89PNG\\xNN...'` repr inside the user
+    text block. Combined with visual_mode's image_url base64, three 1024x1024
+    candidates produce ~5M chars and blow past every vision provider's input
+    limit (DashScope 1M cap was the first to scream).
+
+    The judge does not need byte content in the text block — visual mode
+    delivers actual pixels via `CandidateInput.image_bytes` -> image_url.
+    Text mode never had business carrying binary anyway. This summary keeps
+    enough metadata for the judge to refer to candidates by id / source.
+    """
+    return {
+        "_image_artifact_id": art.artifact_id,
+        "mime_type": art.mime_type,
+        "size_bytes": art.payload_ref.size_bytes if art.payload_ref else None,
+        "source_model": art.producer.model if art.producer else None,
+    }
+
+
+def _candidate_payload(art, repo) -> object:
+    """Image -> metadata summary, everything else -> raw payload."""
+    if art.artifact_type.modality == "image":
+        return _summarize_image_payload(art)
+    return repo.read_payload(art.artifact_id)
+
+
 def _build_candidates(ctx: StepContext, cfg: dict) -> list[CandidateInput]:
     inline = ctx.inputs.get("candidates") or cfg.get("candidate_payloads")
     if inline:
@@ -228,7 +274,7 @@ def _build_candidates(ctx: StepContext, cfg: dict) -> list[CandidateInput]:
             child = repo.get(cid)
             out.append(CandidateInput(
                 candidate_id=cid,
-                payload=repo.read_payload(cid),
+                payload=_candidate_payload(child, repo),
                 artifact_id=cid,
                 source_model=child.producer.model,
             ))
@@ -242,16 +288,27 @@ def _build_candidates(ctx: StepContext, cfg: dict) -> list[CandidateInput]:
         art = repo.get(aid)
         out.append(CandidateInput(
             candidate_id=aid,
-            payload=repo.read_payload(aid),
+            payload=_candidate_payload(art, repo),
             artifact_id=aid,
             source_model=art.producer.model,
         ))
     return out
 
 
-def _attach_image_bytes(ctx: StepContext, candidates: list) -> list:
+def _attach_image_bytes(
+    ctx: StepContext, candidates: list, *,
+    compress: bool = False, max_dim: int = 768, quality: int = 80,
+    threshold_bytes: int = 256 * 1024,
+) -> list:
     """For visual review: load raw bytes for every candidate whose artifact is
-    an image (modality='image'). Non-image candidates pass through unchanged."""
+    an image (modality='image'). Non-image candidates pass through unchanged.
+
+    When ``compress`` is True (default for visual_mode in `execute`), images
+    larger than ``threshold_bytes`` are re-encoded via ``compress_for_vision``
+    so 3+ candidates fit a single vision provider message. Smaller images
+    short-circuit (no re-encode) so Anthropic / small-fixture paths stay
+    byte-identical.
+    """
     repo = ctx.repository
     out = []
     for c in candidates:
@@ -259,8 +316,20 @@ def _attach_image_bytes(ctx: StepContext, candidates: list) -> list:
             art = repo.get(c.artifact_id)
             if art.artifact_type.modality == "image":
                 try:
-                    c.image_bytes = repo.read_payload(c.artifact_id)
-                    c.image_mime = art.mime_type or "image/png"
+                    raw = repo.read_payload(c.artifact_id)
+                    mime = art.mime_type or "image/png"
+                    if (compress
+                            and isinstance(raw, (bytes, bytearray))
+                            and len(raw) > threshold_bytes):
+                        # Lazy import keeps non-visual paths Pillow-free.
+                        from framework.review_engine.image_prep import (
+                            compress_for_vision,
+                        )
+                        raw, mime = compress_for_vision(
+                            bytes(raw), max_dim=max_dim, quality=quality,
+                        )
+                    c.image_bytes = raw
+                    c.image_mime = mime
                 except Exception:
                     # If bytes can't be read (inline text etc.), fall back to
                     # metadata-only review for this candidate.

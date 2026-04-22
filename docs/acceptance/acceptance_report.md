@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 526 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6) |
+| L0 自动化 | `pytest -q` 全绿 | 536 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 |
@@ -418,7 +418,7 @@ python -m pytest -q                            # 全量回归
   - hunyuan_3d × 1(hunyuan_3d)
 - `pricing_autogen.sourced_on` = 执行当日
 - tripo3d 下 model 维持 `no_parser`(scaffold 未实装 parser,区别于 `stale`)
-- 526 测试仍全绿
+- 536 测试仍全绿
 
 **状态**:✅ 已通过(2026-04-22 dry-run + --apply,所有 12 个 model 返 `fresh`,真实页面数值与 YAML 一致,`--apply` 无 diff;DashScope parser 已随 2026-04-22 工作树并入,tripo3d 维持 `no_parser`)
 
@@ -427,8 +427,8 @@ python -m pytest -q                            # 全量回归
 ```
 顺序 1: A3(本地 + playwright)                  ✅ 已完成(2026-04-22)
 顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) ✅ 已完成(commit 293979f / 74c0849)
-顺序 3: A2 qwen/hunyuan 图像链 live smoke       ⚠️ 部分完成(2026-04-22):3/5 绿(a2_char / a2_image / a2_review),a2_mesh 炸在视觉 review payload 超限 → §7 TBD-006,a2_ue 与 A1 合并
-顺序 4: A2 mesh_from_image live smoke           ⏳ 阻塞于 TBD-006(图像压缩)
+顺序 3: A2 qwen/hunyuan 图像链 live smoke       ⚠️ 部分完成(2026-04-22):3/5 绿(a2_char / a2_image / a2_review),a2_mesh 炸在视觉 review payload 超限 → TBD-006 修复后可 resume
+顺序 4: A2 mesh_from_image live smoke           🔓 解锁(TBD-006 已修,代码 + fence 就位;待用户授权 resume a2_mesh 烧 ~$0.5-1 mesh 费用)
 顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时(a2_ue 合并进来)
 ```
 
@@ -445,14 +445,25 @@ python -m pytest -q                            # 全量回归
    - `openai/qwen-plus`: `Range of input length should be [1, 1000000]`(DashScope 措辞)
 3. 量化 payload:3 张 1024×1024 Qwen-image 生成 PNG → base64 总 **1,262,246 字符** > 所有三家 provider 的单消息输入上限
 
-**根因**:`framework.review_engine.judge._build_prompt()` 在 `visual_mode=True` 时,把每个 candidate 的 `image_bytes` 原封不动 base64 后塞进同一条 user message 的 `image_url` content block。对 3 个 1024×1024 PNG(~320KB 原始 / ~427KB base64 each)无节制拼接 → ~1.26MB,超 DashScope 硬限 1M / GLM 同级别上限。
+**根因**(双 bug,Codex 独立 review 协助暴露第二条):
+
+- **Bug B**(原 Claude 定位):`framework.review_engine.judge._build_prompt()` 在 `visual_mode=True` 时把每个 candidate 的 `image_bytes` 原封 base64 塞进 `image_url` content block,3 张 1024×1024 PNG → ~1.28M 字符
+- **Bug A**(Codex 发现):`framework.runtime.executors.review._build_candidates()` 对 image-modality artifact 直接 `payload=repo.read_payload(aid)`,raw bytes 进入 `CandidateInput.payload`;`_build_prompt()` 用 `json.dumps(default=str)` 把 bytes 渲染成 `b'\x89PNG\\xNN...'` repr,**1 字节扩成 4 字符**,3 张 320KB PNG 合计 ~3.84M 字符塞进 user_text。两 bug 叠加 ≈ 5M 字符,远超 DashScope 1M 硬限
+
+只修 Bug B(图像压缩)不闭环 —— text 块的 ~3.84M 仍单独撞限。两步必须一起做。
 
 **不是**:
-- fallback 断了 —— router 确实按序切了 3 家(修后 trace 证)
+- fallback 断了 —— router 确实按序切了 3 家(2f57df9 修后 trace 证)
 - qwen-plus 不支持视觉 —— 它接受了 `image_url` 并开始计数,只是超限
 - provider 配置错 —— 3 家都 `kind: vision`,配置正确
 
-**修法(TBD-006)**:在 `_attach_image_bytes()` 或 `judge._build_prompt()` 里对每张 `image_bytes` resize(≤ 512×512)+ JPEG recompress(quality 80),使单张 base64 ≤ 270K,3 张合计 ~810K 留 20% 余量。依赖:Pillow。Fence:payload 超限时 review 回 `schema_validation_fail` 而非重试到 budget 耗尽。
+**修法(TBD-006,2026-04-22 已实施)**:
+1. **payload 摘要化**(Bug A):`_build_candidates` 对 image candidate 改成元数据 dict(`_image_artifact_id` / `mime_type` / `size_bytes` / `source_model`),raw bytes 仅经 `image_bytes` 字段流转
+2. **图像压缩 helper**(Bug B):新建 `src/framework/review_engine/image_prep.py` 的 `compress_for_vision()`(Pillow 延迟 import + EXIF transpose + 768 px thumbnail + alpha 扁平 + JPEG q=80);`_attach_image_bytes()` 内调用,raw < 256KB 阈值短路保 Anthropic 小图路径
+3. **`pyproject.toml`** `[llm]` extras 加 `Pillow>=10.0,<12`
+4. **fence 10 条**(`tests/unit/test_visual_review_image_compress.py` × 8 + `tests/unit/test_review_payload_summarization.py` × 2),独立守 Bug A / Bug B / 阈值短路 / Pillow 缺失 hint / 端到端 payload 预算
+
+**修法不做**:不引入新 `PromptTooLargeError` / 新 FailureMode。Codex 提的"映射到 `abort_or_fallback`"语义正确但 scope 过大,本轮维持 raise `ProviderError` → router 走 `provider_error → retry_same_step → fallback_model`(同 provider 重一次后切下家),全链炸通过 §6.2.1 的 router error chain 看真实原因。Stretch goal 留 TBD。
 
 **旁证**:`a2_review` 的 `review_judge`(PackyCode Anthropic)对 3 张小占位图正常给 `approve_one @ 0.916`,说明 judge.py 构 message 本身没 bug,只是对真实 Qwen 生成图(每张 300KB+)没做体积控制。
 
@@ -467,7 +478,7 @@ python -m pytest -q                            # 全量回归
 | TBD-003 | WS 鉴权 / 多租户 | NFR-SEC-005 | ❌ | 接入 UI 时 |
 | TBD-004 | FBX self-containment 校验 | FR-WORKER-* | ❌ | 引入 PyFBX / ufbx 后 |
 | TBD-005 | Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold(DashScope 已于 2026-04-22 前并入) | 有工作流真实使用时 |
-| TBD-006 | 视觉 review 图像压缩 | FR-REVIEW-001, A2 顺序 3 | ⚠️ 根因已定位 | 见本行"根因"栏,下一轮做;修好后 resume a2_mesh 可完成顺序 4 |
+| ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3 | ✅ 已实施(2026-04-22)| 见 §6.5;代码 + 10 条 fence 就位,等用户授权 resume a2_mesh 验证端到端 |
 | TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |
@@ -488,7 +499,7 @@ python -m pytest -q                            # 全量回归
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **526 通过 / 0 失败**(2026-04-22 第三轮基线,~12.5s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6) |
+| L0 pytest 全量 | ✅ **536 通过 / 0 失败**(2026-04-22 第四轮基线,~14s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
@@ -501,7 +512,7 @@ python -m pytest -q                            # 全量回归
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 526 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence)+ 60+ L3 fence |
+| 测试覆盖 | ✅ 536 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence)+ 60+ L3 fence |
 
 ### 8.3 整体结论
 

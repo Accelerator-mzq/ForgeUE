@@ -24,6 +24,10 @@ dependencies = [
 llm = [
     "litellm>=1.40",
     "instructor>=1.3",
+    # Pillow powers visual-review image pre-processing (TBD-006). Lazy-imported
+    # in framework.review_engine.image_prep, so users without visual_mode never
+    # pay for it.
+    "Pillow>=10.0,<12",
 ]
 server = [
     "starlette>=0.36",

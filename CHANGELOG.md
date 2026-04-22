@@ -44,6 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - FR-LC-006/007/008: cross-process Artifact metadata persistence + length-mismatch cache miss
   - FR-REVIEW-009: SelectExecutor bare-approve / explicit-reject semantics
   - FR-WORKER-009/010: tokenhub poll timeout clamp + 200/non-JSON wrap as `unsupported_response`
+- TBD-006 visual review image compression (acceptance_report §6.5; Codex independent review co-authored).
+  Two bugs co-fixed:
+  - **Bug A**: `_build_candidates` placed raw image bytes into `CandidateInput.payload`,
+    rendered through `json.dumps(default=str)` as `b'\x89PNG\\xNN...'` repr (~4x inflation).
+    Now image candidates carry a metadata summary; raw bytes flow only via `image_bytes`.
+  - **Bug B**: visual_mode base64-inlined unbounded image_url blocks. New
+    `framework.review_engine.image_prep.compress_for_vision` (Pillow + EXIF transpose +
+    768px thumbnail + alpha flatten + JPEG q=80) wired into `_attach_image_bytes`,
+    raw < 256KB short-circuits to preserve Anthropic small-image path.
+  - Pillow added to `[project.optional-dependencies].llm` extras (lazy import).
+  - 10 new fences: `tests/unit/test_visual_review_image_compress.py` (8) +
+    `tests/unit/test_review_payload_summarization.py` (2)
 
 ## [0.1.0] - 2026-04-22
 

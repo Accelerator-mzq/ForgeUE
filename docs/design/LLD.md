@@ -1020,6 +1020,29 @@ async def ajudge_with_panel(
 - 把 ChiefJudge 输出拆成 `ReviewReport` + `Verdict` 两独立对象
 - 同时落 Artifact Store
 
+### 7.5 Image preprocessing for visual review(`image_prep.py`,2026-04-22 / TBD-006)
+
+```
+def compress_for_vision(data: bytes, *, max_dim: int = 768, quality: int = 80)
+    -> tuple[bytes, str]
+```
+
+- 延迟 import Pillow(在 `[llm]` extras),缺失时 raise `ProviderError` 带 `pip install 'forgeue[llm]'` hint
+- 流水线:magic-bytes 预检(PNG / JPEG / WebP / GIF) → `ImageOps.exif_transpose` → `thumbnail((max_dim, max_dim), LANCZOS)`(仅当超 max_dim) → RGBA/LA/P-alpha 扁平到白底 → JPEG q=80 写出
+- 由 `runtime/executors/review.py:_attach_image_bytes()` 调用,仅当 `compress=True`(默认 `=visual_mode`)且 raw bytes > `compress_threshold_bytes`(默认 256KB)时触发,小图短路保 Anthropic 路径不被无谓 JPEG 劣化
+
+### 7.6 Image-candidate payload summarization(`runtime/executors/review.py`,2026-04-22 / TBD-006)
+
+`_build_candidates()` 对 `art.artifact_type.modality == "image"` 的 candidate **不再** `payload=repo.read_payload(aid)`,而是 `payload=_summarize_image_payload(art)`,字段:
+
+```
+{"_image_artifact_id", "mime_type", "size_bytes", "source_model"}
+```
+
+理由:`_build_prompt()` 用 `json.dumps(default=str)` 渲染 candidates,raw bytes 会被转成 `b'\x89PNG\\xNN...'` repr —— 1 字节扩 4 字符,3 张 320KB PNG 的 user_text 块膨胀到 ~3.84M 字符,单这一项就超 DashScope 1M 输入硬限。原始字节只在 `visual_mode=True` 经 `CandidateInput.image_bytes` 字段流转,经 image_prep 压缩后才进 base64。
+
+预处理放 executor 而非 judge,规避 `ChiefJudge` 并发分发同一 `candidates` 列表给 N 个 judge 时的共享输入污染。
+
 ---
 
 ## 8. Artifact Store(`src/framework/artifact_store/`)
