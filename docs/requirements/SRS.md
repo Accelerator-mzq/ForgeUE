@@ -304,7 +304,7 @@ ForgeUE **不做**:
 | NFR-PERF-002 | ChiefJudge 并发应让总延迟 ≈ 最慢 judge | 3 judge 并发,最慢 judge T → 总延迟 ≤ T × 1.1 |
 | NFR-PERF-003 | 多候选并行(`parallel_candidates=True`)应通过 `asyncio.gather` 真并发 | N 候选,每条 T → 总延迟 ≤ T × 1.2 |
 | NFR-PERF-004 | 分块下载应使用 1 MB 分块 | 避免单次加载大文件到内存 |
-| NFR-PERF-005 | 全量测试套件应在 15 秒内跑完(536+ 用例) | CI 节奏保证 |
+| NFR-PERF-005 | 全量测试套件应在 15 秒内跑完(555+ 用例) | CI 节奏保证 |
 
 ### 4.2 可靠性(NFR-REL)
 
@@ -371,7 +371,7 @@ ForgeUE **不做**:
 
 | 编号 | 决策 | 理由 |
 | --- | --- | --- |
-| ADR-001 | ForgeUE **不做 UE 插件形态**,坚持"文件契约 + 薄 UE Python 代理" | UE 插件会绑定 Python 版本、阻塞 game thread、无法跑 536 单测、隔离网络合规卡死、多工程复用困难、开发环境门槛陡增;ForgeUE 80% 职责与 UE 无关 |
+| ADR-001 | ForgeUE **不做 UE 插件形态**,坚持"文件契约 + 薄 UE Python 代理" | UE 插件会绑定 Python 版本、阻塞 game thread、无法跑 555 单测、隔离网络合规卡死、多工程复用困难、开发环境门槛陡增;ForgeUE 80% 职责与 UE 无关 |
 | ADR-002 | `config/models.yaml` 三段式为**单一真源**,不分散 | 避免 schema 漂移 |
 | ADR-003 | `LiteLLMAdapter` wildcard **必须最后注册** | CapabilityRouter 按注册顺序 `supports(model)`,wildcard 先注册会吞掉专用前缀 |
 | ADR-004 | 外部事实性数据(定价、endpoint、version)**禁止凭印象写数字** | 必须 `sourced_on` + `source_url`,或保持 `null` + TODO;已有 `feedback_no_fabricate_external_data.md` 约定 |

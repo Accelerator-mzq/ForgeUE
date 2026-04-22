@@ -10,18 +10,18 @@
 - `docs/requirements/SRS.md` — 需求规格说明书(FR/NFR 基线)
 - `docs/design/HLD.md` — 概要设计(分层 / 子系统 / 协作)
 - `docs/design/LLD.md` — 详细设计(字段 / 方法 / 算法 / 异常)
-- `docs/testing/test_spec.md` — 系统测试用例规格(536 用例索引 + fence 清单)
+- `docs/testing/test_spec.md` — 系统测试用例规格(555 用例索引 + fence 清单)
 - `docs/acceptance/acceptance_report.md` — 验收报告(FR/NFR 状态矩阵)
 
 - 入口导航见 `docs/INDEX.md`
 - 原 plan_v1(§A-§N 完整史料)迁至 `docs/archive/claude_unified_architecture_plan_v1.md`,不再更新
 - 对象模型 / Workflow / Bridge / Policy / Failure mode 讨论以 HLD/LLD 为准,不重开辩论
-- 当前 P0–P4 + L1–L4 + F1–F5 + Plan C 全绿(536 用例;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10);验收状态见 acceptance_report §3-§5
+- 当前 P0–P4 + L1–L4 + F1–F5 + Plan C 全绿(555 用例;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + mesh quota error 分类 fence 19);验收状态见 acceptance_report §3-§5
 
 ## 开发命令
 
 ```bash
-# 全量测试(536 绿)
+# 全量测试(555 绿)
 python -m pytest -q
 
 # 单阶段验收

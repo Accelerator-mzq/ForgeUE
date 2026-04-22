@@ -561,9 +561,25 @@ class HunyuanMeshWorker(MeshWorker):
             if status in ("done", "success", "finished", "completed"):
                 return resp
             if status in ("failed", "fail", "error", "cancelled"):
+                # TBD-006 A2 verification surfaced: Hunyuan returns
+                # {'message': '配额超限', 'code': 'FailedOperation.InnerError'}
+                # when HUNYUAN_3D_KEY quota is exhausted. Naive
+                # MeshWorkerError maps to worker_error -> retry_same_step
+                # + fallback_model, i.e. every retry re-issues a paid
+                # /submit that will fail the same deterministic way —
+                # just burning quota at the provider. Classify quota /
+                # rate-limit exhaustion as `Unsupported` so FailureModeMap
+                # routes via `abort_or_fallback` (honour on_fallback,
+                # else terminate) and the run stops billing immediately.
+                err_detail = resp.get("error") or resp.get("message") or resp
+                if _is_quota_or_rate_limit_error(resp):
+                    raise MeshWorkerUnsupportedResponse(
+                        f"tokenhub 3d job {job_id} {status} "
+                        f"(deterministic quota/rate-limit exhausted; "
+                        f"retry will not help): {err_detail}"
+                    )
                 raise MeshWorkerError(
-                    f"tokenhub 3d job {job_id} {status}: "
-                    f"{resp.get('error') or resp.get('message') or resp}"
+                    f"tokenhub 3d job {job_id} {status}: {err_detail}"
                 )
             await asyncio.sleep(self._poll)
 
@@ -634,6 +650,69 @@ class HunyuanMeshWorker(MeshWorker):
             )
         except Exception as exc:
             raise MeshWorkerError(f"tokenhub /3d download {url}: {exc}") from exc
+
+
+_QUOTA_KEYWORDS = (
+    # Chinese (Tencent Hunyuan tokenhub returns "配额超限" literally).
+    "配额",     # "quota"
+    "超限",     # "over limit"
+    "限额",     # "cap / limit"
+    "超出",     # "exceeds" (often paired with "限制/额度")
+    "充值",     # "recharge" — only appears in billing/quota contexts
+    # English (DashScope / Zhipu / generic OpenAI-compat providers).
+    "quota",
+    "rate limit",
+    "rate-limit",
+    "rate_limit",
+    "limit exceeded",
+    "exceeded your",
+    "too many requests",
+    "insufficient",   # insufficient_quota / insufficient balance
+    "billing",        # often appears in quota-related error bodies
+)
+
+
+def _is_quota_or_rate_limit_error(resp: dict) -> bool:
+    """Detect deterministic quota / rate-limit / billing exhaustion.
+
+    Returned from poll-body on terminal `status: failed`. Tencent Hunyuan
+    tokenhub returns shapes like:
+        {"status": "failed",
+         "error": {"message": "配额超限", "type": "api_error",
+                   "code": "FailedOperation.InnerError"}}
+    or sometimes the message travels in top-level `resp["message"]`.
+
+    Checks every string-shaped field under `resp["error"]` (dict or str)
+    plus `resp["message"]` / `resp["error_code"]` against a multilingual
+    keyword list. Case-insensitive substring match; short list is fine
+    because quota errors are the one category worth burning a compile
+    cycle on (they're the costliest-to-misclassify).
+
+    Returns False on any decode surprise — prefer `worker_error` (with
+    retry_same_step) over a false-positive `Unsupported` (which would
+    terminate a genuinely transient failure).
+    """
+    try:
+        err_obj = resp.get("error") if isinstance(resp, dict) else None
+        parts: list[str] = []
+        if isinstance(err_obj, dict):
+            for key in ("message", "code", "type"):
+                v = err_obj.get(key)
+                if isinstance(v, str):
+                    parts.append(v)
+        elif isinstance(err_obj, str):
+            parts.append(err_obj)
+        if isinstance(resp, dict):
+            for key in ("message", "error_code", "code"):
+                v = resp.get(key)
+                if isinstance(v, str):
+                    parts.append(v)
+        haystack = " ".join(parts).lower()
+        if not haystack.strip():
+            return False
+        return any(kw in haystack for kw in _QUOTA_KEYWORDS)
+    except Exception:
+        return False
 
 
 def _is_self_contained_obj(data: bytes) -> bool:

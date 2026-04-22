@@ -44,6 +44,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - FR-LC-006/007/008: cross-process Artifact metadata persistence + length-mismatch cache miss
   - FR-REVIEW-009: SelectExecutor bare-approve / explicit-reject semantics
   - FR-WORKER-009/010: tokenhub poll timeout clamp + 200/non-JSON wrap as `unsupported_response`
+- Mesh worker quota / rate-limit error classification (acceptance_report §6.5 末段).
+  A2 顺序 4 resume v4 exposed that Hunyuan tokenhub returns a deterministic
+  `{"status":"failed","error":{"message":"配额超限",...}}` when HUNYUAN_3D_KEY
+  quota is exhausted. Pre-fix this mapped through `worker_error ->
+  retry_same_step + fallback_model`, causing every fallback to issue a fresh
+  paid /submit that failed the same way. Post-fix `_is_quota_or_rate_limit_error`
+  detects multilingual quota / rate-limit / billing markers (配额 / 超限 / 充值 /
+  quota / rate limit / insufficient / billing etc.) and the poll branch raises
+  `MeshWorkerUnsupportedResponse`, which `failure_mode_map` routes via
+  `abort_or_fallback` (honour on_fallback else terminate) — run stops billing
+  immediately. 19 new fences in `tests/unit/test_mesh_worker_quota_errors.py`
+  (16 parametrize covering classifier Chinese/English shapes + defensive
+  False-on-malformed, 3 end-to-end on `_atokenhub_poll` branch).
 - TBD-006 visual review image compression (acceptance_report §6.5; Codex independent review co-authored).
   Two bugs co-fixed:
   - **Bug A**: `_build_candidates` placed raw image bytes into `CandidateInput.payload`,
