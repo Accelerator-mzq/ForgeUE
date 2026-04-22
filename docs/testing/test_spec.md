@@ -21,7 +21,7 @@
 
 | 原则 | 说明 |
 | --- | --- |
-| **测试即可执行规范** | 541 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
+| **测试即可执行规范** | 543 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
 | **零 mock 关键边界** | download / EventBus / DAG / Budget / artifact 流端到端真实对象,不得 mock |
 | **每次修复配一个 fence** | Codex / adversarial review 每条修复对应一个新回归测试 |
 | **单元测试快** | `pytest -q` 全量 ≤ 15s,CI 节奏保证 |
@@ -51,7 +51,7 @@
            ├─────────────────────────┤
            │ Live LLM smoke(A2)     │   ← 可选,需 API key
            ├─────────────────────────┤
-           │ 集成测试 × 11 文件 66 用例│   ← P0-P4 + 场景级
+           │ 集成测试 × 11 文件 68 用例│   ← P0-P4 + 场景级
            ├─────────────────────────┤
            │ 单元测试 × 45 文件 475 用例│   ← 主体
            └─────────────────────────┘
@@ -62,8 +62,8 @@
 | 类别 | 目录 | 文件数 | 用例数 | 运行时间 |
 | --- | --- | --- | --- | --- |
 | 单元测试 | `tests/unit/` | 45 | ~475 | < 10s |
-| 集成测试 | `tests/integration/` | 11 | ~66 | < 8s |
-| **合计** | — | **56** | **541** | **< 18s** |
+| 集成测试 | `tests/integration/` | 11 | ~68 | < 8s |
+| **合计** | — | **56** | **543** | **< 18s** |
 
 ### 2.3 执行方式
 
@@ -320,6 +320,22 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `MeshWorkerError` → `mesh_worker_error` mode → `abort_or_fallback` | L3 orchestrator | `test_mesh_no_silent_retry::test_failure_mode_map_routes_mesh_error_to_abort` |
 | 失败时 failure_event.context 有 job_id/worker/model + CLI stderr 提示含 probe + --resume | B2/B3 visibility | `test_mesh_failure_visibility::test_mesh_failure_event_includes_job_id_and_stderr_hint` |
 
+### TBD-008 visual review contract fence(2026-04-22,2 新 + 3 翻转 — Codex B+C 分层采纳 + Codex Phase G R2 发现 verdict-path 优先级 bug)
+
+Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/REVISED_/API_` / `fake-source-image-bytes` 伪字节,让"视觉 review"退化为"计算 image_url block 数量 / 按 candidate_id 位置打分"。本次升级用真 PNG fixture(`tests/fixtures/review_images/tavern_door_v{1,2,3}.png`)驱动,契约测试 offline 稳定,真 provider 打分归 opt-in probe。
+
+| Fence | 守护点 | 测试名 |
+| --- | --- | --- |
+| P2 visual_mode 真图驱动 + 真压缩 + 按 id 打分选 winner | offline 契约(判别力 / 压缩路径 / id 解析)| `test_p2_standalone_review::test_p2_visual_mode_attaches_image_bytes_to_judge_prompt`(翻转 + Pillow importorskip gate)|
+| P3 revise 路径用真图 round 1/2 区分 | offline 契约(revise 触发 / lineage 正确)| `test_p3_production_pipeline`(翻转多条,fixture 复用)|
+| **L4 mesh 从 review verdict 读 selected_candidate_ids** | **真实生产路径**(image_to_3d_pipeline.json shape) | `test_l4_image_to_3d::test_l4_mesh_reads_selected_candidate_from_review_verdict`(**新增 — Codex R2 发现:此路径才是生产路径**)|
+| L4 mesh 从 selected_set bundle 读 selected 图 | forward-compat(SelectExecutor 流程) | `test_l4_image_to_3d::test_l4_mesh_resolves_selected_image_from_selected_set_bundle`(新增)|
+| 真 provider 打分能力(Anthropic vs GLM on 同 3 图)| 质量抽检 opt-in | `probes/provider/probe_visual_review.py`(FORGEUE_PROBE_VISUAL_REVIEW=1) |
+
+**fixture 使用约定**:新的视觉相关测试一律走 `tests.fixtures.load_review_image(name)` helper,禁止直接内嵌 `b"\x89PNG..."` 之类的魔字节;fixture 不够用时先新增到 `tests/fixtures/review_images/`(README 记来源),不重复造。
+
+**契约 vs 质量分层**:offline 契约测试(p2/p3/l4)用 `FakeAdapter` 脚本化打分,验 review pipeline 流水线正确性;provider 打分质量(真 Anthropic / GLM 对真图的判别)归 opt-in probe,偶发手跑对比。不把 CI 绑到外部 provider 波动。
+
 ---
 
 ## 6. 覆盖分析
@@ -349,8 +365,8 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
 | NFR-SEC | test_secrets |
 | NFR-OBS | test_event_bus,test_progress_passthrough |
-| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 541(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5) |
-| NFR-PORT | CI 能在 Linux 跑(541 全绿,stub unreal 覆盖 P4) |
+| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 543(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2) |
+| NFR-PORT | CI 能在 Linux 跑(543 全绿,stub unreal 覆盖 P4) |
 
 ### 6.3 未覆盖 / 部分覆盖
 
@@ -421,7 +437,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 
 | 级别 | 标准 |
 | --- | --- |
-| 单元测试 | 100% 通过(541 用例,基线 491 + audit 29 + 后续 fence 21)|
+| 单元测试 | 100% 通过(543 用例,基线 491 + audit 29 + 后续 fence 23)|
 | 集成测试 | P0–P4 + 5 场景全绿 |
 | Fence 测试 | 每条守护修复不得回退 |
 | 覆盖率 | 每条 FR 至少 1 个对应测试(矩阵 §6.1 全部 ✅) |

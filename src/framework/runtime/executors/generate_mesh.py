@@ -231,31 +231,79 @@ def _resolve_spec(ctx: StepContext, cfg: dict) -> dict[str, Any]:
 
 
 def _resolve_source_image(ctx: StepContext) -> tuple[bytes | None, str | None]:
-    """Find the first file-backed image artifact in upstream / candidate_set."""
+    """Find the file-backed image artifact for mesh generation.
+
+    Priority (TBD-008 Codex Round 2 fix, 2026-04-22):
+      1. **review Verdict** — real production workflow path. Review executor
+         emits only `report.review` + `report.verdict` artifacts (see
+         `executors/review.py:_persist_verdict`); there is NO SelectExecutor
+         between review and mesh in `examples/image_to_3d_pipeline.json`.
+         So the authoritative curation signal lives in
+         `verdict.payload.selected_candidate_ids[0]`, not in a selected_set
+         bundle. Mesh MUST read the verdict first.
+      2. `bundle.selected_set` — explicit SelectExecutor output (other
+         workflows may still emit this; keep path for forward-compat).
+      3. Direct image — legacy / single-image contexts (e.g. L4 stub tests).
+      4. `bundle.candidate_set` — last-resort fallback (no curation at all).
+
+    History:
+      - Pre-R1 priority (flat image > candidate_set > selected_set) silently
+        picked cand_0 regardless of review. Codex R1 flipped selected_set
+        first, which I verified in a fence — but the fence was wrong: real
+        workflow has no selected_set. Codex R2 caught this deeper miss: mesh
+        must read the VERDICT directly. This version now covers the real
+        path via pass 1.
+    """
     repo = ctx.repository
+
+    # Pass 1: review verdict (real production path — no SelectExecutor needed).
     for aid in ctx.upstream_artifact_ids:
         if not repo.exists(aid):
             continue
         art = repo.get(aid)
-        # Direct image upstream
-        if art.artifact_type.modality == "image":
-            return repo.read_payload(aid), aid
-        # Candidate-set bundle → pick first image in it
-        if art.artifact_type.modality == "bundle" and art.artifact_type.shape == "candidate_set":
-            bundle = repo.read_payload(aid)
-            for cid in bundle.get("candidate_ids") or []:
-                if repo.exists(cid):
-                    cart = repo.get(cid)
-                    if cart.artifact_type.modality == "image":
-                        return repo.read_payload(cid), cid
-        # Selected-set bundle → pick first selected image
+        if (art.artifact_type.modality == "report"
+                and art.artifact_type.shape == "verdict"):
+            payload = repo.read_payload(aid) or {}
+            for sid in payload.get("selected_candidate_ids") or []:
+                if repo.exists(sid):
+                    sart = repo.get(sid)
+                    if sart.artifact_type.modality == "image":
+                        return repo.read_payload(sid), sid
+
+    # Pass 2: selected_set bundle (forward-compat for SelectExecutor-based flows).
+    for aid in ctx.upstream_artifact_ids:
+        if not repo.exists(aid):
+            continue
+        art = repo.get(aid)
         if art.artifact_type.modality == "bundle" and art.artifact_type.shape == "selected_set":
-            payload = repo.read_payload(aid)
+            payload = repo.read_payload(aid) or {}
             for sid in payload.get("selected_ids") or []:
                 if repo.exists(sid):
                     sart = repo.get(sid)
                     if sart.artifact_type.modality == "image":
                         return repo.read_payload(sid), sid
+
+    # Pass 3: direct image (legacy / single-image contexts).
+    for aid in ctx.upstream_artifact_ids:
+        if not repo.exists(aid):
+            continue
+        art = repo.get(aid)
+        if art.artifact_type.modality == "image":
+            return repo.read_payload(aid), aid
+
+    # Pass 4: candidate_set fallback (no curation available).
+    for aid in ctx.upstream_artifact_ids:
+        if not repo.exists(aid):
+            continue
+        art = repo.get(aid)
+        if art.artifact_type.modality == "bundle" and art.artifact_type.shape == "candidate_set":
+            bundle = repo.read_payload(aid) or {}
+            for cid in bundle.get("candidate_ids") or []:
+                if repo.exists(cid):
+                    cart = repo.get(cid)
+                    if cart.artifact_type.modality == "image":
+                        return repo.read_payload(cid), cid
+
     return None, None
 
 

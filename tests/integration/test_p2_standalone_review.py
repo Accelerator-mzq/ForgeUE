@@ -201,32 +201,54 @@ def test_p2_chief_judge_records_dissent(bundle_path: Path, tmp_path: Path):
 # ---- T2.5: visual-mode review (L3) ------------------------------------------
 
 def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
-    """When review step config has visual_mode=true and upstream candidates
-    are image artifacts, the judge prompt becomes multimodal (content blocks
-    with image_url base64). FakeAdapter receives it and we assert on the
-    captured ProviderCall.messages shape."""
+    """TBD-008 (2026-04-22): use REAL Qwen PNG fixtures (1024×1024, ~1.4MB each)
+    instead of the previous `b"\\x89PNG\\r\\n\\x1a\\nVISUAL_A" * 4` byte markers.
+
+    Previously this test only proved "visual_mode code constructs 3 image_url
+    blocks"; with real PNGs it additionally proves:
+      - TBD-006 compress_for_vision runs end-to-end on real content
+        (1.5MB PNG → 768px JPEG@80 → ~50-100KB base64)
+      - FakeAdapter-programmed per-candidate scores correctly surface the
+        winner via review.verdict (not just prompt block count)
+
+    FakeAdapter is still stubbed — provider quality belongs to
+    `probes/provider/probe_visual_review.py` (opt-in). Codex review flagged
+    that marker bytes turned this fence into a shape-only assertion; real
+    fixtures close that gap while keeping CI deterministic + offline.
+
+    Pillow gate: real 1.5MB fixtures exceed the 256KB compress threshold, so
+    `compress_for_vision` is mandatory. Pillow ships in the `[llm]` extras;
+    README.md:41 guarantees "`[dev]` alone can run all tests", so we
+    `importorskip` PIL to keep that contract (mirrors the existing
+    `tests/unit/test_visual_review_image_compress.py:31` gate). Codex review
+    Round 1 Phase G caught this.
+    """
+    pytest.importorskip("PIL")  # TBD-008 Codex R1 fix
     from framework.core.artifact import ArtifactType, Lineage, ProducerRef
     from framework.core.enums import ArtifactRole, PayloadKind, RiskLevel, StepType
     from framework.core.enums import RunMode, RunStatus, TaskType
     from framework.core.policies import ProviderPolicy
     from framework.core.task import Run, Step, Task, Workflow
     from datetime import datetime, timezone
+    from tests.fixtures import load_review_image
 
     run_id = "run_p2_visual"
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
 
-    # Seed 3 file-backed image artifacts directly
-    png_bytes_list = [
-        b"\x89PNG\r\n\x1a\nVISUAL_A" * 4,
-        b"\x89PNG\r\n\x1a\nVISUAL_B" * 4,
-        b"\x89PNG\r\n\x1a\nVISUAL_C" * 4,
+    # Real Qwen PNG fixtures (see tests/fixtures/review_images/README.md).
+    # FakeAdapter-programmed scores determine the winner; fixture filename is
+    # neutral (v1/v2/v3). Mapping fixture → archetype score happens below.
+    fixture_map = [
+        ("cand_primary", "tavern_door_v1", GOOD),
+        ("cand_secondary", "tavern_door_v2", MID),
+        ("cand_variant", "tavern_door_v3", BAD),
     ]
     image_ids = []
-    for i, data in enumerate(png_bytes_list):
-        aid = f"{run_id}_img_{i}"
+    for cid, fixture_name, _ in fixture_map:
+        data = load_review_image(fixture_name)
         repo.put(
-            artifact_id=aid, value=data,
+            artifact_id=cid, value=data,
             artifact_type=ArtifactType(
                 modality="image", shape="raster", display_name="concept_image"),
             role=ArtifactRole.intermediate, format="png", mime_type="image/png",
@@ -234,23 +256,24 @@ def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
             producer=ProducerRef(run_id=run_id, step_id="upstream", provider="fab"),
             file_suffix=".png",
         )
-        image_ids.append(aid)
+        image_ids.append(cid)
 
     fake = FakeAdapter()
-    # Dynamically echo candidate_ids back — visual mode still embeds the ids
-    # in the prompt (candidate_blob inside the text block), so builder can
-    # extract them the same way as non-visual runs.
+    # Score map keyed by candidate_id — the FakeAdapter assigns scores based
+    # on CANDIDATE IDENTITY rather than prompt position. Codex review
+    # specifically flagged the old position-based `scores = [GOOD, MID, BAD][i]`
+    # as "judge not really looking at pixels"; keying by id forces the review
+    # pipeline to correctly propagate per-candidate scores to the verdict.
+    score_map = {cid: scores for cid, _, scores in fixture_map}
     import re as _re
     def _visual_judge_builder(call, _schema):
-        # When content is a list of blocks, the text is inside the first block
         user_content = next(m["content"] for m in call.messages if m["role"] == "user")
         text = user_content[0]["text"] if isinstance(user_content, list) else user_content
         ids = _re.findall(r'"candidate_id":\s*"([^"]+)"', text)
-        scores = [GOOD, MID, BAD]
-        return {"summary": "visual review",
-                "verdicts": [{"candidate_id": cid, "scores": scores[i],
+        return {"summary": "visual review with real fixtures",
+                "verdicts": [{"candidate_id": cid, "scores": score_map[cid],
                               "issues": [], "notes": None}
-                             for i, cid in enumerate(ids)]}
+                             for cid in ids]}
     fake.program("gpt-4o-mini", outputs=[FakeModelProgram(schema_builder=_visual_judge_builder)])
     router = CapabilityRouter()
     router.register(fake)
@@ -289,20 +312,42 @@ def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
     assert result.metrics["visual_mode"] is True
     assert result.metrics["candidate_count"] == 3
 
-    # Inspect the FakeAdapter's captured call
+    # --- Contract assertion 1: verdict routes to the winning candidate ---
+    # This is the TBD-008 upgrade: previously only prompt shape was asserted.
+    verdict_art = next(a for a in result.artifacts
+                        if a.artifact_type.shape == "verdict")
+    verdict_payload = repo.read_payload(verdict_art.artifact_id)
+    assert verdict_payload["decision"] == "approve_one", (
+        f"FakeAdapter programmed cand_primary with GOOD scores (weighted ~0.90); "
+        f"review should approve_one. Got decision={verdict_payload['decision']!r} "
+        f"confidence={verdict_payload['confidence']!r}"
+    )
+    assert verdict_payload["selected_candidate_ids"] == ["cand_primary"], (
+        f"Score map keys by candidate_id (not prompt position), so the winner "
+        f"must be cand_primary (programmed GOOD). Got "
+        f"{verdict_payload['selected_candidate_ids']!r}"
+    )
+    assert verdict_payload["confidence"] > 0.7
+
+    # --- Contract assertion 2: multimodal prompt shape (retained from old test) ---
     calls = fake.calls_for("gpt-4o-mini")
     assert len(calls) == 1
     call = calls[0]
-    # The user message's content is now a LIST of content blocks (multimodal)
     user_msg = next(m for m in call.messages if m["role"] == "user")
     assert isinstance(user_msg["content"], list), "visual_mode must produce list-shaped content"
     types = [b["type"] for b in user_msg["content"]]
-    # At minimum: one text prefix + 3 alternating text-label+image_url pairs
     assert types.count("image_url") == 3
-    # Base64 data URL present
+    # --- Contract assertion 3: TBD-006 compression path exercised ---
+    # Real 1.5MB PNGs must be compressed to JPEG by `compress_for_vision`
+    # (threshold 256KB, default behaviour when visual_mode=true). Assert data
+    # URL now advertises JPEG mime, not PNG — proves compress_for_vision ran.
     for block in user_msg["content"]:
         if block["type"] == "image_url":
-            assert block["image_url"]["url"].startswith("data:image/png;base64,")
+            url = block["image_url"]["url"]
+            assert url.startswith("data:image/jpeg;base64,"), (
+                f"TBD-006 compress_for_vision should have converted the real "
+                f"1.5MB Qwen PNG to JPEG at 768px. Got URL prefix: {url[:40]!r}"
+            )
 
 
 # ---- T3: select step resolves real candidate artifacts -----------------------

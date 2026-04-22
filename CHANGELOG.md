@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **TBD-008**(Codex B+C 分层)`tests/fixtures/review_images/` 目录 + `tavern_door_v{1,2,3}.png` 真 Qwen PNG 加上 `tests/fixtures/__init__.py.load_review_image()` helper,供视觉 review 测试复用;repo 增 ~4.4MB(一次性)
+- **TBD-008** `probes/provider/probe_visual_review.py` — opt-in `FORGEUE_PROBE_VISUAL_REVIEW=1` probe,对比 `review_judge`(Anthropic Opus 4.6)vs `review_judge_visual`(GLM-4.6V)对同 3 张真图的打分分布,落 `comparison_table.md`;首跑确认 Anthropic 判别度更高(0.62-0.88 跨度),GLM 打分更压缩(0.80-0.95)
+- **TBD-008** `tests/integration/test_l4_image_to_3d.py` 新增 2 条 fence(Codex Phase G 两轮 review 后):
+  - `test_l4_mesh_reads_selected_candidate_from_review_verdict` — **真实生产路径**,验证 mesh 从 `report.verdict.selected_candidate_ids[0]` 读图
+  - `test_l4_mesh_resolves_selected_image_from_selected_set_bundle` — forward-compat,守 SelectExecutor 流程的 `bundle.selected_set` 路径
 - **TBD-007** `probes/provider/probe_hunyuan_3d_query.py` — read-only /query probe for historical Hunyuan 3D job_ids(opt-in `FORGEUE_PROBE_HUNYUAN_3D=1`,接受 `--job-id` repeated flag);用于失败后查 server 端 job 真实状态,避免 blind retry 双扣
 - **TBD-007** `tests/unit/test_mesh_no_silent_retry.py` (4 fences) + `tests/integration/test_mesh_failure_visibility.py` (1 fence)
 - Modern Python project layout: `src/framework/` (PEP 621 src layout)
@@ -29,6 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AGENTS.md` — AI agent collaboration context (mirror of `CLAUDE.md`)
 
 ### Changed
+- **TBD-008 — visual review 契约 / 质量分层**(Codex 独立 review 指出盲区 + 采纳 B+C 分层):
+  - `tests/integration/test_p2_standalone_review.py::test_p2_visual_mode_attaches_image_bytes_to_judge_prompt` 升级:`VISUAL_A/B/C` 伪字节 → fixture 真 PNG;FakeAdapter 打分从 "按位置" 改为 "按 candidate_id" 映射;新增 winner/confidence 断言 + JPEG 压缩路径断言
+  - `tests/integration/test_p3_production_pipeline.py` 升级:`ORIGINAL_` / `REVISED_` / `API_` / `OK` prefix 伪字节 → fixture 真 PNG;revise + api_path + worker_timeout 三条路径全走真 PNG;原有断言保留
+  - `tests/integration/test_l4_image_to_3d.py::_seed_image_artifact` helper 升级:`fake-source-image-bytes` → fixture 真 PNG;所有 L4 mesh 测试自动受益
+  - `a2_image` / `a2_review` bundle 的"视觉 review 证据力"在 `docs/acceptance/acceptance_report.md` §6.2 修订:明确标为 "text-only / schema smoke",真视觉证据在 `test_p2/p3/l4` integration + `probe_visual_review.py`
+  - `src/framework/runtime/executors/generate_mesh.py::_resolve_source_image` 优先级重写(Codex Phase G R1+R2):**verdict > selected_set > 直接 image > candidate_set**。之前扁平 image 优先导致真实 workflow 静默取 cand_0 无视 review verdict;本次修复让 mesh 读 verdict 选中的候选
+  - 测试基数 541 → 543(2 新 fence + 3 翻转不变数)
 - **TBD-007 — mesh 重试塌缩**(Codex 独立 review 协助找出第 4 层): 用户实测 1 个 mesh job 在腾讯云控制台被扣 16 调用 × 20 积分 = 320 积分,根因是 4 层叠加重试(L1 `_apost` transient × L2 `GenerateMeshExecutor` 内部循环 × L3 orchestrator `worker_*` retry × L4 download Range resume)。修法:
   - `mesh_worker._apost` 移除 `with_transient_retry_async` wrapper(L1 拆掉)
   - `GenerateMeshExecutor` 对 `capability_ref="mesh.generation"` 强制 attempts=1(L2 短路)

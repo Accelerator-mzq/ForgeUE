@@ -191,6 +191,12 @@ python -m probes.smoke.probe_models
 python -m probes.provider.probe_packycode
 python -m probes.provider.probe_glm_image_debug
 python -m probes.provider.probe_hunyuan_3d_format
+
+# provider opt-in(额外 env guard)
+FORGEUE_PROBE_HUNYUAN_3D=1 python -m probes.provider.probe_hunyuan_3d_submit   # 付费 submit+poll
+FORGEUE_PROBE_HUNYUAN_3D=1 python -m probes.provider.probe_hunyuan_3d_query \
+    --job-id <id>                                                              # 免费 /query(TBD-007)
+FORGEUE_PROBE_VISUAL_REVIEW=1 python -m probes.provider.probe_visual_review    # 付费 review x2(TBD-008)
 ```
 
 `probes/`、`probes/smoke/`、`probes/provider/` 都是 Python package(带 `__init__.py`),可以从 `tests/` 和 `src/framework/` 里通过标准 import 访问。

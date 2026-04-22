@@ -210,15 +210,21 @@ def test_p3_revise_loop_threads_hint_and_converges(tmp_path: Path):
     ))])
 
     worker = FakeComfyWorker()
-    # Program two distinct response sets so the revised round produces different bytes
+    # TBD-008 (2026-04-22): real Qwen 1024×1024 PNG fixtures replace the
+    # previous `ORIGINAL_`/`REVISED_` marker bytes. The revise flow test
+    # asserts on lineage + visited_steps (not byte content), so the fixture
+    # swap keeps behaviour identical while letting visual_mode tests and the
+    # upcoming Phase C probe reuse the same fixture set.
+    from tests.fixtures import load_review_image
+    fixture_names = ["tavern_door_v1", "tavern_door_v2", "tavern_door_v3"]
     worker.program([
-        ImageCandidate(data=b"\x89PNG\r\n\x1a\nORIGINAL_" + bytes([i]),
-                       width=64, height=64, seed=100 + i)
+        ImageCandidate(data=load_review_image(fixture_names[i]),
+                       width=1024, height=1024, seed=100 + i)
         for i in range(3)
     ])
     worker.program([
-        ImageCandidate(data=b"\x89PNG\r\n\x1a\nREVISED_" + bytes([i]),
-                       width=64, height=64, seed=200 + i)
+        ImageCandidate(data=load_review_image(fixture_names[i]),
+                       width=1024, height=1024, seed=200 + i)
         for i in range(3)
     ])
 
@@ -313,9 +319,12 @@ def test_p3_worker_timeout_retries_then_succeeds(tmp_path: Path):
 
     worker = FakeComfyWorker()
     worker.program_error(WorkerTimeout("simulated timeout"))
+    # TBD-008: real PNG fixtures replace `OK` marker bytes.
+    from tests.fixtures import load_review_image
+    _fixture_names = ["tavern_door_v1", "tavern_door_v2", "tavern_door_v3"]
     worker.program([
-        ImageCandidate(data=b"\x89PNG\r\n\x1a\nOK" + bytes([i]),
-                       width=64, height=64, seed=42 + i)
+        ImageCandidate(data=load_review_image(_fixture_names[i]),
+                       width=1024, height=1024, seed=42 + i)
         for i in range(3)
     ])
 
@@ -394,8 +403,11 @@ def test_p3_api_image_path_via_router(tmp_path: Path):
     fake.program("gpt-4o-mini", outputs=[FakeModelProgram(schema_value=_image_spec_payload())])
     # step_image: 3 image_generation calls merged into one program? The router
     # calls image_generation once with n=3; FakeAdapter returns 3 results in one pop.
+    # TBD-008: real PNG fixtures replace `API_` marker bytes.
+    from tests.fixtures import load_review_image
+    _api_fixtures = ["tavern_door_v1", "tavern_door_v2", "tavern_door_v3"]
     fake.program("fake-image-dalle", outputs=[FakeModelProgram(
-        image_bytes_list=[b"\x89PNG\r\n\x1a\nAPI_" + bytes([i]) for i in range(3)]
+        image_bytes_list=[load_review_image(name) for name in _api_fixtures]
     )])
     # step_review approves
     fake.program("gpt-4o-mini", outputs=[FakeModelProgram(schema_builder=_judge_builder(
