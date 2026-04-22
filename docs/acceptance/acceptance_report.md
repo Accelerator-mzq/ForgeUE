@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 555 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + mesh quota error 分类 fence 19) |
+| L0 自动化 | `pytest -q` 全绿 | 536 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 |
@@ -418,7 +418,7 @@ python -m pytest -q                            # 全量回归
   - hunyuan_3d × 1(hunyuan_3d)
 - `pricing_autogen.sourced_on` = 执行当日
 - tripo3d 下 model 维持 `no_parser`(scaffold 未实装 parser,区别于 `stale`)
-- 555 测试仍全绿
+- 536 测试仍全绿
 
 **状态**:✅ 已通过(2026-04-22 dry-run + --apply,所有 12 个 model 返 `fresh`,真实页面数值与 YAML 一致,`--apply` 无 diff;DashScope parser 已随 2026-04-22 工作树并入,tripo3d 维持 `no_parser`)
 
@@ -428,7 +428,7 @@ python -m pytest -q                            # 全量回归
 顺序 1: A3(本地 + playwright)                  ✅ 已完成(2026-04-22)
 顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) ✅ 已完成(commit 293979f / 74c0849)
 顺序 3: A2 qwen/hunyuan 图像链 live smoke       ⚠️ 部分完成(2026-04-22):3/5 绿(a2_char / a2_image / a2_review),a2_mesh 炸在视觉 review payload 超限 → TBD-006 修复后可 resume
-顺序 4: A2 mesh_from_image live smoke           ⚠️ 部分通过(2026-04-22 17:27):review 路径完全打通(GLM-4.6V approve_one @ 0.89),mesh 步抓到确定性业务错误 `配额超限`(HUNYUAN_3D_KEY 账号配额耗尽,非网络问题);本轮顺手加了 mesh quota error 分类 (§6.5 末段, 19 fence),用户充值 / 换 key 后 resume 可真完成
+顺序 4: A2 mesh_from_image live smoke           ⏳ 阻塞于 provider transient(2026-04-22 v3/v4/v5 三次 resume):review 路径完全打通(GLM-4.6V approve_one @ 0.89),mesh 步 Hunyuan 3D tokenhub 间歇性返错(v3 ConnectError / v4 "配额超限" 业务错 / v5 ConnectError),但 solo probe 证明 key 未耗尽 + endpoint + body 全正常(60s done 返 .glb);服务端某种时段/负载相关的 transient 状态,framework 侧无 bug 可修。等 tokenhub 状态稳定后重试
 顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时(a2_ue 合并进来)
 ```
 
@@ -477,32 +477,36 @@ python -m pytest -q                            # 全量回归
 | `step_mesh` | ❌ 配额耗尽 | 见下方"A2 顺序 4 v4 resume"确证 |
 | `step_export` | 未触达 | mesh 没产出,export 步未执行 |
 
-**A2 顺序 4 v4 resume 确证(2026-04-22 17:27)**:再跑一次 resume(网络现已可达,`curl /v1/api/3d/query` 返 HTTP 401 正常),抓到**真实业务错误而非网络问题**:
+**A2 顺序 4 多轮 resume 真实错误形态(2026-04-22 16:48 ~ 18:00)**:
 
-```
-MeshWorkerError: tokenhub 3d job 1438459300615168000 failed:
-  {'message': '配额超限', 'type': 'api_error',
-   'code': 'FailedOperation.InnerError'}
-```
+| 轮次 | 时间 | mesh 步错误形态 |
+| --- | --- | --- |
+| v3 | 16:48 | 3 次 attempt 全 `httpx.ConnectError: All connection attempts failed` |
+| v4 | 17:27 | 第 1 次 attempt `{'message': '配额超限', 'code': 'FailedOperation.InnerError'}`,第 2、3 次 ConnectError |
+| v5 | 18:00 | 3 次 attempt 全 ConnectError,零"配额超限" |
+| probe solo | 17:45 / 17:50 | **完全正常**:submit → job_id → 60s completed → 返 .glb / .obj + preview URL |
 
-- submit **成功拿到 job_id**(`1438459300615168000`),服务端接受了请求
-- poll 第一次就返 `status=failed` + "配额超限"
-- 后续 attempt(第 2、3 次)触发 Hunyuan 服务端**连接级限流**(对耗尽配额的 key 做 TCP-reset),才表现为 `ConnectError: All connection attempts failed` —— 上一轮(16:48 v3)trace 只抓到第二类错误,误导方向,实际底层就是 key 配额耗尽。
+**关键定位步骤**:
 
-**根因**:`HUNYUAN_3D_KEY` 账号**调用配额/余额耗尽**。非 framework bug,非网络问题。
+- 用户去腾讯云控制台**确认 `HUNYUAN_3D_KEY` 额度未耗尽**
+- `probes/provider/probe_hunyuan_3d_submit.py` 独立 Python httpx 打 tokenhub(绕开 framework),用同 key / 同 body / 同 endpoint,submit + poll **完全正常**:60s 完成,返 `status=completed` + .glb / .obj URL + preview
+- 三轮 framework resume 错误形态**每次不同**(ConnectError / "配额超限" / 混合),甚至**同一 key 短时间内**表现不一致
 
-**连带发现 + 顺手 framework 增强(2026-04-22 17:45,本轮实施)**:
+**根因**:Hunyuan 3D tokenhub 服务端**时段/负载相关的 transient 状态**。对同一 key 的同一合法请求,在某些时段给出"配额超限"业务错或 TCP 连接级 reset(与真实配额状态脱钩)。非 framework bug,非 key 耗尽,非网络问题,非请求格式问题。
 
-发现 `mesh_worker.py:_atokenhub_poll` 在 `status=failed` 时无脑 raise `MeshWorkerError`,failure_mode_map 把它路由到 `worker_error → retry_same_step + fallback_model`,**每次 fallback 都 re-issue 一次付费 /submit**,在确定性的配额耗尽场景纯属浪费。
+**关于 `code: FailedOperation.InnerError`**:腾讯云通用"内部错误"码(不是专门的配额错误码 `FailedOperation.QuotaExceeded` / `LimitExceeded.*`),`message: '配额超限'` 只是人类可读文案占位,**不能当作真实配额耗尽的证据**。
 
-修法:
-- 新增 `_is_quota_or_rate_limit_error(resp)` 分类器,检测 resp 里的中/英配额关键词(`配额` / `超限` / `充值` / `quota` / `rate limit` / `insufficient` / `billing` 等 15 条)
-- 命中时改 raise `MeshWorkerUnsupportedResponse`(现有子类),映射到 `unsupported_response → abort_or_fallback`(honour `on_fallback`,未配则终止),**不再 fallback 链白烧 submit**
-- 19 条 fence(`tests/unit/test_mesh_worker_quota_errors.py`):16 条 parametrize 覆盖分类器中英多 shape + 防误伤(GPU OOM / 404 等非 quota 失败保留 `MeshWorkerError`),3 条端到端守 `_atokenhub_poll` 分叉语义
+**一次错误假设 + 已撤回(2026-04-22 17:45 ~ 18:15,commit a0ffa6c 发布、此提交 revert)**:
 
-用户侧 A2 顺序 4 真跑通**仍需先充值 HUNYUAN_3D_KEY 账号或换一把新 key**,framework 只是避免未来任何 provider 配额耗尽白烧付费提交。
+v4 抓到"配额超限"文案后,我误把它当成"确定性配额耗尽"根因,顺手在 `mesh_worker._atokenhub_poll` 加了 `_is_quota_or_rate_limit_error` 分类器,命中时 escalate 到 `MeshWorkerUnsupportedResponse` → `abort_or_fallback` 直接终止。19 条 fence 守门,commit `a0ffa6c` 推送。
 
-**结论**:TBD-006 修复完全验证 —— 视觉 review payload 超限的根因(Bug A + Bug B 双修复)真实环境下闭合,review_judge_visual 在 GLM 上正常工作。剩余 mesh 步阻塞是**外部网络瞬态**,framework 路由和错误处理路径完全按预期工作(`MeshWorkerError` 被捕 → `worker_error` failure mode → 3 次 fallback 后 run.failed,无静默吞栈)。
+v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo probe 证明 key 正常。**假设破产**:"配额超限"文案不是确定性,是 transient 的。留着分类器的风险:下次 provider 又返"配额超限"时会把实际可 retry 的场景永久终止。
+
+撤回:revert `mesh_worker.py` 的 `_QUOTA_KEYWORDS` + `_is_quota_or_rate_limit_error` + poll 分叉,删 `tests/unit/test_mesh_worker_quota_errors.py`,测试基数 555 → 536。
+
+**教训**:provider 的 error `message` **不能字面当结论**(正是 `feedback_verify_external_reviews.md` 规矩防的坑)。应该拿**独立证据**(控制台额度、独立 probe、多时段观察)验证才能定性。framework 不该在单次错误 message 上建立"确定性 / 永久终止"的分类语义 —— 需要多次实证确认才升级。
+
+**结论**:TBD-006 修复完全验证 —— 视觉 review payload 超限的根因(Bug A + Bug B 双修复)真实环境下闭合,review_judge_visual 在 GLM 上正常工作。mesh 步阻塞是**provider 端 transient 状态**,framework 无 bug 可修;需要你等 tokenhub 服务稳定后重试(也可换 `TRIPO3D_KEY` 走 `mesh_from_image` 的 fallback route,但那需要配 tripo3d parser 已完成 scaffold)。
 
 ---
 
@@ -536,7 +540,7 @@ MeshWorkerError: tokenhub 3d job 1438459300615168000 failed:
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **555 通过 / 0 失败**(2026-04-22 第五轮基线,~20.7s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + mesh quota error 分类 fence 19) |
+| L0 pytest 全量 | ✅ **536 通过 / 0 失败**(2026-04-22 第五轮基线,~15.5s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
@@ -549,7 +553,7 @@ MeshWorkerError: tokenhub 3d job 1438459300615168000 failed:
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 555 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + mesh quota error 分类 19 fence)+ 60+ L3 fence |
+| 测试覆盖 | ✅ 536 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence)+ 60+ L3 fence |
 
 ### 8.3 整体结论
 
