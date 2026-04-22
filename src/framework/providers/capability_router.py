@@ -86,7 +86,7 @@ class CapabilityRouter:
     async def acompletion(
         self, *, policy: ProviderPolicy, call_template: ProviderCall,
     ) -> tuple[ProviderResult, str]:
-        last: ProviderError | None = None
+        errors: list[tuple[str, ProviderError]] = []
         for route in self._routes(policy):
             call = _rebind(call_template, route=route, policy=policy)
             adapter = self._resolve(route.model)
@@ -102,9 +102,9 @@ class CapabilityRouter:
                 # terminates) instead.
                 raise
             except ProviderError as exc:
-                last = exc
+                errors.append((route.model, exc))
                 continue
-        raise last or ProviderError("exhausted ProviderPolicy without a single call")
+        raise _raise_exhausted(errors, "completion")
 
     async def astructured(
         self, *, policy: ProviderPolicy, call_template: ProviderCall,
@@ -128,7 +128,7 @@ class CapabilityRouter:
         tuple signature stable — callers that ignore the key are
         unaffected.
         """
-        last: ProviderError | None = None
+        errors: list[tuple[str, ProviderError]] = []
         for route in self._routes(policy):
             call = _rebind(call_template, route=route, policy=policy)
             adapter = self._resolve(route.model)
@@ -139,9 +139,9 @@ class CapabilityRouter:
             except ProviderUnsupportedResponse:
                 raise
             except ProviderError as exc:
-                last = exc
+                errors.append((route.model, exc))
                 continue
-        raise last or ProviderError("exhausted ProviderPolicy without a single call")
+        raise _raise_exhausted(errors, "structured")
 
     async def aimage_edit(
         self, *, policy: ProviderPolicy, prompt: str,
@@ -149,7 +149,7 @@ class CapabilityRouter:
         size: str = "1024x1024", timeout_s: float | None = None,
         extra: dict | None = None,
     ) -> tuple[list[ImageResult], str]:
-        last: ProviderError | None = None
+        errors: list[tuple[str, ProviderError]] = []
         accepted_kinds = {"image_edit", "image"}
         for route in self._routes(policy):
             if route.kind not in accepted_kinds:
@@ -176,21 +176,21 @@ class CapabilityRouter:
                 # Deterministic shape — never fall through to next route.
                 raise
             except NotImplementedError:
-                last = ProviderError(
+                errors.append((route.model, ProviderError(
                     f"adapter {type(adapter).__name__} does not support image_edit"
-                )
+                )))
                 continue
             except ProviderError as exc:
-                last = exc
+                errors.append((route.model, exc))
                 continue
-        raise last or ProviderError("exhausted policy without a single image_edit call")
+        raise _raise_exhausted(errors, "image_edit")
 
     async def aimage_generation(
         self, *, policy: ProviderPolicy, prompt: str, n: int = 1,
         size: str = "1024x1024", timeout_s: float | None = None,
         extra: dict | None = None,
     ) -> tuple[list[ImageResult], str]:
-        last: ProviderError | None = None
+        errors: list[tuple[str, ProviderError]] = []
         for route in self._routes(policy):
             try:
                 # See aimage_edit for the auth-inside-try rationale. Env-missing
@@ -208,14 +208,14 @@ class CapabilityRouter:
             except ProviderUnsupportedResponse:
                 raise
             except NotImplementedError:
-                last = ProviderError(
+                errors.append((route.model, ProviderError(
                     f"adapter {type(adapter).__name__} does not support image_generation"
-                )
+                )))
                 continue
             except ProviderError as exc:
-                last = exc
+                errors.append((route.model, exc))
                 continue
-        raise last or ProviderError("exhausted ProviderPolicy without a single image call")
+        raise _raise_exhausted(errors, "image_generation")
 
     # ---- Sync shims (back-compat) ---------------------------------------
 
@@ -255,6 +255,45 @@ class CapabilityRouter:
             policy=policy, prompt=prompt, n=n, size=size,
             timeout_s=timeout_s, extra=extra,
         ))
+
+
+def _raise_exhausted(
+    errors: list[tuple[str, ProviderError]], action: str,
+) -> ProviderError:
+    """Build (and return) a composite ProviderError that preserves EVERY
+    per-route error so callers can `raise _raise_exhausted(...)`.
+
+    The previous design kept only `last` and discarded earlier errors. That
+    swallowed the root cause whenever the fallback chain masks a deterministic
+    upstream failure: e.g. a2_mesh review_judge_visual runs preferred
+    (glm_4_6v_flashX, glm_4_6v) then fallback (qwen3_6_plus); surfacing only
+    qwen's "Range of input length should be [1, 1000000]" hid whatever the
+    two GLM routes actually said. The chained message here shows every model
+    by name + verbatim exception text so operators can diagnose whether one
+    provider is misconfigured vs all three sharing a systemic issue.
+
+    Does NOT raise — returns the exception so the caller's `raise` keeps
+    its own stack frame. Also sets `__cause__` to the last per-route error
+    so `raise X from Y` chaining stays intact for downstream handlers.
+    """
+    if not errors:
+        return ProviderError(
+            f"exhausted ProviderPolicy without a single {action} call"
+        )
+    detail = "; ".join(f"{m}: {exc}" for m, exc in errors)
+    # Preserve the specific ProviderError subclass when every route failed
+    # the same way — e.g. all schema_validation_fail stays routable to
+    # `schema_validation_fail` FailureMode instead of being demoted to the
+    # generic `provider_error` bucket. Heterogeneous failures fall back to
+    # plain ProviderError, which is still more useful than silently keeping
+    # only the last one.
+    types = {type(e) for _, e in errors}
+    cls = types.pop() if len(types) == 1 else ProviderError
+    composite = cls(
+        f"exhausted {len(errors)} route(s) for {action}: {detail}"
+    )
+    composite.__cause__ = errors[-1][1]
+    return composite
 
 
 def _stash_route_pricing_on_result(result: object, route: PreparedRoute) -> None:

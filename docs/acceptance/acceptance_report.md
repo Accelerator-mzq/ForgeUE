@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 520 用例通过 ✅(基线 491 + Codex 21 条 audit 修复 fence 29) |
+| L0 自动化 | `pytest -q` 全绿 | 526 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 |
@@ -352,7 +352,7 @@
 
 **目标**:验证 9 个已接入别名(text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image)在真实 provider 调用下收敛。
 
-**前置条件**:`.env` 配齐 DASHSCOPE_API_KEY / HUNYUAN_API_KEY / HUNYUAN_3D_KEY / GLM_API_KEY / PACKYCODE_API_KEY。
+**前置条件**:`.env` 配齐 `DASHSCOPE_API_KEY` / `HUNYUAN_API_KEY` / `HUNYUAN_3D_KEY` / `ZHIPU_API_KEY` / `PACKYCODE_KEY` / `MINIMAX_KEY`(注意:v1.0 版本列的 `GLM_API_KEY` / `PACKYCODE_API_KEY` 实装时改成了 `ZHIPU_API_KEY` / `PACKYCODE_KEY`,以 `config/models.yaml` 的 `api_key_env` 为准)。
 
 **执行步骤**:
 
@@ -366,7 +366,30 @@ python -m framework.run --task examples/ue_export_pipeline.json --live-llm --run
 
 **验收标准**:每条产出对应 RunResult.status == succeeded,budget_summary 非零,trace 可读。
 
-**状态**:⏳ 未执行(需 API key)
+**2026-04-22 执行结果**:
+
+| bundle | 状态 | 关键观察 |
+| --- | --- | --- |
+| `a2_char` | ✅ | MiniMax Anthropic 代理 `anthropic/MiniMax-M2.7`,usage=2133 tokens,Pydantic `ue.character` schema 验证 passed,Kaelen 角色卡完整 |
+| `a2_image` | ✅ | FakeComfy 3 candidate + 真 `review_judge` vision,PackyCode Anthropic Opus/Sonnet 对 fake 图 `reject @ 0.26`,工作流按 `on_reject: null` 正常终止 |
+| `a2_review` | ✅ | `review_judge` 对 3 真图挑出 `cand_oak_slab @ 0.916 confidence`,`approve_one` |
+| `a2_mesh` | ⚠️ | 真 Qwen 3 候选图生成($0.0834,`qwen_image_2`),但 `review_judge_visual` 在 3 张 1024×1024 PNG 合一条消息时撞破 GLM / DashScope 的 input-length 上限(base64 1,262,246 字符 > 1M),见 §6.5 根因;mesh 未触达 |
+| `a2_ue` | 跳过 | 占位 `project_root="C:/Users/you/..."` 不存在,`ExportExecutor` 会 raise(保护 C: 驱动不被污染);与 A1 UE 真机绑定 |
+
+**状态**:⚠️ 部分通过(3/5 绿 + 1 发现可修 bug + 1 跳过并入 A1)
+
+### 6.2.1 A2 副产物:Router 观测性修复(2026-04-22)
+
+A2 定位过程中发现并修复了 `CapabilityRouter` 的错误吞栈 bug(LLD §6.2 fallback 链):
+
+- **Before**:`acompletion` / `astructured` / `aimage_generation` / `aimage_edit` 都用 `last = exc; continue`,fallback 耗尽后只 raise 最后一条路的 error。a2_mesh 3 次 attempt 都只看到 qwen-plus 的 DashScope 错误,glm_4_6v 两家的真错误被静默吞掉,根因定位时间被放大
+- **After**:改为 `errors.append((model, exc))`,通过 `_raise_exhausted()` 合成 composite ProviderError,message 携带每条 route 的 `<model>: <verbatim error>`,`__cause__` 仍指向最后一条(不破坏 traceback)。关键:当所有路同 subclass(如全 `SchemaValidationError`)时保留子类,`FailureModeMap` 继续按 `schema_validation_fail` 路由,不会错误降级到 `provider_error`
+- **Fence**:`tests/unit/test_router_fallback_errors.py` 4 条(chain 完整性 / 同类型保留 / 异构降级 / `__cause__` 保留)
+- **验证**:resume a2_mesh 后看到真实全链错误 —— glm_4_6v_flashx / glm_4_6v "Prompt exceeds max length" + qwen-plus "Range of input length [1, 1000000]",3 家**同一根因**(payload 过长),不是 fallback 断也不是 qwen-plus 不支持视觉
+
+### 6.2.2 A2 剩余:视觉 review 图像压缩(未做)
+
+见 §7 TBD-006。
 
 ### 6.3 A3 — Pricing Probe `--apply` 真跑
 
@@ -395,7 +418,7 @@ python -m pytest -q                            # 全量回归
   - hunyuan_3d × 1(hunyuan_3d)
 - `pricing_autogen.sourced_on` = 执行当日
 - tripo3d 下 model 维持 `no_parser`(scaffold 未实装 parser,区别于 `stale`)
-- 520 测试仍全绿
+- 526 测试仍全绿
 
 **状态**:✅ 已通过(2026-04-22 dry-run + --apply,所有 12 个 model 返 `fresh`,真实页面数值与 YAML 一致,`--apply` 无 diff;DashScope parser 已随 2026-04-22 工作树并入,tripo3d 维持 `no_parser`)
 
@@ -404,10 +427,34 @@ python -m pytest -q                            # 全量回归
 ```
 顺序 1: A3(本地 + playwright)                  ✅ 已完成(2026-04-22)
 顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) ✅ 已完成(commit 293979f / 74c0849)
-顺序 3: A2 qwen/hunyuan 图像链 live smoke       预计 1-2 小时(烧 key 钱)
-顺序 4: A2 mesh_from_image live smoke           预计 30 min
-顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时
+顺序 3: A2 qwen/hunyuan 图像链 live smoke       ⚠️ 部分完成(2026-04-22):3/5 绿(a2_char / a2_image / a2_review),a2_mesh 炸在视觉 review payload 超限 → §7 TBD-006,a2_ue 与 A1 合并
+顺序 4: A2 mesh_from_image live smoke           ⏳ 阻塞于 TBD-006(图像压缩)
+顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时(a2_ue 合并进来)
 ```
+
+### 6.5 A2 a2_mesh 根因(视觉 review payload 超限)
+
+**现象**:`image_to_3d_pipeline.json` 的 `step_review_image`(`review_judge_visual`)3 次 fallback attempt 全炸,workflow 终止在 mesh 之前。
+
+**定位过程**:
+
+1. 初读 trace 只看到 qwen-plus 的 DashScope 错误 `InvalidParameter: Range of input length should be [1, 1000000]`,误认为 fallback 断 / qwen 不支持视觉
+2. 修 `CapabilityRouter` 错误吞栈(§6.2.1),resume 后看到全链三条真实错误:
+   - `openai/glm-4.6v-flashx`: `Prompt exceeds max length`(Zhipu 措辞)
+   - `openai/glm-4.6v`: `Prompt exceeds max length`
+   - `openai/qwen-plus`: `Range of input length should be [1, 1000000]`(DashScope 措辞)
+3. 量化 payload:3 张 1024×1024 Qwen-image 生成 PNG → base64 总 **1,262,246 字符** > 所有三家 provider 的单消息输入上限
+
+**根因**:`framework.review_engine.judge._build_prompt()` 在 `visual_mode=True` 时,把每个 candidate 的 `image_bytes` 原封不动 base64 后塞进同一条 user message 的 `image_url` content block。对 3 个 1024×1024 PNG(~320KB 原始 / ~427KB base64 each)无节制拼接 → ~1.26MB,超 DashScope 硬限 1M / GLM 同级别上限。
+
+**不是**:
+- fallback 断了 —— router 确实按序切了 3 家(修后 trace 证)
+- qwen-plus 不支持视觉 —— 它接受了 `image_url` 并开始计数,只是超限
+- provider 配置错 —— 3 家都 `kind: vision`,配置正确
+
+**修法(TBD-006)**:在 `_attach_image_bytes()` 或 `judge._build_prompt()` 里对每张 `image_bytes` resize(≤ 512×512)+ JPEG recompress(quality 80),使单张 base64 ≤ 270K,3 张合计 ~810K 留 20% 余量。依赖:Pillow。Fence:payload 超限时 review 回 `schema_validation_fail` 而非重试到 budget 耗尽。
+
+**旁证**:`a2_review` 的 `review_judge`(PackyCode Anthropic)对 3 张小占位图正常给 `approve_one @ 0.916`,说明 judge.py 构 message 本身没 bug,只是对真实 Qwen 生成图(每张 300KB+)没做体积控制。
 
 ---
 
@@ -420,6 +467,7 @@ python -m pytest -q                            # 全量回归
 | TBD-003 | WS 鉴权 / 多租户 | NFR-SEC-005 | ❌ | 接入 UI 时 |
 | TBD-004 | FBX self-containment 校验 | FR-WORKER-* | ❌ | 引入 PyFBX / ufbx 后 |
 | TBD-005 | Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold(DashScope 已于 2026-04-22 前并入) | 有工作流真实使用时 |
+| TBD-006 | 视觉 review 图像压缩 | FR-REVIEW-001, A2 顺序 3 | ⚠️ 根因已定位 | 见本行"根因"栏,下一轮做;修好后 resume a2_mesh 可完成顺序 4 |
 | TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |
@@ -440,7 +488,7 @@ python -m pytest -q                            # 全量回归
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **520 通过 / 0 失败**(2026-04-22 第二轮基线,12.04s;基线 491 + Codex 21 条 audit 修复 fence 29) |
+| L0 pytest 全量 | ✅ **526 通过 / 0 失败**(2026-04-22 第三轮基线,~12.5s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
@@ -453,7 +501,7 @@ python -m pytest -q                            # 全量回归
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 520 用例(基线 491 + Codex 5 轮 audit 修复 29 fence)+ 60+ L3 fence |
+| 测试覆盖 | ✅ 526 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence)+ 60+ L3 fence |
 
 ### 8.3 整体结论
 

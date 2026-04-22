@@ -21,7 +21,7 @@
 
 | 原则 | 说明 |
 | --- | --- |
-| **测试即可执行规范** | 520 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
+| **测试即可执行规范** | 526 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
 | **零 mock 关键边界** | download / EventBus / DAG / Budget / artifact 流端到端真实对象,不得 mock |
 | **每次修复配一个 fence** | Codex / adversarial review 每条修复对应一个新回归测试 |
 | **单元测试快** | `pytest -q` 全量 ≤ 15s,CI 节奏保证 |
@@ -53,7 +53,7 @@
            ├─────────────────────────┤
            │ 集成测试 × 10 文件 65 用例│   ← P0-P4 + 场景级
            ├─────────────────────────┤
-           │ 单元测试 × 41 文件 455 用例│   ← 主体
+           │ 单元测试 × 42 文件 461 用例│   ← 主体
            └─────────────────────────┘
 ```
 
@@ -61,9 +61,9 @@
 
 | 类别 | 目录 | 文件数 | 用例数 | 运行时间 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | `tests/unit/` | 41 | ~455 | < 10s |
+| 单元测试 | `tests/unit/` | 42 | ~461 | < 10s |
 | 集成测试 | `tests/integration/` | 10 | ~65 | < 5s |
-| **合计** | — | **51** | **520** | **< 15s** |
+| **合计** | — | **52** | **526** | **< 15s** |
 
 ### 2.3 执行方式
 
@@ -337,8 +337,8 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
 | NFR-SEC | test_secrets |
 | NFR-OBS | test_event_bus,test_progress_passthrough |
-| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 520(基线 491 + Codex 21 条 audit 修复 fence 29) |
-| NFR-PORT | CI 能在 Linux 跑(520 全绿,stub unreal 覆盖 P4) |
+| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 526(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6) |
+| NFR-PORT | CI 能在 Linux 跑(526 全绿,stub unreal 覆盖 P4) |
 
 ### 6.3 未覆盖 / 部分覆盖
 
@@ -409,7 +409,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 
 | 级别 | 标准 |
 | --- | --- |
-| 单元测试 | 100% 通过(520 用例,基线 491 + audit fix 29)|
+| 单元测试 | 100% 通过(526 用例,基线 491 + audit 29 + 后续 fence 6)|
 | 集成测试 | P0–P4 + 5 场景全绿 |
 | Fence 测试 | 每条守护修复不得回退 |
 | 覆盖率 | 每条 FR 至少 1 个对应测试(矩阵 §6.1 全部 ✅) |

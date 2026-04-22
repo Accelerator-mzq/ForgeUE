@@ -338,7 +338,7 @@ python -m pytest -v -k p3           # 关键字过滤
 | 需求 | [`docs/requirements/SRS.md`](docs/requirements/SRS.md) | 需求规格说明书(FR/NFR/接口/约束) |
 | 概要设计 | [`docs/design/HLD.md`](docs/design/HLD.md) | 分层 / 子系统 / 对象模型概览 |
 | 详细设计 | [`docs/design/LLD.md`](docs/design/LLD.md) | 字段 / 方法 / 算法 / 异常体系 |
-| 测试 | [`docs/testing/test_spec.md`](docs/testing/test_spec.md) | 520 用例索引 + fence 清单 |
+| 测试 | [`docs/testing/test_spec.md`](docs/testing/test_spec.md) | 526 用例索引 + fence 清单 |
 | 验收 | [`docs/acceptance/acceptance_report.md`](docs/acceptance/acceptance_report.md) | FR/NFR 验收状态矩阵 |
 | 参考 | [`docs/api_des/`](docs/api_des/) | 五家 provider API 契约 |
 | 归档 | [`docs/archive/`](docs/archive/) | 历史方案与 plan_v1 史料(不再更新) |
