@@ -1,6 +1,6 @@
 # probes/ — 手工 smoke / 诊断脚本
 
-本目录存放**手工触发**的冒烟与诊断脚本。它们不是运行时代码(不被 `framework/` 导入),也不是测试(不参与 `pytest` 收集),用于:
+本目录存放**手工触发**的冒烟与诊断脚本。它们不是运行时代码(不被 `src/framework/` 导入),也不是测试(不参与 `pytest` 收集),用于:
 
 - 快速验证某个 provider 的 key / endpoint 是否打通
 - 复现并定位线上 bug(如 "Hunyuan 3D 返回了什么格式?")
@@ -193,7 +193,7 @@ python -m probes.provider.probe_glm_image_debug
 python -m probes.provider.probe_hunyuan_3d_format
 ```
 
-`probes/`、`probes/smoke/`、`probes/provider/` 都是 Python package(带 `__init__.py`),可以从 `tests/` 和 `framework/` 里通过标准 import 访问。
+`probes/`、`probes/smoke/`、`probes/provider/` 都是 Python package(带 `__init__.py`),可以从 `tests/` 和 `src/framework/` 里通过标准 import 访问。
 
 ---
 
@@ -216,7 +216,7 @@ python -m probes.provider.probe_hunyuan_3d_format
 
 ## 不做的事
 
-- ❌ 从 `framework/` 内 import probe(probe 是外部工具,不是 runtime 依赖)
-- ❌ 在 probe 里写"业务逻辑"(该放到 `framework/`)
+- ❌ 从 `src/framework/` 内 import probe(probe 是外部工具,不是 runtime 依赖)
+- ❌ 在 probe 里写"业务逻辑"(该放到 `src/framework/`)
 - ❌ 把 probe 伪装成 `test_*.py`(语义不同:probe 是诊断,test 是断言)
 - ❌ pyproject.toml 的 `packages.find` 不包含 `probes*`(不随 wheel 发布)

@@ -1,4 +1,4 @@
-"""Unit tests for framework/runtime/failure_mode_map.py (§C.6, F3-5)."""
+"""Unit tests for src/framework/runtime/failure_mode_map.py (§C.6, F3-5)."""
 from __future__ import annotations
 
 import pytest

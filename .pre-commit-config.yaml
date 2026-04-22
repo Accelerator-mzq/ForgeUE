@@ -1,0 +1,50 @@
+# pre-commit hooks — https://pre-commit.com/
+# Install once: pre-commit install
+# Manual run:    pre-commit run --all-files
+#
+# Per AGENTS.md "决策 5: 均衡":
+# - ruff check + ruff format (replaces black + isort + flake8)
+# - basic hygiene hooks (trailing whitespace, EOF, large files, yaml syntax)
+# - mypy / pytest are NOT in the commit hook (run via CI / manually)
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        # Markdown line-break awareness — let .editorconfig handle .md
+        exclude: \.(md|markdown)$
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # Allow custom !-tags used by some downstream YAML extensions
+        args: [--unsafe]
+      - id: check-toml
+      - id: check-json
+        # examples/*.json contain UTF-8 full-width quotes; pre-commit's check-json
+        # would still parse them (they're valid JSON), so safe to include.
+      - id: check-added-large-files
+        args: [--maxkb=500]
+        # Pricing fixture HTML can be ~280 KB; keep limit at 500
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # Optional but useful: forbid committing secrets accidentally.
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: |
+          (?x)^(
+              tests/fixtures/.*|
+              docs/archive/.*|
+              src/forgeue\.egg-info/.*
+          )$

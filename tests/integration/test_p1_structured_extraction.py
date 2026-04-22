@@ -116,17 +116,27 @@ def test_p1_schema_fail_retries_then_succeeds(bundle_path: Path, tmp_path: Path)
 
 
 def test_p1_gives_up_after_max_attempts(bundle_path: Path, tmp_path: Path):
+    """Exhausted in-executor retries now re-raise the typed SchemaValidationError
+    instead of wrapping in a generic RuntimeError, so the failure-mode map
+    can route it (schema_validation_fail → retry_same_step). With both the
+    in-executor RetryPolicy and the orchestrator-level max_retries
+    exhausted, the run terminates cleanly with status=failed rather than
+    crashing the caller."""
     bundle = load_task_bundle(bundle_path)
     bad = dict(_valid_character())
     bad["level"] = 9999
     fake = FakeAdapter()
-    fake.program("gpt-4o-mini", outputs=[FakeModelProgram(schema_value=bad) for _ in range(3)])
+    # Provide enough bad outputs to cover every retry the executor +
+    # orchestrator could legitimately request. 12 each is generous.
+    fake.program("gpt-4o-mini",
+                 outputs=[FakeModelProgram(schema_value=bad) for _ in range(12)])
     fake.program("anthropic/claude-haiku-4-5-20251001",
-                 outputs=[FakeModelProgram(schema_value=bad) for _ in range(3)])
+                 outputs=[FakeModelProgram(schema_value=bad) for _ in range(12)])
     orch, _ = _build_env(tmp_path, fake)
-    with pytest.raises(RuntimeError, match="generate_structured failed"):
-        orch.run(task=bundle.task, workflow=bundle.workflow, steps=bundle.steps,
-                 run_id="run_p1_giveup")
+    result = orch.run(task=bundle.task, workflow=bundle.workflow,
+                      steps=bundle.steps, run_id="run_p1_giveup")
+    assert result.run.status.value == "failed"
+    assert result.run.metrics.get("last_failure_mode") == "schema_validation_fail"
 
 
 def test_p1_validate_flags_bad_upstream(tmp_path: Path):

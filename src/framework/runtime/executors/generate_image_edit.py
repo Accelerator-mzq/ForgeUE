@@ -32,6 +32,7 @@ from framework.core.enums import ArtifactRole, PayloadKind, StepType
 from framework.core.policies import RetryPolicy
 from framework.providers.base import ProviderError, ProviderTimeout
 from framework.providers.capability_router import CapabilityRouter
+from framework.runtime.budget_tracker import estimate_image_call_cost_usd
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
 
 
@@ -97,6 +98,15 @@ class GenerateImageEditExecutor(StepExecutor):
         ).hexdigest()[:8]
         variant_group = cfg.get("variation_group_id") or f"{ctx.run.run_id}_{ctx.step.step_id}"
 
+        # Capture route pricing once (router stashes it on every result.raw).
+        # Strip from raw before persisting so adapter metadata stays clean,
+        # mirroring generate_image.py's handling.
+        route_pricing: dict[str, float] | None = None
+        for r in results:
+            if isinstance(r.raw, dict) and "_route_pricing" in r.raw:
+                route_pricing = route_pricing or r.raw.pop("_route_pricing")
+                r.raw.pop("_route_pricing", None)
+
         image_arts = []
         image_ids = []
         for i, r in enumerate(results):
@@ -136,12 +146,18 @@ class GenerateImageEditExecutor(StepExecutor):
             image_arts.append(art)
             image_ids.append(aid)
 
+        cost_usd = estimate_image_call_cost_usd(
+            model=str(chosen_model or "unknown"),
+            n=len(image_ids), size=size,
+            route_pricing=route_pricing,
+        ) if image_ids else 0.0
         metrics = {
             "attempts": attempt_count,
             "edit_count": len(image_ids),
             "chosen_model": chosen_model,
             "source_artifact_id": source_artifact_id,
             "prompt_len": len(prompt),
+            "cost_usd": cost_usd,
         }
         return ExecutorResult(artifacts=image_arts, metrics=metrics)
 
@@ -198,6 +214,11 @@ def _resolve_source_image(ctx: StepContext) -> tuple[bytes | None, str | None]:
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
+    # Deterministic unsupported-response shapes never retry — same paid
+    # call would yield the same bytes. Mirror of generate_mesh.py.
+    from framework.providers.base import ProviderUnsupportedResponse
+    if isinstance(exc, ProviderUnsupportedResponse):
+        return False
     if "timeout" in policy.retry_on and isinstance(exc, ProviderTimeout):
         return True
     if "provider_error" in policy.retry_on and isinstance(exc, ProviderError):

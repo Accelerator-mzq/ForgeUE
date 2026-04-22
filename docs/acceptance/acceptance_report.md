@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 491 用例通过 ✅ |
+| L0 自动化 | `pytest -q` 全绿 | 520 用例通过 ✅(基线 491 + Codex 21 条 audit 修复 fence 29) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 |
@@ -112,6 +112,9 @@
 | FR-LC-003 失败直接 failed | test_dry_run_pass | ✅ |
 | FR-LC-004 artifact_hash + Checkpoint | test_checkpoint_store | ✅ |
 | FR-LC-005 Resume hash 一致性 | test_checkpoint_store | ✅ |
+| FR-LC-006 跨进程 `_artifacts.json` 持久化 | test_codex_audit_fixes(`_repository_metadata_dump_and_load_roundtrip` / `_resume_yields_cache_hits_after_reload`) | ✅ |
+| FR-LC-007 load_run_metadata 三道过滤 | test_codex_audit_fixes(`_skips_missing_payload` / `_skips_corrupted_payload`) | ✅ |
+| FR-LC-008 find_hit 长度不一致 miss | test_codex_audit_fixes(`_misses_on_length_mismatch`) | ✅ |
 
 ### 4.3 FR-MODEL 多模型编排
 
@@ -131,7 +134,7 @@
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
 | FR-STRUCT-001 Instructor + Pydantic | integration/test_p1 | ✅ |
-| FR-STRUCT-002 schema registry | `framework/schemas/registry.py` | ✅ |
+| FR-STRUCT-002 schema registry | `src/framework/schemas/registry.py` | ✅ |
 | FR-STRUCT-003 validation_fail → retry | test_failure_mode_map | ✅ |
 | FR-STRUCT-004 drop_params=True | 代码审阅 `litellm_adapter.py` | ✅ |
 
@@ -147,6 +150,7 @@
 | FR-REVIEW-006 YAML rubric | `rubric_templates/` 3 份 | ✅ |
 | FR-REVIEW-007 panel 并发 | test_chief_judge_parallel | ✅ |
 | FR-REVIEW-008 cost 透传 | test_review_budget | ✅ |
+| FR-REVIEW-009 SelectExecutor bare-approve | test_codex_audit_fixes(`_select_bare_approve_keeps_whole_pool` / `_excludes_explicit_rejects`) | ✅ |
 
 ### 4.6 FR-STORE Artifact 仓库
 
@@ -184,6 +188,8 @@
 | FR-WORKER-006 magic bytes gate | test_cn_image_adapters + test_pr3_cleanup_fences | ✅ |
 | FR-WORKER-007 glTF external-buffer raise | test_cn_image_adapters | ✅ |
 | FR-WORKER-008 data: URI 大小写 | test_cn_image_adapters | ✅ |
+| FR-WORKER-009 tokenhub poll timeout clamp | test_codex_audit_fixes(`_hunyuan_poll_clamps_timeout` / `_mesh_poll_clamps_timeout`) | ✅ |
+| FR-WORKER-010 200/non-JSON wrap unsupported | test_codex_audit_fixes(`_post_raises_unsupported_on_html_body` × 3) | ✅ |
 
 ### 4.9 FR-RUNTIME 工程化
 
@@ -196,6 +202,11 @@
 | FR-RUNTIME-005 瞬态重试 | test_transient_retry + test_retry_async | ✅ |
 | FR-RUNTIME-006 Checkpoint resume | test_checkpoint_store | ✅ |
 | FR-RUNTIME-007 failure_mode_map | test_failure_mode_map | ✅ |
+| FR-RUNTIME-008 on_retry override | test_codex_audit_fixes(`_retry_same_step_honours_policy_on_retry`) | ✅ |
+| FR-RUNTIME-009 TransitionEngine per-arun 隔离 | test_codex_audit_fixes(`_uses_fresh_transition_engine_per_arun` / `_concurrent_arun_does_not_share_counters` / `_clone_preserves_subclass_and_attrs`) | ✅ |
+| FR-RUNTIME-010 cost_usd 写入 cp.metrics | test_codex_audit_fixes(`_structured_step_persists_cost_for_resume`) | ✅ |
+| FR-RUNTIME-011 cache-hit 回放 cost | test_codex_audit_fixes(`_orchestrator_replays_cached_cost_into_budget_tracker`) | ✅ |
+| FR-RUNTIME-012 unsupported 三层 short-circuit | test_codex_audit_fixes(`_router_does_not_fallback_on_unsupported` / `_image_executor_does_not_retry_on_unsupported` / `_*_unsupported_response_skips_transient_retry` × 3) | ✅ |
 
 ### 4.10 FR-COST 成本追踪
 
@@ -208,6 +219,8 @@
 | FR-COST-005 pricing probe CLI dry-run | test_pricing_probe_framework | ✅ |
 | FR-COST-006 httpx + playwright 双后端 | test_pricing_parser_*(3 家已实装) | ⚠️ DashScope / Tripo3D scaffold |
 | FR-COST-007 verifiable 来源 | YAML pricing_autogen 审计块 | ✅(2026-04-21) |
+| FR-COST-008 image_edit cost_usd | test_codex_audit_fixes(`_image_edit_emits_cost_usd`) | ✅ |
+| FR-COST-009 parallel_candidates 同质性 | test_codex_audit_fixes(`_generate_image_parallel_rejects_heterogeneous_models`) | ✅ |
 
 ### 4.11 FR-OBS 可观测
 
@@ -218,7 +231,7 @@
 | FR-OBS-003 WS server | integration/test_ws_progress | ✅ |
 | FR-OBS-004 idle disconnect safe | test_ws_progress | ✅ |
 | FR-OBS-005 OTel tracing | 可选启用 | ⏳ 未端到端验证 |
-| FR-OBS-006 CLI --serve | 代码审阅 `framework/run.py` | ✅ |
+| FR-OBS-006 CLI --serve | 代码审阅 `src/framework/run.py` | ✅ |
 
 ---
 
@@ -246,6 +259,7 @@
 | NFR-REL-006 DAG cascade cancel | test_cascade_cancel | ✅ |
 | NFR-REL-007 Checkpoint hash 严格 | test_checkpoint_store | ✅ |
 | NFR-REL-008 disk_full → rollback | test_failure_mode_map | ⚠️ 映射存在,rollback 动作未端到端 |
+| NFR-REL-009 ArtifactRepository DAG-safe + dump 不吞异常 | test_codex_audit_fixes(`_find_by_producer_safe_under_concurrent_put`) | ✅ |
 
 ### 5.3 NFR-REPRO 可复现
 
@@ -281,7 +295,7 @@
 | --- | --- | --- |
 | NFR-MAINT-001 fence 守门 | test_spec.md §5 清单 | ✅ |
 | NFR-MAINT-002 测试结构 1:1-2:1 | 42 unit / 11 core 模块 ≈ 3.8:1 | ✅ |
-| NFR-MAINT-003 ≥ 491 用例 | `pytest --collect-only` | ✅(491) |
+| NFR-MAINT-003 ≥ 491 用例 | `pytest --collect-only` | ✅(520,2026-04-22 第二轮基线 = 491 + audit 修复 fence 29) |
 | NFR-MAINT-004 关键边界不 mock | 代码审阅 | ✅ |
 | NFR-MAINT-005 Artifact 真实 | 代码审阅 + integration | ✅ |
 
@@ -303,6 +317,7 @@
 | ADR-003 | LiteLLMAdapter 最后注册 | ✅ 代码固化 |
 | ADR-004 | 外部数据必须可验证 | ✅(pricing probe 止血 + fence) |
 | ADR-005 | plan_v1 降级归档 | ✅(本轮文档重构) |
+| ADR-006 | TransitionEngine per-arun 隔离(`cloned_for_run`) | ✅ 代码固化 + 3 fence 守门 |
 
 ---
 
@@ -421,7 +436,7 @@ python -m pytest -q                            # 全量回归
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **491 通过 / 0 失败**(2026-04-22 基线,12.44s) |
+| L0 pytest 全量 | ✅ **520 通过 / 0 失败**(2026-04-22 第二轮基线,12.04s;基线 491 + Codex 21 条 audit 修复 fence 29) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
@@ -434,7 +449,7 @@ python -m pytest -q                            # 全量回归
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 491 用例 + 30+ L3 fence |
+| 测试覆盖 | ✅ 520 用例(基线 491 + Codex 5 轮 audit 修复 29 fence)+ 60+ L3 fence |
 
 ### 8.3 整体结论
 
@@ -464,6 +479,7 @@ python -m pytest -q                            # 全量回归
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §K + §M 拆分重组 |
+| v1.1 | 2026-04-22 | Codex 5 轮 audit(21 条 issue)修复 + 验收登记:新增 FR-LC-006~008、FR-WORKER-009~010、FR-COST-008~009、FR-RUNTIME-008~012、FR-REVIEW-009、NFR-REL-009、ADR-006 共 13 条验收行;L0 自动化基线 491 → 520 |
 
 ### 9.3 签收区
 

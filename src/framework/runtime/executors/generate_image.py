@@ -294,10 +294,27 @@ class GenerateImageExecutor(StepExecutor):
                 return await asyncio.gather(*tasks)
             per_call = asyncio.run(_fan_out())
             results = []
-            chosen_model = ""
+            models_seen: list[str] = []
             for per_call_results, per_call_model in per_call:
                 results.extend(per_call_results)
-                chosen_model = per_call_model
+                models_seen.append(per_call_model)
+            # Detect heterogeneous routing — some candidates landed on
+            # `preferred_models[0]`, others fell through to a fallback.
+            # Producer/cost bookkeeping assumes one route per step (single
+            # `chosen_model`, single `_route_pricing`); silently picking
+            # one would mis-attribute artifacts and rates. Refuse to ship
+            # mixed routes — caller should split the step or disable
+            # `parallel_candidates` for policies whose preferred call is
+            # unreliable enough to hit fallbacks per-candidate.
+            unique_models = sorted(set(models_seen))
+            if len(unique_models) > 1:
+                raise RuntimeError(
+                    f"parallel_candidates fan-out hit heterogeneous routes "
+                    f"{unique_models!r}; cost/producer bookkeeping requires "
+                    f"a single route per step. Disable parallel_candidates "
+                    f"or stabilize preferred_models for this step."
+                )
+            chosen_model = models_seen[0] if models_seen else ""
         else:
             results, chosen_model = self._router.image_generation(
                 policy=ctx.step.provider_policy,    # type: ignore[arg-type]
@@ -399,6 +416,14 @@ def _apply_revision_hint(spec: dict[str, Any], hint: dict[str, Any]) -> dict[str
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
+    # Deterministic unsupported-response shapes (200 + non-JSON, empty
+    # choices, etc.) MUST NOT retry — the provider returns the same
+    # bytes on the same prompt and a paid retry just burns more quota.
+    # Mirrors the early-return in generate_mesh._should_retry().
+    from framework.providers.base import ProviderUnsupportedResponse
+    from framework.providers.workers.comfy_worker import WorkerUnsupportedResponse
+    if isinstance(exc, (ProviderUnsupportedResponse, WorkerUnsupportedResponse)):
+        return False
     if "timeout" in policy.retry_on and isinstance(exc, (WorkerTimeout, ProviderTimeout)):
         return True
     if "provider_error" in policy.retry_on and isinstance(exc, (WorkerError, ProviderError)):

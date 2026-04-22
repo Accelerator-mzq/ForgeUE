@@ -21,6 +21,7 @@ from framework.providers.base import (
     ProviderCall,
     ProviderError,
     ProviderResult,
+    ProviderUnsupportedResponse,
     _run_sync,
 )
 
@@ -93,6 +94,13 @@ class CapabilityRouter:
                 result = await adapter.acompletion(call)
                 _stash_route_pricing_on_result(result, route)
                 return result, route.model
+            except ProviderUnsupportedResponse:
+                # Deterministic protocol mismatch — falling back to the
+                # next route would burn a paid call on a model that
+                # didn't actually fail. Surface up to FailureModeMap so
+                # `abort_or_fallback` honours `on_fallback` (or
+                # terminates) instead.
+                raise
             except ProviderError as exc:
                 last = exc
                 continue
@@ -128,6 +136,8 @@ class CapabilityRouter:
                 obj, usage = await adapter.astructured_with_usage(call, schema)
                 usage = _stash_route_pricing_on_usage(usage, route)
                 return obj, route.model, usage
+            except ProviderUnsupportedResponse:
+                raise
             except ProviderError as exc:
                 last = exc
                 continue
@@ -162,6 +172,9 @@ class CapabilityRouter:
                 for item in results:
                     _stash_route_pricing_on_result(item, route)
                 return results, route.model
+            except ProviderUnsupportedResponse:
+                # Deterministic shape — never fall through to next route.
+                raise
             except NotImplementedError:
                 last = ProviderError(
                     f"adapter {type(adapter).__name__} does not support image_edit"
@@ -192,6 +205,8 @@ class CapabilityRouter:
                 for item in results:
                     _stash_route_pricing_on_result(item, route)
                 return results, route.model
+            except ProviderUnsupportedResponse:
+                raise
             except NotImplementedError:
                 last = ProviderError(
                     f"adapter {type(adapter).__name__} does not support image_generation"

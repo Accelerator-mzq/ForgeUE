@@ -198,7 +198,7 @@ def test_probe_magic_rejects_unknown_payload_as_unknown_not_glb(monkeypatch):
 def test_probe_hunyuan_3d_format_uses_framework_url_picker(monkeypatch):
     """Codex P3 regression — the Hunyuan-3d format-discrimination probe
     must NOT blindly download `urls[0]`. It must use the same URL ranking
-    as framework/providers/workers/mesh_worker._extract_hunyuan_3d_url,
+    as src/framework/providers/workers/mesh_worker._extract_hunyuan_3d_url,
     otherwise its "format param ignored" conclusion rests on looking at
     whichever URL happened to be first (a ZIP), not the best mesh URL
     the server actually offered.

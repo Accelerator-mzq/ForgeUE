@@ -6,7 +6,9 @@ build-backend = "setuptools.build_meta"
 name = "forgeue"
 version = "0.1.0"
 description = "UE production-chain multi-model framework (vNext)"
-requires-python = ">=3.11"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
 dependencies = [
     "pydantic>=2.6",
     "opentelemetry-api>=1.25",
@@ -31,9 +33,16 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
 ]
 
+[tool.setuptools]
+package-dir = {"" = "src"}
+
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["framework*"]
 
 [tool.pytest.ini_options]
@@ -44,4 +53,70 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 110
-target-version = "py311"
+target-version = "py312"
+src = ["src", "tests", "probes"]
+extend-exclude = ["docs/archive", "demo_artifacts", "artifacts"]
+
+[tool.ruff.lint]
+# Balanced rule set — see CLAUDE.md / AGENTS.md "决策 4: 均衡".
+# E/F/W   pycodestyle + pyflakes + warnings (baseline correctness)
+# I       isort       (import ordering)
+# B       bugbear     (likely-bug patterns)
+# UP      pyupgrade   (modern Python idioms)
+# SIM     simplify    (control-flow simplification)
+# RUF     ruff-specific
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
+# Don't fight ASCII-art alignment in docstrings or pre-existing
+# heavy-comment style; raise individual ignores as they actually bite.
+ignore = [
+    "E501",  # line too long — tracked by formatter, not lint
+    "B008",  # do not perform function call in argument defaults — Pydantic Field() is idiomatic
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests freely use unused imports for fixture wiring + side-effects
+"tests/**" = ["F401", "F811"]
+# Probes are scratch scripts; relax noise rules
+"probes/**" = ["F401", "B007", "SIM117"]
+
+[tool.ruff.format]
+# Replaces black; defaults are sane (double quotes, line-length above).
+line-ending = "lf"
+docstring-code-format = false  # leave docstring code blocks alone
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests"]
+namespace_packages = true
+explicit_package_bases = true
+mypy_path = "src"
+# Start non-strict; tighten incrementally per module.
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_optional = true
+ignore_missing_imports = true   # third-party (litellm/instructor/etc.) lack stubs
+
+[[tool.mypy.overrides]]
+# Probe scripts and archived plan_v1 are out of scope for typing.
+module = ["probes.*"]
+ignore_errors = true
+
+[tool.coverage.run]
+source = ["src/framework"]
+branch = true
+omit = [
+    "src/framework/pricing_probe/*",  # CLI tool, exercised via CLI tests not coverage
+    "*/__main__.py",
+]
+
+[tool.coverage.report]
+precision = 1
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

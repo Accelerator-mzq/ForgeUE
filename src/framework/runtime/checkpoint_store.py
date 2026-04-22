@@ -81,6 +81,12 @@ class CheckpointStore:
             return None
         if cp.input_hash != input_hash:
             return None
+        # Length mismatch must be a miss — `zip()` would silently truncate
+        # and treat unhashed artifacts as validated. The two lists are
+        # written in lockstep by `record()`, but bulk_load / hand-written
+        # checkpoints could violate that invariant.
+        if len(cp.artifact_ids) != len(cp.artifact_hashes):
+            return None
         for aid, h in zip(cp.artifact_ids, cp.artifact_hashes):
             if not repository.exists(aid):
                 return None

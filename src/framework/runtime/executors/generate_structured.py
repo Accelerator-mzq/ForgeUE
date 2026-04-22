@@ -114,9 +114,13 @@ class GenerateStructuredExecutor(StepExecutor):
                 _backoff(policy, attempt)
                 continue
         if obj is None:
-            raise RuntimeError(
-                f"generate_structured failed after {attempt_count} attempt(s): {last_exc}"
-            )
+            # Re-raise the original typed exception so FailureModeMap can
+            # classify it (ProviderTimeout / SchemaValidationError /
+            # ProviderError → retry/fallback). Wrapping in RuntimeError
+            # was a silent bug: classify() returned None and the run
+            # crashed instead of routing through the recovery path.
+            assert last_exc is not None
+            raise last_exc
 
         payload = obj.model_dump(mode="json")
         artifact_id = f"{ctx.run.run_id}_{ctx.step.step_id}_out"
@@ -153,6 +157,11 @@ class GenerateStructuredExecutor(StepExecutor):
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
+    # Deterministic unsupported-response shapes never retry — same paid
+    # call would yield the same bytes. Mirror of generate_mesh.py.
+    from framework.providers.base import ProviderUnsupportedResponse
+    if isinstance(exc, ProviderUnsupportedResponse):
+        return False
     if "timeout" in policy.retry_on and isinstance(exc, ProviderTimeout):
         return True
     if "schema_fail" in policy.retry_on and isinstance(exc, SchemaValidationError):

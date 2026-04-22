@@ -531,9 +531,14 @@ class HunyuanMeshWorker(MeshWorker):
                 raise MeshWorkerTimeout(
                     f"tokenhub 3d job {job_id} exceeded {budget_s}s"
                 )
+            # Clamp single-poll timeout so a slow /query can't push the
+            # step past its nominal budget. Same shape as Tripo3D's
+            # min(20.0, max(1.0, remaining)) clamp.
+            remaining = budget_s - elapsed
+            poll_timeout = min(30.0, max(1.0, remaining))
             resp = await self._apost(
                 f"{self._base_url}/query",
-                {"model": model_id, "id": job_id}, timeout_s=30.0,
+                {"model": model_id, "id": job_id}, timeout_s=poll_timeout,
             )
             status = str(resp.get("status", "")).lower()
             if on_progress is not None:
@@ -590,13 +595,31 @@ class HunyuanMeshWorker(MeshWorker):
                 raise MeshWorkerError(
                     f"tokenhub {url} {r.status_code}: {err_body[:300]}"
                 )
-            return r.json()
+            try:
+                return r.json()
+            except ValueError as exc:
+                # 200 + non-JSON body (proxy/WAF HTML, truncated). Mirror
+                # of the image adapter fix — without the catch, downstream
+                # crashes with raw json.JSONDecodeError instead of routing
+                # through the failure-mode map.
+                raise MeshWorkerUnsupportedResponse(
+                    f"tokenhub {url} returned 200 but body is not JSON: "
+                    f"{r.text[:200]!r}"
+                ) from exc
 
         return await with_transient_retry_async(
             _attempt,
-            transient_check=lambda e: isinstance(e, MeshWorkerTimeout) or (
-                isinstance(e, MeshWorkerError)
-                and is_transient_network_message(str(e))
+            # Exclude MeshWorkerUnsupportedResponse — same reasoning as
+            # the image adapters: HTML/WAF body may carry transient
+            # marker words, and a deterministic 200-non-JSON shape
+            # shouldn't cost a second paid /submit call.
+            transient_check=lambda e: not isinstance(
+                e, MeshWorkerUnsupportedResponse,
+            ) and (
+                isinstance(e, MeshWorkerTimeout) or (
+                    isinstance(e, MeshWorkerError)
+                    and is_transient_network_message(str(e))
+                )
             ),
             max_attempts=2, backoff_s=2.0,
         )

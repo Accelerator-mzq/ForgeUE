@@ -7,13 +7,20 @@ Combines:
 - Content hashing
 
 MVP: in-process dict-backed store. Persistence is via file payload backend.
+Run-scoped metadata (Artifact records minus the bytes themselves) can be
+dumped to / loaded from `<run_dir>/_artifacts.json` so a fresh CLI process
+with `--resume` can rebuild the repository and let CheckpointStore.find_hit
+actually report cache hits instead of silently rerunning the pipeline.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable, Iterator
 
 from framework.artifact_store.hashing import hash_payload
+from framework.core.enums import PayloadKind as _PayloadKind
 from framework.artifact_store.lineage import LineageIndex
 from framework.artifact_store.payload_backends.base import (
     PayloadBackendRegistry,
@@ -136,8 +143,11 @@ class ArtifactRepository:
         return [a for a in self._artifacts.values() if tag in a.tags]
 
     def find_by_producer(self, *, run_id: str | None = None, step_id: str | None = None) -> list[Artifact]:
+        # Snapshot via list() to avoid `dictionary changed size during
+        # iteration` when concurrent steps in DAG mode mutate the dict
+        # from worker threads while a main-loop dump is in flight.
         out = []
-        for a in self._artifacts.values():
+        for a in list(self._artifacts.values()):
             if run_id and a.producer.run_id != run_id:
                 continue
             if step_id and a.producer.step_id != step_id:
@@ -154,3 +164,66 @@ class ArtifactRepository:
     @property
     def backend_registry(self) -> PayloadBackendRegistry:
         return self._registry
+
+    # ---- per-run metadata persistence ----
+
+    def dump_run_metadata(self, *, run_id: str, run_dir: Path) -> int:
+        """Write Artifact metadata for *run_id* to `<run_dir>/_artifacts.json`.
+        Payload bytes themselves are NOT duplicated — file/blob backends
+        already keep them on disk; this dump records artifact_id → hash,
+        payload_ref, lineage etc. so a fresh-process resume can rebuild
+        the in-memory index.
+        """
+        run_arts = self.find_by_producer(run_id=run_id)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        target = run_dir / "_artifacts.json"
+        data = [a.model_dump(mode="json") for a in run_arts]
+        target.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        return len(run_arts)
+
+    def load_run_metadata(self, *, run_id: str, run_dir: Path) -> int:
+        """Re-hydrate Artifact records produced by *run_id* from
+        `<run_dir>/_artifacts.json`. Returns the count of newly-registered
+        artifacts (pre-existing ids skipped, missing-payload entries
+        skipped, hash-drift entries skipped). Returns 0 silently when
+        the dump file is absent.
+
+        For file/blob-backed artifacts, the persisted hash MUST match the
+        current bytes on disk before we register the record — otherwise
+        `CheckpointStore.find_hit()` would treat externally-modified or
+        corrupted payloads as valid cache hits and propagate broken
+        bytes to downstream steps. Inline artifacts skip the recheck
+        because their payload travels with the metadata (no external
+        bytes to drift).
+        """
+        target = run_dir / "_artifacts.json"
+        if not target.is_file():
+            return 0
+        raw = json.loads(target.read_text(encoding="utf-8"))
+        n = 0
+        for d in raw:
+            art = Artifact.model_validate(d)
+            if art.artifact_id in self._artifacts:
+                continue
+            try:
+                payload_present = self._registry.exists(art.payload_ref)
+            except KeyError:
+                payload_present = False
+            if not payload_present:
+                continue
+            # For external-bytes payloads, verify the bytes haven't
+            # drifted since the dump (overwrite, partial write, manual
+            # edit). hash_payload re-canonicalizes via the same path as
+            # the original write, so the comparison is apples-to-apples.
+            if art.payload_ref.kind in (_PayloadKind.file, _PayloadKind.blob):
+                try:
+                    current = self._registry.read(art.payload_ref)
+                except Exception:
+                    continue
+                if hash_payload(current) != art.hash:
+                    continue
+            self.register_existing(art)
+            n += 1
+        return n

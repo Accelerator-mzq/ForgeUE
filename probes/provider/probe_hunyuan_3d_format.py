@@ -200,7 +200,7 @@ def _trial(label: str, submit_body: dict) -> None:
         marker = " [preview]" if _is_preview(u) else ""
         print(f"  {_url_ext(u) or '(no ext)'}: {u.split('?', 1)[0]}{marker}")
 
-    # Use the SAME URL picker as framework/providers/workers/mesh_worker.py
+    # Use the SAME URL picker as src/framework/providers/workers/mesh_worker.py
     # — prefer .glb / .gltf > other mesh ext > .zip, never pick preview_*.
     # Importing the framework function instead of copying the logic means
     # the probe can't silently drift from runtime behaviour and any future

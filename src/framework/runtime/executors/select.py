@@ -17,8 +17,15 @@ from framework.core.artifact import (
     ValidationCheck,
     ValidationRecord,
 )
-from framework.core.enums import ArtifactRole, PayloadKind, StepType
+from framework.core.enums import ArtifactRole, Decision, PayloadKind, StepType
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
+
+
+_BARE_APPROVE_DECISIONS = {
+    Decision.approve.value,
+    Decision.approve_one.value,
+    Decision.approve_many.value,
+}
 
 
 class SelectExecutor(StepExecutor):
@@ -56,8 +63,20 @@ class SelectExecutor(StepExecutor):
             else:
                 candidate_pool.append(aid)
 
-        kept = [cid for cid in candidate_pool if cid in selected]
-        dropped = [cid for cid in candidate_pool if cid in rejected or cid not in selected]
+        # Bare-approve (decision=approve* with no selected_candidate_ids)
+        # means "accept everything upstream NOT explicitly rejected" —
+        # mirrors export.py's `_approve_filter` semantics. Rejected ids
+        # MUST stay out of `selected_ids`: downstream consumers (export,
+        # generate_mesh, generate_image_edit) only read `selected_ids`,
+        # so leaving rejected candidates in there would still ship them.
+        decision_str = verdict_payload.get("decision")
+        if not selected and decision_str in _BARE_APPROVE_DECISIONS:
+            rejected_set = set(rejected)
+            kept = [cid for cid in candidate_pool if cid not in rejected_set]
+            dropped = [cid for cid in candidate_pool if cid in rejected_set]
+        else:
+            kept = [cid for cid in candidate_pool if cid in selected]
+            dropped = [cid for cid in candidate_pool if cid in rejected or cid not in selected]
 
         payload = {
             "selected_ids": kept,

@@ -39,6 +39,21 @@ class TransitionEngine:
     def __init__(self) -> None:
         self.counters = TransitionCounters()
 
+    def cloned_for_run(self) -> "TransitionEngine":
+        """Return a copy with fresh counters but everything else (subclass
+        identity, instance attributes set by callers) preserved.
+
+        Orchestrator calls this at the start of each `arun()` so retry /
+        revise budgets don't leak across runs and concurrent runs don't
+        race on the same dict — without losing dependency-injected
+        instances or subclass state. Subclasses with custom state should
+        override this method when shallow copy isn't sufficient.
+        """
+        import copy as _copy
+        clone = _copy.copy(self)
+        clone.counters = TransitionCounters()
+        return clone
+
     def on_success(self, step: Step, *, default_next: str | None) -> TransitionResult:
         policy = step.transition_policy or TransitionPolicy()
         return TransitionResult(next_step_id=policy.on_success or default_next)
@@ -69,7 +84,10 @@ class TransitionEngine:
             if count > policy.max_retries:
                 return TransitionResult(next_step_id=None, terminated=True,
                                         reason=f"max_retries({policy.max_retries}) exceeded")
-            return TransitionResult(next_step_id=step.step_id)
+            # Honour policy.on_retry when configured (e.g. workflow wants
+            # to redirect retries to a sanitiser step). Default falls back
+            # to the same step for the standard "try again" semantics.
+            return TransitionResult(next_step_id=policy.on_retry or step.step_id)
         if d == Decision.fallback_model:
             # Reuse the retry counter to prevent infinite loops when the policy
             # has no explicit on_fallback target and the error keeps recurring.

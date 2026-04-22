@@ -146,13 +146,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.resume:
         store.load_from_disk(args.run_id)
-        # re-register known artifacts so lookup-by-id works for checkpoint hits
         run_dir = artifact_root / args.run_id
         if run_dir.is_dir():
-            # MVP assumption: repo starts empty; resume only checks checkpoint-referenced ids,
-            # which for the mock pipeline use inline payloads — they are reconstructed at run time
-            # via cache hit logic (we treat disk checkpoint as advisory when repo is empty).
-            pass
+            # Rebuild ArtifactRepository from the per-run dump so that
+            # CheckpointStore.find_hit (which requires repository.exists)
+            # actually reports cache hits. Without this, fresh-process
+            # --resume silently re-executed the entire pipeline.
+            n = repo.load_run_metadata(run_id=args.run_id, run_dir=run_dir)
+            if n:
+                print(
+                    f"--resume: rehydrated {n} artifact(s) from {run_dir}",
+                    file=sys.stderr,
+                )
 
     # --serve: run orchestrator + WebSocket server concurrently so external
     # UIs can subscribe to live ProgressEvent stream for this run.

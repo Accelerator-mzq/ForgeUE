@@ -1,4 +1,4 @@
-"""Unit tests for framework/ue_bridge/* (§F4-1, F4-4, F4-5, F4-6)."""
+"""Unit tests for src/framework/ue_bridge/* (§F4-1, F4-4, F4-5, F4-6)."""
 from __future__ import annotations
 
 from pathlib import Path

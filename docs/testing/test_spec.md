@@ -187,6 +187,12 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_probe_framework.py` | `probe_*.py` 的 lazy-init | NFR-MAINT-* | L3 | 无 API key 环境 import 不崩 |
 | `test_pr3_cleanup_fences.py` | URL scheme 大小写 / magic gate / module-level I/O | — | L3 | PR-3 共性平移守门 |
 
+### 3.10 Codex 21 条 audit fence(2026-04-22)
+
+| 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
+| --- | --- | --- | --- | --- |
+| `test_codex_audit_fixes.py` | 5 轮 review-fix 循环全部 fence(29 用例)| FR-LC-006~008, FR-WORKER-009~010, FR-COST-008~009, FR-RUNTIME-008~012, FR-REVIEW-009, NFR-REL-009 | L1,L2,L3 | 见下方 §5 fence 清单第三段 |
+
 ---
 
 ## 4. 集成测试场景
@@ -252,6 +258,56 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | Scaffold parser must raise NotImplementedError | 第五轮 | `test_pricing_probe_framework::test_every_scaffold_parser_still_raises_notimplemented` |
 | Playwright 后端 + fixture | 第六轮 | `test_pricing_parser_*`(3 家)|
 
+### Codex 21 条 audit 修复 fence(2026-04-22,5 轮 review-fix 循环)
+
+文件统一在 `tests/unit/test_codex_audit_fixes.py`(29 用例)。
+
+**第一轮(初始 audit,11 条 — C1 + H6 + M4 + L1)**
+
+| Fence | 守护修复 | 测试名 |
+| --- | --- | --- |
+| generate_structured 重试耗尽要 raise typed exception | #R1-1(critical)| `test_generate_structured_reraises_typed_exception_after_retries` |
+| 三处 `r.json()` 必须捕 `JSONDecodeError` 并 wrap unsupported | #R1-3(high)| `test_hunyuan_tokenhub_post_raises_unsupported_on_html_body` / `_qwen_dashscope_*` / `_mesh_worker_apost_*` |
+| poll loop 单次 timeout clamp 到 remaining budget | #R1-4(high)| `test_hunyuan_poll_clamps_timeout_to_remaining_budget` / `test_mesh_poll_clamps_timeout_to_remaining_budget` |
+| `find_hit` 长度不一致必须 miss | #R1-5(high)| `test_checkpoint_find_hit_misses_on_length_mismatch` |
+| `image_edit` 必须输出 cost_usd | #R1-6(high)| `test_image_edit_emits_cost_usd` |
+| `TransitionPolicy.on_retry` 必须被读 | #R1-7(medium)| `test_retry_same_step_honours_policy_on_retry` / `_falls_back_to_step_id_when_unset` |
+| TransitionEngine counter per-arun 隔离 | #R1-8(medium)| `test_orchestrator_uses_fresh_transition_engine_per_arun` / `_concurrent_arun_does_not_share_counters` |
+| `parallel_candidates` 异质 route 必须 raise | #R1-9(medium)| `test_generate_image_parallel_rejects_heterogeneous_models` |
+| select bare-approve 全保留 | #R1-10(medium)| `test_select_bare_approve_keeps_whole_pool` |
+| sync `chunked_download` dead code 已删 | #R1-11(low)| `test_sync_chunked_download_module_removed` |
+| `--resume` 跨进程 ArtifactRepository 重建 | #R1-2(high)| `test_repository_metadata_dump_and_load_roundtrip` / `test_resume_yields_cache_hits_after_reload` |
+
+**第二轮(2 条)**
+
+| Fence | 守护修复 | 测试名 |
+| --- | --- | --- |
+| select bare-approve 排除显式 rejected | #R2-2 | `test_select_bare_approve_excludes_explicit_rejects` |
+| `load_run_metadata` 跳过 missing payload | #R2-1 | `test_load_run_metadata_skips_missing_payload` |
+
+**第三轮(3 条)**
+
+| Fence | 守护修复 | 测试名 |
+| --- | --- | --- |
+| `cloned_for_run` 保留子类身份 | #R3-1 | `test_transition_engine_clone_preserves_subclass_and_attrs` |
+| unsupported 不进 transient retry(3 处)| #R3-2 | `test_hunyuan_unsupported_response_skips_transient_retry` / `_qwen_*` / `_mesh_worker_*` |
+| `find_by_producer` 并发 put 安全 | #R3-3 | `test_find_by_producer_safe_under_concurrent_put` |
+
+**第四轮(3 条)**
+
+| Fence | 守护修复 | 测试名 |
+| --- | --- | --- |
+| image executor `_should_retry` 不重试 unsupported | #R4-3 | `test_image_executor_does_not_retry_on_unsupported_response` |
+| cache-hit 回放 cost 到 BudgetTracker | #R4-1(critical)| `test_orchestrator_replays_cached_cost_into_budget_tracker` |
+| `load_run_metadata` 跳过 hash 漂移 payload | #R4-2 | `test_load_run_metadata_skips_corrupted_payload` |
+
+**第五轮(2 条)**
+
+| Fence | 守护修复 | 测试名 |
+| --- | --- | --- |
+| structured cost 写入 `cp.metrics` | #R5-1(critical)| `test_structured_step_persists_cost_for_resume` |
+| router 在 unsupported 时不 fallback | #R5-2 | `test_router_does_not_fallback_on_unsupported_response` |
+
 ---
 
 ## 6. 覆盖分析
@@ -281,7 +337,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
 | NFR-SEC | test_secrets |
 | NFR-OBS | test_event_bus,test_progress_passthrough |
-| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 491 |
+| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 520(基线 491 + Codex 21 条 audit 修复 fence 29) |
 | NFR-PORT | CI 能在 Linux 跑(491 全绿,stub unreal 覆盖 P4) |
 
 ### 6.3 未覆盖 / 部分覆盖
@@ -331,7 +387,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | --- | --- |
 | `tests/fixtures/pricing/*.html` | 5 家 provider 定价页真实 HTML 快照(280KB Hunyuan 3D 最大) |
 | `examples/*.json` | 5 份 TaskBundle JSON |
-| `framework/review_engine/rubric_templates/*.yaml` | 3 份 rubric |
+| `src/framework/review_engine/rubric_templates/*.yaml` | 3 份 rubric |
 | `config/models.yaml` | 模型注册表(测试通过 `ModelRegistry.reset()` 隔离) |
 | 临时产物 | `pytest --basetemp=./demo_artifacts/<name>` 手工保留 |
 
@@ -353,7 +409,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 
 | 级别 | 标准 |
 | --- | --- |
-| 单元测试 | 100% 通过(491 用例) |
+| 单元测试 | 100% 通过(520 用例,基线 491 + audit fix 29)|
 | 集成测试 | P0–P4 + 5 场景全绿 |
 | Fence 测试 | 每条守护修复不得回退 |
 | 覆盖率 | 每条 FR 至少 1 个对应测试(矩阵 §6.1 全部 ✅) |
@@ -392,6 +448,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,491 用例索引化,fence 清单对齐 plan_v1 §M |
+| v1.1 | 2026-04-22 | 加 §3.10 `test_codex_audit_fixes.py`(29 用例)+ §5 第三段 5 轮 audit fence 表;`NFR-MAINT` / `单元测试` 总数刷新到 520 |
 
 ### 10.3 未决事项
 

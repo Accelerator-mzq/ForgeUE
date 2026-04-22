@@ -1,4 +1,4 @@
-"""Unit tests for framework/providers/model_registry.py (D plan)."""
+"""Unit tests for src/framework/providers/model_registry.py (D plan)."""
 from __future__ import annotations
 
 from pathlib import Path

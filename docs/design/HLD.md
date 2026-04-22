@@ -47,7 +47,7 @@
 │  ├── WS Server (framework.server.ws_server)                         │
 │  └── Python API (framework.run.Orchestrator.arun)                   │
 ├────────────────────────────────────────────────────────────────────┤
-│  编排层 (framework/runtime/)                                         │
+│  编排层 (src/framework/runtime/)                                         │
 │  ├── Orchestrator   — 9 阶段 Run 生命周期                            │
 │  ├── Scheduler      — risk_level 排序 / depends_on 拓扑              │
 │  ├── DryRunPass     — 零副作用预检                                    │
@@ -56,11 +56,11 @@
 │  ├── BudgetTracker  — 成本累加 + 软终止                               │
 │  └── FailureModeMap — Exception → FailureMode → Decision            │
 ├────────────────────────────────────────────────────────────────────┤
-│  执行器层 (framework/runtime/executors/)                             │
+│  执行器层 (src/framework/runtime/executors/)                             │
 │  generate_structured / generate_image / generate_image_edit         │
 │  generate_mesh / review / select / validate / export / mock         │
 ├────────────────────────────────────────────────────────────────────┤
-│  能力路由层 (framework/providers/)                                   │
+│  能力路由层 (src/framework/providers/)                                   │
 │  ├── CapabilityRouter — 按能力别名分发                                │
 │  ├── ModelRegistry    — YAML 三段式注册 → PreparedRoute              │
 │  └── ProviderAdapter  — 统一 4 方法接口                              │
@@ -72,24 +72,24 @@
 │      ├── ComfyWorker  (HTTP)                                        │
 │      └── MeshWorker   (Hunyuan 3D / Tripo3D)                        │
 ├────────────────────────────────────────────────────────────────────┤
-│  评审引擎 (framework/review_engine/)                                 │
+│  评审引擎 (src/framework/review_engine/)                                 │
 │  LLMJudge / ChiefJudge (asyncio.gather panel)                       │
 │  ReportVerdictEmitter / RubricLoader                                │
 ├────────────────────────────────────────────────────────────────────┤
-│  对象与合约层 (framework/core/, framework/schemas/)                  │
+│  对象与合约层 (src/framework/core/, src/framework/schemas/)                  │
 │  Task / Run / Workflow / Step / Artifact                            │
 │  UEOutputTarget / UEAssetManifest / UEImportPlan / Evidence         │
 │  ReviewReport / Verdict / Checkpoint / Policies                     │
 ├────────────────────────────────────────────────────────────────────┤
-│  存储层 (framework/artifact_store/)                                  │
+│  存储层 (src/framework/artifact_store/)                                  │
 │  Repository / PayloadBackend × 3(inline/file/blob)                  │
 │  Lineage / VariantTracker / Hashing                                 │
 ├────────────────────────────────────────────────────────────────────┤
-│  UE Bridge 层 (framework/ue_bridge/)                                 │
+│  UE Bridge 层 (src/framework/ue_bridge/)                                 │
 │  Inspect → Plan → (Execute 预留) → Evidence                         │
 │  ManifestBuilder / ImportPlanBuilder / PermissionPolicy             │
 ├────────────────────────────────────────────────────────────────────┤
-│  可观测 (framework/observability/)                                   │
+│  可观测 (src/framework/observability/)                                   │
 │  EventBus (loop-aware) / ProgressEvent / Compactor / Secrets / OTel │
 ├────────────────────────────────────────────────────────────────────┤
 │  UE 端代理 (ue_scripts/) — 独立 Python 包,仅依赖 import unreal      │
@@ -154,17 +154,17 @@
 
 | 子系统 | 目录 | 对外接口 | 关键职责 |
 | --- | --- | --- | --- |
-| Core | `framework/core/` | Pydantic schema | 对象模型 + 枚举 + Policy |
-| Schemas | `framework/schemas/` | `registry.py` | 业务 schema 注册 |
-| Workflows | `framework/workflows/` | `load_task_bundle` | Bundle JSON 解析 |
-| Providers | `framework/providers/` | `ProviderAdapter` / `CapabilityRouter` | 模型接入 + 路由 |
-| Runtime | `framework/runtime/` | `Orchestrator.arun` | 生命周期编排 |
-| Review Engine | `framework/review_engine/` | `ChiefJudge.ajudge_with_panel` | 评审与决策 |
-| Artifact Store | `framework/artifact_store/` | `Repository.put / get` | Artifact 持久化 |
-| UE Bridge | `framework/ue_bridge/` | `ManifestBuilder` / `ImportPlanBuilder` | UE 侧文件契约构建 |
-| Observability | `framework/observability/` | `EventBus.publish` / `compact_messages` | 事件 + 追踪 + 密钥 |
-| Server | `framework/server/` | `/ws/run` / `/ws/step` | WS 进度推送 |
-| Pricing Probe | `framework/pricing_probe/` | CLI `--apply` | 定价自动化 |
+| Core | `src/framework/core/` | Pydantic schema | 对象模型 + 枚举 + Policy |
+| Schemas | `src/framework/schemas/` | `registry.py` | 业务 schema 注册 |
+| Workflows | `src/framework/workflows/` | `load_task_bundle` | Bundle JSON 解析 |
+| Providers | `src/framework/providers/` | `ProviderAdapter` / `CapabilityRouter` | 模型接入 + 路由 |
+| Runtime | `src/framework/runtime/` | `Orchestrator.arun` | 生命周期编排 |
+| Review Engine | `src/framework/review_engine/` | `ChiefJudge.ajudge_with_panel` | 评审与决策 |
+| Artifact Store | `src/framework/artifact_store/` | `Repository.put / get` | Artifact 持久化 |
+| UE Bridge | `src/framework/ue_bridge/` | `ManifestBuilder` / `ImportPlanBuilder` | UE 侧文件契约构建 |
+| Observability | `src/framework/observability/` | `EventBus.publish` / `compact_messages` | 事件 + 追踪 + 密钥 |
+| Server | `src/framework/server/` | `/ws/run` / `/ws/step` | WS 进度推送 |
+| Pricing Probe | `src/framework/pricing_probe/` | CLI `--apply` | 定价自动化 |
 | UE Scripts | `ue_scripts/` | `run_import.run()` | UE 内导入 |
 
 ### 3.2 依赖方向
@@ -543,10 +543,10 @@ payload: { status, elapsed_s?, progress?, cost_usd?, ... }
 
 | 接口 | 协议 | 子系统 |
 | --- | --- | --- |
-| CLI | argparse | `framework/run.py` |
-| WebSocket | JSON over WS | `framework/server/ws_server.py` |
-| HTTPS(Provider) | 各 provider REST | `framework/providers/*` |
-| File(UE 契约) | JSON / 资产文件 | `framework/ue_bridge/*` + `ue_scripts/*` |
+| CLI | argparse | `src/framework/run.py` |
+| WebSocket | JSON over WS | `src/framework/server/ws_server.py` |
+| HTTPS(Provider) | 各 provider REST | `src/framework/providers/*` |
+| File(UE 契约) | JSON / 资产文件 | `src/framework/ue_bridge/*` + `ue_scripts/*` |
 | YAML / JSON 配置 | 文件读 | `config/models.yaml` / `examples/*.json` |
 
 详细字段见 LLD §9 与 SRS §5。

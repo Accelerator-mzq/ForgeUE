@@ -171,6 +171,9 @@ ForgeUE **不做**:
 | FR-LC-003 | Dry-run Pass 失败应直接置 Run 为 `failed`,不进入执行阶段 |
 | FR-LC-004 | 每个 Step 完成后应计算 `artifact_hash` 并写 Checkpoint |
 | FR-LC-005 | Run resume 时应校验 Checkpoint 的 `artifact_hash` 与现存 Artifact 一致;不一致则 Run 直接失败 |
+| FR-LC-006 | Step 完成后应把 Artifact 元数据 dump 到 `<run_dir>/_artifacts.json`(file/blob 不重写字节);跨进程 `--resume` 时调 `ArtifactRepository.load_run_metadata` 重建索引,否则 `find_hit` 永远 miss 并静默重跑 |
+| FR-LC-007 | `load_run_metadata` 必须三道过滤:已存在 id skip / 后端 `exists()` False skip / file/blob 实际字节 hash 与元数据 hash 不符 skip(防外部 tampering 当成 cache 命中) |
+| FR-LC-008 | `CheckpointStore.find_hit` 在 `len(artifact_ids) != len(artifact_hashes)` 时必须 miss(`zip()` 静默截断会让未校验 artifact 被当成 cache hit) |
 
 ### 3.3 多模型编排(FR-MODEL)
 
@@ -180,7 +183,7 @@ ForgeUE **不做**:
 | FR-MODEL-002 | TaskBundle 应通过 `provider_policy.models_ref: "<alias>"` 引用 alias,`loader` 展开为 `prepared_routes` |
 | FR-MODEL-003 | 系统应支持至少以下 provider 接入:OpenAI 兼容(GLM / DeepSeek / PackyCode)、Anthropic(via PackyCode)、DashScope(Qwen 系列)、Hunyuan(Image + 3D)、MiniMax、ComfyUI(HTTP)、Tripo3D(预留) |
 | FR-MODEL-004 | 新增 OpenAI 兼容端口 provider 应仅需在 registry 填 `api_base` + `api_key_env`,bundle 写 `openai/<id>`,**零新代码** |
-| FR-MODEL-005 | 非 OpenAI 协议 provider 应通过在 `framework/providers/` 加 adapter 接入,路由按 `model.startswith(...)` 前缀匹配 |
+| FR-MODEL-005 | 非 OpenAI 协议 provider 应通过在 `src/framework/providers/` 加 adapter 接入,路由按 `model.startswith(...)` 前缀匹配 |
 | FR-MODEL-006 | `CapabilityRouter` 应按注册顺序调用 `ProviderAdapter.supports(model)`,`LiteLLMAdapter`(wildcard)**必须最后**注册 |
 | FR-MODEL-007 | 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image` |
 | FR-MODEL-008 | ProviderPolicy 应支持 `fallback_models` 列表,首选失败时按序降级 |
@@ -190,7 +193,7 @@ ForgeUE **不做**:
 | 编号 | 需求 |
 | --- | --- |
 | FR-STRUCT-001 | 结构化输出应通过 `instructor` + Pydantic schema 约束,拒绝自由文本解析 |
-| FR-STRUCT-002 | Schema 应注册到 `framework/schemas/registry.py`,至少包括:`UECharacter` / `ImageSpec` / `MeshSpec` / `UEApiAnswer` |
+| FR-STRUCT-002 | Schema 应注册到 `src/framework/schemas/registry.py`,至少包括:`UECharacter` / `ImageSpec` / `MeshSpec` / `UEApiAnswer` |
 | FR-STRUCT-003 | Schema 验证失败应映射到 `FailureMode.schema_validation_fail`,触发 `Decision.retry_same_step`(默认 ≤ 2 次) |
 | FR-STRUCT-004 | LiteLLM 调用应开启 `drop_params=True`,绕过 Anthropic 不认识的 `seed` 参数 |
 
@@ -203,9 +206,10 @@ ForgeUE **不做**:
 | FR-REVIEW-003 | Verdict 应支持 9 种 `decision`:`accept` / `revise` / `reject` / `retry_same_step` / `fallback_model` / `abort_or_fallback` / `escalate_human` / `human_review_required` / `stop` |
 | FR-REVIEW-004 | Verdict 应携带 `confidence`(0-1 浮点),低于 `pass_threshold` 触发 `revise` |
 | FR-REVIEW-005 | Review 应支持 5 维评分:`quality` / `consistency` / `ue_compliance` / `aesthetics` / `technical_correctness`,写入 `scores_by_dimension` |
-| FR-REVIEW-006 | Rubric 应从 YAML 模板加载(`framework/review_engine/rubric_templates/*.yaml`),支持 `ue_asset_quality` / `ue_character_quality` / `ue_visual_quality` 等 |
+| FR-REVIEW-006 | Rubric 应从 YAML 模板加载(`src/framework/review_engine/rubric_templates/*.yaml`),支持 `ue_asset_quality` / `ue_character_quality` / `ue_visual_quality` 等 |
 | FR-REVIEW-007 | ChiefJudge 面板应通过 `asyncio.gather` 并发所有 judge,总延迟 ≈ 最慢 judge |
 | FR-REVIEW-008 | Review step 应透传 judge 调用的 `usage`(prompt_tokens / completion_tokens / total_tokens)到 BudgetTracker,不得遗漏成本 |
+| FR-REVIEW-009 | `SelectExecutor` 在 `verdict.decision in {approve, approve_one, approve_many}` 且 `selected_candidate_ids == []` 时,应按 "bare-approve = accept all upstream minus rejected" 处理:`kept = candidate_pool - rejected_candidate_ids`(与 `ExportExecutor._approve_filter` 语义一致);`rejected_candidate_ids` 必须从 `kept` 排除,不得同时进 `selected_ids` 和 `rejected_ids` |
 
 ### 3.6 Artifact 仓库(FR-STORE)
 
@@ -243,6 +247,8 @@ ForgeUE **不做**:
 | FR-WORKER-006 | Mesh worker 应做 magic bytes 二次校验:`fmt == "glb"` 分支必须 `data[:4] == b"glTF"`;不符时 raise `MeshWorkerUnsupportedResponse` |
 | FR-WORKER-007 | glTF 外部 buffer 应 raise,不得以 `missing_materials=True` 静默落盘空几何 |
 | FR-WORKER-008 | `data:` URI scheme 识别应大小写不敏感(RFC 2397) |
+| FR-WORKER-009 | 所有 tokenhub poll 循环(`hunyuan_tokenhub_adapter._th_poll` / `mesh_worker._atokenhub_poll`)的单次 `/query` HTTP timeout 必须 clamp 到 `min(<per_poll_cap>, max(1.0, budget_s - elapsed))`,避免剩余 1s 时单次 poll 仍阻塞 20-30s 突破 step timeout |
+| FR-WORKER-010 | adapter 的 200 + 非 JSON body(代理/WAF 返回 HTML)必须显式捕 `ValueError`/`JSONDecodeError`,wrap 为 `ProviderUnsupportedResponse` / `MeshWorkerUnsupportedResponse`;原始 `JSONDecodeError` 不得逃出 try block 让 run 直接崩 |
 
 ### 3.9 运行时工程化(FR-RUNTIME)
 
@@ -254,7 +260,12 @@ ForgeUE **不做**:
 | FR-RUNTIME-004 | 系统应支持取消 / 超时中断:`asyncio.CancelledError` 传播立即中断 poll 循环 |
 | FR-RUNTIME-005 | 系统应支持瞬态重试:SSL EOF / 超时 / 5xx 默认一次 2s 回退 |
 | FR-RUNTIME-006 | Checkpoint 应支持 resume,中断后按 `artifact_hash` 恢复到上次完成步骤 |
-| FR-RUNTIME-007 | 失败模式映射应实装于 `framework/runtime/failure_mode_map.py`,覆盖 8 类 `FailureMode`:provider_timeout / schema_validation_fail / review_below_threshold / ue_path_conflict / budget_exceeded / worker_timeout / worker_error / disk_full / unsupported_response |
+| FR-RUNTIME-007 | 失败模式映射应实装于 `src/framework/runtime/failure_mode_map.py`,覆盖 8 类 `FailureMode`:provider_timeout / schema_validation_fail / review_below_threshold / ue_path_conflict / budget_exceeded / worker_timeout / worker_error / disk_full / unsupported_response |
+| FR-RUNTIME-008 | `TransitionPolicy.on_retry` 字段应被 `Decision.retry_same_step` 实际读取:有配置时跳到该 step,未配则同 step。`on_retry` 不得是死字段 |
+| FR-RUNTIME-009 | `TransitionEngine.counters` 应**per-arun 隔离**:`Orchestrator.arun()` 入口必须调 `cloned_for_run()`,确保顺序与并发的两次 `arun()` 各自拥有独立计数。`cloned_for_run()` 必须保留子类身份与实例属性(避免破坏 `Orchestrator(transition_engine=...)` 注入扩展点) |
+| FR-RUNTIME-010 | Step 完成后,Orchestrator 必须**先**估算并把 `cost_usd` 写入 `exec_result.metrics`,**再** `checkpoints.record(metrics=...)` 落盘,以便跨进程 resume 能从 `cp.metrics["cost_usd"]` 回放预算 |
+| FR-RUNTIME-011 | Cache-hit 路径(`find_hit` 命中)在 `task.budget_policy` 非 None 时,应把 `cp.metrics["cost_usd"]` 重新 `record` 到 BudgetTracker,按 `spend.by_step` 去重(同进程重入不双计,跨进程 fresh tracker 自动回放) |
+| FR-RUNTIME-012 | `*UnsupportedResponse` 异常必须在三层显式 short-circuit:(1)`with_transient_retry_async` 的 `transient_check` 排除;(2)`CapabilityRouter` 4 方法在 `except ProviderError` **之前**单独 `except ProviderUnsupportedResponse: raise`;(3)4 个 executor 的 `_should_retry` 首行返回 False。任何一层漏写都会引发额外计费调用 |
 
 ### 3.10 成本追踪与定价(FR-COST)
 
@@ -264,9 +275,11 @@ ForgeUE **不做**:
 | FR-COST-002 | 未知子字段应在 YAML load 时 raise `RegistryReferenceError`,避免 typo 静默变成 $0 |
 | FR-COST-003 | BudgetTracker 应提供三 estimator:`estimate_call_cost_usd` / `estimate_image_call_cost_usd` / `estimate_mesh_call_cost_usd` |
 | FR-COST-004 | Router 应把选中 route 的 pricing 塞进 `ProviderResult.raw["_route_pricing"]`(不破 tuple 签名),Executor 读取后喂给 BudgetTracker |
-| FR-COST-005 | 系统应提供 `framework/pricing_probe/` 工具,dry-run 默认 + `--apply` 才改 YAML;`pricing_autogen.status=manual` 永不被覆盖 |
+| FR-COST-005 | 系统应提供 `src/framework/pricing_probe/` 工具,dry-run 默认 + `--apply` 才改 YAML;`pricing_autogen.status=manual` 永不被覆盖 |
 | FR-COST-006 | 探针后端应支持 httpx(静态页)+ playwright(JS SPA),按 parser `requires_js` 类属性分发 |
 | FR-COST-007 | 外部定价数字**必须**有 verifiable 来源(`sourced_on` + `source_url`),否则保持 `null` + TODO 注释 |
+| FR-COST-008 | 所有付费 executor(`generate_image_edit` / `generate_image` / `generate_mesh` / `generate_structured` / review)必须在 `metrics["cost_usd"]` 字段写入估算成本;早期 `generate_image_edit` 漏写导致 image edit 调用按 $0 计费 |
+| FR-COST-009 | `parallel_candidates=True` 的并发候选必须落在同一 route(同 `chosen_model` + 同 `_route_pricing`),异质 → executor 显式 raise;否则 `metrics["chosen_model"]` 单值表达失效,producer/cost 记账失真 |
 
 ### 3.11 可观测(FR-OBS)
 
@@ -274,7 +287,7 @@ ForgeUE **不做**:
 | --- | --- |
 | FR-OBS-001 | 系统应提供 `EventBus`,loop-aware(`Subscription` 捕获 owning loop),线程安全(`_subs` 用 `threading.Lock`),跨线程发事件通过 `loop.call_soon_threadsafe` |
 | FR-OBS-002 | 系统应提供 `ProgressEvent` schema,覆盖 `step_start` / `step_progress` / `step_done` / `adapter_poll` / `worker_poll` / `run_start` / `run_done` 等事件类型 |
-| FR-OBS-003 | 系统应提供 WebSocket 进度推送 server(`framework/server/ws_server.py`),支持 `/ws/run/{run_id}` 与 `/ws/step/{run_id}/{step_id}` 端点 |
+| FR-OBS-003 | 系统应提供 WebSocket 进度推送 server(`src/framework/server/ws_server.py`),支持 `/ws/run/{run_id}` 与 `/ws/step/{run_id}/{step_id}` 端点 |
 | FR-OBS-004 | WS handler 应通过 `asyncio.wait(FIRST_COMPLETED)` 同时等事件和 `receive_disconnect`,空闲期客户端断连不得留泄露 `Subscription` |
 | FR-OBS-005 | 系统应支持 OTel tracing(可选开启) |
 | FR-OBS-006 | CLI 应提供 `--serve` flag 启动 WS 服务器 |
@@ -305,6 +318,7 @@ ForgeUE **不做**:
 | NFR-REL-006 | DAG 任一 step 异常应立刻 cancel siblings 并 re-raise,不留孤儿任务 |
 | NFR-REL-007 | Checkpoint 应支持幂等 resume,hash 不匹配应失败而非盲目继续 |
 | NFR-REL-008 | `disk_full` 应触发 `rollback → stop`,不得继续写 Artifact |
+| NFR-REL-009 | DAG fan-out 期间,`ArtifactRepository.find_by_producer` 必须用 `list()` snapshot 迭代,避免 worker 线程 `put()` 与 main loop dump 竞态触发 `dictionary changed size during iteration`;dump 调用不得吞写盘异常(否则 resume cache miss 静默) |
 
 ### 4.3 可复现性(NFR-REPRO)
 
@@ -320,7 +334,7 @@ ForgeUE **不做**:
 | 编号 | 需求 |
 | --- | --- |
 | NFR-SEC-001 | API key 必须通过 `.env` 或环境变量注入,不得硬编码在 bundle / YAML |
-| NFR-SEC-002 | Secrets 应通过 `framework/observability/secrets.py` 统一管理,日志输出前脱敏 |
+| NFR-SEC-002 | Secrets 应通过 `src/framework/observability/secrets.py` 统一管理,日志输出前脱敏 |
 | NFR-SEC-003 | Trace / ProgressEvent 不得包含 API key / token 明文 |
 | NFR-SEC-004 | Dry-run Pass 应校验所需 provider 的 API key 已注入,缺失则 Run 不启动 |
 | NFR-SEC-005 | WS server 默认绑定 `127.0.0.1`,暴露到公网需显式配置(多租户鉴权未实装) |
@@ -339,8 +353,8 @@ ForgeUE **不做**:
 | 编号 | 需求 |
 | --- | --- |
 | NFR-MAINT-001 | 每轮代码 review(Codex / adversarial)修复,应配一个新回归测试 fence 守门 |
-| NFR-MAINT-002 | 单元测试目录结构应与 `framework/` 并列,文件数维持 1:1-2:1 |
-| NFR-MAINT-003 | 总测试用例数 ≥ 491(2026-04-22 基线) |
+| NFR-MAINT-002 | 单元测试目录结构应与 `src/framework/` 并列,文件数维持 1:1-2:1 |
+| NFR-MAINT-003 | 总测试用例数 ≥ 491(2026-04-22 基线;Codex 21 条 audit 修复后 = 520) |
 | NFR-MAINT-004 | 关键边界(download / EventBus / DAG / Budget)不得 mock,必须真实对象流 |
 | NFR-MAINT-005 | Bundle 里 Artifact 流应为端到端真实对象,不使用 mock |
 
@@ -348,7 +362,7 @@ ForgeUE **不做**:
 
 | 编号 | 需求 |
 | --- | --- |
-| NFR-PORT-001 | 运行时主包(`framework/`)应为纯 Python,不依赖 UE |
+| NFR-PORT-001 | 运行时主包(`src/framework/`)应为纯 Python,不依赖 UE |
 | NFR-PORT-002 | CI 应能在 Linux runner 跑通全量测试(除 UE 真机冒烟外) |
 | NFR-PORT-003 | UE 侧(`ue_scripts/`)应最小化依赖,仅 `import unreal` |
 | NFR-PORT-004 | 文件路径应避免 `/tmp/...`(Git-Bash 下翻译到 C: 系统目录),使用项目树内 `./artifacts/` 或 `./demo_artifacts/` |
@@ -362,6 +376,7 @@ ForgeUE **不做**:
 | ADR-003 | `LiteLLMAdapter` wildcard **必须最后注册** | CapabilityRouter 按注册顺序 `supports(model)`,wildcard 先注册会吞掉专用前缀 |
 | ADR-004 | 外部事实性数据(定价、endpoint、version)**禁止凭印象写数字** | 必须 `sourced_on` + `source_url`,或保持 `null` + TODO;已有 `feedback_no_fabricate_external_data.md` 约定 |
 | ADR-005 | `plan_v1` 从唯一权威降级为归档史料,权威转为五件套 | 文档重构 v1,2026-04-22 |
+| ADR-006 | `TransitionEngine` 实例**per-arun 隔离**,`Orchestrator.arun` 入口调 `cloned_for_run()` 创建本次 run 专属副本 | 早期实现把 engine 当 orchestrator 单例,counters 跨 run 泄漏(顺序两 run 计数累加 / 并发两 run 共享字典);改用 `copy.copy(self)` + 重置 counters 既保留子类身份与注入扩展点,又隔离计数器 |
 
 ---
 
@@ -431,7 +446,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | `.env.example` | 模板 | 入库,记录所需 key 清单 |
 | `config/models.yaml` | YAML(三段式) | ModelRegistry 单一真源 |
 | `examples/*.json` | UTF-8 JSON | TaskBundle(Task + Workflow + Steps) |
-| `framework/review_engine/rubric_templates/*.yaml` | YAML | Rubric 模板 |
+| `src/framework/review_engine/rubric_templates/*.yaml` | YAML | Rubric 模板 |
 | `tests/fixtures/pricing/*.html` | HTML | Pricing probe fixture |
 
 ---
@@ -478,6 +493,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | 版本 | 日期 | 变更 | 作者 |
 | --- | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 `claude_unified_architecture_plan_v1.md` 拆分重组 | ForgeUE Team |
+| v1.1 | 2026-04-22 | Codex 5 轮 audit(21 条)修复后 strengthen:新增 FR-LC-006~008、FR-WORKER-009~010、FR-COST-008~009、FR-RUNTIME-008~012、FR-REVIEW-009、NFR-REL-009、ADR-006;`NFR-MAINT-003` 基线 491 → 520;实装一致性见 LLD v1.1 与 acceptance v1.1 | ForgeUE Team |
 
 ### 7.3 未决事项
 

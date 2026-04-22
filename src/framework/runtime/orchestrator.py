@@ -112,6 +112,12 @@ class Orchestrator:
         trace_id: str | None = None,
         skip_dry_run: bool = False,
     ) -> RunResult:
+        # Per-run TransitionEngine clone: counters (retry / revise) MUST NOT
+        # leak across runs on the same Orchestrator instance, and concurrent
+        # arun() calls must not share counter dicts. `cloned_for_run()`
+        # preserves subclass identity and any caller-supplied instance
+        # attributes — only TransitionCounters get reset.
+        transitions = self.transitions.cloned_for_run()
         dr_report: DryRunReport | None = None
         if not skip_dry_run:
             with span("dry_run", {"run_id": run_id, "workflow_id": workflow.workflow_id}):
@@ -177,6 +183,7 @@ class Orchestrator:
                     budget_tracker=budget_tracker,
                     produced_ids_per_step=produced_ids_per_step,
                     pending_revision_hints=pending_revision_hints,
+                    transitions=transitions,
                 )
                 if outcome.terminate:
                     terminated = True
@@ -220,6 +227,7 @@ class Orchestrator:
                     budget_tracker=budget_tracker,
                     produced_ids_per_step=produced_ids_per_step,
                     pending_revision_hints=pending_revision_hints,
+                    transitions=transitions,
                 )
                 done.add(current)
                 step_outcomes[current] = outcome
@@ -240,6 +248,7 @@ class Orchestrator:
                         budget_tracker=budget_tracker,
                         produced_ids_per_step=produced_ids_per_step,
                         pending_revision_hints=pending_revision_hints,
+                        transitions=transitions,
                     ),
                     name=sid,
                 )
@@ -333,6 +342,7 @@ class Orchestrator:
         budget_tracker: BudgetTracker,
         produced_ids_per_step: dict[str, list[str]],
         pending_revision_hints: dict[str, dict],
+        transitions: TransitionEngine,
     ) -> "_StepOutcome":
         """Execute one step in-async. Mirrors v1 run()'s per-iteration body
         but returns a `_StepOutcome` for the caller to apply in aggregate."""
@@ -348,6 +358,7 @@ class Orchestrator:
                 budget_tracker=budget_tracker,
                 produced_ids_per_step=produced_ids_per_step,
                 pending_revision_hints=pending_revision_hints,
+                transitions=transitions,
             )
         finally:
             reset_current_run_step(_run_step_token)
@@ -364,6 +375,7 @@ class Orchestrator:
         budget_tracker: BudgetTracker,
         produced_ids_per_step: dict[str, list[str]],
         pending_revision_hints: dict[str, dict],
+        transitions: TransitionEngine,
     ) -> "_StepOutcome":
         run.current_step_id = step.step_id
         result.visited_step_ids.append(step.step_id)
@@ -394,10 +406,37 @@ class Orchestrator:
             result.cache_hits.append(step.step_id)
             produced_ids_per_step[step.step_id] = list(hit.artifact_ids)
             run.artifact_ids.extend(hit.artifact_ids)
+            # Fresh-process resume must replay the cached step's spend
+            # into BudgetTracker — otherwise a run that was already
+            # over-cap when persisted resumes "for free" on cache hits
+            # and silently bypasses total_cost_cap_usd. We dedupe by
+            # checking by_step (a counter we own per-tracker), so same-
+            # process re-entries (revise loops) don't double-count.
+            if task_obj.budget_policy is not None:
+                cached_cost = (hit.metrics or {}).get("cost_usd") or 0.0
+                already_recorded = budget_tracker.spend.by_step.get(
+                    step.step_id, 0.0,
+                )
+                if cached_cost > 0 and already_recorded == 0:
+                    budget_tracker.record(
+                        step_id=step.step_id,
+                        model=str((hit.metrics or {}).get("chosen_model")
+                                   or (hit.metrics or {}).get("model")
+                                   or "unknown"),
+                        cost_usd=float(cached_cost),
+                    )
+                    if not budget_tracker.check():
+                        run.metrics["termination_reason"] = (
+                            f"budget_exceeded(cap={budget_tracker.cap_usd}, "
+                            f"spent={budget_tracker.spend.total_usd:.4f})"
+                        )
+                        run.metrics["last_failure_mode"] = "budget_exceeded"
+                        run.status = RunStatus.failed
+                        return _StepOutcome(terminate=True, next_step_id=None)
             default_next = self.scheduler.default_next(step=step, workflow=workflow)
             cached_verdict = self._recover_verdict(hit.artifact_ids)
             if cached_verdict is not None:
-                trans = self.transitions.on_verdict(
+                trans = transitions.on_verdict(
                     step=step, verdict=cached_verdict, default_next=default_next,
                 )
                 hint = cached_verdict.revision_hint
@@ -410,7 +449,7 @@ class Orchestrator:
                         "from_cache": True,
                     })
             else:
-                trans = self.transitions.on_success(step=step, default_next=default_next)
+                trans = transitions.on_success(step=step, default_next=default_next)
             if trans.terminated:
                 run.metrics["termination_reason"] = trans.reason
                 return _StepOutcome(terminate=True, next_step_id=None)
@@ -445,7 +484,7 @@ class Orchestrator:
                 "mode": mode.value,
                 "decision": synth.decision.value,
             })
-            trans = self.transitions.on_verdict(
+            trans = transitions.on_verdict(
                 step=step, verdict=synth, default_next=default_next,
             )
             if trans.terminated:
@@ -460,13 +499,11 @@ class Orchestrator:
         produced_ids_per_step[step.step_id] = new_ids
         run.artifact_ids.extend(new_ids)
 
-        cp = self.checkpoints.record(
-            run_id=run_id, step_id=step.step_id, input_hash=input_hash,
-            artifact_ids=new_ids, artifact_hashes=new_hashes,
-            metrics=exec_result.metrics,
-        )
-        run.checkpoint_ids.append(cp.checkpoint_id)
-
+        # Estimate cost BEFORE recording the checkpoint so the per-step
+        # cost lands in cp.metrics. Cross-process resume reads this value
+        # back via the cache-hit replay path; without persistence,
+        # generate_structured (whose executor only emits model + usage)
+        # would resume "for free" and bypass total_cost_cap_usd.
         if task_obj.budget_policy is not None:
             cost_usd = exec_result.metrics.get("cost_usd")
             if cost_usd is None:
@@ -488,6 +525,23 @@ class Orchestrator:
                         usage=usage,
                         route_pricing=route_pricing,
                     )
+                    if cost_usd is not None:
+                        exec_result.metrics["cost_usd"] = cost_usd
+
+        cp = self.checkpoints.record(
+            run_id=run_id, step_id=step.step_id, input_hash=input_hash,
+            artifact_ids=new_ids, artifact_hashes=new_hashes,
+            metrics=exec_result.metrics,
+        )
+        run.checkpoint_ids.append(cp.checkpoint_id)
+        # Persist artifact metadata so a fresh CLI --resume can rebuild
+        # the in-memory repository index. Without this, find_hit() always
+        # misses on resume even though the checkpoint exists. Mirrors
+        # `_checkpoints.json` writes done by CheckpointStore.record().
+        self._dump_run_artifacts_if_possible(run_id=run_id)
+
+        if task_obj.budget_policy is not None:
+            cost_usd = exec_result.metrics.get("cost_usd")
             if cost_usd is not None and cost_usd > 0:
                 budget_tracker.record(
                     step_id=step.step_id,
@@ -513,7 +567,7 @@ class Orchestrator:
                 return _StepOutcome(terminate=True, next_step_id=None)
 
         if exec_result.verdict is not None:
-            trans = self.transitions.on_verdict(
+            trans = transitions.on_verdict(
                 step=step, verdict=exec_result.verdict, default_next=default_next,
             )
             hint = exec_result.verdict.revision_hint
@@ -525,7 +579,7 @@ class Orchestrator:
                     "hint_keys": sorted(hint.keys()),
                 })
         else:
-            trans = self.transitions.on_success(step=step, default_next=default_next)
+            trans = transitions.on_success(step=step, default_next=default_next)
 
         if trans.terminated:
             run.metrics["termination_reason"] = trans.reason
@@ -541,6 +595,28 @@ class Orchestrator:
         return _StepOutcome(terminate=False, next_step_id=trans.next_step_id)
 
     # ---- helpers --------------------------------------------------------
+
+    def _dump_run_artifacts_if_possible(self, *, run_id: str) -> None:
+        """Persist Artifact metadata next to `_checkpoints.json` when the
+        CheckpointStore has an artifact root configured. No-op when the
+        store is in-memory only (tests / sub-flows without disk
+        persistence) — matches CheckpointStore._persist's own no-op.
+
+        Filesystem write errors propagate (mismatch with prior revisions
+        that swallowed them silently): a failed dump means find_hit
+        will miss on the next resume, and the user deserves to see the
+        OSError rather than chase a phantom cache miss.
+        Repository iteration is safe under DAG fan-out because
+        find_by_producer snapshots `_artifacts` via list() before
+        iterating, so a concurrent put() in a worker thread won't
+        raise `dictionary changed size during iteration`.
+        """
+        root = getattr(self.checkpoints, "_root", None)
+        if root is None:
+            return
+        self.repository.dump_run_metadata(
+            run_id=run_id, run_dir=root / run_id,
+        )
 
     def _recover_verdict(self, artifact_ids: list[str]):
         from framework.core.review import Verdict

@@ -70,7 +70,7 @@ python -m pytest <test> --basetemp=./demo_artifacts/<name>
 
 `CapabilityRouter` 走注册顺序的 `supports(model)`,`LiteLLMAdapter` 是 wildcard
 (`supports(*)==True`),必须**最后**注册,否则 `qwen/` / `hunyuan/` 前缀会被它吞掉。
-参考 `framework/run.py:62-73`。
+参考 `src/framework/run.py:62-73`。
 
 ## Bundle JSON 编码
 
@@ -84,7 +84,7 @@ python -m pytest <test> --basetemp=./demo_artifacts/<name>
 
 新增 provider:
 - OpenAI 兼容端口 → 在 registry 填 `api_base` + `api_key_env`,bundle 写 `openai/<id>`,零新代码
-- 非 OpenAI 协议 → 在 `framework/providers/` 加 adapter,路由按 `model.startswith(...)` 前缀匹配
+- 非 OpenAI 协议 → 在 `src/framework/providers/` 加 adapter,路由按 `model.startswith(...)` 前缀匹配
 
 ## 测试纪律
 
@@ -121,7 +121,7 @@ UE Python Console:
 
 ## 常踩的失败模式映射
 
-LLD §5.7 + HLD §5.5 是权威;实装见 `framework/runtime/failure_mode_map.py`。
+LLD §5.7 + HLD §5.5 是权威;实装见 `src/framework/runtime/failure_mode_map.py`。
 - `provider_timeout` → `retry_same_step → fallback_model`
 - `schema_validation_fail` → `retry_same_step`
 - `worker_timeout` → `retry_same_step`

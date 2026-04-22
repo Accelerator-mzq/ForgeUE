@@ -95,13 +95,33 @@ class TokenhubMixin:
                 raise ProviderError(
                     f"tokenhub {url} {r.status_code}: {err_body[:300]}"
                 )
-            return r.json()
+            try:
+                return r.json()
+            except ValueError as exc:
+                # Proxy / WAF returned 200 with HTML or truncated body.
+                # Deterministic protocol mismatch — retrying same request
+                # to same gateway likely returns the same junk; route via
+                # abort_or_fallback rather than fallback_model loop.
+                raise ProviderUnsupportedResponse(
+                    f"tokenhub {url} returned 200 but body is not JSON: "
+                    f"{r.text[:200]!r}"
+                ) from exc
 
         return await with_transient_retry_async(
             _attempt,
-            transient_check=lambda e: isinstance(e, ProviderTimeout) or (
-                isinstance(e, ProviderError)
-                and is_transient_network_message(str(e))
+            # Exclude ProviderUnsupportedResponse explicitly: its message
+            # carries the provider's body (HTML / WAF page), and that body
+            # routinely contains transient-marker substrings like
+            # "Service Unavailable" / "gateway timeout". Without the
+            # exclusion, deterministic protocol mismatches would still
+            # trigger one extra paid request.
+            transient_check=lambda e: not isinstance(
+                e, ProviderUnsupportedResponse,
+            ) and (
+                isinstance(e, ProviderTimeout) or (
+                    isinstance(e, ProviderError)
+                    and is_transient_network_message(str(e))
+                )
             ),
             max_attempts=2, backoff_s=2.0,
         )
@@ -162,9 +182,14 @@ class TokenhubMixin:
                 raise ProviderTimeout(
                     f"tokenhub job {job_id} exceeded {budget_s}s (last poll at {elapsed:.1f}s)"
                 )
+            # Clamp single-poll timeout to the remaining budget so a slow
+            # /query can't burn 20s past the nominal step deadline. Mirrors
+            # the Tripo3DWorker poll-loop clamp.
+            remaining = budget_s - elapsed
+            poll_timeout = min(20.0, max(1.0, remaining))
             resp = await self._th_post(
                 query_url, key=key,
-                body={"model": model, "id": job_id}, timeout_s=20.0,
+                body={"model": model, "id": job_id}, timeout_s=poll_timeout,
             )
             status = str(resp.get("status", "")).lower()
             if on_progress is not None:

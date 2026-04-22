@@ -175,13 +175,29 @@ async def _adashscope_post(
         if r.status_code >= 400:
             err_body = r.text
             raise ProviderError(f"DashScope {r.status_code}: {err_body[:400]}")
-        return r.json()
+        try:
+            return r.json()
+        except ValueError as exc:
+            # 200 + non-JSON body (proxy HTML, truncated stream).
+            # Deterministic; route via abort_or_fallback.
+            raise ProviderUnsupportedResponse(
+                f"DashScope {url} returned 200 but body is not JSON: "
+                f"{r.text[:200]!r}"
+            ) from exc
 
     return await with_transient_retry_async(
         _attempt,
-        transient_check=lambda e: isinstance(e, ProviderTimeout) or (
-            isinstance(e, ProviderError)
-            and is_transient_network_message(str(e))
+        # Exclude ProviderUnsupportedResponse from the transient retry —
+        # its str() carries the WAF/HTML body which often contains
+        # transient marker words like "Service Unavailable", and
+        # retrying a deterministic protocol mismatch wastes a paid call.
+        transient_check=lambda e: not isinstance(
+            e, ProviderUnsupportedResponse,
+        ) and (
+            isinstance(e, ProviderTimeout) or (
+                isinstance(e, ProviderError)
+                and is_transient_network_message(str(e))
+            )
         ),
         max_attempts=2, backoff_s=2.0,
     )

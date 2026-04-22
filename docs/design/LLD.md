@@ -33,11 +33,11 @@
 | `list[T]` | Python 列表 |
 | `dict[K, V]` | Python 字典 |
 | `Literal["a","b"]` | 枚举字符串 |
-| 文件路径 | 相对 `framework/` 或 `ue_scripts/` 的路径 |
+| 文件路径 | 相对 `src/framework/` 或 `ue_scripts/` 的路径 |
 
 ---
 
-## 2. Core 对象模型(`framework/core/`)
+## 2. Core 对象模型(`src/framework/core/`)
 
 ### 2.1 枚举(`enums.py`)
 
@@ -286,7 +286,7 @@
 | `import_mode` | `manifest_only/bridge_execute` | MVP 默认 manifest_only |
 | `validation_hooks` | list[str] | — |
 
-**UEAssetManifest / UEAssetEntry / UEImportPlan / UEImportOperation / Evidence**:字段定义见 `framework/core/ue.py`,用法见 §10。
+**UEAssetManifest / UEAssetEntry / UEImportPlan / UEImportOperation / Evidence**:字段定义见 `src/framework/core/ue.py`,用法见 §10。
 
 ### 2.11 Checkpoint / ValidationRecord
 
@@ -406,7 +406,7 @@
 
 ---
 
-## 4. Schemas(`framework/schemas/`)
+## 4. Schemas(`src/framework/schemas/`)
 
 ### 4.1 业务 schema 注册(`registry.py`)
 
@@ -427,7 +427,7 @@
 
 ---
 
-## 5. Runtime 子系统(`framework/runtime/`)
+## 5. Runtime 子系统(`src/framework/runtime/`)
 
 ### 5.1 Orchestrator(`orchestrator.py`)
 
@@ -495,19 +495,57 @@ done.discard(current)           # 允许同 step 重新入循环
 
 | 方法 | 说明 |
 | --- | --- |
-| `save(run_id, step_id, artifact_hashes)` | 写 Checkpoint |
-| `load(run_id) -> list[Checkpoint]` | 读全部 |
-| `last_completed_step(run_id) -> str?` | resume 入口 |
-| `verify_hashes(run_id, current_artifacts)` | resume 前核对 |
+| `record(run_id, step_id, input_hash, artifact_ids, artifact_hashes, metrics)` | 写 Checkpoint(每步完成后) |
+| `find_hit(run_id, step_id, input_hash, repository) -> Checkpoint?` | resume / 重入 cache 命中查找 |
+| `latest_for_step(run_id, step_id) -> Checkpoint?` | 取最近一个 |
+| `load_from_disk(run_id)` | resume 入口,加载 `_checkpoints.json` |
+
+**find_hit 不变量**(`test_checkpoint_store::test_miss_on_length_mismatch` 守门):
+
+1. `cp.input_hash != input_hash` → miss
+2. `len(cp.artifact_ids) != len(cp.artifact_hashes)` → miss(`zip()` 会静默截断,显式守门避免外部数据污染)
+3. 任何 `repository.exists(aid) == False` → miss
+4. 任何 `repository.get(aid).hash != recorded_hash` → miss
+
+**cp.metrics 字段契约**(供 cache-hit 路径回放):
+
+| 键 | 类型 | 写入时机 |
+| --- | --- | --- |
+| `cost_usd` | float | Orchestrator 估算后**先**写入 `exec_result.metrics`,再 `record()` 落盘 |
+| `chosen_model` / `model` | str | executor 自己写 |
+| `usage` | dict | executor 自己写(text 路径含 `_route_pricing`) |
+| `attempts` / `candidate_count` 等 | int | executor 自己写 |
+
+**关键顺序**(orchestrator.py `_aexec_one_body`):
+- ❶ `executor.execute()` → ❷ 估算并写 `cost_usd` 到 `metrics` → ❸ `checkpoints.record(metrics=exec_result.metrics)` → ❹ `_dump_run_artifacts_if_possible()` → ❺ `budget_tracker.record() + check()`
+
+颠倒 ❷❸ 顺序会导致 `GenerateStructuredExecutor` 等 executor 自身不算 cost 的步骤,checkpoint 永远不带 `cost_usd`,跨进程 resume 无法回放预算(`test_codex_audit_fixes::test_structured_step_persists_cost_for_resume` 守门)。
+
+#### 5.4.1 ArtifactRepository 跨进程持久化(`artifact_store/repository.py`)
+
+CheckpointStore 只持久化 hash + metrics;Artifact 元数据(`payload_ref` / `lineage` / `producer` 等)也必须落盘,fresh-process `--resume` 才能让 `find_hit` 调 `repository.exists(aid)` 命中(否则即使 `_checkpoints.json` 存在,`exists()` 永远 False,整个 pipeline 静默重跑)。
+
+| 方法 | 说明 |
+| --- | --- |
+| `dump_run_metadata(run_id, run_dir) -> int` | 写 `<run_dir>/_artifacts.json`,只含 producer.run_id 匹配的条目;`find_by_producer` 内部 `list()` snapshot,DAG 并发下不会 `dictionary changed size during iteration` |
+| `load_run_metadata(run_id, run_dir) -> int` | 从 `_artifacts.json` 反序列化 + register;**三道过滤**:已存在 id skip / 后端 `exists()` False skip / file/blob 实际字节 hash 漂移 skip(inline 不需要二次校验,payload 直接随元数据走) |
+
+**Orchestrator 集成**:`_aexec_one_body` 在 `record()` 之后调 `_dump_run_artifacts_if_possible()`;CheckpointStore 在内存模式(`_root is None`)时 no-op,与 `_checkpoints.json` 对齐。dump 不再吞写盘异常 — 失败必须抛,免得 resume 时静默 cache miss。
+
+**fence 守门**(`test_codex_audit_fixes`):
+- `test_load_run_metadata_skips_missing_payload` — 文件被删后不重注册
+- `test_load_run_metadata_skips_corrupted_payload` — 文件被改后不重注册
+- `test_resume_yields_cache_hits_after_reload` — 端到端往返
+- `test_find_by_producer_safe_under_concurrent_put` — 并发安全
 
 ### 5.5 TransitionEngine(`transition_engine.py`)
 
 **核心方法**
 
 ```
-def next_step(verdict: Verdict, current_step: Step,
-              transition_policy: TransitionPolicy,
-              revise_count: int, retry_count: int) -> str | None
+def on_verdict(*, step: Step, verdict: Verdict, default_next: str|None) -> TransitionResult
+def on_success(step: Step, *, default_next: str|None) -> TransitionResult
+def cloned_for_run() -> "TransitionEngine"      # 每个 arun 用一个独立 counters
 ```
 
 **决策映射**
@@ -516,12 +554,38 @@ def next_step(verdict: Verdict, current_step: Step,
 | --- | --- | --- |
 | `approve` / `approve_one` / `approve_many` | `on_approve` / `on_success` | 无配置 → 自然下一步 |
 | `reject` | `on_reject` | 无配置 → 终止 |
-| `revise` | `on_revise` | revise_count > max_revise → 转 reject |
-| `retry_same_step` | 同 step | retry_count > max_retries → 转 fallback_model |
-| `fallback_model` | 同 step(换 model) | fallback 列表耗尽 → 终止 |
+| `revise` | `on_revise` | revise_count > max_revise → 终止 |
+| `retry_same_step` | **`on_retry` 优先**,未配则同 step | retry_count > max_retries → 终止 |
+| `fallback_model` | `on_fallback` 或同 step | retry_count > max_retries → 终止 |
 | `abort_or_fallback` | `on_fallback` | 未配 → 终止(**不回 same step 重计费**) |
 | `rollback` | `on_rollback` | — |
 | `human_review_required` | `on_human` | — |
+
+**`on_retry` 字段语义**(`test_codex_audit_fixes::test_retry_same_step_honours_policy_on_retry` 守门):
+
+`TransitionPolicy.on_retry: str | None = None` 长期存在但无人读;`retry_same_step` 要么走 `policy.on_retry`(workflow 想把 retry 重定向到 sanitiser step / 别的 capability),要么 fallback 到 `step.step_id`。
+
+**counters 生命周期** — **per-arun 隔离**:
+
+`TransitionCounters{retry: dict, revise: dict}` 不可跨 run 共享:
+- 同 instance 顺序两个 `arun()` → 第二个 run 不能背着第一个 run 的 retry 计数
+- 同 instance 并发两个 `arun()` → 两个 run 不能竞争同一 `counters` 字典
+
+实现:`Orchestrator.arun` 入口调 `transitions = self.transitions.cloned_for_run()`,所有 `_aexec_one_body` 透传该 local 实例,不动 `self.transitions`。
+
+`cloned_for_run()` 用 `copy.copy(self)` + 重置 `counters`:
+- 保留子类身份(注入 `Orchestrator(transition_engine=MyEngine(label="L1"))` 的扩展点不被吞)
+- 保留实例属性(子类 `__init__` 装的字段)
+- 只重置 `TransitionCounters` 这一个字段
+
+**ADR-006**(per-arun TransitionEngine 隔离):
+- 早期实现 `Orchestrator.__init__` 把 engine 当成单例 instance,counters 生命周期 = orchestrator;Codex 第 1 / 第 3 轮 audit 揭露此模式破坏跨 run 隔离 + 子类不兼容。
+- 改为 per-arun clone:行为正确,API 兼容(注入的 engine 仍可作为 prototype)。
+
+fence 守门:
+- `test_codex_audit_fixes::test_orchestrator_uses_fresh_transition_engine_per_arun` — 顺序两 run sentinel 不被覆盖
+- `test_codex_audit_fixes::test_orchestrator_concurrent_arun_does_not_share_counters` — 并发两 run sentinel 不被覆盖
+- `test_codex_audit_fixes::test_transition_engine_clone_preserves_subclass_and_attrs` — 子类身份保留
 
 ### 5.6 BudgetTracker(`budget_tracker.py`)
 
@@ -553,6 +617,23 @@ per_step: dict[str, dict]
 
 **写 RunResult**:`budget_summary = { total_cost_usd, prompt/completion/total_tokens, per_step }`。
 
+**Cache-hit 回放规则**(fresh-process `--resume` 不绕预算):
+
+跨进程 `--resume` 时 BudgetTracker 是空的,但 checkpoint 的 `cp.metrics["cost_usd"]` 已经持久化(见 §5.4 字段契约);`Orchestrator._aexec_one_body` cache-hit 路径必须把这笔 cost 重算入 tracker:
+
+```
+if hit and task.budget_policy:
+    cached = hit.metrics.get("cost_usd") or 0.0
+    if cached > 0 and budget_tracker.spend.by_step.get(step.step_id, 0) == 0:
+        budget_tracker.record(step_id, model, cost_usd=cached)
+        if not budget_tracker.check(): terminate(budget_exceeded)
+```
+
+**去重判据**:`spend.by_step.get(step_id, 0) == 0`。同进程 cache hit(retry / revise 重入)`by_step` 已经累计过,跳过避免双计;跨进程 fresh tracker `by_step` 全空,自动 record。
+
+fence 守门:
+- `test_codex_audit_fixes::test_orchestrator_replays_cached_cost_into_budget_tracker` — 第一次 run 写 $0.5,fresh 进程开 $0.1 cap resume,cache hit → terminate(budget_exceeded)
+
 ### 5.7 FailureModeMap(`failure_mode_map.py`)
 
 **分类函数**
@@ -576,7 +657,19 @@ def classify(exc: Exception) -> FailureMode
 
 **分类顺序**:unsupported 子类在通用 Error 分支**之前**捕捉,避免被 `worker_error` 吞。
 
-### 5.8 Executors(`framework/runtime/executors/`)
+#### 5.7.1 Unsupported 三层拦截(避免 deterministic bad shape 重复计费)
+
+`*UnsupportedResponse` 既是 `*Error` 子类,需要在所有"自动 retry / fallback"路径前显式 short-circuit;否则一次 deterministic 200+HTML 响应会触发 1~3 次额外付费调用。
+
+| 层 | 文件 | 拦截方式 | fence |
+| --- | --- | --- | --- |
+| **L1 transient retry** | `providers/_retry_async.py` 调用方(三处:`hunyuan_tokenhub_adapter`/`qwen_multimodal_adapter`/`mesh_worker._apost`) | `transient_check` lambda 显式 `not isinstance(e, *Unsupported*)`,因为 HTML body 含 "Service Unavailable" 等关键词会被 `is_transient_network_message` 误判 | `test_codex_audit_fixes::test_*_unsupported_response_skips_transient_retry` × 3 |
+| **L2 router fallback loop** | `providers/capability_router.py` 4 方法(`acompletion` / `astructured` / `aimage_generation` / `aimage_edit`) | `except ProviderUnsupportedResponse: raise` **先于** `except ProviderError` 捕捉,直接跳出 fallback loop | `test_codex_audit_fixes::test_router_does_not_fallback_on_unsupported_response` |
+| **L3 executor `_should_retry`** | 4 个 executor:`generate_structured` / `generate_image` / `generate_image_edit` / `generate_mesh` | 函数首行 `if isinstance(exc, *Unsupported*): return False`,生效于 `RetryPolicy.max_attempts > 1` 场景 | `test_codex_audit_fixes::test_image_executor_does_not_retry_on_unsupported_response` |
+
+三层全部 short-circuit 后,exception 才升到 `_aexec_one_body` 的 `except BaseException`,经 `classify_failure` → `unsupported_response` → `Decision.abort_or_fallback` → `on_fallback`(未配则终止)。
+
+### 5.8 Executors(`src/framework/runtime/executors/`)
 
 | Executor | 文件 | 用途 |
 | --- | --- | --- |
@@ -595,6 +688,12 @@ def classify(exc: Exception) -> FailureMode
 - `_generate_via_router(...)` 返回 3-tuple `(ImageResult, model, route_pricing)`
 - `parallel_candidates=True` → `asyncio.gather(*[_one(i) for i in range(n)])`
 - `num_candidates` 默认 3,对齐 Hunyuan `aimage_generation(n=3)` 真并发
+- **同质性约束**:`parallel_candidates=True` 时若 N 个并发候选落到不同 route(preferred 部分失败转 fallback),`metrics["chosen_model"]` / `_route_pricing` 无法单值表达 → 显式 `raise RuntimeError("heterogeneous routes")`,要求工作流拆 step 或关 `parallel_candidates`(`test_codex_audit_fixes::test_generate_image_parallel_rejects_heterogeneous_models` 守门)
+
+**GenerateImageEditExecutor 关键**:
+
+- 走 `router.image_edit(...)`,从 `result.raw["_route_pricing"]` 取 pricing 后用 `estimate_image_call_cost_usd(...)` 算 `metrics["cost_usd"]`
+- 早期版本只写 `attempts/edit_count/chosen_model/...`,`cost_usd` 缺失 → BudgetTracker 按 $0 计费 → 预算可被绕过(`test_codex_audit_fixes::test_image_edit_emits_cost_usd` 守门)
 
 **ReviewExecutor 关键**:
 
@@ -606,9 +705,17 @@ def classify(exc: Exception) -> FailureMode
 - mesh 不走 router,直接从 `ctx.step.provider_policy.prepared_routes[0].pricing` 读定价
 - 写 `metrics["cost_usd"] = estimate_mesh_call_cost_usd(...)`
 
+**SelectExecutor 关键**:
+
+- 输入:upstream verdict artifact + candidate_set bundle / 直接 candidate artifacts
+- 默认行为:`kept = [cid for cid in candidate_pool if cid in verdict.selected_candidate_ids]`
+- **bare-approve 语义**:`verdict.decision in {approve, approve_one, approve_many}` 且 `selected_candidate_ids == []` → `kept = candidate_pool - rejected_candidate_ids`,与 `ExportExecutor._approve_filter` 的 "approve all upstream" 语义对齐
+  - 关键修正:`rejected_candidate_ids` 必须从 `kept` 排除,而不是同时进 `selected` 和 `dropped`(下游只看 `selected_ids`,后者会让显式拒绝失效)
+  - fence:`test_codex_audit_fixes::test_select_bare_approve_keeps_whole_pool` + `test_select_bare_approve_excludes_explicit_rejects`
+
 ---
 
-## 6. Providers(`framework/providers/`)
+## 6. Providers(`src/framework/providers/`)
 
 ### 6.1 ProviderAdapter 基类(`base.py`)
 
@@ -658,6 +765,19 @@ async def image_edit(self, capability, call, image_bytes) -> ImageResult
 4. 把 route 的 pricing 塞进 `result.raw["_route_pricing"]`(或 `usage["_route_pricing"]`)
 
 **注册顺序约束**:`LiteLLMAdapter`(wildcard `supports(*) == True`)必须最后注册。
+
+**Fallback loop 异常分流**(4 方法都遵守):
+
+```
+except ProviderUnsupportedResponse:
+    raise              # 先捕,绝不进 fallback —— 详见 §5.7.1 L2
+except NotImplementedError:
+    last = ProviderError("adapter does not support ..."); continue
+except ProviderError as exc:
+    last = exc; continue
+```
+
+`ProviderUnsupportedResponse` 是 `ProviderError` 子类,`except ProviderError` 会吞掉它把 deterministic 200+HTML 当成 route 故障,继续请求下一条 fallback model → 多付一次费。必须**先**捕 unsupported。
 
 **Stash 辅助**:`_stash_route_pricing_on_result(result, pricing)` / `_stash_route_pricing_on_usage(usage, pricing)`。
 
@@ -740,7 +860,9 @@ PreparedRoute: Pydantic bundle schema,字段同 ResolvedRoute
 - Tencent tokenhub 协议(`/submit` + `/query` 轮询 + `/download`)
 - `TokenhubMixin._th_poll`:`await asyncio.sleep(interval)`;`CancelledError` 透传
 - `_th_poll` 回调自适应 `(status, elapsed_s)` 或 `(status, elapsed_s, raw_resp)`
+- **单次 poll timeout clamp**:`min(20.0, max(1.0, budget_s - elapsed))`,避免剩余 1s 时单次 `/query` 仍阻塞 20s 突破 step timeout(`test_codex_audit_fixes::test_hunyuan_poll_clamps_timeout_to_remaining_budget` 守门;`HunyuanMeshWorker._atokenhub_poll` 同款 clamp 上限 30s)
 - `submit` 无 id → `ProviderUnsupportedResponse`
+- **200 + 非 JSON body**(代理/WAF 返回 HTML)→ `ProviderUnsupportedResponse`(`r.json()` 抛 `ValueError` 显式捕,不让 `JSONDecodeError` 逃出 try block);`HunyuanMeshWorker` / `qwen_multimodal_adapter` 同款修复
 - `_extract_result_urls_ranked()` 返回 list,`_one()` 遍历试到一个 download 成功为止
 - Image data URL:`data:image/png;base64,...`(`aimage_generation` 的 input)
 - `aimage_generation(n>1)` 用 `asyncio.gather(*[_one(i) for i in range(n)])` 真并发(tokenhub 单次只接一条 prompt)
@@ -863,7 +985,7 @@ if buf:  # 有残缺前缀,走 Range
 
 ---
 
-## 7. Review Engine(`framework/review_engine/`)
+## 7. Review Engine(`src/framework/review_engine/`)
 
 ### 7.1 LLMJudge(`judge.py`)
 
@@ -900,7 +1022,7 @@ async def ajudge_with_panel(
 
 ---
 
-## 8. Artifact Store(`framework/artifact_store/`)
+## 8. Artifact Store(`src/framework/artifact_store/`)
 
 ### 8.1 Repository(`repository.py`)
 
@@ -938,7 +1060,7 @@ def hash_dict(obj: dict) -> str       # canonical JSON
 
 ---
 
-## 9. UE Bridge(`framework/ue_bridge/`)
+## 9. UE Bridge(`src/framework/ue_bridge/`)
 
 ### 9.1 ManifestBuilder(`manifest_builder.py`)
 
@@ -1007,7 +1129,7 @@ def validate_manifest(manifest: UEAssetManifest) -> list[str]  # errors
 
 ---
 
-## 10. Observability(`framework/observability/`)
+## 10. Observability(`src/framework/observability/`)
 
 ### 10.1 EventBus(`event_bus.py`)
 
@@ -1088,7 +1210,7 @@ def get_secret(env_key: str) -> str   # 读环境变量,缺失 raise
 
 ---
 
-## 11. Server(`framework/server/ws_server.py`)
+## 11. Server(`src/framework/server/ws_server.py`)
 
 ### 11.1 端点
 
@@ -1129,7 +1251,7 @@ python -m framework.run --serve [--host 127.0.0.1 --port 8000]
 
 ---
 
-## 12. Pricing Probe(`framework/pricing_probe/`)
+## 12. Pricing Probe(`src/framework/pricing_probe/`)
 
 ### 12.1 子模块
 
@@ -1188,7 +1310,7 @@ python -m framework.pricing_probe --only zhipu
 
 ---
 
-## 13. Workflows(`framework/workflows/`)
+## 13. Workflows(`src/framework/workflows/`)
 
 ### 13.1 loader.py
 
@@ -1390,20 +1512,21 @@ Exception
 
 本文档所有字段定义的真源是:
 
-- `framework/core/*.py`(Pydantic schema + docstring)
-- `framework/schemas/*.py`(业务 schema)
-- `framework/providers/base.py`(异常类族)
+- `src/framework/core/*.py`(Pydantic schema + docstring)
+- `src/framework/schemas/*.py`(业务 schema)
+- `src/framework/providers/base.py`(异常类族)
 
 ### 17.2 算法真源
 
-- `framework/runtime/orchestrator.py` — DAG 调度 / 生命周期
-- `framework/runtime/failure_mode_map.py` — 分类
-- `framework/providers/workers/mesh_worker.py` — URL ranker / 格式检测 / magic gate
-- `framework/providers/_download_async.py` — Range 续传
-- `framework/observability/event_bus.py` — 跨线程 hop
+- `src/framework/runtime/orchestrator.py` — DAG 调度 / 生命周期
+- `src/framework/runtime/failure_mode_map.py` — 分类
+- `src/framework/providers/workers/mesh_worker.py` — URL ranker / 格式检测 / magic gate
+- `src/framework/providers/_download_async.py` — Range 续传
+- `src/framework/observability/event_bus.py` — 跨线程 hop
 
 ### 17.3 变更记录
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §B + §C.6 + §D + §E + §F + §H + §N + 源码实装拆分重组 |
+| v1.1 | 2026-04-22 | Codex 21 条 audit 修复落实装契约:§5.4 find_hit 长度校验 + cost_usd 持久化 + ArtifactRepository 跨进程持久化(`_artifacts.json`)+ payload tampering 校验、§5.5 `on_retry` override + `cloned_for_run()` per-arun 隔离(ADR-006)、§5.6 cache-hit 回放规则、§5.7.1 unsupported 三层拦截(transient retry / router fallback / executor `_should_retry`)、§5.x SelectExecutor bare-approve 语义 + GenerateImageEdit cost_usd + parallel_candidates 同质性、§6.2 router fallback 异常分流、§6.4 hunyuan poll timeout clamp + 200/non-JSON 包装。回归 520 用例(基线 491 + `tests/unit/test_codex_audit_fixes.py` 29 个 fence)|
