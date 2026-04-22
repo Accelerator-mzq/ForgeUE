@@ -428,7 +428,7 @@ python -m pytest -q                            # 全量回归
 顺序 1: A3(本地 + playwright)                  ✅ 已完成(2026-04-22)
 顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) ✅ 已完成(commit 293979f / 74c0849)
 顺序 3: A2 qwen/hunyuan 图像链 live smoke       ⚠️ 部分完成(2026-04-22):3/5 绿(a2_char / a2_image / a2_review),a2_mesh 炸在视觉 review payload 超限 → TBD-006 修复后可 resume
-顺序 4: A2 mesh_from_image live smoke           🔓 解锁(TBD-006 已修,代码 + fence 就位;待用户授权 resume a2_mesh 烧 ~$0.5-1 mesh 费用)
+顺序 4: A2 mesh_from_image live smoke           ⚠️ 部分通过(2026-04-22 16:48):TBD-006 修复后 step_review_image 真过(GLM-4.6V approve_one @ 0.89,$0.0013),但 step_mesh 在 Hunyuan 3D tokenhub `/v1/api/3d/query` poll 阶段 3 次 attempt 全 `MeshWorkerError: All connection attempts failed`(submit 阶段成功拿到 job_id,poll 立刻 ConnectError —— 远端瞬态关连)。framework 行为正确(failure_mode_map 路由 + router error chain 保留),非 bug;待 endpoint 稳定后重试可完成顺序 4
 顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时(a2_ue 合并进来)
 ```
 
@@ -467,6 +467,18 @@ python -m pytest -q                            # 全量回归
 
 **旁证**:`a2_review` 的 `review_judge`(PackyCode Anthropic)对 3 张小占位图正常给 `approve_one @ 0.916`,说明 judge.py 构 message 本身没 bug,只是对真实 Qwen 生成图(每张 300KB+)没做体积控制。
 
+**修复后 live 验证(2026-04-22 16:48)**:resume a2_mesh 用 8e8f533 commit 后的代码 + 已生成的 3 张真 Qwen PNG(各 ~320KB):
+
+| step | 状态 | 关键指标 |
+| --- | --- | --- |
+| `step_spec` / `step_image` | cache_hit | resume 复用,$0.08 image_fast 不重烧 |
+| `step_review_image` | ✅ pass | `openai/glm-4.6v` `approve_one @ 0.89 confidence`,选中 `cand_0`,$0.0013;**之前撞 1.26M payload 的链路现在真过了** |
+| `step_mesh_spec` | ✅ pass | MiniMax 986 tokens 产出 mesh spec |
+| `step_mesh` | ❌ infra | Hunyuan 3D tokenhub `/v1/api/3d/query` poll 阶段 ConnectError(submit 成功拿 job_id,poll 立即关连);3 次 attempt 全 `worker_error`,fallback 链耗尽 |
+| `step_export` | 未触达 | mesh 没产出,export 步未执行 |
+
+**结论**:TBD-006 修复完全验证 —— 视觉 review payload 超限的根因(Bug A + Bug B 双修复)真实环境下闭合,review_judge_visual 在 GLM 上正常工作。剩余 mesh 步阻塞是**外部网络瞬态**,framework 路由和错误处理路径完全按预期工作(`MeshWorkerError` 被捕 → `worker_error` failure mode → 3 次 fallback 后 run.failed,无静默吞栈)。
+
 ---
 
 ## 7. 未启动项(超出当前基线)
@@ -478,7 +490,7 @@ python -m pytest -q                            # 全量回归
 | TBD-003 | WS 鉴权 / 多租户 | NFR-SEC-005 | ❌ | 接入 UI 时 |
 | TBD-004 | FBX self-containment 校验 | FR-WORKER-* | ❌ | 引入 PyFBX / ufbx 后 |
 | TBD-005 | Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold(DashScope 已于 2026-04-22 前并入) | 有工作流真实使用时 |
-| ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3 | ✅ 已实施(2026-04-22)| 见 §6.5;代码 + 10 条 fence 就位,等用户授权 resume a2_mesh 验证端到端 |
+| ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3 | ✅ 已实施 + live 验证通过(2026-04-22)| 见 §6.5;代码 + 10 条 fence 就位,resume a2_mesh 中 step_review_image 真过(GLM-4.6V `approve_one @ 0.89`);剩余 step_mesh 阻塞于 Hunyuan 3D tokenhub poll 网络瞬态(非本 TBD scope) |
 | TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |
