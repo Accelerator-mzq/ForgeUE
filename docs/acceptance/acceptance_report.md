@@ -217,8 +217,8 @@
 | FR-COST-003 三 estimator | test_budget_tracker_pricing | ✅ |
 | FR-COST-004 route_pricing 透传 | test_router_pricing_stash | ✅ |
 | FR-COST-005 pricing probe CLI dry-run | test_pricing_probe_framework | ✅ |
-| FR-COST-006 httpx + playwright 双后端 | test_pricing_parser_*(3 家已实装) | ⚠️ DashScope / Tripo3D scaffold |
-| FR-COST-007 verifiable 来源 | YAML pricing_autogen 审计块 | ✅(2026-04-21) |
+| FR-COST-006 httpx + playwright 双后端 | test_pricing_parser_*(zhipu / dashscope / hunyuan_image / hunyuan_3d 4 家已实装) | ⚠️ tripo3d 仍 scaffold(`no_parser`) |
+| FR-COST-007 verifiable 来源 | YAML pricing_autogen 审计块 | ✅(2026-04-22;A3 dry-run + --apply 验证所有 12 个 model sourced_on 与真实页面一致) |
 | FR-COST-008 image_edit cost_usd | test_codex_audit_fixes(`_image_edit_emits_cost_usd`) | ✅ |
 | FR-COST-009 parallel_candidates 同质性 | test_codex_audit_fixes(`_generate_image_parallel_rejects_heterogeneous_models`) | ✅ |
 
@@ -370,11 +370,11 @@ python -m framework.run --task examples/ue_export_pipeline.json --live-llm --run
 
 ### 6.3 A3 — Pricing Probe `--apply` 真跑
 
-**目标**:验证 playwright 后端在真实 provider 页面拉取,6 个已实装 model 的 `pricing` 与 `pricing_autogen` 刷新正确。
+**目标**:验证 playwright 后端在真实 provider 页面拉取,已实装 parser 的 `pricing` 与 `pricing_autogen` 刷新正确。
 
 **前置条件**:
 - `pip install playwright && playwright install chromium`
-- 网络可达 zhipu.ai / help.aliyun.com / cloud.tencent.com
+- 网络可达 bigmodel.cn / help.aliyun.com / cloud.tencent.com
 
 **执行步骤**:
 
@@ -388,18 +388,22 @@ python -m pytest -q                            # 全量回归
 
 **验收标准**:
 
-- 6 个 model(glm_4_6v / glm_4_6v_flashX / glm_image / hunyuan_image_v3 / hunyuan_image_style / hunyuan_3d_31)的 `pricing:` 字段有值
-- `pricing_autogen.status=fresh`,`sourced_on` = 执行当日
-- DashScope / Tripo3D 下 model 的 scaffold 仍 `status: stale`(parser 未实装)
+- 12 个 model 全部 `status: fresh`:
+  - zhipu × 3(glm_4_6v / glm_4_6v_flashX / glm_image)
+  - dashscope × 6(qwen3_6_plus / qwen_image_2 / qwen_image_2_pro / qwen_image_edit / qwen_image_edit_plus / qwen_image_edit_max)
+  - hunyuan_image × 2(hunyuan_image_v3 / hunyuan_image_style)
+  - hunyuan_3d × 1(hunyuan_3d)
+- `pricing_autogen.sourced_on` = 执行当日
+- tripo3d 下 model 维持 `no_parser`(scaffold 未实装 parser,区别于 `stale`)
 - 520 测试仍全绿
 
-**状态**:⏳ 未执行(新功能,工作树未提交)
+**状态**:✅ 已通过(2026-04-22 dry-run + --apply,所有 12 个 model 返 `fresh`,真实页面数值与 YAML 一致,`--apply` 无 diff;DashScope parser 已随 2026-04-22 工作树并入,tripo3d 维持 `no_parser`)
 
 ### 6.4 手工验收计划时序
 
 ```
-顺序 1: A3(本地 + playwright)                  预计 30 min
-顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) 预计 30 min
+顺序 1: A3(本地 + playwright)                  ✅ 已完成(2026-04-22)
+顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) ✅ 已完成(commit 293979f / 74c0849)
 顺序 3: A2 qwen/hunyuan 图像链 live smoke       预计 1-2 小时(烧 key 钱)
 顺序 4: A2 mesh_from_image live smoke           预计 30 min
 顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时
@@ -415,7 +419,7 @@ python -m pytest -q                            # 全量回归
 | TBD-002 | Audio worker(AudioCraft) | FR-WORKER-* | ❌ | 音频需求明确后 |
 | TBD-003 | WS 鉴权 / 多租户 | NFR-SEC-005 | ❌ | 接入 UI 时 |
 | TBD-004 | FBX self-containment 校验 | FR-WORKER-* | ❌ | 引入 PyFBX / ufbx 后 |
-| TBD-005 | DashScope / Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold | 有工作流真实使用时 |
+| TBD-005 | Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold(DashScope 已于 2026-04-22 前并入) | 有工作流真实使用时 |
 | TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |

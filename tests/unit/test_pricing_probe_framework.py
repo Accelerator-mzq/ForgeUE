@@ -284,7 +284,7 @@ def test_yaml_writer_marks_stale_on_failed_parser(tmp_path):
             path, [result], dry_run=False, today_iso="2026-05-01",
         )
 
-    assert "FRESH → STALE" in diff
+    assert "FRESH -> STALE" in diff
     assert "layout changed" in diff
 
     import yaml as _y

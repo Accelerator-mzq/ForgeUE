@@ -80,7 +80,7 @@ def _apply_proposal_to_model(
         if old_v is None:
             deltas.append(f"      + {k}: {new_v}")
         elif abs(float(old_v) - float(new_v)) > 1e-9:
-            deltas.append(f"      ~ {k}: {old_v} → {new_v}")
+            deltas.append(f"      ~ {k}: {old_v} -> {new_v}")
         # In-place set preserves any ruamel per-key comment token.
         pricing_block[k] = new_v
 
@@ -160,7 +160,7 @@ def _mark_models_stale(
             autogen.get("source_url") or ""
         )
         entry["pricing_autogen"].setdefault("cny_original", "")
-        lines.append(f"  {name}: FRESH → STALE ({reason})")
+        lines.append(f"  {name}: FRESH -> STALE ({reason})")
     return "\n".join(lines)
 
 
@@ -193,7 +193,7 @@ def apply_results_to_yaml(
             diff_lines.append("  (skipped via --only filter)")
             continue
         if result.status is ProbeStatus.no_parser:
-            diff_lines.append("  (no parser implementation yet — "
+            diff_lines.append("  (no parser implementation yet -- "
                                "see parsers/<provider>.py NotImplementedError)")
             continue
         if result.status is ProbeStatus.stale:

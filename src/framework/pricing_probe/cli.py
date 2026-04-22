@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
     print(diff_text)
     print()
     if not args.apply:
-        print("(dry-run — no file changes. Re-run with --apply to write.)")
+        print("(dry-run -- no file changes. Re-run with --apply to write.)")
 
     # Exit code: 0 if all providers fresh OR skipped; 1 if any stale.
     # no_parser doesn't fail — we expect scaffolds during rollout.
