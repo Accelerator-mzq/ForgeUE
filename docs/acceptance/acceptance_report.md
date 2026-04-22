@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 541 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5) |
+| L0 自动化 | `pytest -q` 全绿 | 543 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 |
@@ -511,6 +511,10 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 **A2 顺序 4 收官(2026-04-22 18:38 v6 从头跑)**:Hunyuan 3D tokenhub 服务稳定后,从头跑全链一次过 —— 3 张 Qwen 1024×1024 真图 → GLM-4.6V approve → MiniMax mesh_spec → **Hunyuan 3D 30.6 MB .glb 真生成落盘** → step_export 按预期 raise C: 占位路径(绑 A1 真机)。**A2 顺序 4 ✅ 升级**;先前判定的"transient 阻塞"得到反向验证 —— 服务恢复后链路完全打通。
 
+**a2_image / a2_review 的证据力修订(2026-04-22 TBD-008)**:经 Codex 独立 review,`a2_image`(FakeComfy 4.5KB 占位 + `review_judge` 无 visual_mode)与 `a2_review`(inline 文字 metadata,无 visual_mode)**均不是视觉 review 证据** —— 它们测的是 "占位图被拒的工作流终止路径" 和 "判官解析文字 schema 的契约",属于 smoke 价值,留作现状不扩大。真正的视觉 review 证据现在归:
+- **offline 契约** — `test_p2/p3/l4` 用真 PNG fixture 驱动(见 §6.7 TBD-008)
+- **provider 质量抽检** — `FORGEUE_PROBE_VISUAL_REVIEW=1 python -m probes.provider.probe_visual_review` 手跑,对比 Anthropic Opus 4.6 vs GLM-4.6V 对同 3 张真图的打分分布
+
 ### 6.6 TBD-007 mesh 重试塌缩 + 失败 visibility(Codex 独立 review 协助)
 
 **触发**:用户对账腾讯云控制台,A2 a2_mesh 一次"用户视角的单 mesh job"实际计费 **16 调用 × 20 积分 = 320 积分**。
@@ -565,6 +569,40 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 - "manual-retry class + human gate" 长期方向正确,但需新 framework 级 pause/resume 状态机,scope 太大,本轮维持 batch CLI + stderr hint
 - Layer 4 download Range resume 也"零静默重试"洁癖性删除 —— 我判经济意义低于 API call 重发,保留有真实续传价值;LLD 加 ADR 段记录区分
 
+### 6.7 TBD-008 visual review 契约 / 质量分层(Codex B+C 分层采纳)
+
+**触发**:用户观察 — "a2_image 拿占位图测试 / a2_review 文字 metadata 候选,看不出打分优势"。我第一轮 plan(新 live bundle)被 Codex 独立 review 指出**绕开了真盲区** — `tests/integration/test_p2_standalone_review.py:203,221,298` / `test_p3_production_pipeline.py:214,220,398` / `test_l4_image_to_3d.py:41,147` 成片的 `VISUAL_A/B/C` / `ORIGINAL_/REVISED_/API_` / `fake-source-image-bytes` 伪字节,让"视觉 review"退化为"计算 image_url block 数量 + 按 candidate_id 位置打分"。新加 live bundle 在旁边另起一摊,老盲区仍在。
+
+**修法分层**(Codex):
+1. **契约层(offline 稳定,$0 CI)**:`tests/fixtures/review_images/tavern_door_v{1,2,3}.png` 真 Qwen 1024×1024 PNG + `FakeAdapter` 脚本化打分,测 review pipeline 流水线正确性
+2. **质量层(opt-in 偶发)**:`probes/provider/probe_visual_review.py` FORGEUE_PROBE_VISUAL_REVIEW=1 opt-in,真 Anthropic / GLM 对真图打分对比,测 provider 判别能力
+
+**实施点**:
+- `tests/fixtures/review_images/` 新目录 + `tavern_door_v{1,2,3}.png`(~4.4MB)+ `__init__.py.load_review_image(name)` helper
+- `test_p2_standalone_review::test_p2_visual_mode_attaches_image_bytes_to_judge_prompt`:VISUAL_A/B/C → fixture;断言升级 "winner=cand_primary + confidence>0.7" + JPEG 压缩路径验证(TBD-006 真跑)
+- `test_p3_production_pipeline`:ORIGINAL_/REVISED_/API_ → fixture;assertions 不变,字节源升级
+- `test_l4_image_to_3d::test_l4_mesh_reads_selected_candidate_from_review_verdict`(新增,**真实生产路径**):验证 mesh 从 `report.verdict.selected_candidate_ids[0]` 读图,匹配 `image_to_3d_pipeline.json` 的 depends_on 链(无 SelectExecutor)
+- `test_l4_image_to_3d::test_l4_mesh_resolves_selected_image_from_selected_set_bundle`(新增,forward-compat):验证 `bundle.selected_set` resolution,覆盖未来可能引入 SelectExecutor 的工作流
+- `src/framework/runtime/executors/generate_mesh.py:_resolve_source_image` 优先级重写:verdict > selected_set > 直接 image > candidate_set(Codex Phase G 两轮 review 的核心产出)
+- `probes/provider/probe_visual_review.py`:两家 judge 同 3 图对比,落 `demo_artifacts/<today>/probes/provider/visual_review/<HHMMSS>/comparison_table.md`
+
+**HYPOTHESIS 意外验证**:`review_judge` 别名在 `config/models.yaml` 里**无 `kind: vision` 标签**,但 probe 实跑证实 Anthropic Opus 4.6 vision 路径工作正常(`visual_mode=true` + image_url block + TBD-006 JPEG 压缩一路通到 PackyCode 返 approve_one @ 0.85 confidence)。消息 shape 是 provider 无关的,`kind` 标签只影响 router 优选逻辑(不 gate 路由)。fallback 方案(补标签)**未触发**。
+
+**probe 首跑打分分布对比(2026-04-22 23:03)**:
+| 判官 | cand_0 五维分 | cand_1 | cand_2 | winner | confidence |
+|---|---|---|---|---|---|
+| `review_judge`(Anthropic Opus 4.6)| 0.82-0.88 | 0.62-0.78 | 0.78-0.85 | cand_0 | **0.8515** |
+| `review_judge_visual`(GLM-4.6V) | 0.85-0.95 | 0.80-0.90 | 0.80-0.90 | cand_0 | **0.8925** |
+
+观察:Anthropic 打分跨度更大(0.62-0.88),**判别度更好**;GLM 打分更"压缩"(0.80-0.95 挤在一起),判别度弱但置信度更高。这是用户诉求的"看出打分优势"的直接证据。
+
+**测试基数 541 → 543**(1 新 fence + 3 翻转:翻转不变数,新增 1)。
+
+**未做**(scope 收缩):
+- ❌ 不新建 `a2_image_live.json` / `a2_review_live.json`(我原 P1,被 B+C 覆盖)
+- ❌ 不把 `examples/review_3_images.json` 改造成 visual bundle(留文字 schema smoke 独立价值)
+- ❌ 不引入新 executor / 新 candidate 摄入路径
+
 ---
 
 ## 7. 未启动项(超出当前基线)
@@ -578,6 +616,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | TBD-005 | Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold(DashScope 已于 2026-04-22 前并入) | 有工作流真实使用时 |
 | ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3+4 | ✅ 已实施 + live 验证通过(2026-04-22 18:38)| 见 §6.5;代码 + 10 条 fence 就位,a2_mesh 从头跑全链通过(step_review_image GLM-4.6V approve + step_mesh Hunyuan 3D 真生成 30.6 MB .glb) |
 | ~~TBD-007~~ | ~~mesh 重试塌缩 + 失败 visibility~~ | NFR-COST-*, A2 顺序 4 | ✅ 已实施 + HYPOTHESIS probe 验证(2026-04-22) | 见 §6.6;Codex 独立 review 协助找出 4 层中第 2 层(executor 内部 retry);job_id 持久化暴露给 CLI;5 条 fence 就位 |
+| ~~TBD-008~~ | ~~visual review 契约质量分层(fixture + opt-in probe)~~ | FR-REVIEW-*, NFR-MAINT | ✅ 已实施(2026-04-22)| 见 §6.7;Codex 独立 review 指出 p2/p3/l4 伪字节盲区;fixture 真图驱动 offline + `probe_visual_review.py` opt-in live 抽检;1 新 fence + 3 翻转;a2_image/a2_review bundle 降级为 "schema smoke" 不再当视觉证据 |
 | TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |
@@ -598,7 +637,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **541 通过 / 0 失败**(2026-04-22 第六轮基线,~17.6s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5) |
+| L0 pytest 全量 | ✅ **543 通过 / 0 失败**(2026-04-22 第七轮基线,~15.6s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
@@ -611,7 +650,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 541 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence)+ 60+ L3 fence |
+| 测试覆盖 | ✅ 543 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence + TBD-008 visual review contract 2 fence)+ 60+ L3 fence |
 
 ### 8.3 整体结论
 

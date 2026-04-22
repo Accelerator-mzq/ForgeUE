@@ -1062,6 +1062,29 @@ def compress_for_vision(data: bytes, *, max_dim: int = 768, quality: int = 80)
 
 预处理放 executor 而非 judge,规避 `ChiefJudge` 并发分发同一 `candidates` 列表给 N 个 judge 时的共享输入污染。
 
+### 7.7 视觉 review 测试契约 vs provider 质量分层(2026-04-22 / TBD-008)
+
+Codex 独立 review 指出 2026-04-22 之前的视觉 review 测试存在系统性盲区:`test_p2_standalone_review.py` / `test_p3_production_pipeline.py` / `test_l4_image_to_3d.py` 里成片的伪字节(`b"VISUAL_A/B/C"` / `ORIGINAL_` / `REVISED_` / `API_` / `fake-source-image-bytes`)让"视觉 review 是否正确判断"退化为"`image_url` block 有没有构造出 3 个 / `candidate_id` 位置是否对齐"。伪字节下 judge 无法真正"看图",fence 证据力是零。
+
+修法分层:
+
+| 层次 | 测试介质 | 目的 | 落地 |
+|---|---|---|---|
+| **契约** | 真 PNG fixture(`tests/fixtures/review_images/tavern_door_v{1,2,3}.png`)+ `FakeAdapter` 脚本化打分 | 验流水线:真图 bytes → visual_mode prompt shape → image_prep 压缩 → 打分按 candidate_id 正确 route 到 verdict → selected_set → mesh 读选中 | `test_p2/p3/l4` integration(offline,$0,确定性) |
+| **质量** | 真 PNG fixture + 真 Anthropic / GLM provider | 验 judge 对真实物品图像的判别能力(打分分布、winner 选择、维度区分度) | `probes/provider/probe_visual_review.py`(opt-in `FORGEUE_PROBE_VISUAL_REVIEW=1`) |
+
+**强约束**(反规范:禁止写入此形式的老 fence):
+- ❌ `b"\x89PNG\r\n\x1a\n" + marker_suffix` 作为图像字节源
+- ❌ `FakeAdapter` 程序化打分按"prompt 文本中 candidate_id 出现位置"决定分数
+- ❌ 视觉断言只核对 `image_url` block 数量 / data URL mime prefix
+
+**正确写法**:
+- ✅ `from tests.fixtures import load_review_image; data = load_review_image("tavern_door_v1")`
+- ✅ FakeAdapter 程序化打分按 `candidate_id → scores` 的映射,不依赖 prompt 顺序
+- ✅ 视觉断言至少覆盖 verdict.decision + selected_candidate_ids + confidence
+
+`a2_image` / `a2_review` CLI bundle(`examples/image_pipeline.json` / `examples/review_3_images.json`)保留现状作"schema smoke" —— 非视觉证据;真视觉证据现在归本节两层。
+
 ---
 
 ## 8. Artifact Store(`src/framework/artifact_store/`)
