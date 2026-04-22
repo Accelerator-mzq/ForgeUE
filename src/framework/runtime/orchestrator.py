@@ -479,11 +479,24 @@ class Orchestrator:
             if mode is None:
                 raise
             synth = synth_failure_verdict(step_id=step.step_id, exc=exc, mode=mode)
-            result.failure_events.append({
+            event: dict = {
                 "step_id": step.step_id,
                 "mode": mode.value,
                 "decision": synth.decision.value,
-            })
+            }
+            # TBD-007: enrich with worker-side identifiers when the exception
+            # carries them (MeshWorkerError / MeshWorkerTimeout do). CLI
+            # surfaces these so users can `query` the remote job state before
+            # blind-retrying — mesh jobs ~$0.20-1 each, blind retry can
+            # double-bill jobs that completed server-side after local timeout.
+            ctx_extras: dict = {}
+            for attr in ("job_id", "worker", "model"):
+                val = getattr(exc, attr, None)
+                if val is not None:
+                    ctx_extras[attr] = val
+            if ctx_extras:
+                event["context"] = ctx_extras
+            result.failure_events.append(event)
             trans = transitions.on_verdict(
                 step=step, verdict=synth, default_next=default_next,
             )

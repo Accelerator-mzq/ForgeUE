@@ -28,7 +28,24 @@ import httpx
 
 
 class MeshWorkerError(RuntimeError):
-    """Generic mesh worker failure."""
+    """Generic mesh worker failure.
+
+    TBD-007: optional kwargs `job_id` / `worker` / `model` carry remote-side
+    identifiers when they are known at raise site. They flow into orchestrator
+    failure_event.context so CLI can surface them — letting users `query` the
+    remote job state before blind-retrying (which would double-bill paid jobs
+    that may have already succeeded server-side).
+
+    Backward compatible: existing `raise MeshWorkerError("msg")` still works;
+    new fields default to None.
+    """
+
+    def __init__(self, msg: str, *, job_id: str | None = None,
+                 worker: str | None = None, model: str | None = None) -> None:
+        super().__init__(msg)
+        self.job_id = job_id
+        self.worker = worker
+        self.model = model
 
 
 class MeshWorkerTimeout(MeshWorkerError):
@@ -419,7 +436,8 @@ class HunyuanMeshWorker(MeshWorker):
                 raise MeshWorkerUnsupportedResponse(
                     f"tokenhub 3d DONE response had no importable mesh URL "
                     f"(all URLs filtered as preview/unsupported ext); "
-                    f"keys={list(done_resp)} sample={str(done_resp)[:400]}"
+                    f"keys={list(done_resp)} sample={str(done_resp)[:400]}",
+                    job_id=job_id, worker=self.name, model=model_id,
                 )
 
             last_unsupported: MeshWorkerUnsupportedResponse | None = None
@@ -440,7 +458,8 @@ class HunyuanMeshWorker(MeshWorker):
                         f"mesh step exceeded {budget}s budget before "
                         f"downloading {url!r} (ranked URL "
                         f"{ranked_urls.index(url) + 1}/{len(ranked_urls)}); "
-                        f"{'previous URLs unsupported' if last_unsupported else 'submit+poll alone exhausted budget'}"
+                        f"{'previous URLs unsupported' if last_unsupported else 'submit+poll alone exhausted budget'}",
+                        job_id=job_id, worker=self.name, model=model_id,
                     )
                 per_url_timeout = min(_PER_URL_DOWNLOAD_CAP, remaining)
                 # Download + validate inside a single try so a download
@@ -505,17 +524,22 @@ class HunyuanMeshWorker(MeshWorker):
     # ---- async tokenhub helpers -----------------------------------------
 
     async def _atokenhub_submit(self, body: dict, *, timeout_s: float) -> str:
+        model_id = str(body.get("model") or "")
         resp = await self._apost(f"{self._base_url}/submit", body, timeout_s=timeout_s)
         status = str(resp.get("status", "")).lower()
         if status in ("failed", "fail", "error"):
             err = resp.get("error") or {}
             raise MeshWorkerError(
                 f"tokenhub /3d/submit failed: "
-                f"{err.get('message') or err or resp}"
+                f"{err.get('message') or err or resp}",
+                worker=self.name, model=model_id,
             )
         job_id = resp.get("id") or resp.get("job_id")
         if not job_id:
-            raise MeshWorkerError(f"tokenhub /3d/submit returned no id: {resp}")
+            raise MeshWorkerError(
+                f"tokenhub /3d/submit returned no id: {resp}",
+                worker=self.name, model=model_id,
+            )
         return str(job_id)
 
     async def _atokenhub_poll(self, *, job_id: str, budget_s: float,
@@ -529,7 +553,8 @@ class HunyuanMeshWorker(MeshWorker):
             elapsed = loop.time() - start
             if elapsed > budget_s:
                 raise MeshWorkerTimeout(
-                    f"tokenhub 3d job {job_id} exceeded {budget_s}s"
+                    f"tokenhub 3d job {job_id} exceeded {budget_s}s",
+                    job_id=job_id, worker=self.name, model=model_id,
                 )
             # Clamp single-poll timeout so a slow /query can't push the
             # step past its nominal budget. Same shape as Tripo3D's
@@ -563,66 +588,47 @@ class HunyuanMeshWorker(MeshWorker):
             if status in ("failed", "fail", "error", "cancelled"):
                 raise MeshWorkerError(
                     f"tokenhub 3d job {job_id} {status}: "
-                    f"{resp.get('error') or resp.get('message') or resp}"
+                    f"{resp.get('error') or resp.get('message') or resp}",
+                    job_id=job_id, worker=self.name, model=model_id,
                 )
             await asyncio.sleep(self._poll)
 
     async def _apost(self, url: str, body: dict, *, timeout_s: float) -> dict:
-        """Async POST with transient retry (SSL EOF / timeout / 5xx → 2s backoff).
-        Permanent 4xx bubbles immediately."""
-        from framework.providers._retry_async import (
-            is_transient_network_message, with_transient_retry_async,
-        )
+        """Async POST. TBD-007: NO transient retry —— mesh API LB 接到包就计费,
+        silent transient retry 在贵族 API 上 = 净伤害(用户实测 16x 计费放大)。
+        失败立即 raise,让 orchestrator/CLI 上层 surface 给用户决策。
+        Permanent 4xx 也立即 raise(原本就是这样)。"""
         import json as _json
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as c:
+                r = await c.post(url, headers=headers, content=_json.dumps(
+                    body, separators=(",", ":"), ensure_ascii=False,
+                ).encode("utf-8"))
+        except httpx.TimeoutException as exc:
+            raise MeshWorkerTimeout(str(exc)) from exc
+        except httpx.HTTPError as exc:
+            raise MeshWorkerError(str(exc)) from exc
 
-        async def _attempt() -> dict:
-            headers = {
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            }
-            try:
-                async with httpx.AsyncClient(timeout=timeout_s) as c:
-                    r = await c.post(url, headers=headers, content=_json.dumps(
-                        body, separators=(",", ":"), ensure_ascii=False,
-                    ).encode("utf-8"))
-            except httpx.TimeoutException as exc:
-                raise MeshWorkerTimeout(str(exc)) from exc
-            except httpx.HTTPError as exc:
-                raise MeshWorkerError(str(exc)) from exc
-
-            if r.status_code >= 400:
-                err_body = r.text
-                raise MeshWorkerError(
-                    f"tokenhub {url} {r.status_code}: {err_body[:300]}"
-                )
-            try:
-                return r.json()
-            except ValueError as exc:
-                # 200 + non-JSON body (proxy/WAF HTML, truncated). Mirror
-                # of the image adapter fix — without the catch, downstream
-                # crashes with raw json.JSONDecodeError instead of routing
-                # through the failure-mode map.
-                raise MeshWorkerUnsupportedResponse(
-                    f"tokenhub {url} returned 200 but body is not JSON: "
-                    f"{r.text[:200]!r}"
-                ) from exc
-
-        return await with_transient_retry_async(
-            _attempt,
-            # Exclude MeshWorkerUnsupportedResponse — same reasoning as
-            # the image adapters: HTML/WAF body may carry transient
-            # marker words, and a deterministic 200-non-JSON shape
-            # shouldn't cost a second paid /submit call.
-            transient_check=lambda e: not isinstance(
-                e, MeshWorkerUnsupportedResponse,
-            ) and (
-                isinstance(e, MeshWorkerTimeout) or (
-                    isinstance(e, MeshWorkerError)
-                    and is_transient_network_message(str(e))
-                )
-            ),
-            max_attempts=2, backoff_s=2.0,
-        )
+        if r.status_code >= 400:
+            err_body = r.text
+            raise MeshWorkerError(
+                f"tokenhub {url} {r.status_code}: {err_body[:300]}"
+            )
+        try:
+            return r.json()
+        except ValueError as exc:
+            # 200 + non-JSON body (proxy/WAF HTML, truncated). Mirror
+            # of the image adapter fix — without the catch, downstream
+            # crashes with raw json.JSONDecodeError instead of routing
+            # through the failure-mode map.
+            raise MeshWorkerUnsupportedResponse(
+                f"tokenhub {url} returned 200 but body is not JSON: "
+                f"{r.text[:200]!r}"
+            ) from exc
 
     async def _atokenhub_download(self, url: str, *, timeout_s: float,
                                     on_progress=None) -> bytes:

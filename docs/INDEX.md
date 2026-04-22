@@ -9,7 +9,7 @@
 | 需求 | [`requirements/SRS.md`](requirements/SRS.md) | FORGEUE-SRS-001 | 功能 + 非功能 + 接口 + 约束基线(IEEE 830) |
 | 概要设计 | [`design/HLD.md`](design/HLD.md) | FORGEUE-HLD-001 | 分层 / 子系统 / 对象模型概览 / 协作 |
 | 详细设计 | [`design/LLD.md`](design/LLD.md) | FORGEUE-LLD-001 | 字段 / 方法 / 算法 / 异常体系 |
-| 测试 | [`testing/test_spec.md`](testing/test_spec.md) | FORGEUE-TEST-001 | 536 用例索引 + fence 清单 + 覆盖矩阵 |
+| 测试 | [`testing/test_spec.md`](testing/test_spec.md) | FORGEUE-TEST-001 | 541 用例索引 + fence 清单 + 覆盖矩阵 |
 | 验收 | [`acceptance/acceptance_report.md`](acceptance/acceptance_report.md) | FORGEUE-ACC-001 | FR/NFR 验收状态 + 待执行项清单 |
 
 ## 层级关系

@@ -35,9 +35,13 @@ from framework.runtime.failure_mode_map import (
     (ProviderError("x"), FailureMode.provider_error),
     (WorkerTimeout("slow"), FailureMode.worker_timeout),
     (WorkerError("oops"), FailureMode.worker_error),
-    # Mesh-modality workers reuse the same failure modes as image workers
-    (MeshWorkerTimeout("slow mesh"), FailureMode.worker_timeout),
-    (MeshWorkerError("mesh api down"), FailureMode.worker_error),
+    # TBD-007: Mesh-modality workers no longer share generic worker_*
+    # modes — paid mesh API silent retry was bleeding $0.20-1/job (16x user
+    # implementation). They now classify to mesh_worker_* → abort_or_fallback,
+    # forcing user-decisions instead of silent re-submit. Test fence flipped
+    # 2026-04-22 with the broader executor/transport/orchestrator de-retry.
+    (MeshWorkerTimeout("slow mesh"), FailureMode.mesh_worker_timeout),
+    (MeshWorkerError("mesh api down"), FailureMode.mesh_worker_error),
     # MeshWorkerUnsupportedResponse is a MeshWorkerError subclass but MUST
     # classify as `unsupported_response` (more specific) so it doesn't get
     # routed through the `fallback_model` → same-step loop that re-submits

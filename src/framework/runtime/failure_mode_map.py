@@ -35,6 +35,13 @@ class FailureMode(str, Enum):
     # `fallback_model`, which would rebill the provider for the same
     # deterministic bad output). See Codex P2 2026-04.
     unsupported_response = "unsupported_response"
+    # TBD-007: Mesh-specific failure modes — mesh.generation 单次调用 ~20 积分,
+    # generic worker_error/worker_timeout 走 fallback_model/retry_same_step
+    # 会静默重发(用户实测 16x 计费放大)。mesh 专属 mode 强制 abort_or_fallback,
+    # honour `on_fallback`(若配),否则 terminate,绝不静默重 step。
+    # CLI 端 surface job_id + worker + model 给用户,让他们决策"先 query / 再 retry / 终止"。
+    mesh_worker_timeout = "mesh_worker_timeout"
+    mesh_worker_error = "mesh_worker_error"
     budget_exceeded = "budget_exceeded"
     disk_full = "disk_full"
 
@@ -72,6 +79,18 @@ DEFAULT_MAP: dict[FailureMode, FailureMapEntry] = {
         "provider returned an unsupported response shape — "
         "routing via on_fallback when configured, else terminate "
         "(no same-step retry)",
+    ),
+    FailureMode.mesh_worker_timeout: FailureMapEntry(
+        FailureMode.mesh_worker_timeout, Decision.abort_or_fallback,
+        "mesh worker timeout — abort_or_fallback (TBD-007: avoid silent "
+        "re-bill of paid mesh job; user must check job state via "
+        "probe_hunyuan_3d_query before --resume)",
+    ),
+    FailureMode.mesh_worker_error: FailureMapEntry(
+        FailureMode.mesh_worker_error, Decision.abort_or_fallback,
+        "mesh worker error — abort_or_fallback (TBD-007: avoid silent "
+        "re-bill of paid mesh job; user must check job state via "
+        "probe_hunyuan_3d_query before --resume)",
     ),
     FailureMode.budget_exceeded: FailureMapEntry(
         FailureMode.budget_exceeded, Decision.human_review_required,
@@ -117,9 +136,16 @@ def classify(exc: BaseException) -> FailureMode | None:
         ProviderUnsupportedResponse,
     )):
         return FailureMode.unsupported_response
-    if isinstance(exc, (WorkerTimeout, MeshWorkerTimeout)):
+    # TBD-007: mesh subclasses must match BEFORE generic worker_* so they get
+    # their own abort_or_fallback mode (not retry_same_step / fallback_model
+    # which would double-bill paid mesh jobs).
+    if isinstance(exc, MeshWorkerTimeout):
+        return FailureMode.mesh_worker_timeout
+    if isinstance(exc, MeshWorkerError):
+        return FailureMode.mesh_worker_error
+    if isinstance(exc, WorkerTimeout):
         return FailureMode.worker_timeout
-    if isinstance(exc, (WorkerError, MeshWorkerError)):
+    if isinstance(exc, WorkerError):
         return FailureMode.worker_error
     if isinstance(exc, ProviderTimeout):
         return FailureMode.provider_timeout

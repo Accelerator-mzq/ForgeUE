@@ -21,7 +21,7 @@
 
 | 原则 | 说明 |
 | --- | --- |
-| **测试即可执行规范** | 536 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
+| **测试即可执行规范** | 541 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
 | **零 mock 关键边界** | download / EventBus / DAG / Budget / artifact 流端到端真实对象,不得 mock |
 | **每次修复配一个 fence** | Codex / adversarial review 每条修复对应一个新回归测试 |
 | **单元测试快** | `pytest -q` 全量 ≤ 15s,CI 节奏保证 |
@@ -51,9 +51,9 @@
            ├─────────────────────────┤
            │ Live LLM smoke(A2)     │   ← 可选,需 API key
            ├─────────────────────────┤
-           │ 集成测试 × 10 文件 65 用例│   ← P0-P4 + 场景级
+           │ 集成测试 × 11 文件 66 用例│   ← P0-P4 + 场景级
            ├─────────────────────────┤
-           │ 单元测试 × 44 文件 471 用例│   ← 主体
+           │ 单元测试 × 45 文件 475 用例│   ← 主体
            └─────────────────────────┘
 ```
 
@@ -61,9 +61,9 @@
 
 | 类别 | 目录 | 文件数 | 用例数 | 运行时间 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | `tests/unit/` | 44 | ~471 | < 10s |
-| 集成测试 | `tests/integration/` | 10 | ~65 | < 5s |
-| **合计** | — | **54** | **536** | **< 15s** |
+| 单元测试 | `tests/unit/` | 45 | ~475 | < 10s |
+| 集成测试 | `tests/integration/` | 11 | ~66 | < 8s |
+| **合计** | — | **56** | **541** | **< 18s** |
 
 ### 2.3 执行方式
 
@@ -308,6 +308,18 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | structured cost 写入 `cp.metrics` | #R5-1(critical)| `test_structured_step_persists_cost_for_resume` |
 | router 在 unsupported 时不 fallback | #R5-2 | `test_router_does_not_fallback_on_unsupported_response` |
 
+### TBD-007 mesh 重试塌缩 fence(2026-04-22,5 条 — Codex 独立 review 协助)
+
+用户实测 1 个 mesh job 被扣 16 调用 × 20 积分 = 320 积分。Codex 独立 review 找出 4 层重试中我漏的 executor 内部循环(L2)。HYPOTHESIS probe 验证客户端断开后远端仍生成,blind retry 真双扣。
+
+| Fence | 守护层 | 测试名 |
+| --- | --- | --- |
+| `_apost` 单次直发,ConnectError 不重 POST | L1 transport | `test_mesh_no_silent_retry::test_apost_no_transient_retry_on_connect_error` + `test_transient_retry::test_mesh_worker_does_NOT_retry_on_winerror_10060`(翻转)|
+| `GenerateMeshExecutor` mesh.generation 短路 attempts=1,worker.generate 只调一次 | L2 executor | `test_mesh_no_silent_retry::test_executor_no_internal_retry_for_mesh_capability` + `test_l4_image_to_3d::test_mesh_executor_does_NOT_retry_on_worker_error`(翻转)|
+| `MeshWorkerTimeout` → `mesh_worker_timeout` mode → `abort_or_fallback` | L3 orchestrator | `test_mesh_no_silent_retry::test_failure_mode_map_routes_mesh_timeout_to_abort` |
+| `MeshWorkerError` → `mesh_worker_error` mode → `abort_or_fallback` | L3 orchestrator | `test_mesh_no_silent_retry::test_failure_mode_map_routes_mesh_error_to_abort` |
+| 失败时 failure_event.context 有 job_id/worker/model + CLI stderr 提示含 probe + --resume | B2/B3 visibility | `test_mesh_failure_visibility::test_mesh_failure_event_includes_job_id_and_stderr_hint` |
+
 ---
 
 ## 6. 覆盖分析
@@ -337,8 +349,8 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
 | NFR-SEC | test_secrets |
 | NFR-OBS | test_event_bus,test_progress_passthrough |
-| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 536(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10) |
-| NFR-PORT | CI 能在 Linux 跑(536 全绿,stub unreal 覆盖 P4) |
+| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 541(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5) |
+| NFR-PORT | CI 能在 Linux 跑(541 全绿,stub unreal 覆盖 P4) |
 
 ### 6.3 未覆盖 / 部分覆盖
 
@@ -409,7 +421,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 
 | 级别 | 标准 |
 | --- | --- |
-| 单元测试 | 100% 通过(536 用例,基线 491 + audit 29 + 后续 fence 16)|
+| 单元测试 | 100% 通过(541 用例,基线 491 + audit 29 + 后续 fence 21)|
 | 集成测试 | P0–P4 + 5 场景全绿 |
 | Fence 测试 | 每条守护修复不得回退 |
 | 覆盖率 | 每条 FR 至少 1 个对应测试(矩阵 §6.1 全部 ✅) |

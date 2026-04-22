@@ -181,9 +181,14 @@ def test_mesh_executor_no_upstream_image_raises(tmp_path: Path):
         GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
 
 
-def test_mesh_executor_retries_on_worker_error(tmp_path: Path):
-    """First worker call fails with MeshWorkerError, second succeeds."""
-    run_id = "run_l4_retry"
+def test_mesh_executor_does_NOT_retry_on_worker_error(tmp_path: Path):
+    """TBD-007 (2026-04-22 flipped): the original test asserted 'first worker
+    call fails, second succeeds, attempts=2'. After TBD-007 the executor
+    short-circuits attempts=1 for capability_ref='mesh.generation' (each
+    paid mesh job ~$0.20-1; user实测 16x billing amplification from 4
+    layers of stacked retries). Now we assert: first worker call fails
+    → executor immediately re-raises, no second call, no silent re-bill."""
+    run_id = "run_l4_no_retry"
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
     img_id = _seed_image_artifact(repo, run_id)
@@ -191,15 +196,14 @@ def test_mesh_executor_retries_on_worker_error(tmp_path: Path):
 
     worker = FakeMeshWorker()
     worker.program_error(MeshWorkerError("simulated tripo 500"))
-    worker.program([MeshCandidate(
-        data=b"glTF\x02\x00\x00\x00\x80\x00\x00\x00VALID-ish",
-        format="glb", mime_type="model/gltf-binary",
-    )])
+    # NOTE: previously a second program() call queued a successful
+    # MeshCandidate that would be returned on the assumed retry. Removed
+    # because the executor must NOT call worker.generate() a second time.
 
     step = Step(
         step_id="step_mesh", type=StepType.generate, name="mesh",
         risk_level=RiskLevel.high, capability_ref="mesh.generation",
-        retry_policy=None,  # default max_attempts=2
+        retry_policy=None,  # default max_attempts=2 — executor ignores for mesh
         config={"num_candidates": 1},
     )
     task = Task(task_id="t", task_type=TaskType.asset_generation,
@@ -209,9 +213,8 @@ def test_mesh_executor_retries_on_worker_error(tmp_path: Path):
               started_at=datetime.now(timezone.utc), workflow_id="w", trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=[spec_id, img_id])
-    result = GenerateMeshExecutor(worker=worker).execute(ctx)
-    assert result.metrics["attempts"] == 2
-    assert result.metrics["mesh_count"] == 1
+    with pytest.raises(MeshWorkerError, match="simulated tripo 500"):
+        GenerateMeshExecutor(worker=worker).execute(ctx)
 
 
 def test_hunyuan_mesh_worker_tokenhub_submit_poll_download(monkeypatch):

@@ -74,6 +74,11 @@ class GenerateMeshExecutor(StepExecutor):
         timeout_s = cfg.get("worker_timeout_s")
         policy = ctx.step.retry_policy or RetryPolicy()
         attempts = max(1, policy.max_attempts)
+        # TBD-007: mesh.generation 单次调用 ~20 积分,executor 内部 retry =
+        # 静默扣费(用户实测 16x 放大)。强制 attempts=1,失败让 orchestrator
+        # / failure_mode_map 决定(mesh_worker_* mode → abort_or_fallback)。
+        if self.capability_ref == "mesh.generation":
+            attempts = 1
 
         last_exc: Exception | None = None
         candidates: list[MeshCandidate] | None = None

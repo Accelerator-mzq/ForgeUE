@@ -210,7 +210,58 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
+    _print_mesh_failure_hint(summary, run_dir)
     return 0
+
+
+_MESH_FAILURE_MODES = {"mesh_worker_timeout", "mesh_worker_error"}
+
+
+def _print_mesh_failure_hint(summary: dict, run_dir: Path) -> None:
+    """TBD-007: 检测 mesh.generation step 失败,在 stderr 打印结构化提示。
+
+    用 failure_event.mode 字符串语义匹配(机器可读),不依赖错误措辞。每个 mesh
+    job ~$0.20-1,blind retry 可能重发已在 server 端完成的 job(HYPOTHESIS 已
+    经 probe 验证,见 acceptance_report §6.6)。所以提示用户**先 query 再 retry**。
+    """
+    mesh_failures = [
+        e for e in (summary.get("failure_events") or [])
+        if e.get("mode") in _MESH_FAILURE_MODES
+    ]
+    if not mesh_failures:
+        return
+    for fe in mesh_failures:
+        ctx = fe.get("context") or {}
+        job_id = ctx.get("job_id")
+        worker = ctx.get("worker") or "?"
+        model = ctx.get("model") or "?"
+        step_id = fe.get("step_id", "step_mesh")
+        mode = fe.get("mode")
+        print(
+            f"\n[mesh] {step_id} 未生成 mesh 文件\n"
+            f"       failure_mode: {mode}\n"
+            f"       job_id: {job_id or '(submit 阶段失败,无 job_id)'}\n"
+            f"       worker: {worker}, model: {model}\n"
+            f"       中间产物保留: {run_dir}\n"
+            f"\n  建议(按推荐顺序):",
+            file=sys.stderr,
+        )
+        if job_id:
+            print(
+                f"    1. 先确认 job 是否已在 server 端完成(避免重复扣额度):\n"
+                f"         FORGEUE_PROBE_HUNYUAN_3D=1 python -m probes.provider.probe_hunyuan_3d_query \\\n"
+                f"             --job-id {job_id}\n"
+                f"       若 status=completed,从产物 URL 取 mesh,本地 framework 不重发\n"
+                f"       若 status=failed/cancelled,确认是真失败,执行步骤 2",
+                file=sys.stderr,
+            )
+        print(
+            f"    {'2' if job_id else '1'}. 重发整个 step(扣新额度):\n"
+            f"         python -m framework.run --task <task> --run-id {summary.get('run_id')} "
+            f"--artifact-root {run_dir.parent} --resume\n"
+            f"       (复用 step_image 已生成的图,不重烧 ~$0.08)",
+            file=sys.stderr,
+        )
 
 
 def _serve_run(*, orch: Orchestrator, bundle, args, artifact_root: Path, repo):
