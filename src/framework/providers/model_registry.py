@@ -457,7 +457,7 @@ _DEFAULT_REGISTRY: ModelRegistry | None = None
 
 
 def _default_registry_path() -> Path:
-    return Path(__file__).parents[2] / "config" / "models.yaml"
+    return Path(__file__).parents[3] / "config" / "models.yaml"
 
 
 def get_model_registry(path: str | Path | None = None) -> ModelRegistry:

@@ -280,6 +280,29 @@ def test_get_model_registry_reads_test_fixture_by_default():
     assert expected.issubset(set(reg.names()))
 
 
+def test_default_registry_path_points_to_repo_config():
+    """Fence against src-layout parent-count drift.
+
+    After A-档 src/ layout migration, `Path(__file__).parents[N]` for
+    model_registry.py needs N=3 (providers → framework → src → <repo>)
+    to land on the repo root. A stray parents[2] silently returns
+    `<repo>/src/config/models.yaml` which doesn't exist — and because
+    `get_model_registry()` tolerates missing files (returns empty
+    registry, see `test_get_model_registry_tolerates_missing_file`),
+    the error only surfaces downstream as "alias 'X' not in registry
+    (known: none)". conftest.py pins registry to TEST_MODELS_YAML for
+    every test, so no other test exercises the default production path.
+    """
+    from framework.providers.model_registry import _default_registry_path
+
+    resolved = _default_registry_path()
+    repo_root = Path(__file__).resolve().parents[2]
+    assert resolved == repo_root / "config" / "models.yaml"
+    assert resolved.exists(), (
+        f"default registry path must resolve to a real file; got {resolved}"
+    )
+
+
 def test_get_model_registry_respects_explicit_path(tmp_path):
     path = _write_yaml(tmp_path, """
 providers: {p: {}}
