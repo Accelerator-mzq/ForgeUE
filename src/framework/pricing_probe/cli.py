@@ -30,7 +30,7 @@ from framework.pricing_probe.yaml_writer import apply_results_to_yaml
 
 
 def _default_yaml_path() -> Path:
-    return Path(__file__).parents[2] / "config" / "models.yaml"
+    return Path(__file__).parents[3] / "config" / "models.yaml"
 
 
 def _run_one_parser(parser_cls, *, rate_limit_s: float) -> ProbeResult:

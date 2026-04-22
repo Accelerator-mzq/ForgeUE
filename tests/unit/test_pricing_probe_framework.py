@@ -338,6 +338,26 @@ aliases:
 # ---- CLI fences ------------------------------------------------------------
 
 
+def test_default_yaml_path_points_to_repo_config():
+    """Fence against src-layout parent-count drift.
+
+    After A-档 src/ layout migration, `Path(__file__).parents[N]` for cli.py
+    needs N=3 (pricing_probe → framework → src → <repo>) to land on the
+    repo root. A stray parents[2] silently returns `<repo>/src/config/...`
+    which doesn't exist — `--yaml` default then 404s and every CLI entry
+    point breaks without a single test seeing it (existing CLI tests all
+    pass `--yaml` explicitly).
+    """
+    from framework.pricing_probe.cli import _default_yaml_path
+
+    resolved = _default_yaml_path()
+    repo_root = Path(__file__).resolve().parents[2]
+    assert resolved == repo_root / "config" / "models.yaml"
+    assert resolved.exists(), (
+        f"default yaml path must resolve to a real file; got {resolved}"
+    )
+
+
 def _patch_fetchers(html: str = "<html></html>"):
     """Patch BOTH fetch_html and fetch_html_rendered in cli module so
     tests stay offline regardless of each parser's `requires_js` flag.
