@@ -391,7 +391,7 @@ python -m pytest -q                            # 全量回归
 - 6 个 model(glm_4_6v / glm_4_6v_flashX / glm_image / hunyuan_image_v3 / hunyuan_image_style / hunyuan_3d_31)的 `pricing:` 字段有值
 - `pricing_autogen.status=fresh`,`sourced_on` = 执行当日
 - DashScope / Tripo3D 下 model 的 scaffold 仍 `status: stale`(parser 未实装)
-- 491 测试仍全绿
+- 520 测试仍全绿
 
 **状态**:⏳ 未执行(新功能,工作树未提交)
 
