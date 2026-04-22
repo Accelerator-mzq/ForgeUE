@@ -304,7 +304,7 @@ ForgeUE **不做**:
 | NFR-PERF-002 | ChiefJudge 并发应让总延迟 ≈ 最慢 judge | 3 judge 并发,最慢 judge T → 总延迟 ≤ T × 1.1 |
 | NFR-PERF-003 | 多候选并行(`parallel_candidates=True`)应通过 `asyncio.gather` 真并发 | N 候选,每条 T → 总延迟 ≤ T × 1.2 |
 | NFR-PERF-004 | 分块下载应使用 1 MB 分块 | 避免单次加载大文件到内存 |
-| NFR-PERF-005 | 全量测试套件应在 15 秒内跑完(536+ 用例) | CI 节奏保证 |
+| NFR-PERF-005 | 全量测试套件应在 18 秒内跑完(541+ 用例) | CI 节奏保证 |
 
 ### 4.2 可靠性(NFR-REL)
 
@@ -371,12 +371,13 @@ ForgeUE **不做**:
 
 | 编号 | 决策 | 理由 |
 | --- | --- | --- |
-| ADR-001 | ForgeUE **不做 UE 插件形态**,坚持"文件契约 + 薄 UE Python 代理" | UE 插件会绑定 Python 版本、阻塞 game thread、无法跑 536 单测、隔离网络合规卡死、多工程复用困难、开发环境门槛陡增;ForgeUE 80% 职责与 UE 无关 |
+| ADR-001 | ForgeUE **不做 UE 插件形态**,坚持"文件契约 + 薄 UE Python 代理" | UE 插件会绑定 Python 版本、阻塞 game thread、无法跑 541 单测、隔离网络合规卡死、多工程复用困难、开发环境门槛陡增;ForgeUE 80% 职责与 UE 无关 |
 | ADR-002 | `config/models.yaml` 三段式为**单一真源**,不分散 | 避免 schema 漂移 |
 | ADR-003 | `LiteLLMAdapter` wildcard **必须最后注册** | CapabilityRouter 按注册顺序 `supports(model)`,wildcard 先注册会吞掉专用前缀 |
 | ADR-004 | 外部事实性数据(定价、endpoint、version)**禁止凭印象写数字** | 必须 `sourced_on` + `source_url`,或保持 `null` + TODO;已有 `feedback_no_fabricate_external_data.md` 约定 |
 | ADR-005 | `plan_v1` 从唯一权威降级为归档史料,权威转为五件套 | 文档重构 v1,2026-04-22 |
 | ADR-006 | `TransitionEngine` 实例**per-arun 隔离**,`Orchestrator.arun` 入口调 `cloned_for_run()` 创建本次 run 专属副本 | 早期实现把 engine 当 orchestrator 单例,counters 跨 run 泄漏(顺序两 run 计数累加 / 并发两 run 共享字典);改用 `copy.copy(self)` + 重置 counters 既保留子类身份与注入扩展点,又隔离计数器 |
+| ADR-007 | 贵族 API(mesh.generation,~$0.20-1/job)**不允许 framework 静默重试**;失败立即 raise,CLI surface job_id 给用户,让其手工 query 已完成状态后再决定 --resume | 用户实测一个 mesh job 因 4 层叠加重试被扣 16 调用 × 20 积分;独立 probe 验证客户端断开后远端仍生成 → blind retry 双扣已完成 job;Codex 独立 review 协助找出 executor 内部循环漏层。具体修法见 acceptance_report §6.6 (TBD-007) |
 
 ---
 

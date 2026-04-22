@@ -648,14 +648,33 @@ def classify(exc: Exception) -> FailureMode
 | --- | --- | --- |
 | `asyncio.TimeoutError` | `provider_timeout` | retry_same_step → fallback_model |
 | `pydantic.ValidationError` | `schema_validation_fail` | retry_same_step |
-| `MeshWorkerTimeout` / `WorkerTimeout` | `worker_timeout` | retry_same_step |
+| `WorkerTimeout` (image / comfy 等) | `worker_timeout` | retry_same_step |
+| **`MeshWorkerTimeout`** (TBD-007) | **`mesh_worker_timeout`** | **abort_or_fallback** |
 | `MeshWorkerUnsupportedResponse` / `WorkerUnsupportedResponse` / `ProviderUnsupportedResponse` | `unsupported_response` | abort_or_fallback |
-| `MeshWorkerError` / `WorkerError` | `worker_error` | fallback_model |
+| **`MeshWorkerError`** (TBD-007) | **`mesh_worker_error`** | **abort_or_fallback** |
+| `WorkerError` (image / comfy 等) | `worker_error` | fallback_model |
 | `BudgetExceededError`(合成) | `budget_exceeded` | escalate_human → stop |
 | `ue_path_conflict`(manifest 校验) | `ue_path_conflict` | human_review_required |
 | `OSError(ENOSPC)` | `disk_full` | rollback → stop |
 
-**分类顺序**:unsupported 子类在通用 Error 分支**之前**捕捉,避免被 `worker_error` 吞。
+**分类顺序**:unsupported 子类在通用 Error 分支**之前**捕捉,避免被 `worker_error` 吞。同样,**mesh 子类**(`MeshWorkerTimeout` / `MeshWorkerError`)在通用 `WorkerTimeout` / `WorkerError` 之前 isinstance 检查 — 否则 mesh 会命中 generic mode 进 retry 链(TBD-007 root cause,见下方 §5.7.2)。
+
+#### 5.7.2 TBD-007 mesh 重试塌缩(2026-04-22)
+
+mesh.generation 单次调用 ~$0.20-1 / 20 积分。framework 的"善意瞬时重试"在贵族 API 上 = **净伤害 + 黑箱扣费**(用户实测 16x 计费放大;Codex 独立 review 协助找出 4 层中我漏的 executor 内部循环)。
+
+四层叠加重试 → 全部塌缩为单次:
+
+| 原层 | 行为 | 修法 |
+|---|---|---|
+| L1 transport | `_apost` 套 `with_transient_retry_async(max_attempts=2)` | 拆 wrapper,单次直发 |
+| L2 executor | `GenerateMeshExecutor.execute()` 按 `policy.max_attempts` for-loop 调 worker | `if capability_ref == "mesh.generation": attempts = 1` 短路 |
+| L3 orchestrator | `MeshWorkerTimeout/Error → worker_*` → retry_same_step / fallback_model | 新增 `mesh_worker_timeout/error` mode → `abort_or_fallback` |
+| L4 download | `chunked_download_async _MAX_RETRIES=3` Range resume(只补缺字节)| **不动 — 字节级断点续传与 API call 经济意义不同**(CDN 字节不计积分,已下字节不重收) |
+
+失败 visibility(Phase B):`MeshWorkerError/Timeout` 加 `(*, job_id, worker, model)` kwargs;orchestrator 写 `failure_event.context.{job_id, worker, model}`;CLI stderr 提示用户**先用 `probe_hunyuan_3d_query --job-id <...>` 查 server 端 job 真实状态**(HYPOTHESIS probe 已验证:abandoned mesh job 后台仍生成完成,blind retry 真双扣)再决定 `--resume`。
+
+5 fence 守门(`tests/unit/test_mesh_no_silent_retry.py` × 4 + `tests/integration/test_mesh_failure_visibility.py` × 1)+ 3 翻转(原"重试 N 次成功" → 现"单次 raise");其余 worker(image / comfy)不受影响。
 
 #### 5.7.1 Unsupported 三层拦截(避免 deterministic bad shape 重复计费)
 

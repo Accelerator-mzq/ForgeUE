@@ -225,7 +225,13 @@ def test_hunyuan_adapter_retries_on_ssl_eof(monkeypatch):
     assert len(submit_attempts) == 2
 
 
-def test_mesh_worker_retries_on_winerror_10060(monkeypatch):
+def test_mesh_worker_does_NOT_retry_on_winerror_10060(monkeypatch):
+    """TBD-007: mesh API LB 接到包就计费。原本这条 fence 守"submit transient
+    重试 2 次成功",2026-04-22 用户实测 16x 计费放大后翻转 —— 现在守
+    "submit ConnectError 后立即 raise,不再静默重发"。Codex 独立 review 协助
+    找到这是 4 层重试中的"transport 层"那条;同时还要堵 executor 内部循环
+    (test_mesh_no_silent_retry.py)+ orchestrator transition retry
+    (failure_mode_map mesh_worker_* mode)+ 不动 download Range resume。"""
     from framework.providers.workers import mesh_worker as _mw
     attempts: list[str] = []
 
@@ -233,38 +239,25 @@ def test_mesh_worker_retries_on_winerror_10060(monkeypatch):
         url = str(req.url)
         attempts.append(url)
         if url.endswith("/3d/submit"):
-            if len([a for a in attempts if a.endswith("/3d/submit")]) == 1:
-                raise httpx.ConnectError(
-                    "[WinError 10060] connection attempt failed"
-                )
-            return httpx.Response(200, json={"id": "m1", "status": "queued"})
-        if url.endswith("/3d/query"):
-            return httpx.Response(200, json={
-                "status": "done",
-                "result": {"model_url": "https://mock/out.glb"},
-            })
-        if url == "https://mock/out.glb":
-            return httpx.Response(
-                200, content=b"glTF\x02\x00\x00\x00AFTER-RETRY",
-                headers={"Content-Length": "19"},
+            # 之前这里第 2 次 attempt 会成功;现在只该有 1 次,所以 always raise
+            raise httpx.ConnectError(
+                "[WinError 10060] connection attempt failed"
             )
         return httpx.Response(404, json={"err": url})
 
     _install_httpx_stub(monkeypatch, _mw, handler=handler)
-    from framework.providers import _retry_async
-
-    async def _nosleep(s):
-        return None
-    monkeypatch.setattr(_retry_async.asyncio, "sleep", _nosleep)
 
     worker = HunyuanMeshWorker(api_key="sk-test", poll_interval_s=0.0)
-    cands = worker.generate(
-        source_image_bytes=b"\x89PNG\r\n\x1a\nSRC",
-        spec={"format": "glb"}, num_candidates=1,
-    )
-    assert cands[0].data.startswith(b"glTF")
+    with pytest.raises(MeshWorkerError, match="WinError 10060"):
+        worker.generate(
+            source_image_bytes=b"\x89PNG\r\n\x1a\nSRC",
+            spec={"format": "glb"}, num_candidates=1,
+        )
     submit_attempts = [a for a in attempts if a.endswith("/3d/submit")]
-    assert len(submit_attempts) == 2
+    assert len(submit_attempts) == 1, (
+        f"TBD-007 fence: mesh /submit must hit server EXACTLY ONCE on "
+        f"transient ConnectError, got {len(submit_attempts)} attempts: {submit_attempts}"
+    )
 
 
 def test_mesh_worker_does_not_retry_on_submit_failed_status(monkeypatch):

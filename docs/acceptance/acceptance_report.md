@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 536 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10) |
+| L0 自动化 | `pytest -q` 全绿 | 541 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 |
@@ -373,10 +373,10 @@ python -m framework.run --task examples/ue_export_pipeline.json --live-llm --run
 | `a2_char` | ✅ | MiniMax Anthropic 代理 `anthropic/MiniMax-M2.7`,usage=2133 tokens,Pydantic `ue.character` schema 验证 passed,Kaelen 角色卡完整 |
 | `a2_image` | ✅ | FakeComfy 3 candidate + 真 `review_judge` vision,PackyCode Anthropic Opus/Sonnet 对 fake 图 `reject @ 0.26`,工作流按 `on_reject: null` 正常终止 |
 | `a2_review` | ✅ | `review_judge` 对 3 真图挑出 `cand_oak_slab @ 0.916 confidence`,`approve_one` |
-| `a2_mesh` | ⚠️ | 真 Qwen 3 候选图生成($0.0834,`qwen_image_2`),但 `review_judge_visual` 在 3 张 1024×1024 PNG 合一条消息时撞破 GLM / DashScope 的 input-length 上限(base64 1,262,246 字符 > 1M),见 §6.5 根因;mesh 未触达 |
+| `a2_mesh` | ✅ | 全链跑通(2026-04-22 18:38 v6 重跑):3 张 Qwen 真图(~1.5MB/张) → `step_review_image` GLM-4.6V approve → `step_mesh_spec` MiniMax → **`step_mesh` Hunyuan 3D 真生成 30.6MB .glb**;`step_export` 按预期 raise(C: 占位路径,绑 A1 真机) |
 | `a2_ue` | 跳过 | 占位 `project_root="C:/Users/you/..."` 不存在,`ExportExecutor` 会 raise(保护 C: 驱动不被污染);与 A1 UE 真机绑定 |
 
-**状态**:⚠️ 部分通过(3/5 绿 + 1 发现可修 bug + 1 跳过并入 A1)
+**状态**:✅ 通过(4/5 绿 + 1 跳过并入 A1)
 
 ### 6.2.1 A2 副产物:Router 观测性修复(2026-04-22)
 
@@ -427,8 +427,8 @@ python -m pytest -q                            # 全量回归
 ```
 顺序 1: A3(本地 + playwright)                  ✅ 已完成(2026-04-22)
 顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) ✅ 已完成(commit 293979f / 74c0849)
-顺序 3: A2 qwen/hunyuan 图像链 live smoke       ⚠️ 部分完成(2026-04-22):3/5 绿(a2_char / a2_image / a2_review),a2_mesh 炸在视觉 review payload 超限 → TBD-006 修复后可 resume
-顺序 4: A2 mesh_from_image live smoke           ⏳ 阻塞于 provider transient(2026-04-22 v3/v4/v5 三次 resume):review 路径完全打通(GLM-4.6V approve_one @ 0.89),mesh 步 Hunyuan 3D tokenhub 间歇性返错(v3 ConnectError / v4 "配额超限" 业务错 / v5 ConnectError),但 solo probe 证明 key 未耗尽 + endpoint + body 全正常(60s done 返 .glb);服务端某种时段/负载相关的 transient 状态,framework 侧无 bug 可修。等 tokenhub 状态稳定后重试
+顺序 3: A2 qwen/hunyuan 图像链 live smoke       ✅ 已完成(2026-04-22):4/5 绿(a2_char / a2_image / a2_review / a2_mesh),a2_ue 绑 A1 跳过
+顺序 4: A2 mesh_from_image live smoke           ✅ 已完成(2026-04-22 18:38 v6 重跑):review 路径全通(GLM-4.6V approve)+ Hunyuan 3D mesh 真生成 30.6MB .glb,只 step_export 按预期 raise C: 占位路径(绑 A1 真机)
 顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时(a2_ue 合并进来)
 ```
 
@@ -474,7 +474,7 @@ python -m pytest -q                            # 全量回归
 | `step_spec` / `step_image` | cache_hit | resume 复用,$0.08 image_fast 不重烧 |
 | `step_review_image` | ✅ pass | `openai/glm-4.6v` `approve_one @ 0.89 confidence`,选中 `cand_0`,$0.0013;**之前撞 1.26M payload 的链路现在真过了** |
 | `step_mesh_spec` | ✅ pass | MiniMax 986 tokens 产出 mesh spec |
-| `step_mesh` | ❌ 配额耗尽 | 见下方"A2 顺序 4 v4 resume"确证 |
+| `step_mesh` | ❌ 16:48 当时阻塞 / ✅ v6 18:38 真生成 30.6 MB .glb | 见下方"A2 顺序 4 v6 重跑"行 + "收官"段 |
 | `step_export` | 未触达 | mesh 没产出,export 步未执行 |
 
 **A2 顺序 4 多轮 resume 真实错误形态(2026-04-22 16:48 ~ 18:00)**:
@@ -485,6 +485,7 @@ python -m pytest -q                            # 全量回归
 | v4 | 17:27 | 第 1 次 attempt `{'message': '配额超限', 'code': 'FailedOperation.InnerError'}`,第 2、3 次 ConnectError |
 | v5 | 18:00 | 3 次 attempt 全 ConnectError,零"配额超限" |
 | probe solo | 17:45 / 17:50 | **完全正常**:submit → job_id → 60s completed → 返 .glb / .obj + preview URL |
+| **v6(从头跑)** | **18:38** | **✅ 全链通过**:3 张 Qwen 真图 → review approve → MiniMax mesh_spec → **Hunyuan 3D 真生成 30.6 MB .glb**;step_export 按预期 raise C: 占位路径 |
 
 **关键定位步骤**:
 
@@ -506,7 +507,63 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 **教训**:provider 的 error `message` **不能字面当结论**(正是 `feedback_verify_external_reviews.md` 规矩防的坑)。应该拿**独立证据**(控制台额度、独立 probe、多时段观察)验证才能定性。framework 不该在单次错误 message 上建立"确定性 / 永久终止"的分类语义 —— 需要多次实证确认才升级。
 
-**结论**:TBD-006 修复完全验证 —— 视觉 review payload 超限的根因(Bug A + Bug B 双修复)真实环境下闭合,review_judge_visual 在 GLM 上正常工作。mesh 步阻塞是**provider 端 transient 状态**,framework 无 bug 可修;需要你等 tokenhub 服务稳定后重试(也可换 `TRIPO3D_KEY` 走 `mesh_from_image` 的 fallback route,但那需要配 tripo3d parser 已完成 scaffold)。
+**结论**:TBD-006 修复完全验证 —— 视觉 review payload 超限的根因(Bug A + Bug B 双修复)真实环境下闭合,review_judge_visual 在 GLM 上正常工作。
+
+**A2 顺序 4 收官(2026-04-22 18:38 v6 从头跑)**:Hunyuan 3D tokenhub 服务稳定后,从头跑全链一次过 —— 3 张 Qwen 1024×1024 真图 → GLM-4.6V approve → MiniMax mesh_spec → **Hunyuan 3D 30.6 MB .glb 真生成落盘** → step_export 按预期 raise C: 占位路径(绑 A1 真机)。**A2 顺序 4 ✅ 升级**;先前判定的"transient 阻塞"得到反向验证 —— 服务恢复后链路完全打通。
+
+### 6.6 TBD-007 mesh 重试塌缩 + 失败 visibility(Codex 独立 review 协助)
+
+**触发**:用户对账腾讯云控制台,A2 a2_mesh 一次"用户视角的单 mesh job"实际计费 **16 调用 × 20 积分 = 320 积分**。
+
+**根因 — 4 层叠加重试**(我第一轮只看出 3 层,Codex 独立 review 找到第 4 层):
+
+| 层 | 位置 | 默认乘数 | 我第一轮 | Codex |
+|---|---|---|---|---|
+| L1 TCP transient | `mesh_worker._apost` 套 `with_transient_retry_async(max_attempts=2)` | ×2 | ✅ 找到 | ✅ |
+| L2 **executor 内部 for 循环** | `GenerateMeshExecutor.execute()` 按 `policy.max_attempts` 调 `worker.generate()` | ×2 | **❌ 漏了** | ✅ 找到 |
+| L3 orchestrator | `MeshWorkerTimeout → worker_timeout → retry_same_step` | ×2 | 部分(`worker_error → fallback_model`)| ✅ 找到 |
+| L4 download Range resume | `chunked_download_async _MAX_RETRIES=3`(只补缺字节,经济意义不同)| ×3 字节 | ❌ 漏了 | ✅ 找到 |
+
+最坏组合 **2 × 2 × 2 = 8 logical attempts × (1 submit + 1 poll = 2 计费 each)= 16 次**,与实测吻合。
+
+**HYPOTHESIS 验证(2026-04-22 19:53,probe_hunyuan_3d_query)**:Codex 提出"客户端断开后远端 job 可能继续跑"是关键架构洞察。我用独立 /query probe 对历史 job_id 验证:
+
+| job_id | 提交时间 | 当时本地观察 | 17.5h 后远端真实状态 |
+|---|---|---|---|
+| `1438459300615168000` | 17:18 | failed: '配额超限' | 仍 failed(状态稳定) |
+| `1438465104214892544` | 17:46 | abandoned at 'queued'(probe 单 poll 离开) | **completed**,有完整 .glb / .obj URL,签名到 2026-04-23 19:54 |
+
+**HYPOTHESIS 完全确证** ✅。abandoned job 的 mesh 实际生成完成、用户已付费、产物在 CDN。意味着:framework 的 blind retry 真的会**双扣已完成 job**。
+
+**修法**(本轮全做):
+
+| 阶段 | 内容 | 文件 |
+|---|---|---|
+| Phase 0 | 写 `probes/provider/probe_hunyuan_3d_query.py`(read-only /query) | new |
+| Phase A1 | `GenerateMeshExecutor` 对 `capability_ref="mesh.generation"` 强制 `attempts=1` | `executors/generate_mesh.py` |
+| Phase A2 | `mesh_worker._apost` 拆 `with_transient_retry_async`,单次直发 | `workers/mesh_worker.py` |
+| Phase A3 | `failure_mode_map` 新增 `mesh_worker_timeout` / `mesh_worker_error` mode → `Decision.abort_or_fallback`;classify 优先匹配 mesh 子类 | `failure_mode_map.py` |
+| Phase A4 | Download Range resume **不动**(字节断点,经济意义不同),只补 ADR | `LLD.md` |
+| Phase B1 | `MeshWorkerError/Timeout` 加 `(*, job_id, worker, model)` kwargs;`_atokenhub_*` 失败处填字段 | `workers/mesh_worker.py` |
+| Phase B2 | `orchestrator` failure_event 写 `context.{job_id, worker, model}` | `runtime/orchestrator.py` |
+| Phase B3 | `framework/run.py` mesh 失败检测 + stderr 提示(job_id + 推荐先跑 query probe + 才 --resume)| `run.py` |
+
+**测试基数 536 → 541**:
+- 翻转 `test_mesh_worker_does_NOT_retry_on_winerror_10060`(原断言重试 2 次成功 → 现断言单次 raise)
+- 翻转 `test_mesh_executor_does_NOT_retry_on_worker_error`(同上,executor 层)
+- 修订 `test_failure_mode_map.py::test_classify_known_exceptions`(2 个 parametrize 行从 worker_* 改 mesh_worker_*)
+- 新增 `tests/unit/test_mesh_no_silent_retry.py`(4 fence:L1 transport / L2 executor / L3 mesh_timeout abort / L3 mesh_error abort)
+- 新增 `tests/integration/test_mesh_failure_visibility.py`(1 fence:end-to-end orchestrator failure_event + CLI stderr hint)
+
+**不做**(scope 收缩):
+- 不动 `_retry_async.py` helper(image / qwen adapter 仍依赖)
+- 不动 `_download_async.py`(Range resume 是字节级,与 API call 经济意义不同)
+- 不动 `hunyuan_tokenhub_adapter.py` / `qwen_multimodal_adapter.py`(image 单价低一个量级,留单独评估)
+- 不引入新 FailureMode `pause_for_user_query` / `--resume-job` flag(stretch goal,本轮 stderr hint 已让用户能手工 query)
+
+**Codex 还提了哪些我没采纳**:
+- "manual-retry class + human gate" 长期方向正确,但需新 framework 级 pause/resume 状态机,scope 太大,本轮维持 batch CLI + stderr hint
+- Layer 4 download Range resume 也"零静默重试"洁癖性删除 —— 我判经济意义低于 API call 重发,保留有真实续传价值;LLD 加 ADR 段记录区分
 
 ---
 
@@ -519,7 +576,8 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | TBD-003 | WS 鉴权 / 多租户 | NFR-SEC-005 | ❌ | 接入 UI 时 |
 | TBD-004 | FBX self-containment 校验 | FR-WORKER-* | ❌ | 引入 PyFBX / ufbx 后 |
 | TBD-005 | Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold(DashScope 已于 2026-04-22 前并入) | 有工作流真实使用时 |
-| ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3 | ✅ 已实施 + live 验证通过(2026-04-22)| 见 §6.5;代码 + 10 条 fence 就位,resume a2_mesh 中 step_review_image 真过(GLM-4.6V `approve_one @ 0.89`);剩余 step_mesh 阻塞于 Hunyuan 3D tokenhub poll 网络瞬态(非本 TBD scope) |
+| ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3+4 | ✅ 已实施 + live 验证通过(2026-04-22 18:38)| 见 §6.5;代码 + 10 条 fence 就位,a2_mesh 从头跑全链通过(step_review_image GLM-4.6V approve + step_mesh Hunyuan 3D 真生成 30.6 MB .glb) |
+| ~~TBD-007~~ | ~~mesh 重试塌缩 + 失败 visibility~~ | NFR-COST-*, A2 顺序 4 | ✅ 已实施 + HYPOTHESIS probe 验证(2026-04-22) | 见 §6.6;Codex 独立 review 协助找出 4 层中第 2 层(executor 内部 retry);job_id 持久化暴露给 CLI;5 条 fence 就位 |
 | TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |
@@ -540,7 +598,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **536 通过 / 0 失败**(2026-04-22 第五轮基线,~15.5s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10) |
+| L0 pytest 全量 | ✅ **541 通过 / 0 失败**(2026-04-22 第六轮基线,~17.6s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
@@ -553,7 +611,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 536 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence)+ 60+ L3 fence |
+| 测试覆盖 | ✅ 541 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence)+ 60+ L3 fence |
 
 ### 8.3 整体结论
 
