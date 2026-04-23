@@ -21,7 +21,7 @@
 
 | 原则 | 说明 |
 | --- | --- |
-| **测试即可执行规范** | 543 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
+| **测试即可执行规范** | 549 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
 | **零 mock 关键边界** | download / EventBus / DAG / Budget / artifact 流端到端真实对象,不得 mock |
 | **每次修复配一个 fence** | Codex / adversarial review 每条修复对应一个新回归测试 |
 | **单元测试快** | `pytest -q` 全量 ≤ 15s,CI 节奏保证 |
@@ -62,8 +62,8 @@
 | 类别 | 目录 | 文件数 | 用例数 | 运行时间 |
 | --- | --- | --- | --- | --- |
 | 单元测试 | `tests/unit/` | 45 | ~475 | < 10s |
-| 集成测试 | `tests/integration/` | 11 | ~68 | < 8s |
-| **合计** | — | **56** | **543** | **< 18s** |
+| 集成测试 | `tests/integration/` | 11 | ~71 | < 9s |
+| **合计** | — | **56** | **549** | **~18s** |
 
 ### 2.3 执行方式
 
@@ -365,14 +365,14 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
 | NFR-SEC | test_secrets |
 | NFR-OBS | test_event_bus,test_progress_passthrough |
-| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 543(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2) |
-| NFR-PORT | CI 能在 Linux 跑(543 全绿,stub unreal 覆盖 P4) |
+| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 549(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收) |
+| NFR-PORT | CI 能在 Linux 跑(549 全绿,stub unreal 覆盖 P4 + 真机 commandlet 覆盖 A1) |
 
 ### 6.3 未覆盖 / 部分覆盖
 
 | 项 | 状态 | 说明 |
 | --- | --- | --- |
-| A1 UE 真机冒烟 | **手工验收** | stub 覆盖框架侧,真 UE API 调用无自动化 |
+| A1 UE 真机冒烟 | ✅ 已通过(2026-04-23,UE 5.7.4 commandlet)| stub 覆盖框架侧 offline,真机走 `UnrealEditor-Cmd.exe -ExecutePythonScript` 自动化路径(无 GUI 依赖),见 `acceptance_report §6.1` |
 | Live LLM 端到端 | **手工验收** | 需 provider key,默认不在 CI 跑 |
 | Pricing probe `--apply` 真跑 | **手工验收** | playwright + chromium + 供应商页面可达 |
 | bridge_execute 模式 | **未启动** | §G #1 |
@@ -407,7 +407,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | 集成测试 | 8GB RAM |
 | Live LLM smoke | 外网可达 provider endpoint |
 | Pricing probe --apply | 4GB+ 空闲(playwright/chromium) |
-| UE 真机 | UE 5.3+ 装机,推荐 16GB RAM |
+| UE 真机 | UE 5.3+ 装机,推荐 16GB RAM(已实测 UE 5.7.4 + C++ 项目 + commandlet 模式,2026-04-23) |
 
 ### 7.3 测试数据
 
@@ -437,7 +437,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 
 | 级别 | 标准 |
 | --- | --- |
-| 单元测试 | 100% 通过(543 用例,基线 491 + audit 29 + 后续 fence 23)|
+| 单元测试 | 100% 通过(549 用例,基线 491 + audit 29 + 后续 fence 23 + A1 + a2_mesh live bundle parametrize 6)|
 | 集成测试 | P0–P4 + 5 场景全绿 |
 | Fence 测试 | 每条守护修复不得回退 |
 | 覆盖率 | 每条 FR 至少 1 个对应测试(矩阵 §6.1 全部 ✅) |
@@ -477,6 +477,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,491 用例索引化,fence 清单对齐 plan_v1 §M |
 | v1.1 | 2026-04-22 | 加 §3.10 `test_codex_audit_fixes.py`(29 用例)+ §5 第三段 5 轮 audit fence 表;`NFR-MAINT` / `单元测试` 总数刷新到 520 |
+| v1.2 | 2026-04-23 | A1 UE 真机 ⏳→✅(UE 5.7.4 commandlet 路径,§7.2 / §7.3 状态升级);A2 全集 5/5 ✅(0423 重跑 a2_char/image/review/mesh + a1_demo 含 a2_ue);新增 examples bundle `ue_export_pipeline_live.json` + `image_to_3d_pipeline_live.json`,`test_example_bundles_smoke` 自动 parametrize 收 6 用例,总数刷新到 549 |
 
 ### 10.3 未决事项
 

@@ -46,10 +46,10 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 543 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2) |
+| L0 自动化 | `pytest -q` 全绿 | 549 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
-| L3 UE 真机冒烟 | UE Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 |
+| L3 UE 真机冒烟 | UE commandlet `UnrealEditor-Cmd.exe -ExecutePythonScript=ue_scripts/a1_run.py`(0 GUI 依赖)或 GUI Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 + PythonScriptPlugin |
 | L4 文档评审 | 人工审阅 SRS/HLD/LLD/test_spec | 一致、无漂移 |
 
 ---
@@ -64,7 +64,7 @@
 | P1 | basic_llm + LiteLLM + Instructor | `integration/test_p1_structured_extraction.py` | ✅ `examples/character_extract.json` | — | ✅ |
 | P2 | standalone_review | `integration/test_p2_standalone_review.py` | ✅ `examples/review_3_images.json` | — | ✅ |
 | P3 | production + 内嵌 review | `integration/test_p3_production_pipeline.py` | ✅ `examples/image_pipeline.json` | — | ✅ |
-| P4 | UE Bridge manifest_only | `integration/test_p4_ue_manifest_only.py`(stub unreal) | ✅ `examples/ue_export_pipeline.json` | ⏳ UE 真机 | ⚠️ |
+| P4 | UE Bridge manifest_only | `integration/test_p4_ue_manifest_only.py`(stub unreal) | ✅ `examples/ue_export_pipeline.json` | ✅ UE 5.7.4 真机(2026-04-23 commandlet) | ✅ |
 
 ### 3.2 L 层能力
 
@@ -73,7 +73,7 @@
 | L1 | UE5 API 查询 | FR-STRUCT-* + rubric `ue5_api_assist` | ✅ |
 | L2 | 图像生成 API 路径 | FR-WORKER-001(ComfyUI) + `image.*` capability | ✅ |
 | L3 | 视觉 QA | FR-REVIEW-* + rubric `ue_visual_quality` | ✅ |
-| L4 | image → 3D mesh | `integration/test_l4_image_to_3d.py` + Hunyuan 3D | ✅ |
+| L4 | image → 3D mesh | `integration/test_l4_image_to_3d.py` + Hunyuan 3D + UE 5.7 真 import(2026-04-23 a2_mesh_0423)| ✅ |
 
 ### 3.3 F 附加能力
 
@@ -169,7 +169,7 @@
 | --- | --- | --- |
 | FR-UE-001 manifest_only / bridge_execute | 代码审阅 + enum | ✅ manifest_only / ❌ bridge_execute 未启动 |
 | FR-UE-002 文件契约落盘 | integration/test_p4 | ✅ |
-| FR-UE-003 UE Python Console 导入 | stub unreal(`test_p4`) | ⏳ UE 真机未验证(A1) |
+| FR-UE-003 UE Python Console 导入 | stub unreal(`test_p4`) + UE 5.7.4 commandlet 真机 | ✅(2026-04-23 A1 通过,见 §6.1)|
 | FR-UE-004 naming_policy 声明 | test_ue_bridge | ✅ |
 | FR-UE-005 depends_on 拓扑 | test_ue_bridge | ✅ |
 | FR-UE-006 Evidence 追加 | test_ue_bridge | ✅ |
@@ -318,35 +318,58 @@
 | ADR-004 | 外部数据必须可验证 | ✅(pricing probe 止血 + fence) |
 | ADR-005 | plan_v1 降级归档 | ✅(本轮文档重构) |
 | ADR-006 | TransitionEngine per-arun 隔离(`cloned_for_run`) | ✅ 代码固化 + 3 fence 守门 |
+| ADR-008 | 启用 UE 自带 plugin(PythonScriptPlugin / 未来 RemoteControl)不算违反 ADR-001 | ✅(2026-04-23 A1 立项):ADR-001 禁止**"我们自己写 UE 插件"**;启用 Epic 维护、UE 引擎自带的 plugin 不在禁令范围。逐条对照 SRS:374 的 6 个顾虑:**Python 版本绑定** — UE 自带 plugin 已随 UE 版本编译,不强制我们绑特定 Python;**阻塞 game thread** — 我们不在 game thread 写代码,plugin 已在 editor 模块隔离;**无法跑 543+ 单测** — 启用 plugin 不影响纯 Python 单测套件,framework 侧仍 0 UE 依赖;**隔离网络合规** — 启用 plugin 不引入新网络通道;**多工程复用** — `.uproject` Plugins 段是工程级配置,跨工程同样可声明;**开发环境门槛** — 启用是 1 行 .uproject + 1 行 commandlet,不像写 plugin 要 VS + UE source 编译。注意:ADR-007 在 SRS:380 是"贵族 API 不允许 framework 静默重试",与本条无关 |
 
 ---
 
 ## 6. 待验收项(需执行)
 
-### 6.1 A1 — UE 5.x 真机冒烟
+### 6.1 A1 — UE 5.x 真机冒烟 ✅(2026-04-23 通过,a2_ue 同次合并)
 
 **目标**:验证 `ue_scripts/run_import.py` 在真实 UE 进程中调用 `unreal.AssetImportTask` 系列 API,Content Browser 出现资产,evidence.json 追加成功记录。
 
-**前置条件**:
-- 本机装 UE 5.3+
-- 建 Blueprint 空白项目(推荐 `D:\UE_Projects\ForgeUEDemo\`),启用 Python Editor Script Plugin
-- 修改 `examples/ue_export_pipeline.json:22` 的 `project_root`
-- framework 侧跑 `python -m framework.run --task examples/ue_export_pipeline.json --live-llm --run-id a1_demo`
+**实际执行**(commandlet 全自动化路径,0 GUI 操作):
+- UE 5.7.4 装在 `E:\Epic Games\UE_5.7\`
+- C++ 项目 `D:\UnrealProjects\ForgeUEDemo\`,本地编译过
+- `.uproject` Plugins 段加 `PythonScriptPlugin: Enabled`(注意:不是 `PythonAutomationTest` —— 后者是测试框架,易混淆)
+- 新建 live bundle `examples/ue_export_pipeline_live.json`(原 `ue_export_pipeline.json` 留 ComfyUI 接口给 P4 集成测试),关键 diff:
+  - `step_image` 走真 `image_fast`(qwen_image_2 → glm_image fallback),替代 FakeComfy 占位
+  - `step_review` 切 `review_judge_visual` + `visual_mode: true` + `rubric_ref: ue_visual_quality`,与 `image_to_3d_pipeline.json` 对齐
+  - 显式 `on_reject: null` 防御
+- 入口脚本 `ue_scripts/a1_run.py`(设 `FORGEUE_RUN_FOLDER` + 调 `run_import.run()`)
 
 **执行步骤**:
 
-```
-1. 在 framework 侧产出 manifest/plan/evidence/资产到 <UE项目>/Content/Generated/a1_demo/
-2. 打开 UE 编辑器,Window → Python
-3. 执行:
-   import os
-   os.environ['FORGEUE_RUN_FOLDER'] = r'<UE项目>\Content\Generated\a1_demo'
-   exec(open(r'D:\ClaudeProject\ForgeUE_claude\ue_scripts\run_import.py').read())
-4. 验证 Content Browser 下 /Game/Generated/... 出现资产
-5. 验证 evidence.json 追加了 status=success 记录
+```bash
+# Step 1 — framework 侧 live 跑(~60s,$0.12 USD)
+PYTHONPATH=src python -m framework.run \
+    --task examples/ue_export_pipeline_live.json \
+    --live-llm --run-id a1_demo
+
+# Step 2 — UE 5.7 commandlet 真机 import(~20s,无 GUI)
+"E:/Epic Games/UE_5.7/Engine/Binaries/Win64/UnrealEditor-Cmd.exe" \
+    "D:/UnrealProjects/ForgeUEDemo/ForgeUEDemo.uproject" \
+    -ExecutePythonScript="D:/ClaudeProject/ForgeUE_claude/ue_scripts/a1_run.py" \
+    -stdout -unattended -nopause
 ```
 
-**状态**:⏳ 未执行(需用户 UE 装机确认)
+**实测结果**:
+
+| 阶段 | 状态 | 关键指标 |
+| --- | --- | --- |
+| framework run | ✅ succeeded | 4 步全访问 + 0 failure_event + verdict approve_one @ 0.89 |
+| step_image | ✅ | Qwen-image-2.0 真生成 3 张 candidate(1920×1080 PNG,各 ~3 MB) |
+| step_review | ✅ | GLM-4.6V-flashX 视觉 review:cand_0 加权 0.89(其他全过线,single_best 选最高) |
+| step_export | ✅ | manifest + plan + evidence + 选中 PNG 落 `D:/UnrealProjects/ForgeUEDemo/Content/Generated/a1_demo/` |
+| commandlet | ✅ exit=0 | UE 5.7.4 启动 + load C++ project + Interchange import + shutdown 共 20s |
+| UE Interchange | ✅ | `LogInterchangeEngine: Interchange import completed`,`LogTexture: 正在构建纹理：/Game/Generated/Tavern/a1_demo/T_xxx (TFO_AutoDXT, 1920x1080)` |
+| evidence.json | ✅ | 3 条全 success:`drop_file` + `create_folder` + `import_texture` |
+| .uasset 落盘 | ✅ | `D:/UnrealProjects/ForgeUEDemo/Content/Generated/Tavern/a1_demo/T_a1_demo_step_image_cand_a6a96ca7_0.uasset`(3.15 MB) |
+| Content Browser 视觉确认 | ✅ | 用户 GUI 双击 .uasset,Texture 预览出现 oak tavern door |
+
+**架构突破**:用 UE commandlet 模式 (`-ExecutePythonScript`) 让 Claude 通过 Bash 直接驱动 `unreal` Python API,不需要 UE 编辑器 GUI 开着、不需要用户手工点 Python Console。三通道分析(A=Python commandlet / B=RemoteControl HTTP / C=C++ Subsystem)详见 `C:\Users\mzq\.claude-max\plans\ue-ue5-gui-a-greedy-umbrella.md`,A1 选 A 通道,B 通道作为长期 bridge_execute 的 future TBD-009。
+
+**状态**:✅ 通过(2026-04-23)
 
 ### 6.2 A2 — Live LLM 端到端
 
@@ -373,10 +396,10 @@ python -m framework.run --task examples/ue_export_pipeline.json --live-llm --run
 | `a2_char` | ✅ | MiniMax Anthropic 代理 `anthropic/MiniMax-M2.7`,usage=2133 tokens,Pydantic `ue.character` schema 验证 passed,Kaelen 角色卡完整 |
 | `a2_image` | ✅ | FakeComfy 3 candidate + 真 `review_judge` vision,PackyCode Anthropic Opus/Sonnet 对 fake 图 `reject @ 0.26`,工作流按 `on_reject: null` 正常终止 |
 | `a2_review` | ✅ | `review_judge` 对 3 真图挑出 `cand_oak_slab @ 0.916 confidence`,`approve_one` |
-| `a2_mesh` | ✅ | 全链跑通(2026-04-22 18:38 v6 重跑):3 张 Qwen 真图(~1.5MB/张) → `step_review_image` GLM-4.6V approve → `step_mesh_spec` MiniMax → **`step_mesh` Hunyuan 3D 真生成 30.6MB .glb**;`step_export` 按预期 raise(C: 占位路径,绑 A1 真机) |
-| `a2_ue` | 跳过 | 占位 `project_root="C:/Users/you/..."` 不存在,`ExportExecutor` 会 raise(保护 C: 驱动不被污染);与 A1 UE 真机绑定 |
+| `a2_mesh` | ✅ | 全链跑通(2026-04-22 18:38 v6 重跑):3 张 Qwen 真图(~1.5MB/张) → `step_review_image` GLM-4.6V approve → `step_mesh_spec` MiniMax → **`step_mesh` Hunyuan 3D 真生成 30.6MB .glb**;`step_export` 按预期 raise(C: 占位路径,绑 A1 真机)。**2026-04-23 重跑(`image_to_3d_pipeline_live.json` + run_id `a2_mesh_0423`):全链一次过(approve_one @ 0.90)+ 33.3MB .glb 真生成 + UE 5.7 commandlet 真 import → `Generated/Props/a2_mesh_0423/.../{StaticMeshes/SM_*, Materials/Material_001, Textures/texture_20250901}.uasset` 三类资产落盘 + 用户 GUI 视觉确认 oak barrel 3D mesh** |
+| `a2_ue` | ✅(2026-04-23 与 A1 合并) | 用 `examples/ue_export_pipeline_live.json`(原 `ue_export_pipeline.json` 留 ComfyUI 接口给 P4 集成测试)+ 真 UE 5.7.4 项目 `D:/UnrealProjects/ForgeUEDemo/`,framework live + commandlet 全自动化跑通,export bundle 真落到 UE 项目,见 §6.1 |
 
-**状态**:✅ 通过(4/5 绿 + 1 跳过并入 A1)
+**状态**:✅ 通过(5/5 绿,a2_ue 在 2026-04-23 与 A1 合并跑过)
 
 ### 6.2.1 A2 副产物:Router 观测性修复(2026-04-22)
 
@@ -428,8 +451,8 @@ python -m pytest -q                            # 全量回归
 顺序 1: A3(本地 + playwright)                  ✅ 已完成(2026-04-22)
 顺序 2: B — 结构整理后 commit 工作树(含 pricing probe 那一轮) ✅ 已完成(commit 293979f / 74c0849)
 顺序 3: A2 qwen/hunyuan 图像链 live smoke       ✅ 已完成(2026-04-22):4/5 绿(a2_char / a2_image / a2_review / a2_mesh),a2_ue 绑 A1 跳过
-顺序 4: A2 mesh_from_image live smoke           ✅ 已完成(2026-04-22 18:38 v6 重跑):review 路径全通(GLM-4.6V approve)+ Hunyuan 3D mesh 真生成 30.6MB .glb,只 step_export 按预期 raise C: 占位路径(绑 A1 真机)
-顺序 5: A1 UE 真机冒烟(待用户建空 UE 项目)      预计 1-2 小时(a2_ue 合并进来)
+顺序 4: A2 mesh_from_image live smoke           ✅ 已完成(2026-04-22 18:38 v6 重跑 + 2026-04-23 重跑):前者证 mesh 生成 + 后者证 UE 真 import 闭合(`image_to_3d_pipeline_live.json` → `Generated/Props/a2_mesh_0423/.../SM_*.uasset` + 用户视觉确认 oak barrel)
+顺序 5: A1 UE 真机冒烟 + a2_ue 合并              ✅ 已完成(2026-04-23):UE 5.7.4 commandlet 全自动化路径,framework live + commandlet 总 ~80s,Texture .uasset 落盘 + Content Browser 视觉确认,见 §6.1
 ```
 
 ### 6.5 A2 a2_mesh 根因(视觉 review payload 超限)
@@ -620,6 +643,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |
+| TBD-009 | RemoteControl HTTP bridge(future bridge_execute) | FR-UE-001 | ⏳ | A1 立项(2026-04-23):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor。**适用**:长会话多次操作(免重启 editor)/ 实时反馈(PIE 截图回 review)/ 真正"agent 与 live editor 协同"。**关键约束**:UE editor 必须常驻进程(端口非独立 daemon)+ 30010 防火墙放通 + reflection 调用拼 ObjectPath/UFUNCTION 比 Python API 繁琐脆。**不在 A1 scope**:commandlet 冷启 20s 已够,无 GUI 依赖更稳。**ADR**:见 ADR-008 |
 
 ### 明确不做(⛔)
 
@@ -637,20 +661,21 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **543 通过 / 0 失败**(2026-04-22 第七轮基线,~15.6s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2) |
+| L0 pytest 全量 | ✅ **549 通过 / 0 失败**(2026-04-23 第八轮基线,~18.0s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
+| L3 UE 真机 | ✅ UE 5.7.4 commandlet 通过(2026-04-23,见 §6.1) |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
 ### 8.2 实装成熟度
 
 | 维度 | 等级 |
 | --- | --- |
-| 主线闭环(P0-P4) | ✅ 完整 |
+| 主线闭环(P0-P4 含 UE 真机) | ✅ 完整(2026-04-23 A1 + a2_ue 真机闭合) |
 | 失败路由 | ✅ 9 FailureMode 全覆盖 |
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 543 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence + TBD-008 visual review contract 2 fence)+ 60+ L3 fence |
+| 测试覆盖 | ✅ 549 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence + TBD-008 visual review contract 2 fence + A1 + a2_mesh live bundle parametrize 6 自动收)+ 60+ L3 fence |
 
 ### 8.3 整体结论
 
@@ -658,10 +683,15 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 - 所有 FR/NFR 项已有自动化或指定手工手段覆盖
 - 自动化部分 100% 通过
-- 手工验收(A1/A2/A3)项目明确,路径可执行
+- 手工验收 A1 / A2 / A3 全部通过(2026-04-23 收尾)
 - 不做项与未启动项有明确 ADR 或 TBD 条目
 
-**推荐下一步**:按 §6.4 时序执行手工验收,完成 A1/A2/A3 后,本文档升版 v1.1,把 ⏳ 转为 ✅。
+**vNext 主线闭合状态**(2026-04-23):
+- A3 pricing probe ✅(2026-04-22)
+- A2 char/image/review/mesh live ✅(2026-04-22)
+- **A1 + a2_ue UE 真机 ✅(2026-04-23,UE 5.7.4 commandlet 全自动化)**
+- L0 自动化 549 用例全绿 ✅
+- 长期 bridge_execute 路径有 TBD-009(RemoteControl HTTP)+ ADR-008 兜底
 
 ---
 
@@ -681,6 +711,8 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §K + §M 拆分重组 |
 | v1.1 | 2026-04-22 | Codex 5 轮 audit(21 条 issue)修复 + 验收登记:新增 FR-LC-006~008、FR-WORKER-009~010、FR-COST-008~009、FR-RUNTIME-008~012、FR-REVIEW-009、NFR-REL-009、ADR-006 共 13 条验收行;L0 自动化基线 491 → 520 |
+| v1.2 | 2026-04-23 | A1 UE 真机 + a2_ue 合并通过(UE 5.7.4 commandlet 全自动化路径,Texture .uasset 真落盘 + 视觉确认):P4 ⚠️→✅ / FR-UE-003 ⏳→✅ / a2_ue 跳过→✅ / §3.1 + §4.7 + §6.1 + §6.2 + §6.4 五处状态升级;新增 ADR-008(启用 UE 自带 plugin 不算违反 ADR-001)+ TBD-009(RemoteControl HTTP bridge,future bridge_execute);新增 live bundle `examples/ue_export_pipeline_live.json`(原 `ue_export_pipeline.json` 留 ComfyUI 接口给 P4 集成测试)+ 入口脚本 `ue_scripts/a1_run.py`(后扩展为读 `FORGEUE_RUN_FOLDER` env 优先,支持复用跑不同 run_id) |
+| v1.3 | 2026-04-23 | A2 全集 5/5 ✅ 重跑收尾(0423 重跑 a2_char/image/review/mesh):a2_mesh_0423 用新 `examples/image_to_3d_pipeline_live.json` 跑 Hunyuan 3D 33.3MB .glb + UE 5.7 commandlet 真 import → `Generated/Props/a2_mesh_0423/.../{StaticMeshes/SM_*, Materials/Material_001, Textures/texture_20250901}.uasset` 三类资产 + 用户 GUI 视觉确认 oak barrel 3D mesh;`test_example_bundles_smoke` 自动 parametrize 收 6 用例(2 个新 bundle × 3),总数 546 → 549 |
 
 ### 9.3 签收区
 
