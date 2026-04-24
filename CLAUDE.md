@@ -130,3 +130,42 @@ LLD §5.7 + HLD §5.5 是权威;实装见 `src/framework/runtime/failure_mode_ma
 
 DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静默吞掉,
 已修复并用 `test_cascade_cancel::test_dag_retry_same_step_reexecutes` 守门。
+
+## OpenSpec 工作流(2026-04-24 启用)
+
+ForgeUE 已采用 OpenSpec 作为 AI 主工作流。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md),本节是 Claude Code 视角的摘要。
+
+### 什么时候走 change,什么时候直接改代码
+
+- **非平凡**需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先走 `/opsx:propose <name>`,再 proposal → design → tasks → implementation。
+- **小 bugfix / typo / logic 微调** → 可以直接改代码,但必须补回归测试或说明验证方式(对应既有"每条 Codex review 修复 = 一条新回归测试")。
+- 实现只围绕 active change 范围;**禁止**顺手重构无关模块。
+
+### 与 docs 五件套的关系
+
+- `docs/` 五件套仍是长期权威(需求 / 设计 / 测试 / 验收)。
+- `openspec/specs/` 是**精简当前行为契约层**,8 个 capability:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`。
+- `openspec/changes/` 是未来变更入口,不用于重写历史。
+- **禁止**把 docs 整篇搬入 openspec,只做契约抽取。
+
+### 事实来源
+
+- 做任何 change 前读 `CHANGELOG.md` 了解近期变更事实(TBD-006 / 007 / 008 等)。
+- `tests/` + `examples/` + `probes/` 是验收事实来源;bundle 里 Artifact 流是端到端真实对象,不 mock 关键边界。
+- 验证命令矩阵见 `docs/ai_workflow/validation_matrix.md`(Level 0 / 1 / 2 分级)。
+
+### 禁令摘要
+
+- 不提交 `artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径。
+- 不硬编码测试总数;以 `python -m pytest -q` 实测为准。
+- 不硬编码 provider model id(除非 bundle 显式允许)。
+- 不修改 `.claude/commands/opsx/*` / `.claude/skills/openspec-*`(OpenSpec 默认产物)。
+- 贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);失败时 surface job_id 给用户,先 `probe_hunyuan_3d_query` 再决定 `--resume`。
+
+### Documentation Sync Gate(摘要)
+
+每个非平凡 change 在 archive 或 merge 前必须执行 Documentation Sync Gate(完整规则见 `docs/ai_workflow/README.md` §4)。
+
+必须检查的 10 份文档:`openspec/specs/*` / `docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md` / `README.md` / `CHANGELOG.md` / `CLAUDE.md` / `AGENTS.md`。
+
+规则:不机械同步;不更新必须记录原因;docs / tests / code / CHANGELOG 冲突时标记 doc drift,不自行猜测。触发提示词见 `docs/ai_workflow/README.md` §4.3。

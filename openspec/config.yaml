@@ -18,3 +18,78 @@ schema: spec-driven
 #       - Always include a "Non-goals" section
 #     tasks:
 #       - Break tasks into chunks of max 2 hours
+
+# ---------------------------------------------------------------------------
+# ForgeUE project context + rules (2026-04-24 OpenSpec adoption)
+# ---------------------------------------------------------------------------
+
+context: |
+  ForgeUE is a UE production-chain multi-model runtime framework.
+
+  Positioning:
+  - Infrastructure layer (LiteLLM / Instructor / httpx) is used directly, not wrapped.
+  - Multimodal workers (ComfyUI / Qwen / Hunyuan image+3D / Tripo3D) are bolted on as external providers.
+  - UE domain objects and runtime engineering are fully in-house.
+
+  Core object model (see docs/requirements/SRS.md §1.4):
+  - Task, Run, Workflow, Step, Artifact, PayloadRef, Lineage
+  - ReviewReport, Verdict, Checkpoint, DryRunPass
+  - UEOutputTarget, UEAssetManifest, UEImportPlan, Evidence
+  - ModelRegistry, PreparedRoute, CapabilityRouter, BudgetTracker, TransitionEngine
+
+  Provider routing:
+  - ModelRegistry (config/models.yaml, three-section: providers / models / aliases) is the single source of truth.
+  - Bundle JSON references aliases via provider_policy.models_ref; the loader expands them into prepared_routes.
+  - CapabilityRouter calls ProviderAdapter.supports(model) in registration order; LiteLLMAdapter (wildcard) must be registered LAST.
+
+  Authoritative documents:
+  - docs/ five-piece set (SRS / HLD / LLD / test_spec / acceptance_report) remains the long-form requirements / design / testing / acceptance knowledge base.
+  - openspec/specs/ is a slim behavior-contract layer, NOT a replacement for docs/.
+  - openspec/changes/ is the entry point for FUTURE changes, not a rewrite of historical documents.
+  - CHANGELOG.md is one of the recent-change factual sources.
+  - tests/ + examples/ + probes/ are factual acceptance sources (bundle end-to-end real object flow, not mocks).
+
+  Runtime environment:
+  - Windows 11 + Git-Bash + D: drive, Python 3.12+.
+  - /tmp/... is forbidden (Git-Bash translates it into C: system temp).
+  - Artifacts land only in ./artifacts/<YYYY-MM-DD>/<run_id>/ or ./demo_artifacts/<YYYY-MM-DD>/.
+
+  Non-negotiable rules:
+  - Do not hardcode provider model ids except where a bundle explicitly allows it.
+  - Do not commit artifacts/, demo_artifacts/, .env, API keys, or machine-absolute paths.
+  - Do not copy long sections of docs/ into openspec/ artifacts.
+  - Do not treat openspec/ as a generic documentation folder.
+  - External factual data (pricing, endpoints, versions) MUST carry a verifiable sourced_on + source_url, or remain null with a TODO (ADR-004).
+  - Premium per-call APIs such as mesh.generation (~$0.20-1/job, ADR-007) must NOT be silently retried by the framework; the CLI surfaces job_id and the user queries remote state before --resume.
+
+rules:
+  proposal: |
+    - A non-trivial new requirement (new object, new workflow, new provider, new step type, cross-subsystem refactor, or architecture-boundary change) MUST have an OpenSpec proposal before implementation.
+    - A small bugfix MAY skip proposal, but MUST add a regression test or explicitly describe the verification method (see CLAUDE.md "每条 Codex review 修复 = 一条新回归测试").
+    - Proposals MUST state: why ForgeUE needs it, what it solves, what it does NOT solve, which modules are affected, which are not, and success criteria.
+    - Do NOT copy long sections from SRS / HLD / LLD into proposals; cite the section instead.
+
+  design: |
+    - Design MUST follow the actual src/framework/ layout, not a guessed directory tree.
+    - Design MUST name the capability specs it touches (runtime-core / artifact-contract / workflow-orchestrator / review-engine / provider-routing / ue-export-bridge / probe-and-validation / examples-and-acceptance).
+    - Design MUST NOT hardcode provider model ids; use aliases from config/models.yaml.
+    - Designs that touch paid providers, mesh workers, or premium per-call APIs MUST explicitly declare: opt-in mechanism, double-bill risk, and probe workflow (see CHANGELOG.md TBD-007 / ADR-007).
+
+  tasks: |
+    - Each task MUST be independently executable and verifiable by Claude Code or another coding agent.
+    - tasks.md MUST end with a "## Documentation Sync" section listing the ten documents to check before archive (see docs/ai_workflow/README.md §Documentation Sync Gate).
+    - Testing-related tasks MUST NOT hardcode total test counts; treat `python -m pytest -q` output as the source of truth.
+    - Paid-provider tasks default to opt-in via environment flags (e.g. FORGEUE_PROBE_VISUAL_REVIEW=1, FORGEUE_PROBE_HUNYUAN_3D=1); framework-level tests run offline with FakeAdapter / FakeComfyWorker.
+
+  specs: |
+    - Delta specs MUST NOT copy the full main spec; they describe only the ADDED / MODIFIED / REMOVED behavior introduced by the change.
+    - A delta spec Validation section MUST point at concrete test files (paths), never a total test count.
+    - A delta spec MUST include a Non-Goals section.
+
+  general: |
+    - Communicate in Chinese; keep library / API / file-path / class / capability-key identifiers in English.
+    - External review opinions (Codex / adversarial) MUST be independently verified against real code before acting on them (see CLAUDE.md / AGENTS.md).
+    - Decision style: present analysis + options + tradeoffs up-front, then execute fully after a single green-light; avoid mid-execution micro-confirmations.
+    - Ad-hoc scripts (python -c, heredoc) use ASCII markers [OK] / [FAIL] / [SKIP]; no emoji (Windows GBK stdout crashes on emoji — see probes/README.md and CLAUDE.md).
+    - When README / CHANGELOG / docs five-piece-set numbers disagree, mark as doc drift and defer to `python -m pytest -q` actual output. Do NOT silently pick a number.
+    - .claude/commands/opsx/*, .claude/skills/openspec-*, .codex/skills/openspec-* are OpenSpec-generated defaults — do not modify or overwrite them.

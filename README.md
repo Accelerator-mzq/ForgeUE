@@ -354,6 +354,21 @@ python -m pytest -v -k p3           # 关键字过滤
 
 ---
 
+## AI Workflow / OpenSpec
+
+2026-04-24 起,ForgeUE 采用 OpenSpec 作为 AI 主工作流。非平凡需求走 change 流程(proposal → design → tasks → implementation → validation → review → Documentation Sync Gate → archive);小 bugfix 可轻量处理,但必须补测试或说明验证方式。
+
+| 入口 | 用途 |
+|---|---|
+| [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) | OpenSpec 主流程 + Documentation Sync Gate 主规则 |
+| [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
+| [`openspec/specs/`](openspec/specs/) | 当前行为契约层:8 个 capability spec(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
+| [`openspec/changes/`](openspec/changes/) | 未来变更入口 |
+
+`docs/` 五件套仍是长期权威;OpenSpec 通过"契约抽取"与之互补,不替代。详见 `docs/ai_workflow/README.md`。
+
+---
+
 ## 后续扩展
 
 按优先级排序（§G）：
