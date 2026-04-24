@@ -1,0 +1,168 @@
+{
+  "task": {
+    "task_id": "task_p4_image_to_3d_live",
+    "task_type": "asset_generation",
+    "run_mode": "production",
+    "title": "L4 live + UE 真机：prompt → ImageSpec → Qwen 真图 → review → MeshSpec → Hunyuan 3D 真 .glb → UE 真 import",
+    "description": "原 image_to_3d_pipeline.json 的 live 变体。Diff: ue_target.project_root 从 C: 占位改成 D:/UnrealProjects/ForgeUEDemo,让 step_export 真把 mesh 落到 UE 项目。原 bundle 留着不动,继续是 image_to_3d 集成测试 reference。",
+    "input_payload": {
+      "prompt": "A stylized medieval oak barrel with iron bands, tavern prop, low-poly game asset look."
+    },
+    "expected_output": {
+      "artifact_types": ["structured_answer", "concept_image", "candidate_bundle",
+                         "review_report", "verdict", "mesh_asset", "ue_asset_manifest", "ue_import_plan", "export_bundle"]
+    },
+    "project_id": "proj_p4_3d_live",
+    "review_policy": {
+      "enabled": true,
+      "default_mode": "single_judge",
+      "pass_threshold": 0.70
+    },
+    "ue_target": {
+      "project_name": "ForgeUEDemo",
+      "project_root": "D:/UnrealProjects/ForgeUEDemo",
+      "asset_root": "/Game/Generated/Props",
+      "asset_naming_policy": "house_rules",
+      "expected_asset_kinds": ["texture", "static_mesh"],
+      "import_mode": "manifest_only"
+    },
+    "determinism_policy": {
+      "seed_propagation": true,
+      "model_version_lock": true,
+      "hash_verify_on_resume": true
+    }
+  },
+  "workflow": {
+    "workflow_id": "wf_p4_image_to_3d_live",
+    "name": "image_to_3d_pipeline_live",
+    "version": "1.0.0",
+    "entry_step_id": "step_spec",
+    "step_ids": ["step_spec", "step_image", "step_review_image",
+                 "step_mesh_spec", "step_mesh", "step_export"]
+  },
+  "steps": [
+    {
+      "step_id": "step_spec",
+      "type": "generate",
+      "name": "prompt-to-image-spec",
+      "risk_level": "low",
+      "capability_ref": "text.structured",
+      "provider_policy": {
+        "capability_required": "text.structured",
+        "models_ref": "text_cheap"
+      },
+      "retry_policy": {
+        "max_attempts": 3, "backoff": "fixed",
+        "retry_on": ["timeout", "schema_fail", "provider_error"]
+      },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "output_schema": { "schema_ref": "ue.image_spec" },
+      "config": {
+        "task_goal": "Produce an ImageSpec for a low-poly game asset concept image.",
+        "temperature": 0.1
+      }
+    },
+    {
+      "step_id": "step_image",
+      "type": "generate",
+      "name": "image-gen-api",
+      "risk_level": "medium",
+      "capability_ref": "image.generation",
+      "depends_on": ["step_spec"],
+      "provider_policy": {
+        "capability_required": "image.generation",
+        "models_ref": "image_fast"
+      },
+      "retry_policy": {
+        "max_attempts": 2, "backoff": "fixed",
+        "retry_on": ["timeout", "provider_error"]
+      },
+      "transition_policy": {
+        "on_success": "step_review_image",
+        "max_retries": 1
+      },
+      "config": {
+        "num_candidates": 3,
+        "selection_goal": "pick the cleanest silhouette for 3D reconstruction",
+        "selection_policy": "single_best",
+        "seed": 17,
+        "worker_timeout_s": 60
+      }
+    },
+    {
+      "step_id": "step_review_image",
+      "type": "review",
+      "name": "image-visual-review",
+      "risk_level": "medium",
+      "capability_ref": "review.judge",
+      "depends_on": ["step_image"],
+      "provider_policy": {
+        "capability_required": "review.judge",
+        "models_ref": "review_judge_visual"
+      },
+      "transition_policy": {
+        "on_approve": "step_mesh_spec",
+        "on_revise": "step_image",
+        "max_revise": 2
+      },
+      "config": {
+        "review_mode": "single_judge",
+        "review_scope": "image",
+        "review_id": "rv_p4_img_live",
+        "rubric_ref": "ue_visual_quality",
+        "selection_policy": "single_best",
+        "visual_mode": true
+      }
+    },
+    {
+      "step_id": "step_mesh_spec",
+      "type": "generate",
+      "name": "image-to-mesh-spec",
+      "risk_level": "low",
+      "capability_ref": "text.structured",
+      "depends_on": ["step_review_image"],
+      "provider_policy": {
+        "capability_required": "text.structured",
+        "models_ref": "text_cheap"
+      },
+      "retry_policy": {
+        "max_attempts": 3, "backoff": "fixed",
+        "retry_on": ["timeout", "schema_fail", "provider_error"]
+      },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "output_schema": { "schema_ref": "ue.mesh_spec" },
+      "config": {
+        "task_goal": "Produce a MeshSpec targeting a low-poly static_mesh import (Z-up, cm scale, PBR, under 20k tris).",
+        "temperature": 0.0
+      }
+    },
+    {
+      "step_id": "step_mesh",
+      "type": "generate",
+      "name": "image-to-3d",
+      "risk_level": "high",
+      "capability_ref": "mesh.generation",
+      "depends_on": ["step_mesh_spec", "step_review_image", "step_image"],
+      "retry_policy": {
+        "max_attempts": 1, "backoff": "fixed",
+        "retry_on": []
+      },
+      "config": {
+        "num_candidates": 1,
+        "worker_timeout_s": 300
+      }
+    },
+    {
+      "step_id": "step_export",
+      "type": "export",
+      "name": "ue-manifest-export",
+      "risk_level": "low",
+      "capability_ref": "ue.export",
+      "depends_on": ["step_mesh"]
+    }
+  ]
+}

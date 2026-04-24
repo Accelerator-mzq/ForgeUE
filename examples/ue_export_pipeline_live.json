@@ -1,0 +1,131 @@
+{
+  "task": {
+    "task_id": "task_p4_export_live",
+    "task_type": "ue_export",
+    "run_mode": "production",
+    "title": "A1 + a2_ue live: prompt -> ImageSpec -> Qwen image -> visual review -> UE manifest_only export",
+    "description": "A1 (UE 5.x manifest_only real-machine smoke) + a2_ue (live UE export end-to-end) merged. Diff vs ue_export_pipeline.json: step_image 走真 image_fast (qwen_image_2 + glm_image fallback) 替代 FakeComfy 占位,review 切 review_judge_visual + visual_mode 与 image_to_3d_pipeline 对齐,显式 on_reject: null 防止意外终止时无声吞掉。原 ue_export_pipeline.json 保留 ComfyUI Fake/真 路径,仍由 test_p4_ue_manifest_only.py 引用走 offline 集成测试。",
+    "input_payload": {
+      "prompt": "A weathered oak tavern door with iron banding on a stone facade, overcast dusk light, painterly medieval style."
+    },
+    "expected_output": {
+      "artifact_types": ["structured_answer", "concept_image", "candidate_bundle", "review_report", "verdict", "ue_asset_manifest", "ue_import_plan", "export_bundle"]
+    },
+    "project_id": "proj_p4_live",
+    "review_policy": {
+      "enabled": true,
+      "default_mode": "single_judge",
+      "pass_threshold": 0.70
+    },
+    "ue_target": {
+      "project_name": "ForgeUEDemo",
+      "project_root": "D:/UnrealProjects/ForgeUEDemo",
+      "asset_root": "/Game/Generated/Tavern",
+      "asset_naming_policy": "house_rules",
+      "expected_asset_kinds": ["texture"],
+      "import_mode": "manifest_only",
+      "validation_hooks": []
+    },
+    "determinism_policy": {
+      "seed_propagation": true,
+      "model_version_lock": true,
+      "hash_verify_on_resume": true
+    }
+  },
+  "workflow": {
+    "workflow_id": "wf_p4_export_live",
+    "name": "ue_export_pipeline_live",
+    "version": "1.0.0",
+    "entry_step_id": "step_spec",
+    "step_ids": ["step_spec", "step_image", "step_review", "step_export"]
+  },
+  "steps": [
+    {
+      "step_id": "step_spec",
+      "type": "generate",
+      "name": "prompt-to-image-spec",
+      "risk_level": "low",
+      "capability_ref": "text.structured",
+      "provider_policy": {
+        "capability_required": "text.structured",
+        "models_ref": "text_cheap"
+      },
+      "retry_policy": {
+        "max_attempts": 3,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "schema_fail", "provider_error"]
+      },
+      "input_bindings": [
+        { "name": "prompt", "source": "task.input_payload.prompt" }
+      ],
+      "output_schema": { "schema_ref": "ue.image_spec" },
+      "config": {
+        "task_goal": "Produce an ImageSpec matching the UE tavern-door concept brief.",
+        "temperature": 0.1
+      }
+    },
+    {
+      "step_id": "step_image",
+      "type": "generate",
+      "name": "image-gen-api",
+      "risk_level": "medium",
+      "capability_ref": "image.generation",
+      "depends_on": ["step_spec"],
+      "provider_policy": {
+        "capability_required": "image.generation",
+        "models_ref": "image_fast"
+      },
+      "retry_policy": {
+        "max_attempts": 2,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "provider_error"]
+      },
+      "transition_policy": {
+        "on_success": "step_review",
+        "max_retries": 1
+      },
+      "config": {
+        "num_candidates": 3,
+        "selection_goal": "pick the strongest tavern-door concept",
+        "selection_policy": "single_best",
+        "seed": 17,
+        "worker_timeout_s": 60
+      }
+    },
+    {
+      "step_id": "step_review",
+      "type": "review",
+      "name": "image-visual-review",
+      "risk_level": "medium",
+      "capability_ref": "review.judge",
+      "depends_on": ["step_image"],
+      "provider_policy": {
+        "capability_required": "review.judge",
+        "models_ref": "review_judge_visual"
+      },
+      "transition_policy": {
+        "on_approve": "step_export",
+        "on_revise": "step_image",
+        "on_reject": null,
+        "max_revise": 2
+      },
+      "config": {
+        "review_mode": "single_judge",
+        "review_scope": "image",
+        "review_id": "rv_p4_image_live",
+        "rubric_ref": "ue_visual_quality",
+        "selection_policy": "single_best",
+        "seed": 23,
+        "visual_mode": true
+      }
+    },
+    {
+      "step_id": "step_export",
+      "type": "export",
+      "name": "ue-manifest-export",
+      "risk_level": "low",
+      "capability_ref": "ue.export",
+      "depends_on": ["step_review"]
+    }
+  ]
+}
