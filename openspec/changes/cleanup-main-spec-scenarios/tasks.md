@@ -16,7 +16,7 @@
   - DAG-safe producer lookup [Min 1] — 1 Scenario
 - [x] 1.2 Scenario 内容对照源码:`src/framework/core/artifact.py`(ArtifactType / Modality / PayloadRef / Lineage 字段);测试:`tests/integration/test_l4_image_to_3d.py::test_l4_mesh_reads_selected_candidate_from_review_verdict`(lineage selected_by_verdict_id 路径);LLD §5(modality 字段表)
 - [x] 1.3 跑 `openspec validate cleanup-main-spec-scenarios --strict` —— Task 1 完成时 artifact-contract delta 已合规,其他 7 份 spec 用 `## Planned Requirement Updates` placeholder 段(不当 delta 解析),validate 不再因 "empty MODIFIED section" 报错
-- [x] 1.4 跑 `python -m pytest -q` —— 848 passed 不变(本 task 是 doc-only,不影响测试)
+- [x] 1.4 跑 `python -m pytest -q` —— 数量以实测为准;本 task 是 doc-only,不影响测试(`pytest -q` / `pytest --collect-only -q | tail -5` 是真源,见 §3.1 收紧后的 `Test totals are never hardcoded` 描述)
 
 **Task 1 hygiene note**(2026-04-25 方案 E 落地):为保持 active change strict validate **完全 PASS**,Task 2-8 未实施前其对应 Plan 内容**已从 specs/ 移出到 notes/**,完整路径如下:
 
@@ -149,7 +149,7 @@
 
 - [ ] 9.1 `openspec validate cleanup-main-spec-scenarios --strict` —— 期望 PASS(0 ERROR)
 - [ ] 9.2 `openspec list` —— 期望本 change tasks 全部勾选,只剩 archive 阶段的 sync-specs row(若有)未勾
-- [ ] 9.3 `python -m pytest -q` —— 期望 848 passed,零回归
+- [ ] 9.3 `python -m pytest -q` —— 期望与 cleanup 启动前基线一致,零回归;数量以实测为准(不硬编码)
 - [ ] 9.4 跑 `git status --short` 确认改动只在 `openspec/changes/cleanup-main-spec-scenarios/` 范围内,**未**触动 `openspec/specs/` / `src/` / `tests/` / `docs/` / `README.md` / 其他禁止清单文件
 
 ## 10. Codex Review Gate
@@ -164,12 +164,12 @@
 - [ ] 11.1 `openspec archive cleanup-main-spec-scenarios -y` —— 默认带 strict validate,**不**用 `--no-validate` / `--skip-specs` 绕过
 - [ ] 11.2 archive 应当成功(因为本 change delta 给所有缺失 Scenario 补齐,rebuilt main spec 通过 strict)
 - [ ] 11.3 archive 后跑 `openspec validate --specs --strict` —— 期望 8/8 PASS
-- [ ] 11.4 archive 后跑 `python -m pytest -q` —— 期望 848 passed
+- [ ] 11.4 archive 后跑 `python -m pytest -q` —— 期望与 cleanup 启动前基线一致,数量以实测为准(不硬编码)
 
 ## 12. Return to archive add-run-comparison-baseline-regression
 
 - [ ] 12.1 `openspec archive add-run-comparison-baseline-regression -y` —— 现在应当一次通过(它自己的 delta 早已 strict PASS,卡住的是 main spec rebuild,本 cleanup 修了那条卡点)
-- [ ] 12.2 archive 后:`openspec list` 不再含两个 active change;主 spec 含 `add-run-comparison-baseline-regression` 的 ADDED Requirements;`pytest -q` 仍 848 passed
+- [ ] 12.2 archive 后:`openspec list` 不再含两个 active change;主 spec 含 `add-run-comparison-baseline-regression` 的 ADDED Requirements;`pytest -q` 数量以实测为准(与 cleanup 启动前基线一致,不硬编码)
 - [ ] 12.3 git log 含 cleanup archive + add-run-comparison archive 两个 commit
 
 ---
