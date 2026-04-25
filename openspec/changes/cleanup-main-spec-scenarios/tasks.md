@@ -50,10 +50,10 @@
 
 ## 3. probe-and-validation(10 缺,2 [审视])
 
-- [ ] 3.1 措辞收紧 2 处:
-  - `Regression fence per review fix` —— 改为可验证的元规则:"任何被 Codex / adversarial review 修复的 issue 必须在同 commit 引入 ≥1 条 fence test;`tests/unit/test_codex_audit_fixes.py` 是这条规则的执行证据"
-  - `Test totals are never hardcoded` —— 改为:"OpenSpec change / docs 引用测试总数时必须以 `pytest -q` 当下输出为准,不在文件正文写死数字(历史快照可标 'YYYY-MM-DD 历史基线')"
-- [ ] 3.2 为以下 10 个 Requirement 各补 Scenario:
+- [x] 3.1 措辞收紧 2 处,**两条 [审视] 项均采用方案 A**(把流程承诺改为可静态识别的样板):
+  - `Regression fence per review fix` —— 方案 A:把 "every Codex / adversarial review fix" 放宽为 "fix 触发 executable behaviour change(runtime / executor / provider adapter / schema / worker code)时" 必须新增或扩展 fence test;documentation-only / doc-drift-only fix 可走 review note / validation note(不强制 test);引用 `tests/unit/test_codex_audit_fixes.py` 的 numbered comment blocks(`# #1` … `# #11`)作为 2026-04-22 Codex 21-condition audit 的历史 evidence pattern;开放 peer fence files(`test_cascade_cancel` / `test_review_budget` / `test_download_async` / `test_event_bus`)作为合法 fence 着陆点。**不**断言"所有未来 review fix 必须新增 test";**不**写 CI gate / 自动 enforcement
+  - `Test totals are never hardcoded` —— 方案 A:区分两类文档 ——(a)用户入口文档(`README.md` / `validation_matrix.md` / `openspec/specs/*` / `openspec/changes/*/proposal.md` / `design.md` / `tasks.md`)禁止裸数字写 aggregate test count;(b)长篇叙事文档(`test_spec.md` / `acceptance_report.md` / `CHANGELOG.md`)允许 snapshot count 但每次出现必须带 date stamp(如 `2026-04-25 实测 848 用例` / `2026-04-23 历史基线 549`);真源是 `python -m pytest -q` / `python -m pytest --collect-only -q | tail -5`。**不**扩大到"任何数字都不能出现",只管 aggregate test count(timeouts / fixture counts / retry budgets 不受影响)
+- [x] 3.2 为以下 10 个 Requirement 各补 Scenario,合计 11 个 Scenario(`Probe exit code convention` 写 2 个覆盖 all-OK 与 has-fail 两侧):
   - Probe directory layout [Min 1]
   - Probe naming [Min 1]
   - Module-level side-effect ban [Min 1]
@@ -64,8 +64,8 @@
   - Critical-boundary objects are real, not mocked [Min 1]
   - Validation stratification into three levels [Min 1]
   - Test totals are never hardcoded [审视 + Min 1]
-- [ ] 3.3 Scenario 对照:`probes/README.md`、`probes/_output.py`、`probes/smoke/probe_framework.py`、`tests/unit/test_probe_framework.py`、`docs/ai_workflow/validation_matrix.md`
-- [ ] 3.4 `openspec validate ... --strict` + `pytest -q`
+- [x] 3.3 Scenario 对照:`probes/README.md` §"目录结构"/§"命名约定"/§5 输出路径、`probes/_output.py::probe_output_dir`、`probes/smoke/probe_framework.py`、`tests/unit/test_probe_framework.py`(side-effect / tristate / opt-in fence)、`tests/unit/test_codex_audit_fixes.py`(numbered comment blocks `# #1` … `# #11`)、`tests/unit/test_event_bus.py`(真 asyncio.Queue + call_soon_threadsafe)、`docs/ai_workflow/validation_matrix.md`(三级分层 + 不硬编码总数原文)
+- [x] 3.4 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(以实测为准,本 task 是 doc-only,不影响测试)
 
 ## 4. provider-routing(16 缺,最大份)
 
