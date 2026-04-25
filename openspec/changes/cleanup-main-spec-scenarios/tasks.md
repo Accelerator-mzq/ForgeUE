@@ -69,7 +69,7 @@
 
 ## 4. provider-routing(16 缺,最大份)
 
-- [ ] 4.1 为以下 16 个 Requirement 各补 Scenario(其中 `Pricing probe defaults to dry-run` [+1] 写 dry-run / --apply 两个):
+- [x] 4.1 为以下 16 个 Requirement 各补 Scenario,合计 17 个 Scenario(`Pricing probe defaults to dry-run` [+1] 写 dry-run + `--apply` 两个;**Scenario 7b 采用方案 A**:按真实代码行为写 `--apply` 路径 —— `apply_results_to_yaml(... dry_run=False)` mutate `config/models.yaml`,`pricing_autogen.status: manual` 条目保留不动;**不**写 `--apply` 写 `demo_artifacts/<date>/pricing/<HHMMSS>/` snapshot(实证:cli.py / yaml_writer.py 没有该路径写入逻辑;CLAUDE.md §产物路径约定那条仅为路径**约定**,不是实装产物;notes/provider-routing-plan.md 原 Scenario 草案与代码事实不符,本 delta 已纠偏)。其余 15 个 Requirement 描述与标题保持不变(本 capability 无 [审视] 项):
   - Three-section ModelRegistry is the single source [Min 1]
   - Alias reference expansion in the loader [Min 1]
   - OpenAI-compatible endpoints add zero code [Min 1]
@@ -86,8 +86,8 @@
   - HTML-body pollution wraps as unsupported [Min 1]
   - Premium-API single-attempt guard [Min 1]
   - Parallel candidates are homogeneous [Min 1]
-- [ ] 4.2 Scenario 对照:`src/framework/providers/{capability_router,model_registry,litellm_adapter,workers/mesh_worker,_download_async}.py`、`config/models.yaml`、`tests/unit/test_*router*.py` / `test_mesh_*.py` / `test_pricing_*.py`、`src/framework/pricing_probe/`
-- [ ] 4.3 `openspec validate ... --strict` + `pytest -q`
+- [x] 4.2 Scenario 对照:`src/framework/providers/model_registry.py`(三段式 + autogen 校验)、`src/framework/providers/{litellm_adapter,qwen_multimodal_adapter,hunyuan_tokenhub_adapter}.py`(wildcard / prefix supports)、`src/framework/providers/_download_async.py`(206 + Content-Range)、`src/framework/providers/workers/mesh_worker.py`(`_rank_hunyuan_3d_urls` 五桶 / `_build_candidate` magic / `_is_data_uri` RFC2397 / `_atokenhub_poll` clamp / `_apost` no-retry)、`src/framework/workflows/loader.py`(expand_model_refs)、`src/framework/pricing_probe/{cli,yaml_writer}.py`(dry-run + manual-skip)、`config/models.yaml`(三家 OpenAI-compatible provider 实证)、`tests/unit/test_model_registry.py` / `test_router_pricing_stash.py` / `test_pricing_probe_framework.py` / `test_download_async.py` / `test_cn_image_adapters.py` / `test_codex_audit_fixes.py`(audit `# #4` poll clamp / `# #3` HTML body / `# #9` parallel hetero) / `test_mesh_no_silent_retry.py`(三层 fence) / `test_pr3_cleanup_fences.py`(case-insensitive 同款式)
+- [x] 4.3 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(以实测为准,本 task 是 doc-only,不影响测试)
 
 ## 5. review-engine(8 缺)
 
