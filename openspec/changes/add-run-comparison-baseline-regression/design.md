@@ -34,7 +34,7 @@ src/framework/comparison/       (规划,实现阶段创建)
 ├── models.py                   # Pydantic:RunComparisonInput / Report / ArtifactDiff / VerdictDiff / MetricDiff / StepDiff
 ├── loader.py                   # 读 <artifact_root>/<date>/<run_id>/ 下 run_summary.json + _artifacts.json + 各 artifact
 ├── diff_engine.py              # 逐 Step / 逐 Artifact / 逐 Verdict 对比,返回 structured diff
-├── reporter.py                 # Report → comparison_report.json + comparison_report.md
+├── reporter.py                 # Report → comparison_report.json + comparison_summary.md
 └── cli.py                      # python -m framework.comparison 入口
 ```
 
@@ -128,7 +128,7 @@ schema_version: str              # "1"
 关键实现点:
 
 - **不**走 `ArtifactRepository.put()` / `load_run_metadata()` 的写路径;只读 `_artifacts.json` 纯文件 + 重算 payload hash 做一致性校验(默认开启,可 `--no-hash-check` 关)。
-- 调用 `framework.artifact_store.hashing.hash_bytes` 重算 payload 字节哈希——**引用**现有 hashing module,不复制算法。
+- 调用 `framework.artifact_store.hashing.hash_payload` 重算 payload 字节哈希——**引用**现有 hashing module,不复制算法。
 - `_resolve_run_dir(artifact_root, run_id, date_bucket)`:
   1. 若 `date_bucket` 显式给出 → 直接 `<artifact_root>/<date_bucket>/<run_id>/`
   2. 否则遍历 `artifact_root` 下所有日期分桶,找匹配 `<run_id>/` 目录
@@ -173,7 +173,7 @@ compare(input: RunComparisonInput, baseline: RunSnapshot, candidate: RunSnapshot
 `src/framework/comparison/reporter.py` 把 `RunComparisonReport` 渲染为两份输出:
 
 - **JSON**:`comparison_report.json`,Pydantic `model_dump_json(indent=2)`,用于程序化消费。
-- **Markdown**:`comparison_report.md`,结构:
+- **Markdown**:`comparison_summary.md`,结构:
   ```
   # Run Comparison: baseline=<id_a> vs candidate=<id_b>
   ## Summary

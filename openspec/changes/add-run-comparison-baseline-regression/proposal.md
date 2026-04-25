@@ -58,7 +58,7 @@ ForgeUE 已经围绕 Run / Artifact / ReviewReport / Verdict / Provider / exampl
 
 ## Success criteria (future implementation phase, 非本轮范围)
 
-- CLI `python -m framework.comparison --baseline <id_a> --candidate <id_b>` 跑通离线 fixture,产出 `comparison_report.json` + `comparison_report.md`。
+- CLI `python -m framework.comparison --baseline-run <id_a> --candidate-run <id_b>` 跑通离线 fixture,产出 `comparison_report.json` + `comparison_summary.md`。
 - 至少一条 integration 测试用 fixture 两个 run 目录覆盖:`status_match` / `artifact_content_changed` / `verdict_mismatch` / `missing_in_candidate` 四类差异。
 - 不依赖 `.env` 或任何 provider key 即可全量跑完。
 - 新增测试数**不**硬编码进文档;以 `python -m pytest -q` 实测为准。

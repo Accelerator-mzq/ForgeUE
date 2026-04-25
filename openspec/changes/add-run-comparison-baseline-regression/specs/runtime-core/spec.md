@@ -13,20 +13,38 @@ The system SHALL provide a `framework.comparison` module that reads two complete
 #### Scenario: Comparing two completed Runs does not mutate their state
 
 - GIVEN two Run directories `<root>/<date>/<run_a>/` and `<root>/<date>/<run_b>/`, each with a valid `run_summary.json` + `_artifacts.json`
-- WHEN the user invokes `python -m framework.comparison --baseline <run_a> --candidate <run_b>`
-- THEN a `comparison_report.json` + `comparison_report.md` are written to `--output-dir` and neither source Run directory is modified (no new artifact files, no timestamp changes on existing artifact files)
+- WHEN the user invokes `python -m framework.comparison --baseline-run <run_a> --candidate-run <run_b>`
+- THEN a `comparison_report.json` + `comparison_summary.md` are written to `--output-dir` and neither source Run directory is modified (no new artifact files, no timestamp changes on existing artifact files)
 
 ### Requirement: Comparison refuses to run on incomplete Runs
 
 The system SHALL require both Run directories to contain a `run_summary.json` whose `status` field has been finalized (e.g. `succeeded` / `failed` / `cancelled`). If either is missing the status field, the loader SHALL raise `RunSnapshotCorrupt` and the CLI SHALL exit with code 2.
 
+#### Scenario: Run with missing status field is rejected
+
+- GIVEN the baseline `run_summary.json` is a valid JSON object that lacks the `status` field
+- WHEN the user invokes `python -m framework.comparison --baseline-run <run_a> --candidate-run <run_b>`
+- THEN the loader raises `RunSnapshotCorrupt`, the CLI prints `[ERR] RunSnapshotCorrupt: ...` to stderr, and exits with code 2
+
 ### Requirement: Comparison reuses the existing hashing module
 
 The system SHALL call `framework.artifact_store.hashing` to recompute payload byte hashes; the comparison module MUST NOT reimplement its own hashing.
 
+#### Scenario: Loader recomputes payload hash via hash_payload
+
+- GIVEN an Artifact whose `_artifacts.json` entry records `hash=H` and whose payload file is present on disk
+- WHEN `load_run_snapshot(..., include_payload_hash_check=True)` runs
+- THEN it calls `framework.artifact_store.hashing.hash_payload(path.read_bytes())` and compares the result to `H`; the comparison module ships no alternate hashing implementation, and on mismatch surfaces `ArtifactDiff.kind="content_changed"` with a tampered-payload note rather than re-deriving any hash
+
 ### Requirement: Cost comparison reads from `cp.metrics["cost_usd"]`
 
 The system SHALL compare per-step and per-run cost by reading the already-persisted `cp.metrics["cost_usd"]` field, which is guaranteed by the main runtime-core Requirement "Cost is persisted before Checkpoint"; the comparison module MUST NOT attempt to re-estimate cost via BudgetTracker.
+
+#### Scenario: Run-level cost diff reads cp.metrics verbatim
+
+- GIVEN baseline checkpoints carry `metrics["cost_usd"] = 0.10` (summed across the run) and candidate checkpoints carry `0.12`
+- WHEN `diff_engine.compare(...)` computes the run-level metric diff
+- THEN the resulting `MetricDiff(metric="cost_usd", scope="run")` has `baseline_value=0.10`, `candidate_value=0.12`, `delta=0.02`, `delta_pct=20.0`; no `BudgetTracker` re-estimation is invoked, and no provider call is issued
 
 ### Requirement: CLI exit codes carve out comparison-specific meanings
 
@@ -37,6 +55,12 @@ The system SHALL use the following exit code convention for `python -m framework
 - `3` — strict mode is enabled and at least one artifact payload is missing on disk
 
 Exit code `0` MUST NOT be redefined as "non-zero when any diff exists"; CI callers are responsible for consuming `summary_counts` from the JSON report to decide gating.
+
+#### Scenario: Diff-bearing comparison still exits 0
+
+- GIVEN baseline and candidate Run dirs differ in `artifact:content_changed` / `artifact:metadata_only` / run-level `cost_usd` MetricDiff
+- WHEN the user runs `python -m framework.comparison --baseline-run <a> --candidate-run <b> --output-dir <out>`
+- THEN the CLI writes `comparison_report.json` + `comparison_summary.md` under `<out>` and exits with code 0; the existence of diffs MUST NOT promote the exit code to non-zero. CI gating is the caller's responsibility via consuming `summary_counts` from the JSON report
 
 ## ADDED Invariants
 

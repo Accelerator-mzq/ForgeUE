@@ -26,6 +26,12 @@ The system SHALL allow the `framework.comparison` module to read an Artifact's o
 
 The system SHALL, when an Artifact's `Lineage` fields differ between baseline and candidate, output a `lineage_delta` block on the `ArtifactDiff`, covering at minimum `source_artifact_ids`, `source_step_ids`, `transformation_kind`, `selected_by_verdict_id`, and `variant_group_id` (the five Lineage fields enumerated by main-spec Requirement "Lineage is tracked end-to-end").
 
+#### Scenario: Differing transformation_kind surfaces in lineage_delta
+
+- GIVEN baseline `a_metadata_only.lineage.transformation_kind = "T1"` and candidate `"T2"`, with all non-lineage Artifact fields equal and identical payload bytes on both sides
+- WHEN `diff_engine.compare(...)` computes the artifact diff
+- THEN the resulting `ArtifactDiff` for `a_metadata_only` has `kind="metadata_only"` and `lineage_delta == {"transformation_kind": ("T1", "T2")}`; serializing the report to JSON renders the tuple as `["T1", "T2"]`
+
 ### Requirement: Missing payload is distinguished from missing metadata entry
 
 The system SHALL distinguish two absence modes:
@@ -35,9 +41,23 @@ The system SHALL distinguish two absence modes:
 
 Both modes are valid `ArtifactDiff.kind` values; callers MUST NOT collapse them into a single "missing" bucket.
 
+#### Scenario: Missing _artifacts.json entry is distinct from missing payload bytes
+
+- GIVEN `artifact_id="a1"` is recorded in baseline `_artifacts.json` but absent from candidate `_artifacts.json`
+- WHEN `diff_engine.compare(...)` runs
+- THEN the resulting `ArtifactDiff.kind == "missing_in_candidate"`
+- AND when both sides instead record `artifact_id="a1"` in `_artifacts.json` but neither has the payload file present on disk (loader run with `--non-strict`), the resulting `ArtifactDiff.kind == "payload_missing_on_disk"` — these two kinds are surfaced as separate `summary_counts` keys (`artifact:missing_in_candidate` vs `artifact:payload_missing_on_disk`) and never collapse into a single "missing" bucket
+
 ### Requirement: Comparison does not revalidate through ArtifactRepository write path
 
 The system SHALL read `_artifacts.json` and payload files as plain files; it MUST NOT call `ArtifactRepository.put()`, `load_run_metadata()`, or any other write-side routine. This guarantees comparison has zero risk of mutating either Run's state.
+
+#### Scenario: Loader avoids ArtifactRepository write APIs entirely
+
+- GIVEN the comparison module loads two completed Run directories
+- WHEN `load_run_snapshot(...)` reads `run_summary.json` / `_artifacts.json` / payload bytes
+- THEN it uses plain file reads + `framework.artifact_store.hashing.hash_payload`; it does NOT call `ArtifactRepository.put` / `load_run_metadata` or any payload-backend write routine
+- AND a recursive pre/post snapshot of both source Run directories (file path + size + mtime_ns) is byte-identical across the comparison call, proving the source trees were not mutated
 
 ## ADDED Invariants
 
