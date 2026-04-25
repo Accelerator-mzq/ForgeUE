@@ -147,10 +147,10 @@
 
 ## 9. Full validation
 
-- [ ] 9.1 `openspec validate cleanup-main-spec-scenarios --strict` —— 期望 PASS(0 ERROR)
-- [ ] 9.2 `openspec list` —— 期望本 change tasks 全部勾选,只剩 archive 阶段的 sync-specs row(若有)未勾
-- [ ] 9.3 `python -m pytest -q` —— 期望与 cleanup 启动前基线一致,零回归;数量以实测为准(不硬编码)
-- [ ] 9.4 跑 `git status --short` 确认改动只在 `openspec/changes/cleanup-main-spec-scenarios/` 范围内,**未**触动 `openspec/specs/` / `src/` / `tests/` / `docs/` / `README.md` / 其他禁止清单文件
+- [x] 9.1 `openspec validate cleanup-main-spec-scenarios --strict` —— PASS(0 ERROR);8 份 capability delta 全部合规
+- [x] 9.2 `openspec list` —— cleanup-main-spec-scenarios 显示 27/54 tasks(Task 1-8 capability delta 全部勾选;Task 9 自身 4 checkbox 与 Task 10-12 + Documentation Sync 段待按阶段推进时勾选);active change 状态健康,无 stale entry
+- [x] 9.3 `python -m pytest -q` —— 与 cleanup 启动前基线一致,零回归;数量以实测为准(不硬编码,见 §3.1 收紧后的 `Test totals are never hardcoded` 描述)
+- [x] 9.4 全量结构检查通过:`git status --short` 干净,`git diff --name-only` 空,改动仅落在 `openspec/changes/cleanup-main-spec-scenarios/` 范围内,**未**触动 `openspec/specs/` / `src/` / `tests/` / `docs/` / `README.md` / 其他禁止清单文件;8 份 delta spec(`artifact-contract` / `examples-and-acceptance` / `probe-and-validation` / `provider-routing` / `review-engine` / `runtime-core` / `ue-export-bridge` / `workflow-orchestrator`)全部存在;7 份 notes plan(对应 Task 2-8 的 plan-as-source-of-truth)全部保留;正式 delta spec 内 stale 文本扫描 0 blocker(动词 / 真实 enum 值 / 显式 drift-callout 反例标记 / ADR-004 行为约定引用 均合规);pre-Codex polish 已落地(commit 305dcd9 修掉 tasks.md 4 处裸数字 `848`,与 §3.1 收紧描述自洽)
 
 ## 10. Codex Review Gate
 
