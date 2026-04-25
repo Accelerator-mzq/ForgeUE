@@ -197,15 +197,19 @@ ASCII 输出原则同 `probes/README.md` §5:报告内文不用 emoji,避免 Win
 
 ```
 python -m framework.comparison \
-    --baseline <run_id_a> \
-    --candidate <run_id_b> \
+    --baseline-run <run_id_a> \
+    --candidate-run <run_id_b> \
     [--artifact-root ./artifacts] \
     [--baseline-date YYYY-MM-DD] \
     [--candidate-date YYYY-MM-DD] \
     [--output-dir <path>] \
-    [--strict | --no-strict] \
-    [--no-hash-check]
+    [--non-strict] \
+    [--no-hash-check] \
+    [--json-only | --markdown-only] \
+    [--quiet]
 ```
+
+注:`--non-strict` 为单向开关(默认 strict);`--json-only` / `--markdown-only` 互斥(argparse mutually-exclusive group);`--quiet` 抑制人类可读 summary,只输出产物路径。
 
 exit code:
 - 0 = 两端都跑通对比,无论差异多少
