@@ -1,39 +1,39 @@
 # Tasks: add-run-comparison-baseline-regression
 
-> 本轮(阶段 3)**只创建文档,不实现代码**。以下任务清单是未来实现阶段的路线图;每条任务应独立可执行与可验证,完成后打钩。
+> **当前阶段**(2026-04-25):本 change 实装侧 6 Task 已全部完成并 commit(`a1bf0c4` Models+Loader / `40a85da` Diff Engine / `421dab2` Reporter / `c632743` CLI / `d1c5f84` Fixtures+Integration);Codex Review Gate Task 4/5/6 各两轮 PASS;pytest -q 实测 848 通过,工作树进入 Documentation Sync Gate 修复阶段。下文 checkbox 反映**实装事实**,而非 doc-only 阶段路线图。
 
 ---
 
 ## 1. Pydantic models
 
-- [ ] 1.1 新建 `src/framework/comparison/__init__.py`(仅导出公共类型)与 `models.py`。
-- [ ] 1.2 实装 `RunComparisonInput` / `ArtifactDiff` / `VerdictDiff` / `MetricDiff` / `StepDiff` / `RunComparisonReport`,字段与 `design.md` §2 一致。
-- [ ] 1.3 `RunComparisonReport.schema_version = "1"` 作为 JSON 输出版本锁。
-- [ ] 1.4 单元测试:模型构造 / 字段默认值 / Pydantic 序列化往返(`tests/unit/test_run_comparison_models.py`,实现阶段新建)。
+- [x] 1.1 新建 `src/framework/comparison/__init__.py`(仅导出公共类型)与 `models.py`。
+- [x] 1.2 实装 `RunComparisonInput` / `ArtifactDiff` / `VerdictDiff` / `MetricDiff` / `StepDiff` / `RunComparisonReport`,字段与 `design.md` §2 一致。
+- [x] 1.3 `RunComparisonReport.schema_version = "1"` 作为 JSON 输出版本锁。
+- [x] 1.4 单元测试:模型构造 / 字段默认值 / Pydantic 序列化往返(`tests/unit/test_run_comparison_models.py`,实现阶段新建)。
 
-**验证**:`python -m pytest tests/unit/test_run_comparison_models.py -v`(新文件,当前不存在)。
+**验证**:`python -m pytest tests/unit/test_run_comparison_models.py -v` — 已建,52 用例通过(实测 collect-only)。
 
 ## 2. Loader
 
-- [ ] 2.1 实装 `src/framework/comparison/loader.py::_resolve_run_dir`,覆盖三分支(显式 date / 自动遍历 / 多匹配 ambiguous)。
-- [ ] 2.2 实装 `load_run_snapshot(run_dir, *, include_payload_hash_check)`,读 `run_summary.json` + `_artifacts.json` + 按需重算 payload 字节 hash。
-- [ ] 2.3 定义专属异常:`RunDirNotFound` / `RunDirAmbiguous` / `RunSnapshotCorrupt`;不复用 runtime 侧的 FailureMode(comparison 是纯工具,不进 Run 生命周期)。
-- [ ] 2.4 单元测试:`tests/unit/test_run_comparison_loader.py`。覆盖:
+- [x] 2.1 实装 `src/framework/comparison/loader.py::resolve_run_dir(artifact_root, run_id, date_bucket=None)` 公开函数(原 task 文本误写私有 `_resolve_run_dir`,实际公开),覆盖三分支(显式 date / 自动遍历 / 多匹配 ambiguous)。
+- [x] 2.2 实装 `load_run_snapshot(run_dir, *, include_payload_hash_check: bool = True, strict: bool = True)`,读 `run_summary.json` + `_artifacts.json` + 按需重算 payload 字节 hash;`strict` 参数原 task 文本漏写,实装含此 keyword-only 参数(strict=True 时 payload 缺失 raise `PayloadMissingOnDisk`,strict=False 时记录到 `RunSnapshot.payload_missing_on_disk` 集合)。
+- [x] 2.3 定义专属异常:`RunDirNotFound` / `RunDirAmbiguous` / `RunSnapshotCorrupt`;不复用 runtime 侧的 FailureMode(comparison 是纯工具,不进 Run 生命周期)。实装时额外加了 `PayloadMissingOnDisk`(strict 模式 payload 缺失专用),与 design.md §3 一致。
+- [x] 2.4 单元测试:`tests/unit/test_run_comparison_loader.py`。覆盖:
   - 显式 date_bucket 命中
   - 不指定 date_bucket + 遍历命中
   - 多日期同 run_id → `RunDirAmbiguous`
   - 空目录 / 缺 `run_summary.json` / 缺 `_artifacts.json`
   - strict=True 时 payload 缺失 raise;strict=False 时返回 `payload_missing_on_disk`
 
-**验证**:`python -m pytest tests/unit/test_run_comparison_loader.py -v`(新文件)。
+**验证**:`python -m pytest tests/unit/test_run_comparison_loader.py -v` — 已建,50 用例通过(实测 collect-only)。
 
 ## 3. Diff engine
 
-- [ ] 3.1 实装 `src/framework/comparison/diff_engine.py::compare(input, baseline, candidate) -> RunComparisonReport`。
-- [ ] 3.2 Step 级并集迭代;artifact_id 字典序;lineage 字段独立 delta 块。
-- [ ] 3.3 Verdict 级对比只读 `decision` / `confidence` / `selected_candidate_ids` / `rejected_candidate_ids`,**不**重新调 judge。
-- [ ] 3.4 `summary_counts` 字段统计各 diff kind。
-- [ ] 3.5 单元测试:`tests/unit/test_run_comparison_diff_engine.py`。覆盖:
+- [x] 3.1 实装 `src/framework/comparison/diff_engine.py::compare(input, baseline, candidate) -> RunComparisonReport`。
+- [x] 3.2 Step 级并集迭代;artifact_id 字典序;lineage 字段独立 delta 块。
+- [x] 3.3 Verdict 级对比只读 `decision` / `confidence` / `selected_candidate_ids` / `rejected_candidate_ids`,**不**重新调 judge。
+- [x] 3.4 `summary_counts` 字段统计各 diff kind。**注**:实装为 sparse dict,kind 为 0 的键缺省;reporter 用 `_count(report, key)` 走 `.get(key, 0)`。
+- [x] 3.5 单元测试:`tests/unit/test_run_comparison_diff_engine.py`。覆盖:
   - 完全一致 → 全部 `unchanged`,`status_match=True`
   - hash 同 metadata 异 → `metadata_only`
   - hash 异 → `content_changed`
@@ -41,45 +41,44 @@
   - Verdict decision 变 → `decision_changed`
   - Verdict selected 集合 delta 正确输出 added / removed
 
-**验证**:`python -m pytest tests/unit/test_run_comparison_diff_engine.py -v`(新文件)。
+**验证**:`python -m pytest tests/unit/test_run_comparison_diff_engine.py -v` — 已建,69 用例通过(实测 collect-only)。
 
 ## 4. Reporter
 
-- [ ] 4.1 实装 `src/framework/comparison/reporter.py::write_reports(report, output_dir)`,产出 `comparison_report.json` + `comparison_report.md`。
-- [ ] 4.2 Markdown 结构见 `design.md` §5。ASCII-only,不用 emoji(Windows GBK stdout 兼容)。
-- [ ] 4.3 JSON 采用 `model_dump_json(indent=2)`。
-- [ ] 4.4 单元测试:`tests/unit/test_run_comparison_reporter.py`。覆盖:
+- [x] 4.1 实装 `src/framework/comparison/reporter.py::write_reports(report, output_dir)`,产出 `comparison_report.json` + `comparison_summary.md`。
+- [x] 4.2 Markdown 结构见 `design.md` §5。ASCII-only,不用 emoji(Windows GBK stdout 兼容)。实装含 `_ascii_safe` / `_line_safe` / `_escape_cell` / `_console_safe`(后者在 cli.py)四层 ASCII / CRLF 守门。
+- [x] 4.3 JSON 采用 `model_dump_json(indent=2)`,末尾追加单个 `"\n"`。
+- [x] 4.4 单元测试:`tests/unit/test_run_comparison_reporter.py`。覆盖:
   - 空 diff(两端完全一致)的 Markdown 渲染
   - 含所有 diff kind 的 Markdown 渲染
   - JSON schema_version 存在且为 "1"
 
-**验证**:`python -m pytest tests/unit/test_run_comparison_reporter.py -v`(新文件)。
+**验证**:`python -m pytest tests/unit/test_run_comparison_reporter.py -v` — 已建,65 用例通过。
 
 ## 5. CLI
 
-- [ ] 5.1 实装 `src/framework/comparison/cli.py::main(argv=None)` 与 `__main__.py`。
-- [ ] 5.2 Argparse flags 按 `design.md` §6 列表;`--artifact-root` 默认 `./artifacts`。
-- [ ] 5.3 Exit code:0 正常 / 2 定位 schema / 3 strict payload 缺。
-- [ ] 5.4 单元测试:`tests/unit/test_run_comparison_cli.py`。覆盖:
+- [x] 5.1 实装 `src/framework/comparison/cli.py::main(argv=None)` 与 `__main__.py`。
+- [x] 5.2 Argparse flags 按 `design.md` §6 列表;`--artifact-root` 默认 `./artifacts`。实装含 11 flag(增加 `--json-only` / `--markdown-only` / `--quiet`,前两者 argparse 互斥组)。
+- [x] 5.3 Exit code:0 正常 / 2 定位 schema / 3 strict payload 缺。实装含兜底 1(其他未识别异常)。
+- [x] 5.4 单元测试:`tests/unit/test_run_comparison_cli.py`。覆盖:
   - 正常两端 → exit 0 + 产物落盘
-  - `--baseline` 不存在 → exit 2 + stderr 含 `RunDirNotFound`
+  - `--baseline-run` 指向的 run 不存在 → exit 2 + stderr 含 `RunDirNotFound`
   - 多日期匹配 → exit 2 + stderr 含 `RunDirAmbiguous`,提示 `--baseline-date`
-- [ ] 5.5 Integration 测试:`tests/integration/test_run_comparison_cli.py`。用 pytest fixture 构造两个假 run 目录,跑 CLI,验证 JSON + MD 文件结构。
+- [x] 5.5 Integration 测试:`tests/integration/test_run_comparison_cli.py`。用 pytest fixture 构造两个假 run 目录,跑 CLI,验证 JSON + MD 文件结构。
 
 **验证**:
-- `python -m pytest tests/unit/test_run_comparison_cli.py tests/integration/test_run_comparison_cli.py -v`
-- 手工:`python -m framework.comparison --baseline <id_a> --candidate <id_b> --artifact-root ./demo_artifacts/runs/compare_demo`
+- `python -m pytest tests/unit/test_run_comparison_cli.py tests/integration/test_run_comparison_cli.py -v` — 59 unit + 4 integration 通过
+- 手工:`python -m framework.comparison --baseline-run <id_a> --candidate-run <id_b> --artifact-root ./demo_artifacts/runs/compare_demo`
 
 ## 6. Fixtures
 
-- [ ] 6.1 决策:fixture 两个假 run 目录的方案(两选一)——
-  - A:pytest fixture 手写静态 `run_summary.json` + `_artifacts.json` + 占位 payload(快,但人造)
-  - B:fixture 跑两次 `examples/mock_linear.json` 经 `FakeAdapter` 产生两份真实 artifact 目录(慢但真实)
-  - 默认推荐 A(单测快);B 作为 integration 单条覆盖即可。
-- [ ] 6.2 Fixture 路径放 `tests/fixtures/comparison/`(目前不存在目录,实现阶段创建),不污染现有 `tests/fixtures/review_images/`。
-- [ ] 6.3 **禁止**在 fixture 里硬编码当前日期;fixture 自己 freezegun 或用相对日期子目录。
+- [x] 6.1 决策:实装阶段同时使用 A + B(combo),不互斥 ——
+  - A(主路径):`tests/fixtures/comparison/builders.py::build_fixture_pair(root)` 通过真实 Pydantic 类构造确定性 fixture(deterministic on-disk JSON + payload bytes,合成日期 `2000-01-01`),驱动 3 个 integration test(happy / 不污染 demo_artifacts / lineage diff)。
+  - B(spec validation gate):`test_offline_real_run_pair_via_framework_run` subprocess 跑 `python -m framework.run --task examples/mock_linear.json` 两次(无 `--live-llm` / `--comfy-url`,自动 FakeAdapter + FakeComfyWorker),再跑 `python -m framework.comparison`,守门 `examples-and-acceptance/spec.md:54` Validation 项。
+- [x] 6.2 Fixture 路径放 `tests/fixtures/comparison/`(实装阶段创建),不污染现有 `tests/fixtures/review_images/`。
+- [x] 6.3 **禁止**在 fixture 里硬编码当前日期;builder 用合成 `2000-01-01` date bucket + 固定 timestamp,实测 byte-deterministic。
 
-**验证**:fixture 文件在 `git status` 中可见;不污染 `./artifacts` / `./demo_artifacts`。
+**验证**:fixture 文件在 `git status` 中可见(见 commit `d1c5f84`);**未**污染 `./artifacts` / `./demo_artifacts`(integration test 显式 `--output-dir tmp_path/...` + pre/post 递归快照守门)。
 
 ## 7. Docs(OpenSpec 主 spec 同步)
 
@@ -87,23 +86,23 @@
   - `openspec/specs/runtime-core/spec.md` — 新增 "Run comparison is a read-only consumer" invariant(明确 comparison 不进 Run 生命周期)。
   - `openspec/specs/artifact-contract/spec.md` — 新增 "Artifact byte-hash recomputation" 约定(comparison 可重算并校验)。
   - `openspec/specs/examples-and-acceptance/spec.md` — 新增 "Fixture-generated run directories" 路径约定。
-- [ ] 7.2 **禁止**在本 change 实现阶段直接改 `openspec/specs/` 主 spec——按 OpenSpec 流程,主 spec 的同步在 `/opsx:archive` 时由 sync-specs 步骤执行。
+- [x] 7.2 **禁止**在本 change 实现阶段直接改 `openspec/specs/` 主 spec——按 OpenSpec 流程,主 spec 的同步在 `/opsx:archive` 时由 sync-specs 步骤执行。本轮 Documentation Sync Gate 也遵守这条规则,未触动 `openspec/specs/`。
 
 **验证**:`/opsx:archive add-run-comparison-baseline-regression` 触发 delta → main sync 预览;确认增量清单与 §7.1 一致后再落。
 
 ## 8. Docs(长期知识库)
 
-- [ ] 8.1 评估是否更新 `docs/design/LLD.md`:若 comparison 产出成为稳定 API,需在 LLD 新增 §"Run Comparison" 章节(接口签名级)。
-- [ ] 8.2 评估是否更新 `docs/testing/test_spec.md`:新增 comparison 相关 unit + integration 测试文件索引。
-- [ ] 8.3 评估是否更新 `docs/acceptance/acceptance_report.md`:如果 comparison 关掉了既有 TBD 项,需更新验收矩阵;否则跳过并在 Documentation Sync 段记录原因。
-- [ ] 8.4 **不要**把 `design.md` 长文复制进 `docs/`;只追加接口 / 字段摘要。
+- [x] 8.1 已更新 `docs/design/LLD.md` —— 新增 §15 "Run Comparison(`src/framework/comparison/`)" 章节(接口签名级),老 §15-§17 顺延为 §16-§18;§18.3 变更记录加 v1.2 行。
+- [x] 8.2 已更新 `docs/testing/test_spec.md` —— §3 单元测试矩阵新增 §3.11 Run Comparison;§4 集成测试场景新增 comparison 行;§10.2 变更记录加新行。
+- [x] 8.3 已更新 `docs/acceptance/acceptance_report.md` —— §6 加 §6.8 Run Comparison / Baseline Regression 验收记录;§7 表里 ~~README §7 第 7 项 Run Comparison~~ 占位关闭;§8.1 自动化验收行更新到 848 通过;§9.2 变更记录加 v1.4 行。
+- [x] 8.4 **未**把 `design.md` 长文复制进 `docs/`;LLD 新章节只追加接口 / 字段摘要 + 分层边界,详细算法仍引用 `design.md` 与源码。
 
 ## 9. Acceptance
 
-- [ ] 9.1 Level 0(离线):`python -m pytest -q` 全绿(数量以实测为准,不硬编码)。
-- [ ] 9.2 Level 0 CLI:`python -m framework.comparison --baseline <id_a> --candidate <id_b> --artifact-root <fixture_root>` 产出合法 JSON + Markdown。
-- [ ] 9.3 Level 1 / 2:**本 change 不新增任何 Level 1 / 2 验证项**(comparison 不需要 key / UE / ComfyUI)。
-- [ ] 9.4 Windows + macOS + Linux 路径兼容通过(CI 若未建立,至少本机 Windows 过)。
+- [x] 9.1 Level 0(离线):`python -m pytest -q` 全绿 —— **848 passed** (2026-04-25 实测,基线 549 + Run Comparison 模块 299 新用例 = 52 + 50 + 69 + 65 + 59 + 4)。
+- [x] 9.2 Level 0 CLI:`python -m framework.comparison --baseline-run <id_a> --candidate-run <id_b> --artifact-root <fixture_root>` 产出合法 JSON + Markdown(`tests/integration/test_run_comparison_cli.py::test_python_m_framework_comparison_happy_path` 守门)。
+- [x] 9.3 Level 1 / 2:**本 change 不新增任何 Level 1 / 2 验证项**(comparison 不需要 key / UE / ComfyUI)。
+- [x] 9.4 Windows + macOS + Linux 路径兼容:本机 Windows 实测通过;`_safe_path_segment` / `_console_safe` / `_snapshot_tree` 全部用 POSIX-relative 字符串规范化,跨平台行为一致。**注**:macOS / Linux CI 未建立(对应 acceptance_report TBD-T-001),留 CI 接入或异机验证时收尾。
 
 ---
 
@@ -111,18 +110,35 @@
 
 > 本段为 `docs/ai_workflow/README.md` §4.4 要求的 Documentation Sync Gate 检查清单。archive 本 change 之前必须勾选每一项。
 
-- [ ] Check whether openspec/specs/* needs update after archive
-- [ ] Check whether docs/requirements/SRS.md needs update
-- [ ] Check whether docs/design/HLD.md needs update
-- [ ] Check whether docs/design/LLD.md needs update
-- [ ] Check whether docs/testing/test_spec.md needs update
-- [ ] Check whether docs/acceptance/acceptance_report.md needs update
-- [ ] Check whether README.md needs update
-- [ ] Check whether CHANGELOG.md needs update
-- [ ] Check whether CLAUDE.md needs update
-- [ ] Check whether AGENTS.md needs update
-- [ ] Record skipped docs with reason
-- [ ] Mark doc drift for human confirmation if sources conflict
+- [ ] Check whether openspec/specs/* needs update after archive — **跳过本轮**:tasks.md §7.2 显式禁止实现 / Documentation Sync 阶段改 `openspec/specs/`;主 spec 同步留 `/opsx:archive` 的 sync-specs 步骤执行。
+- [x] Check whether docs/requirements/SRS.md needs update — **跳过**:Run Comparison 是开发 / 诊断工具,不引入新 FR / NFR,不改变用户可见功能需求。docs/ai_workflow/README.md §4.2 "不机械同步"。
+- [x] Check whether docs/design/HLD.md needs update — **跳过**:LLD §15 已记录模块级设计 + 分层边界,HLD 架构边界(子系统拓扑)未实质变更;Run Comparison 作为 sibling read-only consumer 与既有架构图相容。本轮不扩 HLD,留下次架构整理批量更新。
+- [x] Check whether docs/design/LLD.md needs update — **已更新**:见 tasks.md §8.1。新增 §15 + 重编号老 §15-§17 + §18.3 变更记录。
+- [x] Check whether docs/testing/test_spec.md needs update — **已更新**:见 tasks.md §8.2。新增 §3.11 + §4 集成行 + §10.2 变更记录。
+- [x] Check whether docs/acceptance/acceptance_report.md needs update — **已更新**:见 tasks.md §8.3。新增 §6.8 + 关闭 §7 表 Run Comparison 占位 + §8.1 测试总数 549 → 848 + §9.2 变更记录。
+- [x] Check whether README.md needs update — **已更新**:§"后续扩展" 第 7 项 Run Comparison 从"`observability/run_comparison.py` 待补"改为"已实装",指向 `python -m framework.comparison`,记录默认产物 `comparison_report.json` / `comparison_summary.md`。
+- [x] Check whether CHANGELOG.md needs update — **已更新**:`[Unreleased].Added` 新增 Run Comparison 模块条目(models / loader / diff_engine / reporter / cli / __main__ + CLI 入口 + 离线 fixture + integration coverage)+ deferred follow-up `lazy-artifact-store-package-exports`。
+- [x] Check whether CLAUDE.md needs update — **跳过**:无新 AI 协作约定;本 change 是 OpenSpec 工作流的具体应用,不修改工作流本身;CLI `python -m framework.comparison` 是用户可见命令(已记入 README),不属于 AI 协作核心高频命令。
+- [x] Check whether AGENTS.md needs update — **跳过**:与 CLAUDE.md 同步规则(`AGENTS.md:3` 显式声明镜像);CLAUDE.md 既然不动,AGENTS.md 也保持原状。
+- [x] Record skipped docs with reason — **已记录**:本段每个 "跳过本轮" / "跳过" 行均含原因。`openspec/specs/*` 跳过原因独立(留 archive 阶段),其他 4 份(SRS / HLD / CLAUDE / AGENTS)按 docs/ai_workflow/README.md §4.2 "不机械同步" 原则评估后跳过。
+- [x] Mark doc drift for human confirmation if sources conflict — Documentation Sync Gate 阶段(2026-04-25)发现的 drift 分两类:
+
+  **类别 A — 本轮已修(在白名单内)**:
+  1. `tasks.md §4.1` 原写 `comparison_report.md` → 已对齐为 `comparison_summary.md`(实装常量 `reporter.MARKDOWN_FILENAME`)。
+  2. `tasks.md §1.4 / §2.4 / §3.5` 验证段 per-file 用例数 32 / 96 / 43 → 已对齐为实测 52 / 50 / 69(`pytest --collect-only`)。
+  3. `tasks.md §2.1` `_resolve_run_dir`(私有名)→ 已对齐为 `resolve_run_dir`(实装公开名,loader.py:110)。
+  4. `tasks.md §2.2` `load_run_snapshot` 签名漏 `strict` → 已补 `strict: bool = True` keyword-only。
+  5. `tasks.md` 顶部 doc-only 阶段措辞 → 已更新为当前阶段(实装已完成,Documentation Sync Gate 修复中)。
+  6. `docs/testing/test_spec.md §3.11` per-file 用例数 32 / 96 / 43 → 已对齐 52 / 50 / 69;§24 / §66 / §386 / §387 / §458 / §462 历史基线数字 549 / ≤15s / ≤18s 等 → 已加 "历史基线 (2026-04-23)" 标注或更新到当前实测 848 / ~28s。
+  7. `docs/acceptance/acceptance_report.md §49 / §704 / §719` 残留 549 → 已加历史基线标注 / 同步当前 848;§6.8 / §8.1 per-file 用例数 → 已对齐 52 / 50 / 69。
+  8. `README.md §10 / §286 / §310` 长期残留 "143 条测试" → 已改为不硬编码,引用 `pytest -q` 实测。
+
+  **类别 B — 本轮 Documentation Sync Gate 不在白名单,留 archive / sync-specs 阶段处理**:
+  9. `openspec/changes/add-run-comparison-baseline-regression/proposal.md:61` 仍写 `--baseline <id_a> --candidate <id_b>` + `comparison_report.md` —— 实装是 `--baseline-run` / `--candidate-run` + `comparison_summary.md`。
+  10. `openspec/changes/add-run-comparison-baseline-regression/design.md:37 / :131 / :176` 仍写 `comparison_report.md`(§5 Markdown 段 + 目录树)+ `hash_bytes`(实装是 `framework.artifact_store.hashing.hash_payload`)。
+  11. `openspec/changes/add-run-comparison-baseline-regression/specs/runtime-core/spec.md:17` THEN 子句仍写 `comparison_report.md`,与 reporter `MARKDOWN_FILENAME` 不一致。
+
+  类别 B 共 3 文件 / 5 处。**当前代码事实**:CLI 用 `--baseline-run` / `--candidate-run`;Markdown 产物名是 `comparison_summary.md`;hash 复用走 `hash_payload`。这些 drift 留 `/opsx:archive` 触发 sync-specs 阶段一并处理,本轮 Documentation Sync Gate 严格守"不动 proposal / design / openspec/specs/"白名单边界。
 
 ---
 

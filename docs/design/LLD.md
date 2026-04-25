@@ -1109,10 +1109,11 @@ def by_lineage(self, source_artifact_id: str) -> list[Artifact]
 ### 8.3 Hashing(`hashing.py`)
 
 ```
-def hash_bytes(data: bytes) -> str    # sha256
-def hash_file(path: Path) -> str
-def hash_dict(obj: dict) -> str       # canonical JSON
+def hash_payload(value: Any) -> str   # SHA-256 over canonicalized bytes
+def hash_inputs(*parts: Any) -> str   # SHA-256 over the concatenation of canonicalized parts
 ```
+
+`_canonicalize(value)` 是私有 helper,负责把任意 Python 值序列化为字节:`bytes`/`bytearray` 直接通过;`str` 编码为 UTF-8;其余类型走 `json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)` 后 UTF-8 编码(`default=str` 给非 JSON-native 对象兜底,例如 `Path` / `datetime`)。`framework.comparison.loader` 用 `hash_payload(path.read_bytes())` 重算 payload byte hash 与 `_artifacts.json.hash` 比对。
 
 ### 8.4 Lineage(`lineage.py`)
 
@@ -1432,9 +1433,109 @@ def topological_ops(plan: UEImportPlan) -> list[UEImportOperation]
 
 ---
 
-## 15. 关键算法详述
+## 15. Run Comparison(`src/framework/comparison/`)
 
-### 15.1 DAG cascade cancel(orchestrator.arun)
+> 新增于 2026-04-25(OpenSpec change `add-run-comparison-baseline-regression`)。**只读消费**已落盘的两个 Run 目录,逐项对比并产出结构化报告。**不**进入 Run 生命周期,**不**调用 `runtime` / `providers` / `review_engine` / `ue_bridge` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`。
+
+### 15.1 公共类型(Pydantic v2)
+
+| 类型 | 文件 | 关键字段 |
+| --- | --- | --- |
+| `RunComparisonInput` | `models.py` | `baseline_run_id` / `candidate_run_id` / `artifact_root: Path` / `baseline_date_bucket?` / `candidate_date_bucket?` / `strict=True` / `include_payload_hash_check=True`(frozen) |
+| `ArtifactDiff` | `models.py` | `artifact_id` / `kind: Literal["unchanged","content_changed","metadata_only","missing_in_baseline","missing_in_candidate","payload_missing_on_disk"]` / `baseline_hash?` / `candidate_hash?` / `metadata_delta` / `lineage_delta?` / `note?` |
+| `VerdictDiff` | `models.py` | `step_id` / `kind: Literal["unchanged","decision_changed","confidence_changed","selected_candidates_changed","missing_in_baseline","missing_in_candidate"]` / 双侧 decision / confidence / `selected_delta?` |
+| `MetricDiff` | `models.py` | `metric` / `scope: Literal["run","step"]` / `step_id?` / 双侧 value / `delta?` / `delta_pct?` |
+| `StepDiff` | `models.py` | `step_id` / 双侧 status / 双侧 chosen_model / `artifact_diffs` / `verdict_diffs` / `metric_diffs` |
+| `RunComparisonReport` | `models.py` | `input` / `status_match` / `generated_at` / 双侧 run meta / `step_diffs` / `run_level_metric_diffs` / `summary_counts: dict[str, int]`(sparse)/ `schema_version: Literal["1"]` |
+
+`summary_counts` 是 **sparse dict** —— 没出现的 kind 不写入键。所有读取必须走 `.get(key, 0)`;reporter 内统一通过 `_count(report, key)` helper 收口。
+
+### 15.2 接口签名(分层,严格只读消费)
+
+```python
+# loader.py — 读 Run 目录,返回 dataclass RunSnapshot
+def resolve_run_dir(
+    artifact_root: Path, run_id: str, date_bucket: str | None = None,
+) -> Path: ...
+
+def load_run_snapshot(
+    run_dir: Path, *,
+    include_payload_hash_check: bool = True,
+    strict: bool = True,
+) -> RunSnapshot: ...
+
+# 异常族(均继承 ComparisonLoaderError,不进 FailureModeMap)
+class RunDirNotFound(ComparisonLoaderError): ...
+class RunDirAmbiguous(ComparisonLoaderError): ...
+class RunSnapshotCorrupt(ComparisonLoaderError): ...
+class PayloadMissingOnDisk(ComparisonLoaderError): ...
+
+# diff_engine.py — 纯函数,无 I/O,无网络,无对 snapshot 的 mutation
+def compare(
+    input: RunComparisonInput,
+    baseline: RunSnapshot,
+    candidate: RunSnapshot,
+    *, generated_at: datetime | None = None,
+) -> RunComparisonReport: ...
+
+# reporter.py — 纯渲染 + 唯一 I/O 边界 write_reports
+JSON_FILENAME = "comparison_report.json"
+MARKDOWN_FILENAME = "comparison_summary.md"
+
+def render_json(report: RunComparisonReport) -> str: ...      # POSIX 末尾换行
+def render_markdown(report: RunComparisonReport) -> str: ...  # ASCII-only
+def write_reports(
+    report: RunComparisonReport, output_dir: Path,
+) -> tuple[Path, Path]: ...                                   # 唯一 I/O
+
+# cli.py — 仅做编排,不再写业务逻辑
+def main(
+    argv: Sequence[str] | None = None,
+    *, now: Callable[[], datetime] | None = None,
+) -> int: ...
+
+# __main__.py — `python -m framework.comparison` 入口
+raise SystemExit(main())
+```
+
+CLI 默认 `output_dir = ./demo_artifacts/<YYYY-MM-DD>/comparison/<safe-baseline>__vs__<safe-candidate>/<HHMMSS>/`;`<safe-*>` 经 `_safe_path_segment` 把 `/ \ : \r \n` 替换为 `_`,**不**改变 `RunComparisonInput.baseline_run_id` / `candidate_run_id` 原值(报告体里仍是用户输入字符串)。
+
+### 15.3 分层边界
+
+| 层 | 职责 | 禁忌 |
+| --- | --- | --- |
+| `loader` | 读 `run_summary.json` + `_artifacts.json` + 按需 recompute payload byte hash;构造 `RunSnapshot` | 不调 `ArtifactRepository.put` / `load_run_metadata`,不写文件 |
+| `diff_engine` | 纯函数 `compare()`,artifact / verdict / metric / step / run 五层 diff;artifact_id 字典序;sparse summary_counts | 无 I/O,无网络,无对 snapshot mutation,**不**重新调 judge / hash |
+| `reporter` | `render_json` / `render_markdown` 纯渲染;`write_reports` 唯一 I/O 边界(UTF-8 + LF) | 不重 diff,不重 hash;Markdown ASCII-only(`_ascii_safe` / `_line_safe` / `_escape_cell`)守门 Windows GBK |
+| `cli` | argparse → loader → compare → reporter 编排;exit code 映射;stdout / stderr 走 `_console_safe`(ASCII + 可见 `\\r` / `\\n`) | **直接** import / call `framework.runtime` / `providers` / `review_engine` / `ue_bridge` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`;不直接调 `ArtifactRepository.put` / payload backend 写路径 |
+
+### 15.4 Exit code 契约(对应 runtime-core delta spec)
+
+| code | 触发 |
+| --- | --- |
+| `0` | comparison 完成,无论差异多少 |
+| `2` | `RunDirNotFound` / `RunDirAmbiguous` / `RunSnapshotCorrupt`(包括 `run_summary.json` 缺 `status`)/ argparse error |
+| `3` | strict 模式 + 至少一个 artifact payload 在 disk 缺失(`PayloadMissingOnDisk`) |
+| `1` | 其他未识别异常(兜底) |
+
+`0` **不**因为"有 diff"就变非零 —— CI 卡 PR 的逻辑应消费 `comparison_report.json` 的 `summary_counts` 自行决定。
+
+### 15.5 Import-fence 与 transitive carve-out
+
+CLI / loader 的 import-fence 一致禁止 9 个执行链路前缀(runtime / providers / review_engine / ue_bridge / workflows / observability / server / schemas / pricing_probe)。**允许**的 transitive:`framework.artifact_store.{repository, payload_backends}` —— 这是 `framework.artifact_store.hashing` 触发包级 `__init__.py` eager-import 的副产品,**不**代表 CLI / loader 可调写路径。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"` 与未来 change `lazy-artifact-store-package-exports`。
+
+### 15.6 真源
+
+- 算法 / 字段:`src/framework/comparison/{models,loader,diff_engine,reporter,cli,__main__}.py`
+- 测试:`tests/unit/test_run_comparison_{models,loader,diff_engine,reporter,cli}.py` + `tests/integration/test_run_comparison_cli.py`
+- Fixture:`tests/fixtures/comparison/builders.py`(deterministic 构造,合成日期 `2000-01-01`,真 `hash_payload` 算 hash)
+- 设计文档:`openspec/changes/add-run-comparison-baseline-regression/{proposal,design,tasks}.md` + 三份 delta spec
+
+---
+
+## 16. 关键算法详述
+
+### 16.1 DAG cascade cancel(orchestrator.arun)
 
 ```
 tasks = { step_id: asyncio.create_task(execute_step(s)) for s in ready }
@@ -1450,11 +1551,11 @@ for exc_task in done:
 
 **retry_same_step 修复**:done.discard(current) 允许同 step 重入(§5.1)。
 
-### 15.2 Range 续传强校验(_download_async.chunked_download_async)
+### 16.2 Range 续传强校验(_download_async.chunked_download_async)
 
 见 §6.6。**失守场景**(修复前):CDN/代理忽略 Range 回 200 全量,buf 非空时被直接 `buf.extend(chunk)` → 坏图 / 坏 GLB 静默落盘,`ValidationRecord` 只检查 bytes_nonempty 失守。
 
-### 15.3 URL ranking + fallthrough(mesh_worker._one)
+### 16.3 URL ranking + fallthrough(mesh_worker._one)
 
 ```
 urls = _rank_hunyuan_3d_urls(raw)  # 桶序 (strong, ok, key, other, zip)
@@ -1479,7 +1580,7 @@ if last_download_err:
 raise last_unsupported             # abort_or_fallback
 ```
 
-### 15.4 mesh format 检测 + magic gate(_build_candidate)
+### 16.4 mesh format 检测 + magic gate(_build_candidate)
 
 ```
 fmt = _detect_mesh_format(data)
@@ -1495,11 +1596,11 @@ elif fmt == "fbx" or ...
 
 **双保险**:parse-fail 的 glTF,`_is_self_contained_gltf` 返回 False,`_gltf_has_external_geometry` 返回 True,即使进 geometry_only 分支也会 raise。
 
-### 15.5 EventBus 跨线程 hop(event_bus.publish_nowait)
+### 16.5 EventBus 跨线程 hop(event_bus.publish_nowait)
 
 见 §10.1。
 
-### 15.6 Failure classify(failure_mode_map.classify)
+### 16.6 Failure classify(failure_mode_map.classify)
 
 **分类顺序**(关键):
 
@@ -1513,7 +1614,7 @@ elif fmt == "fbx" or ...
 7. 其他 → raise 原样(不分类异常)
 ```
 
-### 15.7 Hunyuan n>1 真并发
+### 16.7 Hunyuan n>1 真并发
 
 ```
 async def aimage_generation(self, call, n=1):
@@ -1526,7 +1627,7 @@ async def aimage_generation(self, call, n=1):
 
 tokenhub 单次只接一条 prompt,硬伪造 `raw["n_requested"]` 会让 `GenerateImageExecutor` 默认 `num_candidates=3` 的路径静默降级为 1 候选。
 
-### 15.8 Review cost 透传 3-tuple
+### 16.8 Review cost 透传 3-tuple
 
 ```
 # ProviderAdapter
@@ -1547,7 +1648,7 @@ step.metrics["cost_usd"] = cost
 
 ---
 
-## 16. 异常类族总览
+## 17. 异常类族总览
 
 ```
 Exception
@@ -1571,9 +1672,9 @@ Exception
 
 ---
 
-## 17. 附录
+## 18. 附录
 
-### 17.1 字段级真源
+### 18.1 字段级真源
 
 本文档所有字段定义的真源是:
 
@@ -1581,7 +1682,7 @@ Exception
 - `src/framework/schemas/*.py`(业务 schema)
 - `src/framework/providers/base.py`(异常类族)
 
-### 17.2 算法真源
+### 18.2 算法真源
 
 - `src/framework/runtime/orchestrator.py` — DAG 调度 / 生命周期
 - `src/framework/runtime/failure_mode_map.py` — 分类
@@ -1589,9 +1690,10 @@ Exception
 - `src/framework/providers/_download_async.py` — Range 续传
 - `src/framework/observability/event_bus.py` — 跨线程 hop
 
-### 17.3 变更记录
+### 18.3 变更记录
 
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §B + §C.6 + §D + §E + §F + §H + §N + 源码实装拆分重组 |
 | v1.1 | 2026-04-22 | Codex 21 条 audit 修复落实装契约:§5.4 find_hit 长度校验 + cost_usd 持久化 + ArtifactRepository 跨进程持久化(`_artifacts.json`)+ payload tampering 校验、§5.5 `on_retry` override + `cloned_for_run()` per-arun 隔离(ADR-006)、§5.6 cache-hit 回放规则、§5.7.1 unsupported 三层拦截(transient retry / router fallback / executor `_should_retry`)、§5.x SelectExecutor bare-approve 语义 + GenerateImageEdit cost_usd + parallel_candidates 同质性、§6.2 router fallback 异常分流、§6.4 hunyuan poll timeout clamp + 200/non-JSON 包装。回归 520 用例(基线 491 + `tests/unit/test_codex_audit_fixes.py` 29 个 fence)|
+| v1.2 | 2026-04-25 | 新增 §15 Run Comparison(`src/framework/comparison/`)接口签名级章节,含 6 个 Pydantic 类型 / 5 个公共函数 / exit code 契约 / 分层边界 / import-fence carve-out;老 §15-§17 顺延至 §16-§18(关键算法 / 异常类族 / 附录)。OpenSpec change `add-run-comparison-baseline-regression` 实装侧 6 个 Task 全部完成,Codex Review Gate 双轮 PASS,pytest -q 实测 848 通过(基线 549 + ~299 新用例)|

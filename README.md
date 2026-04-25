@@ -7,7 +7,7 @@
 - **三种运行模式**：`basic_llm`（结构化问答）· `production`（多模态生成 + 内嵌评审）· `standalone_review`（独立评审链）
 - **UE Bridge（manifest-only）**：产出 `UEAssetManifest + UEImportPlan + Evidence`，UE 侧 Python 脚本一键执行导入
 - **基础层直接用开源**：[LiteLLM](https://github.com/BerriAI/litellm) 统一 provider 调用 + [Instructor](https://github.com/567-labs/instructor) 做结构化输出；**运行时、评审、UE 领域全自研**
-- **测试驱动**：143 条测试覆盖 P0–P4 全阶段 + 单元级断言，全部可离线跑（`FakeAdapter` + `FakeComfyWorker`）
+- **测试驱动**：覆盖 P0–P4 全阶段 + 单元级断言，全部可离线跑（`FakeAdapter` + `FakeComfyWorker`）；测试数量以 `pytest -q` 实测为准
 
 ---
 
@@ -153,8 +153,9 @@ D:\ClaudeProject\ForgeUE_claude\
 │   └── assistant_plan_bundle/                      # 详细分章节设计
 │
 ├── tests/
-│   ├── integration/             # 5 份阶段闭环测试（test_p0 ~ test_p4）
-│   └── unit/                    # 11 份单元测试
+│   ├── integration/             # 阶段闭环 + 场景级 + Run Comparison 集成测试
+│   ├── unit/                    # 单元测试（含 Run Comparison;详见 docs/testing/test_spec.md §2.2）
+│   └── fixtures/                # 共享测试 fixture（review_images / comparison / ...）
 │
 ├── artifacts/                   # 运行产物（gitignored，file-backed Artifact 落这里）
 │
@@ -276,14 +277,14 @@ bridge_execute ← 后置（Phase G 扩展）
 
 ```bash
 python -m pytest                    # 跑全部
-python -m pytest tests/integration/ # 只跑阶段闭环（5 份）
-python -m pytest tests/unit/        # 只跑单元（12 份）
+python -m pytest tests/integration/ # 只跑集成测试目录（P0-P4 + 场景级 + Run Comparison）
+python -m pytest tests/unit/        # 只跑单元（含 Run Comparison;具体文件以 ls 实时查为准）
 python -m pytest -v -k p3           # 关键字过滤
 ```
 
 ### 当前覆盖
 
-- **143 条测试，全部离线可跑**（无 API key、无 UE 工程、无 ComfyUI）
+- **测试全部离线可跑**（无 API key、无 UE 工程、无 ComfyUI）；当前数量以 `pytest -q` 实测为准
 - 真实 LLM 调用路径被 `FakeAdapter`（`framework.providers.fake_adapter`）替换
 - ComfyUI 路径被 `FakeComfyWorker`（`framework.providers.workers.comfy_worker`）替换
 - UE 侧导入路径用 `sys.modules` 注入的 `unreal` stub 驱通
@@ -297,7 +298,7 @@ python -m pytest -v -k p3           # 关键字过滤
 | `test_p2_standalone_review.py` | 4 | single_judge · chief_judge 分歧 · select 按 Verdict 过滤 |
 | `test_p3_production_pipeline.py` | 6 | happy · revise 收敛 · max_revise 封顶 · worker timeout 恢复 · 失败映射 · risk 排序 |
 | `test_p4_ue_manifest_only.py` | 5 | 落盘 · PermissionPolicy skip · Verdict.reject 短路 · UE stub 驱通 · builder 纯函数 |
-| `test_*.py`（unit，12 份）| 120 | schema / artifact / checkpoint / policies / judges / bridge / failure_mode / registry ... |
+| `test_*.py`（unit，多个）| 以 `pytest -q` 实测为准 | schema / artifact / checkpoint / policies / judges / bridge / failure_mode / registry / Run Comparison ... |
 
 ---
 
@@ -307,7 +308,7 @@ python -m pytest -v -k p3           # 关键字过滤
 
 | 档 | 命令 | 验证目标 |
 |---|---|---|
-| **1** | `python -m pytest` | 143 passed = 全逻辑正确 |
+| **1** | `python -m pytest` | 全用例通过 = 全逻辑正确(以 `pytest -q` 实测为准)|
 | **2** | `pip install -e ".[llm]"` + `python -c "import litellm, instructor"` | 开源包装好，版本 ≥ pyproject 声明 |
 | **3** | `python -m framework.run --task examples/character_extract.json --run-id r1 --live-llm` | `.env` 密钥 + LiteLLM 真实调用 OK |
 | **4** | `python -m framework.run --task examples/ue_export_pipeline.json --run-id r2 --live-llm`（改 `ue_target.project_root` 到临时目录）| 全链 + 产 manifest + evidence |
@@ -338,7 +339,7 @@ python -m pytest -v -k p3           # 关键字过滤
 | 需求 | [`docs/requirements/SRS.md`](docs/requirements/SRS.md) | 需求规格说明书(FR/NFR/接口/约束) |
 | 概要设计 | [`docs/design/HLD.md`](docs/design/HLD.md) | 分层 / 子系统 / 对象模型概览 |
 | 详细设计 | [`docs/design/LLD.md`](docs/design/LLD.md) | 字段 / 方法 / 算法 / 异常体系 |
-| 测试 | [`docs/testing/test_spec.md`](docs/testing/test_spec.md) | 543 用例索引 + fence 清单 |
+| 测试 | [`docs/testing/test_spec.md`](docs/testing/test_spec.md) | 测试索引 + fence 清单(用例数以 `pytest -q` 实测为准) |
 | 验收 | [`docs/acceptance/acceptance_report.md`](docs/acceptance/acceptance_report.md) | FR/NFR 验收状态矩阵 |
 | 参考 | [`docs/api_des/`](docs/api_des/) | 五家 provider API 契约 |
 | 归档 | [`docs/archive/`](docs/archive/) | 历史方案与 plan_v1 史料(不再更新) |
@@ -379,7 +380,7 @@ python -m pytest -v -k p3           # 关键字过滤
 4. **Workflow 模板继承** —— `Workflow.template_ref` 字段已预留
 5. **Blob 存储后端** —— S3/MinIO（`PayloadRef.kind="blob"` 已支持，`payload_backends/blob.py` 空实现）
 6. **Resource Budget / GPU 调度** —— `BudgetPolicy.gpu_seconds_cap` 已有
-7. **Run Comparison / 基线回归** —— `observability/run_comparison.py` 待补
+7. **Run Comparison / 基线回归** —— ✅ 已实装(2026-04-25,见 `src/framework/comparison/`)。CLI 入口 `python -m framework.comparison --baseline-run <id_a> --candidate-run <id_b> --artifact-root <root>`,read-only 比较两个完成的 Run 目录,产出 `comparison_report.json` + `comparison_summary.md`(覆盖 artifact / verdict / metric diff)。完整 flag 列表见 `--help`
 8. **Human-in-the-loop 标准协议** —— `human_gate` Step.type + `EscalationPolicy.notify_channel`
 9. **Schema Registry + 演化规则**
 10. **多租户/多项目隔离** —— `Task.project_id` + Artifact Store 按 project 分目录已做
