@@ -106,16 +106,17 @@
 
 ## 6. runtime-core(7 缺)
 
-- [ ] 6.1 为以下 7 个 Requirement 各补 Scenario(其中两条 [+1] 各 2 个):
-  - `load_run_metadata` performs three-stage filtering [+1]
-  - TransitionEngine is isolated per `arun` [Min 1]
-  - Unsupported-response short-circuit at three layers [+1]
-  - Premium-API single-attempt contract [Min 1]
-  - Budget exceeded synthesizes a Verdict [Min 1]
-  - EventBus is loop-aware and thread-safe [Min 1]
-  - WebSocket idle-disconnect is leak-free [Min 1]
-- [ ] 6.2 Scenario 对照:`src/framework/{artifact_store/repository,runtime/{transition_engine,budget_tracker,failure_mode_map},observability/event_bus,server/ws_server,providers/workers/mesh_worker}.py`、`tests/unit/test_{cascade_cancel,review_budget,event_bus,mesh_no_silent_retry,codex_audit_fixes}.py`、`tests/integration/test_{ws_progress,mesh_failure_visibility}.py`
-- [ ] 6.3 `openspec validate ... --strict` + `pytest -q`
+- [x] 6.1 为以下 7 个 Requirement 各补 Scenario,合计 9 个 Scenario(两条 [+1] 各 2 个);**实证检查发现 1 处主 spec 与代码命名漂移**,**Budget exceeded synthesizes a Verdict** 采用方案 A 收紧描述以对齐真实代码,**保留 Requirement 标题不变**:
+  - **Budget exceeded synthesizes a Verdict** —— 方案 A:把"合成 `budget_exceeded` Verdict 并通过 TransitionEngine 路由"的描述改为按真实终止链路写 —— `BudgetTracker.assert_within(...)` 抛 `BudgetExceeded(RuntimeError)` → `Orchestrator` catch → 写 `run.metrics["termination_reason"]` = `"budget_exceeded(cap=<cap>, spent=<spent>)"` + `last_failure_mode="budget_exceeded"` + `failure_event.decision="human_review_required"`(`Decision` enum 真实成员,非虚构 `budget_exceeded`)→ `run.status=RunStatus.failed` → 返回 `_StepOutcome(terminate=True, next_step_id=None)`;路径覆盖 fresh-execution(`orchestrator.py:566-580`)与 fresh-process resume cache-hit cost replay(`orchestrator.py:428-435`)。Run 不得静默退出。**不**继续保留主 spec 原误写的"合成 Verdict"+"通过 TransitionEngine 路由";**不**写 `Decision` enum 中不存在的 `budget_exceeded` / `abort` 枚举值
+  - 其余 6 条不动描述,仅补 Scenario:
+    - `load_run_metadata` performs three-stage filtering [+1] —— 2 个 Scenario(已知 + 缺 payload / file-blob hash drift)
+    - TransitionEngine is isolated per `arun` [Min 1]
+    - Unsupported-response short-circuit at three layers [+1] —— 2 个 Scenario(Layer 1 transient_check / Layer 2 router re-raise + Layer 3 executor _should_retry)
+    - Premium-API single-attempt contract [Min 1] —— runtime 视角(GenerateMeshExecutor attempts=1 + stderr surface),Task 4 provider-routing 视角的 `Premium-API single-attempt guard` 不重复
+    - EventBus is loop-aware and thread-safe [Min 1]
+    - WebSocket idle-disconnect is leak-free [Min 1]
+- [x] 6.2 Scenario 对照:`src/framework/artifact_store/repository.py`(load_run_metadata 三段式)、`src/framework/runtime/{transition_engine,budget_tracker,failure_mode_map,orchestrator}.py`(cloned_for_run / BudgetExceeded / cap miss 双路径)、`src/framework/runtime/executors/{generate_image,generate_image_edit,generate_structured,generate_mesh}.py`(`_should_retry` 首行 + mesh `attempts=1`)、`src/framework/providers/{_retry_async,capability_router,workers/mesh_worker}.py`(transient_check / 4 处 router re-raise / `_apost` 不包 retry)、`src/framework/observability/event_bus.py`(threading.Lock + call_soon_threadsafe)、`src/framework/server/ws_server.py`(FIRST_COMPLETED race)、`src/framework/run.py:240-264`(stderr `[mesh]` block)、`tests/unit/test_codex_audit_fixes.py`(`# #2` resume / `# #4` clamp / `# #8` cloned / `# #9` parallel / FR-RUNTIME-008/009 fence)、`tests/unit/test_{budget_tracker,event_bus,mesh_no_silent_retry,review_budget}.py`、`tests/integration/test_{ws_progress,mesh_failure_visibility}.py`
+- [x] 6.3 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(以实测为准,本 task 是 doc-only,不影响测试)
 
 ## 7. ue-export-bridge(8 缺)
 
