@@ -36,8 +36,8 @@
 
 ## 2. examples-and-acceptance(7 缺,1 [审视])
 
-- [ ] 2.1 措辞收紧:`No hardcoded provider model ids` —— 在 delta spec MODIFIED 块中重写 Requirement 描述,明确"production bundles MUST use models_ref;LIVE bundles 通过 frontmatter 显式声明 model id 例外"。**不**改 Requirement 标题
-- [ ] 2.2 为以下 7 个 Requirement 各补 Scenario(包括 §2.1 重写后的那条):
+- [x] 2.1 措辞收紧:`No hardcoded provider model ids` —— 在 delta spec MODIFIED 块中重写 Requirement 描述。**采用方案 A**:硬约束"every bundle under `examples/` SHALL declare model selection via `models_ref`;concrete provider model ids MUST live in `config/models.yaml.models`",同时**保留** schema 已允许的 Step-scoped `preferred_models` / `fallback_models` 逃生口,但限定其条目必须是 `config/models.yaml.models` 已注册的 model id(堵裸字符串 bypass registry 漏洞)。**不**引入 LIVE bundle frontmatter 例外(JSON 没有 frontmatter 概念,且当前 10 份 bundle 实证全部走 `models_ref`,没有 LIVE override 路径需要写契约)。**不**改 Requirement 标题
+- [x] 2.2 为以下 7 个 Requirement 各补 Scenario(包括 §2.1 收紧后的那条):
   - Bundle is the end-to-end acceptance artifact [Min 1]
   - UTF-8 bundles go through the loader [Min 1]
   - Alias-based model references [Min 1]
@@ -45,8 +45,8 @@
   - Stage-aligned acceptance coverage [Min 1]
   - Live bundles carry premium-API warnings [Min 1]
   - UE hardware smoke is reachable via commandlet [Min 1]
-- [ ] 2.3 Scenario 对照:`framework/workflows/loader.py`、`tests/integration/test_p[0-4]_*.py`、`examples/*_live.json`、`ue_scripts/a1_run.py`
-- [ ] 2.4 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(预期 848)
+- [x] 2.3 Scenario 对照:`framework/workflows/loader.py`、`tests/integration/test_p[0-4]_*.py`、`examples/*_live.json`、`ue_scripts/a1_run.py`
+- [x] 2.4 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(以实测为准,本 task 是 doc-only,不影响测试)
 
 ## 3. probe-and-validation(10 缺,2 [审视])
 
