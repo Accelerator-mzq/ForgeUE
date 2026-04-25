@@ -39,6 +39,13 @@ if TYPE_CHECKING:
         load_run_snapshot,
         resolve_run_dir,
     )
+    from framework.comparison.reporter import (
+        JSON_FILENAME,
+        MARKDOWN_FILENAME,
+        render_json,
+        render_markdown,
+        write_reports,
+    )
 
 _LAZY_LOADER_NAMES = frozenset(
     {
@@ -53,6 +60,15 @@ _LAZY_LOADER_NAMES = frozenset(
     }
 )
 _LAZY_DIFF_ENGINE_NAMES = frozenset({"compare"})
+_LAZY_REPORTER_NAMES = frozenset(
+    {
+        "JSON_FILENAME",
+        "MARKDOWN_FILENAME",
+        "render_json",
+        "render_markdown",
+        "write_reports",
+    }
+)
 
 
 def __getattr__(name: str) -> Any:
@@ -70,6 +86,12 @@ def __getattr__(name: str) -> Any:
         value = getattr(diff_engine, name)
         globals()[name] = value
         return value
+    if name in _LAZY_REPORTER_NAMES:
+        from framework.comparison import reporter
+
+        value = getattr(reporter, name)
+        globals()[name] = value
+        return value
     raise AttributeError(f"module 'framework.comparison' has no attribute {name!r}")
 
 
@@ -77,6 +99,8 @@ __all__ = [
     "ArtifactDiff",
     "ArtifactDiffKind",
     "ComparisonLoaderError",
+    "JSON_FILENAME",
+    "MARKDOWN_FILENAME",
     "MetricDiff",
     "MetricScope",
     "PayloadMissingOnDisk",
@@ -91,5 +115,8 @@ __all__ = [
     "VerdictDiffKind",
     "compare",
     "load_run_snapshot",
+    "render_json",
+    "render_markdown",
     "resolve_run_dir",
+    "write_reports",
 ]
