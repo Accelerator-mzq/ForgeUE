@@ -91,17 +91,18 @@
 
 ## 5. review-engine(8 缺)
 
-- [ ] 5.1 为以下 8 个 Requirement 各补 Scenario:
-  - Nine decision enums [Min 1]
-  - Five-dimension scoring [Min 1]
-  - Confidence threshold governs revise [Min 1]
-  - Panel runs in parallel [Min 1]
-  - Review usage flows into BudgetTracker [Min 1]
-  - Visual-review payload is summarized, not raw bytes [Min 1]
-  - SelectExecutor bare-approve semantics [Min 1]
-  - Mesh reads review-selected image via verdict priority [Min 1]
-- [ ] 5.2 Scenario 对照:`src/framework/review_engine/{judge,chief_judge,report_verdict_emitter,image_prep}.py`、`src/framework/runtime/executors/{select,generate_mesh}.py`、`tests/integration/test_p2_standalone_review.py` / `test_l4_image_to_3d.py`、`tests/unit/test_visual_review_image_compress.py` / `test_review_payload_summarization.py`
-- [ ] 5.3 `openspec validate ... --strict` + `pytest -q`
+- [x] 5.1 为以下 8 个 Requirement 各补 Scenario(合计 8 个 Scenario);**实证检查发现 2 处主 spec 与代码命名漂移**,**Nine decision enums** 与 **Five-dimension scoring** 两条均采用方案 A 收紧描述以对齐真实代码,**保留 Requirement 标题不变**:
+  - **Nine decision enums** —— 方案 A:描述明列 `framework.core.enums.Decision` 当前 10 个成员(`approve` / `approve_one` / `approve_many` / `reject` / `revise` / `retry_same_step` / `fallback_model` / `abort_or_fallback` / `rollback` / `human_review_required`),标题中 "Nine" 注解为历史命名,authoritative 真源为 `Decision` enum 自身。**不**继续保留主 spec 原误写的 `accept` / `escalate_human` / `stop` 这三个代码不存在的成员
+  - **Five-dimension scoring** —— 方案 A:字段名改 `scores_by_candidate: dict[str, DimensionScores]`(原误写 `scores_by_dimension`),5 维度名改代码实际 `constraint_fit` / `style_consistency` / `production_readiness` / `technical_validity` / `risk_score`(原误写 `quality` / `consistency` / `ue_compliance` / `aesthetics` / `technical_correctness`),引用 `rubric_templates/*.yaml` 三套 YAML 与之一致
+  - 其余 6 条不动描述,仅补 Scenario:
+    - Confidence threshold governs revise [Min 1]
+    - Panel runs in parallel [Min 1]
+    - Review usage flows into BudgetTracker [Min 1]
+    - Visual-review payload is summarized, not raw bytes [Min 1]
+    - SelectExecutor bare-approve semantics [Min 1]
+    - Mesh reads review-selected image via verdict priority [Min 1]
+- [x] 5.2 Scenario 对照:`src/framework/core/{enums,review}.py`(Decision enum / DimensionScores / Verdict / ReviewReport)、`src/framework/review_engine/{judge,chief_judge,report_verdict_emitter}.py`(asyncio.gather panel / pass_threshold judge / weighted_score)、`src/framework/review_engine/rubric_templates/*.yaml`(三套 rubric criteria.name 实证)、`src/framework/runtime/executors/{select,generate_mesh}.py`(bare-approve / `_resolve_source_image` 4-pass)、`tests/unit/test_chief_judge_parallel.py` / `test_review_budget.py` / `test_review_payload_summarization.py` / `test_codex_audit_fixes.py`(`# #10` SelectExecutor bare-approve)、`tests/integration/test_l4_image_to_3d.py::test_l4_mesh_reads_selected_candidate_from_review_verdict`
+- [x] 5.3 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(以实测为准,本 task 是 doc-only,不影响测试)
 
 ## 6. runtime-core(7 缺)
 
