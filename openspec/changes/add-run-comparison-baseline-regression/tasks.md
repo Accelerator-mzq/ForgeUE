@@ -123,3 +123,48 @@
 - [ ] Check whether AGENTS.md needs update
 - [ ] Record skipped docs with reason
 - [ ] Mark doc drift for human confirmation if sources conflict
+
+---
+
+## Deferred Follow-ups
+
+> 本段记录在本 change 范围内**有意推迟**的工作项。Archive 本 change **之后**应单独创建对应的 OpenSpec change 跟进。本段不阻塞 archive。
+
+### `lazy-artifact-store-package-exports`
+
+**产生原因**(Task 5 CLI 实装时发现):
+
+- `framework.comparison.loader` 在模块顶层 `from framework.artifact_store.hashing import hash_payload`(loader 的 hash 重算职责必须依赖该 helper)。
+- Python 子模块 import 必须先执行父包 `__init__.py`,这是语言层语义,不可绕过。
+- 当前 `framework/artifact_store/__init__.py` 在顶层 eager-import `repository` / `payload_backends` / `lineage` / `variant_tracker`,作为公共 API 表面。
+- 因此任何 import `framework.comparison.loader`(以及依赖它的 `framework.comparison.cli`)的进程,都会在 `sys.modules` 里出现 `framework.artifact_store.repository` 与 `framework.artifact_store.payload_backends`,**即使** loader / CLI 源码从未直接调用这些模块。
+
+**当前 Task 5 的裁决**:
+
+- 接受这个 transitive-import 事实,与 Task 2 loader fence 对齐 —— `tests/unit/test_run_comparison_loader.py` 与 `tests/unit/test_run_comparison_cli.py` 的 import-fence 测试都**不**把 `repository` / `payload_backends` 列入禁止清单,只锁 9 个执行链路前缀(runtime / providers / review_engine / ue_bridge / workflows / observability / server / schemas / pricing_probe)。
+- 在 `src/framework/comparison/cli.py` 顶部 docstring 与 `tests/unit/test_run_comparison_cli.py::TestCliImportFence` docstring 显式记录这个 carve-out 与原因。
+- **不**修改 `framework/artifact_store/__init__.py`;**不**修改任何 artifact_store 既有文件;**不**在本 change 里悄悄重构跨子系统的包结构。
+- CLI 源码层仍守门"DIRECTLY import or call write-side APIs",禁止直接调用 `ArtifactRepository.put` / `load_run_metadata` / 任何 payload backend 写操作 / `CheckpointStore` 写路径。
+
+**为什么不在当前 change 中修**:
+
+- 改 `framework/artifact_store/__init__.py` 为 PEP 562 lazy export 是**跨子系统**改动 —— 该包被 runtime / providers / review_engine / ue_bridge 等多处调用方 import,行为变化范围远超 comparison。
+- 本 change(`add-run-comparison-baseline-regression`)的 proposal.md "Modules NOT affected" 显式承诺**不动** `artifact_store`。在实施阶段擅自改它会越界。
+- comparison 模块对 `repository` / `payload_backends` 的源码依赖为零;transitive 加载只影响 fence 测试的禁止清单宽度,**不**影响运行时正确性。延迟到独立 change 处理是合理的工程取舍。
+
+**未来处理**:
+
+在 `add-run-comparison-baseline-regression` archive 之后,单独创建 OpenSpec change:
+
+```
+lazy-artifact-store-package-exports
+```
+
+该 change 评估并(若可行)实施以下改动:
+
+- 把 `framework/artifact_store/__init__.py` 顶层的 `repository` / `payload_backends` / `lineage` / `variant_tracker` eager-import 改为 PEP 562 `__getattr__` lazy export(参考 `framework/comparison/__init__.py` 现有做法)。
+- 更新 Task 2 loader fence、Task 5 CLI fence 测试的禁止清单,把 `framework.artifact_store.repository` / `framework.artifact_store.payload_backends` 重新加回禁止项。
+- 评估对 runtime / providers / review_engine / ue_bridge 等 artifact_store 公共 API 调用方的影响(它们目前依赖顶层符号即时可用,改 lazy 后需要确认无回归)。
+- 跑全套 ForgeUE 测试矩阵确认无回归。
+
+本 change(`add-run-comparison-baseline-regression`)**不**预先创建该 follow-up change 的 proposal / spec,只在本段记录入口。
