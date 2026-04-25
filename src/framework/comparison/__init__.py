@@ -28,6 +28,7 @@ from framework.comparison.models import (
 )
 
 if TYPE_CHECKING:
+    from framework.comparison.diff_engine import compare
     from framework.comparison.loader import (
         ComparisonLoaderError,
         PayloadMissingOnDisk,
@@ -51,6 +52,7 @@ _LAZY_LOADER_NAMES = frozenset(
         "resolve_run_dir",
     }
 )
+_LAZY_DIFF_ENGINE_NAMES = frozenset({"compare"})
 
 
 def __getattr__(name: str) -> Any:
@@ -60,6 +62,12 @@ def __getattr__(name: str) -> Any:
         value = getattr(loader, name)
         # PEP 562 cache: write back to module globals so subsequent attribute
         # access bypasses __getattr__ and avoids repeated import / getattr work.
+        globals()[name] = value
+        return value
+    if name in _LAZY_DIFF_ENGINE_NAMES:
+        from framework.comparison import diff_engine
+
+        value = getattr(diff_engine, name)
         globals()[name] = value
         return value
     raise AttributeError(f"module 'framework.comparison' has no attribute {name!r}")
@@ -81,6 +89,7 @@ __all__ = [
     "StepDiff",
     "VerdictDiff",
     "VerdictDiffKind",
+    "compare",
     "load_run_snapshot",
     "resolve_run_dir",
 ]
