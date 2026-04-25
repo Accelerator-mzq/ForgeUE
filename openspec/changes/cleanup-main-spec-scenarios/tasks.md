@@ -120,17 +120,18 @@
 
 ## 7. ue-export-bridge(8 缺)
 
-- [ ] 7.1 为以下 8 个 Requirement 各补 Scenario(其中 Evidence [+1] 写 success-append / crash-no-half 两个):
-  - Dual-mode bridge, manifest_only shipped [Min 1]
-  - Three-file deliverable [Min 1]
-  - UE-side agent supports three domains [Min 1]
-  - Naming policy declared per asset [Min 1]
-  - Dependencies drive topological order [Min 1]
-  - Evidence is append-only and atomic [+1]
-  - Bridge never modifies asset content [Min 1]
-  - Hardware smoke acceptance [Min 1]
-- [ ] 7.2 Scenario 对照:`src/framework/ue_bridge/{manifest_builder,import_plan_builder,permission_policy,evidence}.py`、`ue_scripts/{run_import,evidence_writer,manifest_reader,a1_run}.py`、`tests/integration/test_p4_ue_manifest_only.py`
-- [ ] 7.3 `openspec validate ... --strict` + `pytest -q`
+- [x] 7.1 为以下 8 个 Requirement 各补 Scenario,合计 9 个 Scenario(`Evidence is append-only and atomic` [+1] 写 success-append / crash-no-half 两个);**8 个 Requirement 描述与标题保持不变**(本 capability 无 [审视] / 无 doc drift 收紧需要);**Scenario 4 / Scenario 7 已按代码事实纠偏**:
+  - **Scenario 4**(Naming policy declared per asset)—— notes/plan 第 28 行原草案 "Asset entry without a declared `naming_policy` fails dry-run validation before any UE-side execution" 与代码事实不符(grep 验证 `dry_run_pass.py` 无 naming_policy 校验逻辑)。本 delta 改用代码事实:`UEOutputTarget.asset_naming_policy: Literal["gdd_mandated", "house_rules", "gdd_preferred_then_house_rules"]`(`src/framework/core/ue.py:20-22`)由 Pydantic 在 `UEOutputTarget.model_validate` 时校验(其他字符串拒绝),`manifest_builder._derive_ue_name(art, kind, policy=target.asset_naming_policy)`(`manifest_builder.py:101 / 113 / 150 / 164`)在每个 asset 的 manifest 构造时用同一 target 的 policy。**不**写"dry-run 拦截"
+  - **Scenario 7**(Bridge never modifies asset content)—— notes/plan 第 48 行原草案 "Imported texture file's bytes match source file's bytes" 是 UE-internal byte equality,框架侧无法直接断言(UE 的 `AssetImportTask` 内部处理 `.uasset` 写入)。本 delta 改用框架/UE-script 侧 no-transform 断言:`ExportExecutor` 落 file-backed payload 走 copy 不 transcode,`domain_texture.import_texture_entry` 把源文件路径直接传给 `unreal.AssetImportTask.filename`,引用 `test_p4_ue_scripts_run_import_with_stub_unreal`(line 398-528)stub `unreal` 验证框架 / script 侧不改字节。**不**断言 UE 内部导入后 `.uasset` 字节相等
+  - 其余 7 条 Scenario 直接按 §3 计划落地:
+    - Dual-mode bridge, manifest_only shipped [Min 1] —— `ImportMode` enum + `execute/` 目录无实装代码
+    - Three-file deliverable [Min 1] —— `test_p4_full_pipeline_writes_manifest_plan_and_evidence` 守门
+    - UE-side agent supports three domains [Min 1] —— `_OP_HANDLERS` 三键 + 域外 kind 走 skipped
+    - Dependencies drive topological order [Min 1] —— `import_plan_builder` `depends_on=[folder_op_id]` + `manifest_reader.topological_ops`
+    - Evidence is append-only and atomic [+1] —— success-append / crash-mid-write 两 Scenario(tmp + `tmp.replace` POSIX/NTFS atomic rename)
+    - Hardware smoke acceptance [Min 1] —— `a1_run.py` commandlet entry + offline stub + 2026-04-23 a1_demo 历史轨迹
+- [x] 7.2 Scenario 对照:`src/framework/core/{enums,ue}.py`(`ImportMode` / `UEOutputTarget` Literal)、`src/framework/ue_bridge/{manifest_builder,import_plan_builder,evidence}.py`(`_derive_ue_name` / `depends_on` / atomic write)、`src/framework/ue_bridge/execute/`(空目录,bridge_execute reserved 实证)、`ue_scripts/{run_import,evidence_writer,manifest_reader,a1_run,domain_texture,domain_mesh,domain_audio}.py`(`_OP_HANDLERS` / append + tmp.replace / commandlet 入口)、`tests/unit/test_ue_bridge.py::test_evidence_writer_appends_atomically` / `::test_plan_builder_adds_create_folder_and_dependencies`、`tests/integration/test_p4_ue_manifest_only.py::test_p4_full_pipeline_writes_manifest_plan_and_evidence` / `::test_p4_ue_scripts_run_import_with_stub_unreal` / `::test_p4_verdict_reject_skips_file_drop`、`docs/acceptance/acceptance_report.md` §6.1(2026-04-23 a1_demo)、`examples/{image_to_3d_pipeline_live,ue_export_pipeline_live}.json`(`asset_naming_policy: house_rules` 实证)
+- [x] 7.3 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(以实测为准,本 task 是 doc-only,不影响测试)
 
 ## 8. workflow-orchestrator(5 缺)
 
