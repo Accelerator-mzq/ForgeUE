@@ -135,14 +135,15 @@
 
 ## 8. workflow-orchestrator(5 缺)
 
-- [ ] 8.1 为以下 5 个 Requirement 各补 Scenario:
-  - Three RunModes share one scheduler [Min 1]
-  - Eleven step types are supported [Min 1]
-  - Opt-in DAG concurrency [Min 1]
-  - Bundle loading goes through the loader [Min 1]
-  - Model reference expansion happens before validation [Min 1]
-- [ ] 8.2 Scenario 对照:`src/framework/runtime/{orchestrator,scheduler}.py`、`src/framework/workflows/loader.py`、`src/framework/core/{task,enums}.py`、`tests/integration/test_dag_concurrency.py`、`tests/unit/test_workflow_loader_*.py`
-- [ ] 8.3 `openspec validate ... --strict` + `pytest -q`
+- [x] 8.1 为以下 5 个 Requirement 各补 Scenario,合计 5 个 Scenario;**实证检查发现 1 处主 spec 与代码命名漂移**,**Eleven step types are supported** 采用方案 A 收紧描述以对齐真实代码,**保留 Requirement 标题不变**:
+  - **Eleven step types are supported** —— 方案 A:描述明列 `framework.core.enums.StepType` 当前 11 个实际成员(`generate` / `transform` / `review` / `select` / `merge` / `validate` / `export` / `import_` 暴露为 `"import"` / `retry` / `branch` / `human_gate`),**不**继续保留主 spec 原误写的 `inspect` / `plan` / `execute` / `custom`(代码不存在),**补上**代码实有的 `merge` / `retry` / `branch` / `human_gate`(原 spec 列表未列);明确 dispatch 通过 `framework.runtime.executors.base.ExecutorRegistry` 用 `(step_type, capability_ref)` 键;声明默认 `framework.run._build_orchestrator` 只为 `generate` / `validate` / `review` / `select` / `export` 与 mock variants 注册 executor,其他 StepType 是保留枚举值,调用方可通过 `ExecutorRegistry.register(...)` 注册自定义 executor;未注册的 `(step_type, capability_ref)` 在 `resolve` 时抛 `KeyError(f"No executor for step_type=... capability_ref=...")`;标题 "Eleven" 保留为历史命名(成员数确实是 11,但权威成员清单以 `StepType` enum 为准)。**notes/plan 第 16 行 "Scheduler.dispatch" 草案已纠偏**:真实 dispatch 路径是 `Orchestrator` 通过 `ExecutorRegistry.resolve`,Scheduler 类只有 `prepare` / `default_next` / `risk_sort` / `runnable_after`,无 `dispatch` 方法
+  - 其余 4 条不动描述,仅补 Scenario:
+    - Three RunModes share one scheduler [Min 1]
+    - Opt-in DAG concurrency [Min 1] —— `task.constraints["parallel_dag"]` 或 `workflow.metadata["parallel_dag"]` 短路 OR
+    - Bundle loading goes through the loader [Min 1] —— framework / CLI / integration tests 通过 loader,不延伸到任意用户脚本
+    - Model reference expansion happens before validation [Min 1] —— 顺序 `read_text` → `json.loads` → `expand_model_refs` → Pydantic validation;alias miss 在 expansion 阶段抛 `UnknownModelAlias`
+- [x] 8.2 Scenario 对照:`src/framework/core/enums.py`(`RunMode` 三成员 / `StepType` 11 成员实证)、`src/framework/runtime/scheduler.py`(单 Scheduler 类无 RunMode import)、`src/framework/runtime/orchestrator.py:157-162`(parallel_dag 短路 OR 双源)、`src/framework/runtime/executors/base.py:54-67`(`ExecutorRegistry.register` / `.resolve` 用 `(step_type, capability_ref)` 键 + 未匹配 KeyError)、`src/framework/run.py:140`(`load_task_bundle` 单一入口)、`src/framework/workflows/loader.py:31-37`(`read_text` UTF-8 → `json.loads` → `expand_model_refs` → Pydantic 顺序)、`tests/integration/test_p[0,2,3]_*.py`(三 RunMode 共享 Scheduler)、`tests/integration/test_dag_concurrency.py`(`test_dag_fans_out_leaves_concurrently` / `test_workflow_metadata_parallel_dag_activates_fanout` / `test_linear_mode_still_sequential`)、`tests/integration/test_example_bundles_smoke.py::test_bundle_loads`、`tests/unit/test_model_registry.py::test_expand_unknown_ref_raises`、CLAUDE.md "Bundle JSON 编码"段
+- [x] 8.3 `openspec validate cleanup-main-spec-scenarios --strict` + `pytest -q`(以实测为准,本 task 是 doc-only,不影响测试)
 
 ## 9. Full validation
 
