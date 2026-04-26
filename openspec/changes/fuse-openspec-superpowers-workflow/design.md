@@ -144,6 +144,51 @@ codex_plugin_available: true
 | doc sync report | `forgeue_doc_sync_check` + agent §4.3 | `verification/doc_sync_report.md` | DRIFT 默认以 contract 为真回写 | REQUIRED 进 S8 |
 | finish gate report | `forgeue_finish_gate` | `verification/finish_gate_report.md` | 全部 aligned_with_contract: true 或带 drift 标记 | REQUIRED 进 archive |
 
+**Cross-check Protocol**:
+
+`design_cross_check.md` / `plan_cross_check.md` 必含 4 段(`## A` 冻结于 codex 调用之前;Claude 不得在写 `## B/C/D` 时回填 `## A`):
+
+```
+## A. Claude's Decision Summary (frozen before codex run)
+- D-Decision1: ... — file:line evidence
+- D-Decision2: ...
+
+## B. Cross-check Matrix
+| ID | Claude's choice | Codex's verdict | Codex's reasoning(摘要 + 引用) | Resolution | 修复操作 |
+
+## C. Disputed Items Pending Resolution
+disputed_open: <count>(>0 阻断下一阶段)
+
+## D. Verification Note
+### D.1 独立验证(沿 ForgeUE memory feedback_verify_external_reviews)
+逐条 file:line evidence 验证 Codex claim 真实性。
+
+### D.2 修复完整性
+checklist 列已修与待修。
+
+### D.3 进 <下一阶段> 前置
+disputed_open == 0 / contract 一致 / strict validate PASS。
+```
+
+frontmatter 必含:`disputed_open: <int>` / `codex_review_ref: <path>` / `created_at` / `resolved_at`。
+
+`disputed_open` 取值:
+- `0` — 全部 resolution 决定(`aligned` / `accepted-codex` / `accepted-claude` / `disputed-permanent-drift`);可进下一阶段
+- `> 0` — 至少一项仍是 `disputed-pending`(待用户裁决);阻断下一阶段
+
+**Resolution 取值**:
+
+| Resolution | 含义 | 约束 |
+|---|---|---|
+| `aligned` | Claude 与 codex 立场一致 | 无 |
+| `accepted-codex` | Codex 立场更优,Claude 接受 | contract 已修(对应 commit 必有) |
+| `accepted-claude` | Claude 立场更优,codex 立场不接受 | reason ≥ 20 字 |
+| `disputed-blocker` | 双方僵持,需用户裁决 | 临时态;裁决后落到下面三态之一 |
+| `disputed-pending` | 待用户裁决 | 必含在 `## C` 段 |
+| `disputed-permanent-drift` | 用户裁决保留 drift,evidence 不被接受为新规范源 | reason ≥ 50 字 + `## Reasoning Notes` anchor |
+
+> Adversarial review(`/codex:adversarial-review` mixed scope)**不**走 cross-check;single-direction `/codex:review --base <main>` verification review 也**不**走 cross-check。仅 doc-level S2 design / S3 plan stage hook 走 cross-check(详 §4)。
+
 ### §4 Command Design(8 个,accepted-claude)
 
 8 个 ForgeUE commands `/forgeue:change-*`,前缀与 `/opsx:*` 平行(决议 14.2)。**不**包 OpenSpec contract create/archive(强调 OpenSpec 中心地位):

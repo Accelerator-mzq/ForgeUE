@@ -29,14 +29,14 @@
 
 ## 2. P1 — Workflow Docs(1 份合并,accepted-codex)
 
-- [ ] 2.1 新建 `docs/ai_workflow/forgeue_integrated_ai_workflow.md`(中心化契约主文档,内部分 4 个 section:fusion contract / agent phase gate policy / documentation sync gate / state machine)
+- [x] 2.1 新建 `docs/ai_workflow/forgeue_integrated_ai_workflow.md`(中心化契约主文档,内部分 4 个 section:fusion contract / agent phase gate policy / documentation sync gate / state machine)
   - Section A:fusion contract(中心化架构图 / 三层服务关系 / 不并立而是中心化 + 服务者)
   - Section B:agent phase gate policy(S0-S9 各 stage 退出条件 / Superpowers 边界 / codex hook 触发)
   - Section C:documentation sync gate(沿 docs/ai_workflow/README.md §4 + tools/forgeue_doc_sync_check.py 静态扫描衔接)
   - Section D:state machine + writeback protocol(12-key frontmatter(11 audit + 1 change_id wrapper) + 4 类 DRIFT + writeback 协议 + cross-check A/B/C/D 模板)
-- [ ] 2.2 修 `docs/ai_workflow/README.md` §5 表格:Superpowers 行从"暂不接入主线"升级为"作为 OpenSpec evidence 生成器,跨 env 装,产物绑 active change 子目录,实施暴露的 contract 漏洞必须回写";Codex CLI 行扩展为"Claude Code 内通过 codex-plugin-cc 自动 stage cross-review,blocker 涉及 contract 必须回写"
-- [ ] 2.3 修 `docs/ai_workflow/README.md` §8 表格:新增 forgeue: 列(`/forgeue:change-*` 8 个命令的等价说明)
-- [ ] 2.4 不动 `docs/ai_workflow/validation_matrix.md`(`tools/forgeue_verify.py` 是机器版,文档保留为人类 reference)
+- [x] 2.2 修 `docs/ai_workflow/README.md` §5 表格:Superpowers 行从"暂不接入主线"升级为"作为 OpenSpec evidence 生成器,跨 env 装,产物绑 active change 子目录,实施暴露的 contract 漏洞必须回写";Codex CLI 行扩展为"Claude Code 内通过 codex-plugin-cc 自动 stage cross-review,blocker 涉及 contract 必须回写"
+- [x] 2.3 修 `docs/ai_workflow/README.md` §8 表格:新增 forgeue: 列(`/forgeue:change-*` 8 个命令的等价说明)
+- [x] 2.4 不动 `docs/ai_workflow/validation_matrix.md`(`tools/forgeue_verify.py` 是机器版,文档保留为人类 reference)
 
 ## 3. P2 — Claude Commands and Skills
 
