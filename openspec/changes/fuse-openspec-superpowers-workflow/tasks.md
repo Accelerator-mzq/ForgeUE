@@ -42,28 +42,28 @@
 
 ### 3.1 Claude Commands(8 个,前缀 `/forgeue:change-*`)
 
-- [ ] 3.1.1 `.claude/commands/forgeue/change-status.md`(列 active changes / state / evidence + 回写状态)
-- [ ] 3.1.2 `.claude/commands/forgeue/change-plan.md`(S2→S3:codex design review hook + Superpowers writing-plans 配路径 + 锚点检测)
-- [ ] 3.1.3 `.claude/commands/forgeue/change-apply.md`(S3→S4-S5:codex plan review hook + executing-plans/TDD + 越界检测)
-- [ ] 3.1.4 `.claude/commands/forgeue/change-debug.md`(显式调 Superpowers systematic-debugging)
-- [ ] 3.1.5 `.claude/commands/forgeue/change-verify.md`(Level 0/1/2 + codex verification review hook)
-- [ ] 3.1.6 `.claude/commands/forgeue/change-review.md`(superpowers_review finalize + codex adversarial review + blocker 回写)
-- [ ] 3.1.7 `.claude/commands/forgeue/change-doc-sync.md`(Documentation Sync Gate)
-- [ ] 3.1.8 `.claude/commands/forgeue/change-finish.md`(Finish Gate,中心化最后防线)
+- [x] 3.1.1 `.claude/commands/forgeue/change-status.md`(列 active changes / state / evidence + 回写状态)
+- [x] 3.1.2 `.claude/commands/forgeue/change-plan.md`(S2→S3:codex design review hook + Superpowers writing-plans 配路径 + 锚点检测)
+- [x] 3.1.3 `.claude/commands/forgeue/change-apply.md`(S3→S4-S5:codex plan review hook + executing-plans/TDD + 越界检测)
+- [x] 3.1.4 `.claude/commands/forgeue/change-debug.md`(显式调 Superpowers systematic-debugging)
+- [x] 3.1.5 `.claude/commands/forgeue/change-verify.md`(Level 0/1/2 + codex verification review hook)
+- [x] 3.1.6 `.claude/commands/forgeue/change-review.md`(superpowers_review finalize + codex adversarial review + blocker 回写)
+- [x] 3.1.7 `.claude/commands/forgeue/change-doc-sync.md`(Documentation Sync Gate)
+- [x] 3.1.8 `.claude/commands/forgeue/change-finish.md`(Finish Gate,中心化最后防线)
 
 每个 command markdown 必含:frontmatter(`name` / `description` / `category: ForgeUE Workflow` / `tags`)+ Steps(明确 hook 触发顺序)+ Output 报告格式 + Guardrails(明列禁令:不调 `/codex:rescue` / 不启 review-gate / 必绑 active change / 不让 evidence 成新规范源 / 必跑回写检测)。
 
 ### 3.2 ForgeUE Claude Skills(2 个,不重造 Superpowers 已有)
 
-- [ ] 3.2.1 `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`(中心化编排器主 skill;每个 `/forgeue:change-*` 引用本 skill 作 backbone;含中心化架构图 + Superpowers/codex 集成边界)
-- [ ] 3.2.2 `.claude/skills/forgeue-doc-sync-gate/SKILL.md`(Sync Gate:静态扫描 + §4.3 提示词 + 报告落盘 + 应用 [REQUIRED])
+- [x] 3.2.1 `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`(中心化编排器主 skill;每个 `/forgeue:change-*` 引用本 skill 作 backbone;含中心化架构图 + Superpowers/codex 集成边界)
+- [x] 3.2.2 `.claude/skills/forgeue-doc-sync-gate/SKILL.md`(Sync Gate:静态扫描 + §4.3 提示词 + 报告落盘 + 应用 [REQUIRED])
 
 每个 SKILL.md 必含:frontmatter(沿 OpenSpec skill 模板 `name` / `description` / `license: MIT` / `compatibility: Requires openspec CLI + Claude Code` / `metadata.author: forgeue` / `metadata.version: "1.0"`)+ Steps + Input/Output + Guardrails。
 
 ### 3.3 不创建项(防回归)
 
-- [ ] 3.3.1 **不**创建 `forgeue-superpowers-tdd-execution/SKILL.md`(重复 Superpowers test-driven-development;P4 fence test `test_forgeue_no_duplicated_tdd_skill.py` 守门)
-- [ ] 3.3.2 **不**新增 `.codex/skills/forgeue-*-review/`(走 codex-plugin-cc `/codex:*`;P4 fence test `test_forgeue_codex_review_no_skill_files.py` 守门)
+- [x] 3.3.1 **不**创建 `forgeue-superpowers-tdd-execution/SKILL.md`(重复 Superpowers test-driven-development;P4 fence test `test_forgeue_no_duplicated_tdd_skill.py` 守门)
+- [x] 3.3.2 **不**新增 `.codex/skills/forgeue-*-review/`(走 codex-plugin-cc `/codex:*`;P4 fence test `test_forgeue_codex_review_no_skill_files.py` 守门)
 
 ## 4. P3 — Tools(5 个 stdlib-only)
 
