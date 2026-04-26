@@ -173,23 +173,39 @@
 
 ## 10. Codex Review Gate
 
-- [ ] 10.1 跑 `openspec validate cleanup-main-spec-scenarios --strict` 输出贴给 Codex 作为 ground truth
-- [ ] 10.2 通过 Codex CLI 跑 review,审查 8 份 delta spec 的 Scenario 是否对齐源码 / 测试 / docs,是否有未实装行为 / 措辞过宽
-- [ ] 10.3 按 Codex 反馈循环修复(同 add-run-comparison 的 Codex review 模式;最多 3-4 轮收敛)
-- [ ] 10.4 Codex Commit Recommendation = "可以提交" 后才进入 Task 11
+- [x] 10.1 `openspec validate cleanup-main-spec-scenarios --strict` —— PASS(`Change 'cleanup-main-spec-scenarios' is valid`,本地 shell 跑;Codex sandbox 因 policy 拦截 `openspec` CLI(`rejected: blocked by policy`),需本地代跑;Round 3 Codex 明确说"无需改文件,请在允许执行 `openspec` 的本地 shell 中运行 strict validate 把真实输出补到 Task 10.1 所需证据链"——已补,2026-04-26)
+- [x] 10.2 通过 Codex CLI(via codex:codex-rescue subagent)跑了 3 轮 review,逐 Scenario / 逐 Requirement 描述 + 源码 / 测试交叉核对(详见下方 review-fix log 各 Round 段);未实装行为 / 措辞过宽全部按方案 A 收紧描述 + 重写 Scenario(artifact-contract / runtime-core)或措辞调整(ue-export-bridge / proposal / design)
+- [x] 10.3 三轮收敛,共 3 个修复 commit:**Round 1** 修复 commits 805c7e9 + d65e2ea(7 Blocker + 1 Low Risk + 用户 M2 实证漏报 1 处 = 9 finding),**Round 2** 修复 commit 169fcf2(2 Medium Risk self-consistency),**Round 3** 确认 spec 内容零 finding;在 add-run-comparison 同款 3-4 轮 Codex review 模式中,本 change 用 3 轮收敛
+- [x] 10.4 Codex Round 3 **effective Recommendation = "可以进入 Task 10 completion update"**(Codex 形式上写"不建议继续 archive"但理由是其 sandbox policy 拦截 `openspec validate`,**非 spec 内容问题**——其 Suggested Fixes 段明确"无需改文件,本地 shell 跑 strict validate PASS 即可进 Task 10 completion update");本地 strict validate PASS 已补;**Task 11 archive readiness 达成**(但本轮按指令**不**进 Task 11)
 
-**Task 10 review-fix log**(2026-04-26 Codex Round 1 后落地,**不**勾 §10.x checkbox,等 Codex re-review 收敛后再勾):
+**Task 10 review-fix log**(2026-04-26 Codex Round 1 / Round 2 / Round 3 全部完成,§10.1-§10.4 全勾):
 
-- **Round 1 Codex review (commit 805c7e9 + 本 commit)**:
-  - Codex Recommendation:**修复后再 review**,7 处 Blocker + 1 处 Low Risk 全部 Confirmed(M2 实证零 false positive)
-  - **Step 7a**(commit 805c7e9):artifact-contract delta 6 处 Scenario 重写 + 3 处 Requirement 描述收紧(详见 §1 Task 1 Codex review fix block)
-  - **Step 7b**(本 commit):剩余三类修复
-    - **proposal.md / design.md 裸测试总数(3 处)**:proposal:64 / design:83 / design:113 全部改为"数量以实测为准"措辞,与 §3.1 收紧后的 `Test totals are never hardcoded` 描述自洽;tasks.md line 55 的 `2026-04-25 实测 848 用例` / `2026-04-23 历史基线 549` 是带 date stamp 的合规样板,保留不动
+- **Round 1 Codex review** (commits 805c7e9 + d65e2ea):
+  - Codex Recommendation:**修复后再 review**,7 处 Blocker + 1 处 Low Risk 全部 Confirmed(M2 实证零 false positive,加上用户 grep 漏报 1 处 design.md:124 裸 848,共 9 处 finding)
+  - **Step 7a**(commit 805c7e9):artifact-contract delta 6 处 Scenario 重写(S1 / S2 / S4 / S5 / S6 / S7) + 3 处 Requirement 描述收紧(Two-segment / Lineage / Four-layer);保留 S3 / S8 + 5 个 Requirement 标题;详见 §1 Task 1 Codex review fix block
+  - **Step 7b**(commit d65e2ea):剩余三类修复
+    - **proposal.md / design.md 裸测试总数 4 处**(含 design:124 漏报):全部改为"数量以实测为准"措辞,与 §3.1 收紧后的 `Test totals are never hardcoded` 描述自洽;tasks.md line 55 的 `2026-04-25 实测 848 用例` / `2026-04-23 历史基线 549` 是带 date stamp 的合规样板,保留不动
     - **runtime-core delta `Budget exceeded synthesizes a Verdict`**:Codex Blocker #5 + #6 修复 —— 删 "BudgetExceeded → Orchestrator catch" 虚构链路 + "fresh-execution 与 resume cache-hit metrics identical" 错位断言;改写为真实 `budget_tracker.check() → Orchestrator direct termination` bool-branch 路径;Requirement 描述明列两路径共享 4 个终止字段(`termination_reason` / `last_failure_mode` / `run.status` / 终止 outcome)+ 显式区分 fresh path 额外 append `failure_events`(decision="human_review_required")vs resume cache-hit path 不 append;`BudgetExceeded` class / `assert_within()` 标注为 BudgetTracker API 存在但 Orchestrator 主路径不使用;Requirement 标题保留为历史命名
     - **ue-export-bridge delta Low Risk**:Codex Low Risk 修复 —— 删 "contains only `__init__.py`" 虚构;改为"`execute/` directory is empty (no executor module, not even an `__init__.py`)" + 实证标注(2026-04-26 Bash `ls -la` 与 PowerShell `Get-ChildItem -Force` 双重验证空目录,`Test-Path` 验证 `__init__.py` = False);`bridge_execute` reserved 语义在主 spec Invariants 段保留
-- **未修改**:主 spec(`openspec/specs/`)/ Task 2-8 其他 6 份 delta(examples / probe / provider / review / workflow / artifact-contract 已在 Step 7a 修)/ src / tests / docs / 其他禁止清单文件
-- **未勾 Task 10**:Round 1 修复完成,等 Codex Round 2 re-review 验证 finding 全部收敛(可能仍发现新问题或确认通过),Round 2 通过后再勾 §10.1-§10.4
-- **archive 时由 sync-specs 合并 delta 进主 spec**:Round 1 修复后的 delta 描述 + Scenario 是 archive 阶段写入主 spec 的权威版本
+
+- **Round 2 Codex review** (commit 169fcf2):
+  - Codex Recommendation:**修复后再 review**;Round 1 finding 全部 confirmed resolved,但发现 **2 处 Medium Risk self-consistency 残留**(Step 7b 改了 Requirement 主体但未同步镜像段)
+  - **Step 7c**(commit 169fcf2):
+    - **runtime-core/spec.md:3 顶部摘要**:删 "代码实际走 `BudgetExceeded` exception → Orchestrator 直接 terminate 链路";改为 "代码实际走 `budget_tracker.check()` bool branch → Orchestrator direct termination 链路;`BudgetExceeded` class 与 `assert_within()` 在 `BudgetTracker` API 上存在但 Orchestrator 主路径不使用,见 Requirement 主体"
+    - **tasks.md:124 Task 6.1 备注**:整段方案 A 描述重写,链路改为 `budget_tracker.check()` 返回 `False`(`if not budget_tracker.check():` bool branch)→ Orchestrator direct termination(**不**调 `assert_within()`,**不** catch `BudgetExceeded`);4 子要点显式列共享 4 字段 / fresh-execution 额外 append / resume cache-hit 不 append(Codex Round 2 修正:Step 6.1 原备注误写两路径 metrics identical)/ 标题保留 + API-存在但不使用注解
+
+- **Round 3 Codex review** (本 commit,Task 10 completion update):
+  - Codex 跑通 14m33s(第二次 attempt;首次 `task-mofga4z4-sxgqzm` "Reconnecting 5/5" 偶发 IPC fail 后重发即过,无需重启 daemon)
+  - **Codex 确认 Round 1 + Round 2 finding 全部 resolved**:artifact-contract 6 重写 Scenario + 3 收紧描述齐(`artifact-contract/spec.md:3 / 9 / 35 / 51`);runtime-core budget chain top summary + Requirement body 一致(`runtime-core/spec.md:3 / 61 / 67-75`);ue-export-bridge `execute/` 描述准确(`ue-export-bridge/spec.md:13`);proposal/design 无裸 aggregate test count
+  - **Codex 内容核对**:Blocker / High / Medium / Low / Missing Docs **全部为零**
+  - **Codex 唯一阻塞**:其 sandbox policy 拦截 `openspec validate` 命令(`rejected: blocked by policy`),无法独立 verify strict validate 通过 —— **非 spec 内容问题**
+  - **Codex Suggested Fixes**:"无需改文件,请在允许执行 `openspec` 的本地 shell 中运行 strict validate"
+  - **本地代跑结果**:`openspec validate cleanup-main-spec-scenarios --strict` 输出 `Change 'cleanup-main-spec-scenarios' is valid`(2026-04-26 Claude Code Bash tool,bypass Codex sandbox policy)
+  - **Codex effective Recommendation = "可以进入 Task 10 completion update"**(形式 Recommendation "不建议继续 archive" 是环境 gate,本地 PASS 已消解)
+
+- **未修改**:主 spec(`openspec/specs/`)/ src / tests / docs / 其他禁止清单文件;archive 时由 sync-specs 合并 delta 进主 spec
+- **archive 权威版本**:Round 1 / Round 2 / Round 3 收敛后的 delta 描述 + Scenario 是 archive 阶段写入主 spec 的权威版本
+- **Task 11 archive readiness 达成**:8 份 delta strict-clean,Codex 三轮 content review 通过,本地 strict validate PASS,测试 0 回归(数量以实测为准);**但本轮按指令不进 Task 11,等下一阶段指令**
 
 ## 11. Archive cleanup-main-spec-scenarios
 
