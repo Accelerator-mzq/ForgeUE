@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | 549 用例通过 ✅(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6) |
+| L0 自动化 | `pytest -q` 全绿 | **848 用例通过 ✅**(2026-04-25 实测;历史基线 549 = 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6;本轮 +299 = Run Comparison 模块,详见 §6.8 与 §8.1) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE commandlet `UnrealEditor-Cmd.exe -ExecutePythonScript=ue_scripts/a1_run.py`(0 GUI 依赖)或 GUI Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 + PythonScriptPlugin |
@@ -318,7 +318,7 @@
 | ADR-004 | 外部数据必须可验证 | ✅(pricing probe 止血 + fence) |
 | ADR-005 | plan_v1 降级归档 | ✅(本轮文档重构) |
 | ADR-006 | TransitionEngine per-arun 隔离(`cloned_for_run`) | ✅ 代码固化 + 3 fence 守门 |
-| ADR-008 | 启用 UE 自带 plugin(PythonScriptPlugin / 未来 RemoteControl)不算违反 ADR-001 | ✅(2026-04-23 A1 立项):ADR-001 禁止**"我们自己写 UE 插件"**;启用 Epic 维护、UE 引擎自带的 plugin 不在禁令范围。逐条对照 SRS:374 的 6 个顾虑:**Python 版本绑定** — UE 自带 plugin 已随 UE 版本编译,不强制我们绑特定 Python;**阻塞 game thread** — 我们不在 game thread 写代码,plugin 已在 editor 模块隔离;**无法跑 543+ 单测** — 启用 plugin 不影响纯 Python 单测套件,framework 侧仍 0 UE 依赖;**隔离网络合规** — 启用 plugin 不引入新网络通道;**多工程复用** — `.uproject` Plugins 段是工程级配置,跨工程同样可声明;**开发环境门槛** — 启用是 1 行 .uproject + 1 行 commandlet,不像写 plugin 要 VS + UE source 编译。注意:ADR-007 在 SRS:380 是"贵族 API 不允许 framework 静默重试",与本条无关 |
+| ADR-008 | 启用 UE 自带 plugin(PythonScriptPlugin / 未来 RemoteControl)不算违反 ADR-001 | ✅(2026-04-23 A1 立项):ADR-001 禁止**"我们自己写 UE 插件"**;启用 Epic 维护、UE 引擎自带的 plugin 不在禁令范围。逐条对照 SRS:374 的 6 个顾虑:**Python 版本绑定** — UE 自带 plugin 已随 UE 版本编译,不强制我们绑特定 Python;**阻塞 game thread** — 我们不在 game thread 写代码,plugin 已在 editor 模块隔离;**无法跑纯 Python 单测套件**(2026-04-23 ADR-008 立项时基线 543+ 单测)— 启用 plugin 不影响纯 Python 单测套件,framework 侧仍 0 UE 依赖;**隔离网络合规** — 启用 plugin 不引入新网络通道;**多工程复用** — `.uproject` Plugins 段是工程级配置,跨工程同样可声明;**开发环境门槛** — 启用是 1 行 .uproject + 1 行 commandlet,不像写 plugin 要 VS + UE source 编译。注意:ADR-007 在 SRS:380 是"贵族 API 不允许 framework 静默重试",与本条无关 |
 
 ---
 
@@ -626,6 +626,32 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 - ❌ 不把 `examples/review_3_images.json` 改造成 visual bundle(留文字 schema smoke 独立价值)
 - ❌ 不引入新 executor / 新 candidate 摄入路径
 
+### 6.8 Run Comparison / Baseline Regression(2026-04-25,OpenSpec change `add-run-comparison-baseline-regression`)
+
+**触发**:`README.md` §"后续扩展" 第 7 项 "Run Comparison / 基线回归 — `observability/run_comparison.py` 待补" 占位关闭。proposal.md 列 4 条 Success criteria(future implementation phase),全部达成。
+
+**实装产出**:`src/framework/comparison/`(`models.py` / `loader.py` / `diff_engine.py` / `reporter.py` / `cli.py` / `__main__.py`)+ `tests/fixtures/comparison/builders.py`(deterministic builder)+ 5 unit + 1 integration 测试文件。CLI 入口 `python -m framework.comparison`。详见 `docs/design/LLD.md` §15 接口签名 + `docs/testing/test_spec.md` §3.11 / §3.11A 测试索引。
+
+**proposal 4 条 Success criteria 验收**:
+- ✅ CLI 跑通离线 fixture,产出 JSON + Markdown(`tests/integration/test_run_comparison_cli.py::test_python_m_framework_comparison_happy_path` + `..._lineage_diff_surfaces_in_json` + `..._does_not_pollute_repo_demo_artifacts`)
+- ✅ ≥1 condition integration test 覆盖 `unchanged` / `content_changed` / `metadata_only` / `lineage_delta` / `cost_usd metric diff`(builder fixture 端到端)+ `examples/mock_linear.json` + FakeAdapter 双跑离线 integration(`..._offline_real_run_pair_via_framework_run`,守门 examples-and-acceptance delta spec Validation gate)
+- ✅ 不依赖 `.env` / provider key — 全 offline,subprocess 跑 `python -m framework.run` 时无 `--live-llm` / 无 `--comfy-url`,自动 FakeAdapter + FakeComfyWorker
+- ✅ 测试数实测(**未硬编码**),pytest -q 实测 **848 通过**(基线 549 + Run Comparison 模块 299 新用例,per-file:models 52 + loader 50 + diff_engine 69 + reporter 65 + cli 59 + integration 4)
+
+**Codex Review Gate**:已通过(Task 4 / 5 / 6 各两轮)。具体 thread / agent ID 见本地 conversation records,本文件不重复列出避免随会话漂移。
+- Task 4 第一轮 PASS + 3 条 nice-to-have polish(吸收后第二轮可选验证)
+- Task 5 第一轮 BLOCK(stdout/stderr ASCII-safe + CR/LF compaction Blocker;由 `_console_safe` + 13 个 ConsoleSafe / EndToEnd / NoHashCheck 测试解决);第二轮 PASS
+- Task 6 第一轮 BLOCK(spec validation gate 缺失 / `demo_artifacts` 浅层快照 / 源 run dir read-only 未守门;由 `test_offline_real_run_pair_via_framework_run` + `_snapshot_tree` 递归 + pre/post 快照断言解决);第二轮 PASS,2 条 Low Risk polish(`_run_comparison_cli` timeout + `_diff_snapshots` helper)吸收
+
+**Deferred follow-up**:`lazy-artifact-store-package-exports`(尚未创建独立 OpenSpec change)。`framework.comparison.loader` 顶层 `from framework.artifact_store.hashing import hash_payload` 必然触发 `framework/artifact_store/__init__.py` 执行,而该 `__init__` 当前 eager-import `repository` / `payload_backends`,导致两者作为 transitive 出现在 `sys.modules`。当前 fence 与 Task 2 loader fence 对齐(只锁 9 个执行链路前缀);**未**改 `artifact_store/__init__.py`,跨子系统改动留独立 change 评估 PEP 562 lazy export。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"`。
+
+**Non-goals 验证**:
+- ❌ 不改现有 Run 执行链路(Orchestrator / Scheduler / TransitionEngine / Executors 全未触动)— 实测 git diff 仅含 `src/framework/comparison/` + `tests/{unit,integration,fixtures}/comparison*` + 6 份 docs / openspec sync
+- ❌ 不改 Artifact / Checkpoint / ReviewReport / Verdict schema — model 未触动
+- ❌ 不做实时对比(两端必须已结束)— loader 强制要求 `run_summary.json` 含 `status` 字段,不满足时 `RunSnapshotCorrupt` exit 2
+- ❌ 不做 content-semantic 比较(图像 / mesh 几何相似度)— 止于 hash + metadata + Verdict 语义
+- ❌ 不做 Run 合并 / 选优 / 人工审核 — `compare()` 是 read-only 函数
+
 ---
 
 ## 7. 未启动项(超出当前基线)
@@ -661,7 +687,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **549 通过 / 0 失败**(2026-04-23 第八轮基线,~18.0s;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收) |
+| L0 pytest 全量 | ✅ **848 通过 / 0 失败**(2026-04-25 OpenSpec change `add-run-comparison-baseline-regression` 完成后实测,~28s;基线 549 + Run Comparison 模块 299 用例[`test_run_comparison_models.py` 52 + `test_run_comparison_loader.py` 50 + `test_run_comparison_diff_engine.py` 69 + `test_run_comparison_reporter.py` 65 + `test_run_comparison_cli.py` 59 + integration 4]) |
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L3 UE 真机 | ✅ UE 5.7.4 commandlet 通过(2026-04-23,见 §6.1) |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
@@ -675,7 +701,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 549 用例(基线 491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence + TBD-008 visual review contract 2 fence + A1 + a2_mesh live bundle parametrize 6 自动收)+ 60+ L3 fence |
+| 测试覆盖 | ✅ 当前 848 用例(2026-04-25 实测);历史基线 549(491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence + TBD-008 visual review contract 2 fence + A1 + a2_mesh live bundle parametrize 6 自动收);本轮 Run Comparison 模块 +299;另有 60+ L3 fence |
 
 ### 8.3 整体结论
 
@@ -690,7 +716,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 - A3 pricing probe ✅(2026-04-22)
 - A2 char/image/review/mesh live ✅(2026-04-22)
 - **A1 + a2_ue UE 真机 ✅(2026-04-23,UE 5.7.4 commandlet 全自动化)**
-- L0 自动化 549 用例全绿 ✅
+- L0 自动化 **848 用例全绿** ✅(2026-04-25 实测;历史基线 549,本轮 Run Comparison 模块 +299)
 - 长期 bridge_execute 路径有 TBD-009(RemoteControl HTTP)+ ADR-008 兜底
 
 ---
@@ -713,6 +739,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.1 | 2026-04-22 | Codex 5 轮 audit(21 条 issue)修复 + 验收登记:新增 FR-LC-006~008、FR-WORKER-009~010、FR-COST-008~009、FR-RUNTIME-008~012、FR-REVIEW-009、NFR-REL-009、ADR-006 共 13 条验收行;L0 自动化基线 491 → 520 |
 | v1.2 | 2026-04-23 | A1 UE 真机 + a2_ue 合并通过(UE 5.7.4 commandlet 全自动化路径,Texture .uasset 真落盘 + 视觉确认):P4 ⚠️→✅ / FR-UE-003 ⏳→✅ / a2_ue 跳过→✅ / §3.1 + §4.7 + §6.1 + §6.2 + §6.4 五处状态升级;新增 ADR-008(启用 UE 自带 plugin 不算违反 ADR-001)+ TBD-009(RemoteControl HTTP bridge,future bridge_execute);新增 live bundle `examples/ue_export_pipeline_live.json`(原 `ue_export_pipeline.json` 留 ComfyUI 接口给 P4 集成测试)+ 入口脚本 `ue_scripts/a1_run.py`(后扩展为读 `FORGEUE_RUN_FOLDER` env 优先,支持复用跑不同 run_id) |
 | v1.3 | 2026-04-23 | A2 全集 5/5 ✅ 重跑收尾(0423 重跑 a2_char/image/review/mesh):a2_mesh_0423 用新 `examples/image_to_3d_pipeline_live.json` 跑 Hunyuan 3D 33.3MB .glb + UE 5.7 commandlet 真 import → `Generated/Props/a2_mesh_0423/.../{StaticMeshes/SM_*, Materials/Material_001, Textures/texture_20250901}.uasset` 三类资产 + 用户 GUI 视觉确认 oak barrel 3D mesh;`test_example_bundles_smoke` 自动 parametrize 收 6 用例(2 个新 bundle × 3),总数 546 → 549 |
+| v1.4 | 2026-04-25 | Run Comparison / 基线回归落地(OpenSpec change `add-run-comparison-baseline-regression`):新增 §6.8 验收记录,关闭 `README.md` §"后续扩展" 第 7 项 "`observability/run_comparison.py` 待补" 占位;Codex Review Gate 双轮 PASS(Task 4/5/6 各两轮);proposal.md 4 条 Success criteria 全部达成;Deferred follow-up `lazy-artifact-store-package-exports` 单独 change 待启;§8.1 自动化验收基线 549 → 848(基线 549 + Run Comparison 模块 ~299 新用例)|
 
 ### 9.3 签收区
 

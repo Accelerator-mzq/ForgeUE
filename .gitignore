@@ -10,3 +10,13 @@ demo_artifacts/
 dist/
 build/
 .coverage
+
+# ---------------------------------------------------------------------------
+# 2026-04-24 OpenSpec adoption 追加:保护本机 .env 变体 + lint / coverage 缓存
+# ---------------------------------------------------------------------------
+.env.*
+!.env.example
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+coverage.xml

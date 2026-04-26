@@ -21,10 +21,10 @@
 
 | 原则 | 说明 |
 | --- | --- |
-| **测试即可执行规范** | 549 个 pytest 用例本身是测试规范,本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
+| **测试即可执行规范** | pytest 用例本身是测试规范(2026-04-23 历史基线 549 用例,2026-04-25 加入 Run Comparison 后实测 848 用例);本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
 | **零 mock 关键边界** | download / EventBus / DAG / Budget / artifact 流端到端真实对象,不得 mock |
 | **每次修复配一个 fence** | Codex / adversarial review 每条修复对应一个新回归测试 |
-| **单元测试快** | `pytest -q` 全量 ≤ 15s,CI 节奏保证 |
+| **单元测试快** | `pytest -q` 全量目标 ≤ 30s(2026-04-23 历史基线 ≤15s @ 549 用例;2026-04-25 含 Run Comparison subprocess integration 后实测 ~28s @ 848 用例,仍在区间内) |
 | **集成测试表意清晰** | 每个 P0–P4 集成测试一个闭环场景,命名与 SRS 章节对齐 |
 | **fence 测试守门** | 反 fabrication / 反 regression / 反语法回退 |
 
@@ -51,9 +51,9 @@
            ├─────────────────────────┤
            │ Live LLM smoke(A2)     │   ← 可选,需 API key
            ├─────────────────────────┤
-           │ 集成测试 × 11 文件 68 用例│   ← P0-P4 + 场景级
+           │ 集成测试(详见 §2.2 表)│   ← P0-P4 + 场景级 + Run Comparison
            ├─────────────────────────┤
-           │ 单元测试 × 45 文件 475 用例│   ← 主体
+           │ 单元测试(详见 §2.2 表)│   ← 主体(含 Run Comparison)
            └─────────────────────────┘
 ```
 
@@ -61,9 +61,10 @@
 
 | 类别 | 目录 | 文件数 | 用例数 | 运行时间 |
 | --- | --- | --- | --- | --- |
-| 单元测试 | `tests/unit/` | 45 | ~475 | < 10s |
-| 集成测试 | `tests/integration/` | 11 | ~71 | < 9s |
-| **合计** | — | **56** | **549** | **~18s** |
+| 单元测试 | `tests/unit/` | 多个(以 `ls tests/unit/` 实查) | 以 `pytest -q tests/unit/` 实测为准 | < 15s |
+| 集成测试 | `tests/integration/` | 多个(以 `ls tests/integration/` 实查) | 以 `pytest -q tests/integration/` 实测为准 | < 13s |
+| **合计**(2026-04-25 实测) | — | — | **848** | **~28s** |
+| 历史基线(2026-04-23) | — | 56 | 549 | ~18s |
 
 ### 2.3 执行方式
 
@@ -193,6 +194,23 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | --- | --- | --- | --- | --- |
 | `test_codex_audit_fixes.py` | 5 轮 review-fix 循环全部 fence(29 用例)| FR-LC-006~008, FR-WORKER-009~010, FR-COST-008~009, FR-RUNTIME-008~012, FR-REVIEW-009, NFR-REL-009 | L1,L2,L3 | 见下方 §5 fence 清单第三段 |
 
+### 3.11 Run Comparison(2026-04-25,OpenSpec change `add-run-comparison-baseline-regression`)
+
+| 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
+| --- | --- | --- | --- | --- |
+| `test_run_comparison_models.py` | `RunComparisonInput` / `ArtifactDiff` / `VerdictDiff` / `MetricDiff` / `StepDiff` / `RunComparisonReport` 字段 + `model_dump_json` JSON roundtrip + `schema_version="1"` lock | — | L0 | 52 用例 |
+| `test_run_comparison_loader.py` | `resolve_run_dir` 三分支 / `load_run_snapshot` 严格读 + payload byte hash recompute / 4 类异常(`RunDirNotFound` / `RunDirAmbiguous` / `RunSnapshotCorrupt` / `PayloadMissingOnDisk`)/ strict 与 non-strict 行为 / loader subprocess import-fence | — | L0 | 50 用例 |
+| `test_run_comparison_diff_engine.py` | `compare()` 纯函数;artifact / verdict / metric 五层 diff taxonomy(unchanged / content_changed / metadata_only / missing / payload_missing_on_disk / decision_changed / confidence_changed / selected_candidates_changed)/ sparse `summary_counts` / lineage_delta / status_match / read-only over snapshot / diff_engine subprocess import-fence | — | L0 | 69 用例 |
+| `test_run_comparison_reporter.py` | `render_json` / `render_markdown` 纯函数 + `write_reports` 唯一 I/O 边界(UTF-8 + LF)/ ASCII-only(`_ascii_safe` / `_line_safe` / `_escape_cell`)/ 固定文件名 `comparison_report.json` + `comparison_summary.md` / sparse `summary_counts` `.get(key, 0)` 守门 / reporter subprocess import-fence(直接 + lazy public export 两路)| — | L0 | 65 用例 |
+| `test_run_comparison_cli.py` | argparse 11 flag → `RunComparisonInput` 映射 / exit code 0/2/3/1 / `--json-only` / `--markdown-only` 互斥 / `--quiet` stdout / `--no-hash-check` / `_safe_path_segment` / `_console_safe`(stdout/stderr ASCII-safe + 可见 `\\r` `\\n`)/ python -m subprocess / cli subprocess import-fence | — | L0 | 59 用例 |
+
+### 3.11A Run Comparison Integration(2026-04-25)
+
+| 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
+| --- | --- | --- | --- | --- |
+| `tests/integration/test_run_comparison_cli.py` | 真实 subprocess `python -m framework.comparison` 端到端 / 静态 builder fixture happy path(JSON schema_version=="1" + Markdown ASCII + 三个 ArtifactDiffKind + run-level cost_usd metric diff + Markdown 关键 section 标题)/ `<repo>/demo_artifacts/` 不污染(递归快照 size + mtime_ns + cwd sibling)/ lineage_delta `transformation_kind` 端到端 round-trip / `examples/mock_linear.json` + FakeAdapter 双跑(无 `--live-llm` / 无 `--comfy-url`)/ source run dir 字节级 read-only(对应 runtime-core delta spec) | — | L0 | 4 用例 |
+| `tests/fixtures/comparison/builders.py` | deterministic `build_fixture_pair(root)` / 合成日期 `2000-01-01` / 真实 Pydantic 类构造 / `hash_payload(bytes)` 真实计算 / 不依赖 `datetime.now` / `os.environ` / 网络 / provider | — | — | 公共构造 helper(被 integration test 调用)|
+
 ---
 
 ## 4. 集成测试场景
@@ -216,6 +234,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_dag_concurrency.py` | FR-WF-007, NFR-PERF-001 | `parallel_dag=True` fan-out,墙钟验证 |
 | `test_ws_progress.py` | FR-OBS-003, FR-OBS-004 | WS endpoint 订阅 + 事件推送 + idle disconnect |
 | `test_example_bundles_smoke.py` | FR-WF-001 | `examples/*.json` 每份 loader + Orchestrator 不抛 |
+| `test_run_comparison_cli.py` | — | 4 用例;详见 §3.11A。FakeAdapter 双跑离线集成是 examples-and-acceptance delta spec Validation gate |
 
 ---
 
@@ -365,8 +384,8 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
 | NFR-SEC | test_secrets |
 | NFR-OBS | test_event_bus,test_progress_passthrough |
-| NFR-MAINT | 所有 L3 fence 守门 + 总用例数 549(基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收) |
-| NFR-PORT | CI 能在 Linux 跑(549 全绿,stub unreal 覆盖 P4 + 真机 commandlet 覆盖 A1) |
+| NFR-MAINT | 所有 L3 fence 守门 + 历史基线 549 用例(491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收);**当前 2026-04-25 实测 848 用例**(基线 549 + Run Comparison 模块 299) |
+| NFR-PORT | CI 能在 Linux 跑(2026-04-23 基线 549 全绿,stub unreal 覆盖 P4 + 真机 commandlet 覆盖 A1;2026-04-25 实测 848 全绿) |
 
 ### 6.3 未覆盖 / 部分覆盖
 
@@ -437,11 +456,11 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 
 | 级别 | 标准 |
 | --- | --- |
-| 单元测试 | 100% 通过(549 用例,基线 491 + audit 29 + 后续 fence 23 + A1 + a2_mesh live bundle parametrize 6)|
-| 集成测试 | P0–P4 + 5 场景全绿 |
+| 单元测试 | 100% 通过(以 `pytest -q` 实测为准;2026-04-25 当前 848 用例 = 基线 549 + Run Comparison 299;历史基线 549 = 491 + audit 29 + 后续 fence 23 + A1 + a2_mesh live bundle parametrize 6)|
+| 集成测试 | P0–P4 + 5 场景 + Run Comparison 全绿 |
 | Fence 测试 | 每条守护修复不得回退 |
 | 覆盖率 | 每条 FR 至少 1 个对应测试(矩阵 §6.1 全部 ✅) |
-| 性能 | 全量 `pytest -q` ≤ 15s |
+| 性能 | 全量 `pytest -q` 目标 ≤ 30s(历史基线 ≤15s @ 549 用例;2026-04-25 实测 ~28s @ 848 用例,subprocess integration 占主要时间)|
 | 手工验收 | A1 UE 真机、A2 live LLM、A3 pricing probe 按验收文档勾选 |
 
 ---
@@ -478,6 +497,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | v1.0 | 2026-04-22 | 初始基线,491 用例索引化,fence 清单对齐 plan_v1 §M |
 | v1.1 | 2026-04-22 | 加 §3.10 `test_codex_audit_fixes.py`(29 用例)+ §5 第三段 5 轮 audit fence 表;`NFR-MAINT` / `单元测试` 总数刷新到 520 |
 | v1.2 | 2026-04-23 | A1 UE 真机 ⏳→✅(UE 5.7.4 commandlet 路径,§7.2 / §7.3 状态升级);A2 全集 5/5 ✅(0423 重跑 a2_char/image/review/mesh + a1_demo 含 a2_ue);新增 examples bundle `ue_export_pipeline_live.json` + `image_to_3d_pipeline_live.json`,`test_example_bundles_smoke` 自动 parametrize 收 6 用例,总数刷新到 549 |
+| v1.3 | 2026-04-25 | 加 §3.11 / §3.11A Run Comparison(`tests/unit/test_run_comparison_{models,loader,diff_engine,reporter,cli}.py` 5 文件 + `tests/integration/test_run_comparison_cli.py` 1 文件 + `tests/fixtures/comparison/builders.py` deterministic builder);§4 集成测试场景表加一行 `test_run_comparison_cli.py`;OpenSpec change `add-run-comparison-baseline-regression` 实装侧 6 Task 全部完成,总数刷新到 848(基线 549 + ~299 新用例)|
 
 ### 10.3 未决事项
 
