@@ -18,6 +18,20 @@
 - [x] 1.3 跑 `openspec validate cleanup-main-spec-scenarios --strict` —— Task 1 完成时 artifact-contract delta 已合规,其他 7 份 spec 用 `## Planned Requirement Updates` placeholder 段(不当 delta 解析),validate 不再因 "empty MODIFIED section" 报错
 - [x] 1.4 跑 `python -m pytest -q` —— 数量以实测为准;本 task 是 doc-only,不影响测试(`pytest -q` / `pytest --collect-only -q | tail -5` 是真源,见 §3.1 收紧后的 `Test totals are never hardcoded` 描述)
 
+**Task 1 Codex review fix**(2026-04-26 Task 10 review 后落地):Task 10 Codex review 发现 artifact-contract delta 含多处 false claims,本 commit 按 M2 实证验证 + M3.2 修复策略**重写 6 个 Scenario** 与**收紧 3 个 Requirement 描述**:
+- **重写 Scenario S1**(Two-segment artifact type)—— 删 `display_name` 反向解析虚构;改写为 `internal` `@property` 单向拼接 + `display_name` 独立 author-declared 字段
+- **重写 Scenario S2**(Modality-specific metadata)—— 删"image artifact 缺 width/height 在 metadata layer 被拒"虚构;改写为 executor convention(`generate_mesh.py:139-151` 真实写 metadata,`put` 接受 dict as-is)
+- **重写 Scenario S4**(Lineage source_step_ids)—— 修 producer-vs-upstream 错位:`source_step_ids=[ctx.step.step_id]` 是 producer step id,不是 upstream consumed step id;此处是 M2 实证发现 Codex 漏报的第 6 处虚构
+- **重写 Scenario S5**(Lineage selected_by_verdict_id)—— 删 mesh executor 设 `selected_by_verdict_id = verdict id` 虚构;改写为 `source_artifact_ids` 承载(`test_l4_image_to_3d.py:351` 真实断言),`selected_by_verdict_id` 标注为 reserved future-use field
+- **重写 Scenario S6 / S7**(Four-layer validation)—— 删 store-entry 4 层 gate 虚构;S6 改写为 `put` 真实三步边界(write payload → hash → register),S7 改写为 pipeline-stage layered(DryRunPass / executor / manifest_builder + ExportExecutor.validate_manifest / ue_bridge.inspect)
+- **收紧 Requirement 描述**(3 处,标题保留为历史命名):
+  - `Two-segment artifact type` —— 删"bidirectional mapping",改为 `modality + shape` 字段 + `internal` 单向拼接 + `display_name` 独立标签;明示无反向 parser
+  - `Lineage is tracked end-to-end` —— 明确 `source_artifact_ids` 是 upstream / `source_step_ids` 是 producer step id;`selected_by_verdict_id` 标注为 reserved future-use slot,当前 executors 不填充
+  - `Four-layer validation on store entry` —— 改为 layered across pipeline stages 描述,明列 4 个真实校验阶段(dry-run preflight / executor-side / manifest build / ue_bridge.inspect),`put` 真实三步边界声明
+- **保留**:Scenario S3(Mesh metadata)+ Scenario S8(DAG-safe producer lookup)+ Requirement 标题全部 5 个 + Requirements 2 / 6 描述
+- **不改主 spec**(`openspec/specs/artifact-contract/spec.md` 不动,archive 时由 sync-specs 合并 delta 进主 spec)
+- **未勾 Task 10**(Codex review 仍待收敛后再勾;本 commit 是 Task 10.3 修复循环的一轮)
+
 **Task 1 hygiene note**(2026-04-25 方案 E 落地):为保持 active change strict validate **完全 PASS**,Task 2-8 未实施前其对应 Plan 内容**已从 specs/ 移出到 notes/**,完整路径如下:
 
 | Task | Plan 来源(已删) | Plan 现位置(notes/) |
