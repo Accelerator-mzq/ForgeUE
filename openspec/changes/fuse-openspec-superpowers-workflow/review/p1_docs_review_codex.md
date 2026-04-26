@@ -15,9 +15,9 @@ triggered_by: forced
 created_at: 2026-04-26
 resolved_at: 2026-04-26
 disputed_open: 0
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-design
+writeback_commit: a7057545bb9c5ea7017f0ad7af8c46d030e571cc
 drift_reason: |
   Codex H1.1 (blocker, verified true): docs/ai_workflow/forgeue_integrated_ai_workflow.md §D.5/§D.6 wrote cross-check protocol (4-section template + Resolution 6-value enum + frontmatter required fields + disputed_open semantics) as normative ("必含/必有") rules, but design.md/spec.md only stated "A frozen + disputed_open==0" tangentially. The full template + Resolution enum existed only in evidence files (design_cross_check.md / forgeue-fusion-cross_check.md) — putting them into target docs would have made the docs file a contract source, violating its own §A.4. Resolution: wrote back to design.md §3 by adding "Cross-check Protocol" subsection containing 4-section template + Resolution enum + frontmatter required fields + disputed_open semantics + adversarial-review-no-cross-check carve-out. Target §D.5/§D.6 reframed as restatements pointing to design.md as唯一权威源, with explicit "不引入新约束" disclaimer. writeback_commit pending user commit (edits applied this session, not yet committed).
 reasoning_notes_anchor: null
@@ -38,6 +38,8 @@ note: |
     - M1.2: verification 表硬编码行号(`design.md:204` / `design.md:147`)改为 semantic §X 引用(行号 +44 偏移因 Cross-check Protocol 写回)
     - L3.1: Validation 段 emoji ✅/⚠️ 替换为 [OK]/[WARN]
   Round-2 详情:`review/p1_docs_review_round2_codex.md`(同会话产出)。
+
+  Post-commit(2026-04-26):milestone commit `a7057545bb9c5ea7017f0ad7af8c46d030e571cc` 触 design.md(+45 行 Cross-check Protocol)+ README.md / forgeue_integrated_ai_workflow.md / tasks.md / 2 份 evidence;writeback_commit 已回填,frontmatter 升回 `drift_decision: written-back-to-design` + `aligned_with_contract: true`。spec.md ADDED Requirement Scenario 2 protocol(written-back-* 必有真实 commit + 触对应 artifact)满足。
 ---
 
 # P1 Evidence-level Codex Review: forgeue_integrated_ai_workflow.md
@@ -124,7 +126,7 @@ P1 §2.1 起草了 `docs/ai_workflow/forgeue_integrated_ai_workflow.md`(402 行,
 - [OK] target §D.5 / §D.6 不再 prescriptive(prefix 段明示 "design.md 是唯一权威源,不引入新约束")
 - [OK] target §A.5 不再列 skill 子集(改为引 §B.3 详表;design.md §8 Compatibility 同款边界并存,共同作来源 — round-2 H2.1 fix 去 "唯一来源" 表述)
 - [OK] contract 与 evidence 三方一致(design.md / spec.md / target docs)
-- [WARN] `writeback_commit: null`(用户尚未 commit;round-2 M1.1 fix 已把 frontmatter 改为 `drift_decision: pending` + `aligned_with_contract: false`,因 spec.md Scenario 2 protocol 要求 written-back-* 必有真实 commit;commit 后回填 writeback_commit 为真实 sha 并升回 written-back-to-design + aligned_with_contract: true)
+- [OK] `writeback_commit: a7057545bb9c5ea7017f0ad7af8c46d030e571cc`(post-milestone-commit 回填 2026-04-26;commit 触 design.md +45 行 Cross-check Protocol;`drift_decision: written-back-to-design` + `aligned_with_contract: true` 已升回;spec.md ADDED Requirement Scenario 2 protocol 满足)
 
 ## Notes for future
 
