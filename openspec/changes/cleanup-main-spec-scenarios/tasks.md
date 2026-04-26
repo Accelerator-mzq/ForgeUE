@@ -121,7 +121,12 @@
 ## 6. runtime-core(7 缺)
 
 - [x] 6.1 为以下 7 个 Requirement 各补 Scenario,合计 9 个 Scenario(两条 [+1] 各 2 个);**实证检查发现 1 处主 spec 与代码命名漂移**,**Budget exceeded synthesizes a Verdict** 采用方案 A 收紧描述以对齐真实代码,**保留 Requirement 标题不变**:
-  - **Budget exceeded synthesizes a Verdict** —— 方案 A:把"合成 `budget_exceeded` Verdict 并通过 TransitionEngine 路由"的描述改为按真实终止链路写 —— `BudgetTracker.assert_within(...)` 抛 `BudgetExceeded(RuntimeError)` → `Orchestrator` catch → 写 `run.metrics["termination_reason"]` = `"budget_exceeded(cap=<cap>, spent=<spent>)"` + `last_failure_mode="budget_exceeded"` + `failure_event.decision="human_review_required"`(`Decision` enum 真实成员,非虚构 `budget_exceeded`)→ `run.status=RunStatus.failed` → 返回 `_StepOutcome(terminate=True, next_step_id=None)`;路径覆盖 fresh-execution(`orchestrator.py:566-580`)与 fresh-process resume cache-hit cost replay(`orchestrator.py:428-435`)。Run 不得静默退出。**不**继续保留主 spec 原误写的"合成 Verdict"+"通过 TransitionEngine 路由";**不**写 `Decision` enum 中不存在的 `budget_exceeded` / `abort` 枚举值
+  - **Budget exceeded synthesizes a Verdict** —— 方案 A:把"合成 `budget_exceeded` Verdict 并通过 TransitionEngine 路由"的描述改为按真实终止链路写 —— `budget_tracker.check()` 返回 `False`(`if not budget_tracker.check():` bool branch)→ `Orchestrator` direct termination(**不**调 `assert_within()`,**不** catch `BudgetExceeded`):
+    - **共享 4 字段**(fresh-execution `orchestrator.py:566-580` 与 resume cache-hit `orchestrator.py:428-435` 都写):`run.metrics["termination_reason"]` = `"budget_exceeded(cap=<cap>, spent=<spent>)"` + `run.metrics["last_failure_mode"] = "budget_exceeded"` + `run.status = RunStatus.failed` + 返回 `_StepOutcome(terminate=True, next_step_id=None)`
+    - **fresh-execution 额外** append `result.failure_events`,decision tag 为 `"human_review_required"`(`Decision` enum 真实成员,非虚构 `budget_exceeded`)
+    - **resume cache-hit 不** append `failure_events`(只写 4 个共享字段;Codex Round 2 修正:Step 6.1 原备注误写两路径 metrics identical)
+    - Run 不得静默退出
+    - **不**继续保留主 spec 原误写的"合成 Verdict"+"通过 TransitionEngine 路由";**不**写 `Decision` enum 中不存在的 `budget_exceeded` / `abort` 枚举值;`BudgetExceeded` class 与 `assert_within()` 在 `BudgetTracker` API 上存在但 Orchestrator 主路径不使用 —— **本备注 2026-04-26 Codex Round 2 Medium Risk self-consistency 修复**(原 Step 7b 改了 Requirement 主体但未同步本备注链路细节,Round 2 抓出残留)
   - 其余 6 条不动描述,仅补 Scenario:
     - `load_run_metadata` performs three-stage filtering [+1] —— 2 个 Scenario(已知 + 缺 payload / file-blob hash drift)
     - TransitionEngine is isolated per `arun` [Min 1]

@@ -1,6 +1,6 @@
 # Delta Spec: runtime-core (cleanup-main-spec-scenarios)
 
-> 给 `openspec/specs/runtime-core/spec.md` 的 7 个已有 Requirement 补 `#### Scenario:` 块(共 9 个 Scenario,其中 `load_run_metadata performs three-stage filtering` 与 `Unsupported-response short-circuit at three layers` 两条 [+1] 各写 2 个 Scenario)。**不**新增 Requirement,**不**改 Requirement 标题。其中 `Budget exceeded synthesizes a Verdict` 一条按方案 A 收紧描述以对齐真实代码(主 spec 描述引用了 `Decision` enum 中不存在的 `budget_exceeded` 枚举值,代码实际走 `BudgetExceeded` exception → Orchestrator 直接 terminate 链路),其余 6 条复用主 spec 描述。`9-stage Run lifecycle is strict` / `Checkpoint persistence survives cross-process resume` / `Cost is persisted before Checkpoint` 已有 Scenario,不在本 delta 范围。
+> 给 `openspec/specs/runtime-core/spec.md` 的 7 个已有 Requirement 补 `#### Scenario:` 块(共 9 个 Scenario,其中 `load_run_metadata performs three-stage filtering` 与 `Unsupported-response short-circuit at three layers` 两条 [+1] 各写 2 个 Scenario)。**不**新增 Requirement,**不**改 Requirement 标题。其中 `Budget exceeded synthesizes a Verdict` 一条按方案 A 收紧描述以对齐真实代码(主 spec 描述引用了 `Decision` enum 中不存在的 `budget_exceeded` 枚举值,代码实际走 `budget_tracker.check()` bool branch → Orchestrator direct termination 链路;`BudgetExceeded` class 与 `assert_within()` 在 `BudgetTracker` API 上存在但 Orchestrator 主路径不使用,见 Requirement 主体),其余 6 条复用主 spec 描述。`9-stage Run lifecycle is strict` / `Checkpoint persistence survives cross-process resume` / `Cost is persisted before Checkpoint` 已有 Scenario,不在本 delta 范围。
 
 ## MODIFIED Requirements
 
