@@ -80,7 +80,7 @@ Requirement 名是 OpenSpec 内部标识符。本 change 全部用 `## MODIFIED 
 2. 对照源码 / 测试 / docs,为每个缺 Scenario Requirement 写 1-2 个 GIVEN/WHEN/THEN
 3. 把 delta spec 的 "Plan" 段转为 `## MODIFIED Requirements` 完整块
 4. 跑 `openspec validate cleanup-main-spec-scenarios --strict` —— 单 spec 完成时本 change 自身 validate 应当部分 PASS(其他未完 spec 仍报警告),全 8 份完成后 PASS
-5. 跑 `python -m pytest -q`(预期 848,本 change 不影响测试,作为防回归冒烟)
+5. 跑 `python -m pytest -q`(数量以实测为准,本 change 不影响测试,作为防回归冒烟)
 
 8 个 Task 完成后,Task 9 跑全量 validate,Task 10 走 Codex review,Task 11 archive cleanup-main-spec-scenarios,Task 12 回头 archive add-run-comparison-baseline-regression。
 
@@ -110,7 +110,7 @@ openspec/changes/cleanup-main-spec-scenarios/        (本 change)
 - **全量验证**(Task 9):
   - `openspec validate cleanup-main-spec-scenarios --strict` PASS
   - `openspec list` 显示本 change 全部 task checkbox 勾选(留 archive 阶段的 sync-specs sync-specs row 除外)
-  - `python -m pytest -q` 848 passed(零回归)
+  - `python -m pytest -q` 与 cleanup 启动前基线一致,数量以实测为准(零回归)
 - **archive 后验证**(Task 11 完成):
   - `openspec validate --specs --strict` 8/8 PASS(主 spec 全部带回 strict-clean 状态)
   - `openspec list` 不再含 cleanup-main-spec-scenarios(已 archived)
@@ -121,7 +121,7 @@ openspec/changes/cleanup-main-spec-scenarios/        (本 change)
 - `openspec/specs/*/spec.md`:8 份主 spec 各自加完缺失 Scenario,strict validate PASS
 - `openspec/changes/cleanup-main-spec-scenarios/`:整体移到 `openspec/changes/archive/<YYYY-MM-DD>-cleanup-main-spec-scenarios/`
 - `add-run-comparison-baseline-regression` 解锁:重跑 `openspec archive add-run-comparison-baseline-regression -y` 应直接通过(因为它的 delta strict 早就 PASS,只是被 main spec rebuild 校验卡住)
-- ForgeUE 运行时行为:零变化(`pytest -q` 848 全绿,`framework.comparison` / 其他模块代码与归档前一致)
+- ForgeUE 运行时行为:零变化(`pytest -q` 全绿,数量以实测为准;`framework.comparison` / 其他模块代码与归档前一致)
 
 ## 7. 与既有 ADR / change 的关系
 

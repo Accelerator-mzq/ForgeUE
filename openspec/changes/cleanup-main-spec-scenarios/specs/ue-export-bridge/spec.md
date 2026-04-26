@@ -10,9 +10,9 @@ The system SHALL support two `UEOutputTarget.import_mode` values — `manifest_o
 
 #### Scenario: ImportMode enum exposes manifest_only and bridge_execute, but bridge_execute is reserved with no executor wiring
 
-- GIVEN `framework.core.enums.ImportMode(str, Enum)` declaring `manifest_only = "manifest_only"` and `bridge_execute = "bridge_execute"` (`src/framework/core/enums.py:91-93`); `UEOutputTarget.import_mode: ImportMode = ImportMode.manifest_only` (`src/framework/core/ue.py:24`); the `src/framework/ue_bridge/execute/` package directory contains only `__init__.py` (no executor module); ADR-008 plus the main spec's Invariants section state that `bridge_execute` remains reserved
+- GIVEN `framework.core.enums.ImportMode(str, Enum)` declaring `manifest_only = "manifest_only"` and `bridge_execute = "bridge_execute"` (`src/framework/core/enums.py:91-93`); `UEOutputTarget.import_mode: ImportMode = ImportMode.manifest_only` (`src/framework/core/ue.py:24`); the `src/framework/ue_bridge/execute/` directory is empty — no executor module, not even an `__init__.py` (verified 2026-04-26 via `ls -la` and PowerShell `Get-ChildItem -Force` returning empty; `Test-Path "<dir>\__init__.py"` returns False); ADR-008 plus the main spec's Invariants section state that `bridge_execute` remains reserved
 - WHEN a Run with `ue_target.import_mode = "manifest_only"` reaches the export Step versus a hypothetical Run with `import_mode = "bridge_execute"`
-- THEN the `manifest_only` path runs end-to-end through `ExportExecutor` (writing the three deliverable files) and the framework completes the export Step normally; the `bridge_execute` path has no executor wiring inside `src/framework/ue_bridge/execute/`, so it cannot be exercised today — moving `bridge_execute` to "implemented" requires a separate future change with an updated HLD/LLD per the main spec's Invariants
+- THEN the `manifest_only` path runs end-to-end through `ExportExecutor` (writing the three deliverable files) and the framework completes the export Step normally; the `bridge_execute` path has no executor wiring (the `execute/` directory is empty), so it cannot be exercised today — moving `bridge_execute` to "implemented" requires a separate future change with an updated HLD/LLD per the main spec's Invariants
 
 ### Requirement: Three-file deliverable
 

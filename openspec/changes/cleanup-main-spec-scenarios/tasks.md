@@ -173,6 +173,19 @@
 - [ ] 10.3 按 Codex 反馈循环修复(同 add-run-comparison 的 Codex review 模式;最多 3-4 轮收敛)
 - [ ] 10.4 Codex Commit Recommendation = "可以提交" 后才进入 Task 11
 
+**Task 10 review-fix log**(2026-04-26 Codex Round 1 后落地,**不**勾 §10.x checkbox,等 Codex re-review 收敛后再勾):
+
+- **Round 1 Codex review (commit 805c7e9 + 本 commit)**:
+  - Codex Recommendation:**修复后再 review**,7 处 Blocker + 1 处 Low Risk 全部 Confirmed(M2 实证零 false positive)
+  - **Step 7a**(commit 805c7e9):artifact-contract delta 6 处 Scenario 重写 + 3 处 Requirement 描述收紧(详见 §1 Task 1 Codex review fix block)
+  - **Step 7b**(本 commit):剩余三类修复
+    - **proposal.md / design.md 裸测试总数(3 处)**:proposal:64 / design:83 / design:113 全部改为"数量以实测为准"措辞,与 §3.1 收紧后的 `Test totals are never hardcoded` 描述自洽;tasks.md line 55 的 `2026-04-25 实测 848 用例` / `2026-04-23 历史基线 549` 是带 date stamp 的合规样板,保留不动
+    - **runtime-core delta `Budget exceeded synthesizes a Verdict`**:Codex Blocker #5 + #6 修复 —— 删 "BudgetExceeded → Orchestrator catch" 虚构链路 + "fresh-execution 与 resume cache-hit metrics identical" 错位断言;改写为真实 `budget_tracker.check() → Orchestrator direct termination` bool-branch 路径;Requirement 描述明列两路径共享 4 个终止字段(`termination_reason` / `last_failure_mode` / `run.status` / 终止 outcome)+ 显式区分 fresh path 额外 append `failure_events`(decision="human_review_required")vs resume cache-hit path 不 append;`BudgetExceeded` class / `assert_within()` 标注为 BudgetTracker API 存在但 Orchestrator 主路径不使用;Requirement 标题保留为历史命名
+    - **ue-export-bridge delta Low Risk**:Codex Low Risk 修复 —— 删 "contains only `__init__.py`" 虚构;改为"`execute/` directory is empty (no executor module, not even an `__init__.py`)" + 实证标注(2026-04-26 Bash `ls -la` 与 PowerShell `Get-ChildItem -Force` 双重验证空目录,`Test-Path` 验证 `__init__.py` = False);`bridge_execute` reserved 语义在主 spec Invariants 段保留
+- **未修改**:主 spec(`openspec/specs/`)/ Task 2-8 其他 6 份 delta(examples / probe / provider / review / workflow / artifact-contract 已在 Step 7a 修)/ src / tests / docs / 其他禁止清单文件
+- **未勾 Task 10**:Round 1 修复完成,等 Codex Round 2 re-review 验证 finding 全部收敛(可能仍发现新问题或确认通过),Round 2 通过后再勾 §10.1-§10.4
+- **archive 时由 sync-specs 合并 delta 进主 spec**:Round 1 修复后的 delta 描述 + Scenario 是 archive 阶段写入主 spec 的权威版本
+
 ## 11. Archive cleanup-main-spec-scenarios
 
 - [ ] 11.1 `openspec archive cleanup-main-spec-scenarios -y` —— 默认带 strict validate,**不**用 `--no-validate` / `--skip-specs` 绕过

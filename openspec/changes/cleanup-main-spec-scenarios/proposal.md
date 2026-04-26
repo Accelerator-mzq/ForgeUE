@@ -61,7 +61,7 @@ OpenSpec 是契约抽取层(`docs/ai_workflow/README.md` §1)。当 ForgeUE 主 
 - [ ] 8 份 delta spec 的 MODIFIED Requirement 全部含至少 1 个 Scenario,Scenario 与 ForgeUE 源码 / 测试 / docs 现状对齐
 - [ ] `openspec archive cleanup-main-spec-scenarios` 完成 sync-specs 后,主 spec 8/8 通过 `openspec validate --specs --strict`
 - [ ] archive `add-run-comparison-baseline-regression` 在 cleanup archive 之后可以重新跑通,sync-specs 不再 abort
-- [ ] `python -m pytest -q` 仍 848 通过(运行时行为零变更,本 change 不应引入回归)
+- [ ] `python -m pytest -q` 仍通过,数量以实测为准(运行时行为零变更,本 change 不应引入回归)
 
 ## References
 
