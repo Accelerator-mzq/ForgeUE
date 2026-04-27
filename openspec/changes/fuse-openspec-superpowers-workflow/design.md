@@ -214,6 +214,29 @@ frontmatter 必含:`disputed_open: <int>` / `codex_review_ref: <path>` / `create
 
 > Adversarial review(`/codex:adversarial-review` mixed scope)**不**走 cross-check;single-direction `/codex:review --base <main>` verification review 也**不**走 cross-check。仅 doc-level S2 design / S3 plan stage hook 走 cross-check(详 §4)。
 
+**Codex Review Output Exposure Protocol(verbatim-first;P3 实战暴露后立的协议)**:
+
+当 Claude 触发任意 codex review — 无论是 `/codex:review` / `/codex:adversarial-review` slash 命令路径还是 path B(`codex exec --sandbox read-only -o ...`,plugin slash 不可被 model 调用时的等价 fallback)— Claude **必须**在**单一回复**中同时呈现以下 4 项,确保用户在同一审计窗口对照 codex 原文与 Claude 的解读判断中立性:
+
+1. **Verbatim codex output** — codex 原始 review markdown,完整置于 fenced code block。仅在 ≥ 500 行的极长 output 时允许 `... <N lines elided, full at <path>>` 标记截断,且必须给出可直接 `Read` 的文件路径。
+2. **Independent verification 表**(沿 ForgeUE memory `feedback_verify_external_reviews`)— 每条 finding 的 `file:line`(或 semantic §X)引用对照实际代码 / contract 真源,逐行 verdict。
+3. **Finding 分类** — blocker / non-blocker / nit 分组,加 verdict 维度(verified-ok / drift / bug / over-claim / gap / safety / trade-off)。
+4. **Resolution 提议** — 每条 finding 提议动作(write-back-to-<artifact> / delete / leave-as-is / fix-in-tool / disputed-permanent-drift)+ 跨迭代分桶(C1 纯 code / C2 code+contract / C3 contract 写回 等)。
+
+**禁令**:
+
+- 隐藏 verbatim output 直到用户主动问("我看不到 review 结果")才贴
+- 仅给摘要表 / 归纳表而不给 verbatim block
+- 把 verbatim 与解读拆到多个回复(失去并列审计视角)
+- 编辑 verbatim block:删除 `Verdict: trade-off` 措辞 / 复述 reasoning / 丢 `## Summary` 行 / 翻译
+
+**本协议管什么不管什么**:
+
+- 管:codex review 跑完后 Claude 必须如何向用户暴露结果
+- 不管:谁可以触发 review(`/codex:review` / `/codex:adversarial-review` 仍是 plugin `disable-model-invocation: true` 设置下的 user-only;path B 是 Claude 唯一独立触发 adversarial review 的路径)
+
+protocol 立的根本理由:review 整性的来源是过程纪律(brief 准确 / verbatim 落盘 / 独立验证 / Claude 中立 / evidence 进 git)+ 用户审计权,不是"谁按按钮"。本 protocol 把第 5 项"用户审计权"从被动(用户主动 `Read` 文件)升为主动(Claude 必须同回复内贴 verbatim),关闭旧流程的 Claude-消化-在前-用户-审计-在后窗口期。
+
 ### §4 Command Design(8 个,accepted-claude)
 
 8 个 ForgeUE commands `/forgeue:change-*`,前缀与 `/opsx:*` 平行(决议 14.2)。**不**包 OpenSpec contract create/archive(强调 OpenSpec 中心地位):
