@@ -459,3 +459,56 @@ def test_cli_missing_pytest_count_does_not_crash(monkeypatch, tmp_path):
     # No literal ``== 848`` style hardcoded pytest count comparisons in source.
     for forbidden in ("== 848", "== 491", "==848", "==491"):
         assert forbidden not in src, f"hardcoded count {forbidden!r} found in {TOOL}"
+
+
+# ---------------------------------------------------------------------------
+# Subprocess env injection (P5 fixup): src/ on PYTHONPATH so framework imports
+# without `pip install -e .`. Mirrors tests/conftest.py sys.path extension.
+# ---------------------------------------------------------------------------
+
+
+def test_build_subprocess_env_injects_src_when_pythonpath_absent(monkeypatch, tmp_path):
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    env = fv._build_subprocess_env(tmp_path)
+    expected = str(tmp_path / "src")
+    assert env["PYTHONPATH"] == expected
+
+
+def test_build_subprocess_env_appends_to_existing_pythonpath(monkeypatch, tmp_path):
+    pre_existing = str(tmp_path / "vendor")
+    monkeypatch.setenv("PYTHONPATH", pre_existing)
+    env = fv._build_subprocess_env(tmp_path)
+    expected_src = str(tmp_path / "src")
+    parts = env["PYTHONPATH"].split(os.pathsep)
+    assert expected_src in parts
+    assert pre_existing in parts
+    # src must come first so framework wins over a vendored copy
+    assert parts.index(expected_src) < parts.index(pre_existing)
+    # Idempotent: calling again does not duplicate src
+    env2 = fv._build_subprocess_env(tmp_path)
+    assert env2["PYTHONPATH"].split(os.pathsep).count(expected_src) == 1
+
+
+def test_run_step_subprocess_inherits_pythonpath_with_src(monkeypatch, tmp_path):
+    """End-to-end: a child Python process started by run_step can see ``src`` on
+    PYTHONPATH. This is what makes ``python -m framework.run`` resolve on a
+    fresh checkout without ``pip install -e .``.
+    """
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+    src_path = str(tmp_path / "src")
+    # Child exits 0 iff src is in PYTHONPATH; 1 otherwise. No filesystem writes.
+    probe = (
+        "import os, sys; "
+        "pp = os.environ.get('PYTHONPATH', ''); "
+        f"sys.exit(0 if {src_path!r} in pp.split(os.pathsep) else 1)"
+    )
+    step = fv.StepPlan(
+        name="env-probe",
+        command=[sys.executable, "-c", probe],
+        level=0,
+    )
+    result = fv.run_step(step, repo=tmp_path)
+    assert result.status == "OK", (
+        f"child did not see src on PYTHONPATH; reason={result.reason!r}"
+    )
+    assert result.exit_code == 0

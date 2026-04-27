@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -220,6 +221,27 @@ def _extract_pytest_summary(stdout: str) -> str | None:
     return None
 
 
+def _build_subprocess_env(repo: Path) -> dict[str, str]:
+    """Return env mapping for verify subprocesses with ``src`` on PYTHONPATH.
+
+    Mirrors the ``sys.path`` extension that ``tests/conftest.py`` performs
+    on import, so ``python -m framework.run`` works on a fresh checkout
+    without requiring ``pip install -e .`` (matches the "sandboxed reviewer"
+    contract that conftest already documents). Existing PYTHONPATH from the
+    caller is preserved by appending — never overwritten — so users with
+    custom layouts keep their lookup order.
+    """
+    env = os.environ.copy()
+    src_path = str(repo / "src")
+    existing = env.get("PYTHONPATH", "")
+    parts = existing.split(os.pathsep) if existing else []
+    if src_path not in parts:
+        env["PYTHONPATH"] = (
+            src_path + os.pathsep + existing if existing else src_path
+        )
+    return env
+
+
 def run_step(step: StepPlan, *, repo: Path) -> StepResult:
     if step.env_var and not _common.env_truthy(step.env_var):
         return StepResult(
@@ -241,6 +263,7 @@ def run_step(step: StepPlan, *, repo: Path) -> StepResult:
             encoding="utf-8",
             errors="replace",
             timeout=DEFAULT_TIMEOUT_SEC,
+            env=_build_subprocess_env(repo),
         )
     except FileNotFoundError as exc:
         return StepResult(
