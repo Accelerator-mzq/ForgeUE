@@ -18,9 +18,9 @@ triggered_by: forced
 created_at: 2026-04-27
 resolved_at: 2026-04-27
 disputed_open: 0
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-design
+writeback_commit: d5630a1050ab1ba3968f443f1064d377d968047d
 drift_reason: |
   Codex adversarial code-level review of P3 tools (post-C1 state) surfaced 14 findings: 6 verified-ok (C1 fixes confirmed correct) + 5 NEW blocker + 2 non-blocker + 1 nit. All 8 NEW findings independently verified TRUE against actual code + contract artifacts (per ForgeUE memory feedback_verify_external_reviews). All 8 fixed in C1' iteration:
     - F7-adv: quick_detect_env refactored to use detect_env_full (4-layer + codex-cli signal)
@@ -36,7 +36,7 @@ reasoning_notes_anchor: null
 note: |
   Adversarial review (mixed scope, challenger mindset);区别于先前 regular review(code-level single-direction)。Path B `codex exec --sandbox read-only` 调用,与 P1 round-1/2 范式一致,绕开 codex-companion task broker subcommand(后者等价 /codex:rescue,工作流内禁用)。
   
-  /codex:adversarial-review slash command 在本机已装(`~/.claude-max/plugins/cache/openai-codex/codex/1.0.4/commands/adversarial-review.md`),但 frontmatter `disable-model-invocation: true` 阻止 Claude 模型触发,只允许人类用户输入。Path B 是 Claude 唯一可独立触发 adversarial review 的路径;此约束首次在本 change P3 阶段被发现,详 cross-check `## A. D-CodexAdversarialModelLock` + Reasoning Notes anchor `reasoning-notes-codex-adversarial-model-lock`(若需保留 drift)。
+  /codex:adversarial-review slash command 在本机已装(`~/.claude-max/plugins/cache/openai-codex/codex/1.0.4/commands/adversarial-review.md`),但 frontmatter `disable-model-invocation: true` 阻止 Claude 模型触发,只允许人类用户输入。Path B 是 Claude 唯一可独立触发 adversarial review 的路径;此约束首次在本 change P3 阶段被发现,在 cross-check `## A` Decision Summary 中以 codex-adversarial-model-lock tracking 项记录(intra-review tracking,不作 contract 级 decision)。
   
   本次 review 暴露 5 个 NEW blocker 显著强于 regular review 的 7 blocker — 因为 adversarial 视角带来:
     1. 集成 drift 检查(quick_detect_env 与 detect_env_full 5 层一致性 — F7-adv)

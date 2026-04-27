@@ -15,9 +15,9 @@ triggered_by: forced
 created_at: 2026-04-27T13:30:00+08:00
 resolved_at: 2026-04-27T13:42:00+08:00
 disputed_open: 0
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-design
+writeback_commit: d5630a1050ab1ba3968f443f1064d377d968047d
 drift_reason: |
   P3 code-level review cross-check; 12/12 codex finding verified TRUE (no virtual claims). All 12 resolutions are accepted-codex; resolution path categorized into 3 buckets (code-only fix / code + contract clarification / contract write-back to clarify ambiguity). aligned_with_contract: false until tool fixes commit + design.md/tasks.md write-back commits land; drift_decision will move to written-back-to-* per fix.
 reasoning_notes_anchor: null

@@ -14,9 +14,9 @@ triggered_by: forced
 created_at: 2026-04-27T13:50:00+08:00
 resolved_at: 2026-04-27T14:30:00+08:00
 disputed_open: 0
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-design
+writeback_commit: d5630a1050ab1ba3968f443f1064d377d968047d
 drift_reason: |
   P3 adversarial cross-check;14 项 finding 全部 verified TRUE。6 verified-ok(C1 fix 已修通)+ 8 NEW(5 blocker + 2 non-blocker + 1 nit),全 accepted-codex,全 C1' fix 落地。aligned_with_contract: false 待 milestone commit 后升回 written-back-to-{tools,design,tasks};drift_decision 同步。
 reasoning_notes_anchor: null

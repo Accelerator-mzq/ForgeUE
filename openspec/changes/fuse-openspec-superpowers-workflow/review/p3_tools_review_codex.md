@@ -18,9 +18,9 @@ triggered_by: forced
 created_at: 2026-04-27
 resolved_at: null
 disputed_open: 0
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-design
+writeback_commit: d5630a1050ab1ba3968f443f1064d377d968047d
 drift_reason: |
   Codex regular code-level review of P3 tools surfaced 12 findings (7 blocker + 5 non-blocker). All independently verified TRUE against actual code + contract artifacts (per ForgeUE memory feedback_verify_external_reviews). Findings split into three resolution categories: (a) tool-side bugs to fix in code (F1 / F4 / F5 / F7 / F9 / F12); (b) finish_gate evidence completeness gap to fix in code AND clarify in design.md §3 (F2 / F3); (c) contract drift requiring write-back to design.md / tasks.md to clarify exit-code semantics + 12-key extension policy + DRIFT detector heuristic scope (F6 / F8 / F10 / F11). aligned_with_contract: false until fixes land + writeback commits made; drift_decision will progress to written-back-to-* per resolution category. resolved_at + writeback_commit to be filled after fix commits.
 reasoning_notes_anchor: null
