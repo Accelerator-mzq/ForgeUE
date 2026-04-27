@@ -17,11 +17,32 @@ codex_background_task_id: btg63drbp
 codex_plugin_available: true
 detected_env: claude-code
 triggered_by: forced
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-tool
+writeback_commit: fe184a624f7d68b2cda3c3ca0d8f0e8fee5b0099
 drift_reason: |
-  P7 codex /codex:adversarial-review --background (mixed-scope, post-self-review) surfaced 6 findings: 1 critical + 3 high + 2 medium. All 6 independently re-verified TRUE by Claude (file:line + live tool reproduction) per ForgeUE memory feedback_verify_external_reviews. 2 of the 6 (F-A=self-review C1, F-D=self-review C2) confirm the Superpowers self-review findings; 4 are NEW (F-B = finish_gate_report self-pollution, F-C = notes/ REQUIRED bypass, F-E = change_state S5 substring, F-F = spec.md test-claim drift). User selected plan A "全改" (P4 §5.8 pattern). Resolution: 7 finding fix (6 codex + I4 from self-review) lands in the resolution-commit alongside this evidence; frontmatter writeback_commit will be amended in a follow-up evidence-backfill commit per P3 / P4 protocol (commits 1c0da37 / 2aceee3). drift_decision = pending until resolution lands.
+  P7 codex /codex:adversarial-review --background (mixed-scope, post-self-review)
+  surfaced 6 findings: 1 critical + 3 high + 2 medium. All 6 independently
+  re-verified TRUE by Claude (file:line + live tool reproduction) per ForgeUE
+  memory feedback_verify_external_reviews. 2 of the 6 (F-A = self-review C1,
+  F-D = self-review C2) confirm the Superpowers self-review findings; 4 are
+  NEW (F-B = finish_gate_report self-pollution, F-C = notes/ REQUIRED bypass,
+  F-E = change_state S5 substring, F-F = spec.md test-claim drift). User
+  selected plan A "全改" (P4 §5.8 pattern). Resolution: 6 codex finding fix +
+  I4 from self-review (7 total) landed in commit
+  fe184a624f7d68b2cda3c3ca0d8f0e8fee5b0099 alongside this evidence; the same
+  commit added 7 fence tests (3 F-A + 1 F-B + 1 F-C + 2 F-E) and wrote back
+  design.md §3 (helper-vs-formal table column + REQUIRED slot来源约束 +
+  finish_gate_report self-evidence 排除) + spec.md §41 (drop false timestamp
+  comparison claim) + review/codex_design_review.md frontmatter (P0 sha
+  73f18e6c written-back-to-design) + CLAUDE.md / AGENTS.md ban list parity.
+  drift_decision = written-back-to-tool because the dominant fix category
+  is tool change (4 of 7 fixes touch tools/_common.py + forgeue_finish_gate.py
+  + forgeue_change_state.py); design.md and spec.md also written back as part
+  of the same commit. aligned_with_contract: true post-fix: pytest baseline
+  1126 -> 1133 (= 1126 + 7 new fences); contract (revised at fe184a6) and
+  tool (fixed at fe184a6) now agree. Frontmatter backfill follows P3 / P4
+  evidence-backfill commit pattern (1c0da37 / 2aceee3).
 reasoning_notes_anchor: null
 ---
 

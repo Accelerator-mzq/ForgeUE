@@ -8,21 +8,28 @@ contract_refs:
   - design.md#10
   - tasks.md#8
   - specs/examples-and-acceptance/spec.md
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-tool
+writeback_commit: fe184a624f7d68b2cda3c3ca0d8f0e8fee5b0099
 drift_reason: |
   Self-review (Superpowers requesting-code-review skill, code-reviewer subagent
   dispatched 2026-04-27, agent id a9aeeb7c07026f06f) over the full P0-P6 commit
   range (a481682..e68e459, 17 commits, 96 files, +21010 / -21) surfaced 2
   Critical + 5 Important + 5 Minor findings. Independently re-verified by Claude
   per ForgeUE memory feedback_verify_external_reviews (file:line evidence + live
-  tool reproduction, see body §"Independent Verification"); 3 findings (C1+C2+I4)
-  resolved as fix-in-tool / written-back-to-evidence; 4 findings (I1+I2+I3+I5)
-  resolved as wontfix with rationale; 5 minor findings deferred. Pending
-  consolidation with codex adversarial review (P7.2) before single-batch fix
-  commit. drift_decision will be amended to written-back-to-tool +
-  written-back-to-evidence after fix lands.
+  tool reproduction, see body §"Independent Verification"). 3 findings (C1+C2+I4)
+  resolved as fix-in-tool / written-back-to-evidence in resolution-commit
+  fe184a624f7d68b2cda3c3ca0d8f0e8fee5b0099 (= P7 review + 7 finding resolution);
+  4 findings (I1+I2+I3+I5) resolved as wontfix with rationale documented in
+  body §"Subagent Findings (verbatim disposition table)"; 5 minor findings (M1-M5)
+  deferred per body §"Resolution Plan". C1 (verify_report self-block) and C2
+  (codex_design_review frontmatter rot) overlap codex F-A and F-D respectively;
+  consolidation with codex adversarial review (P7.2 evidence
+  review/codex_adversarial_review.md) achieved through single-batch fix in the
+  named commit. drift_decision = written-back-to-tool reflects the dominant
+  resolution category (4 of 7 fixes are tool changes); design.md §3 + spec.md
+  §41 also written back as part of the same commit. aligned_with_contract: true
+  post-fix: contract (revised at fe184a6) and tool (fixed at fe184a6) now agree.
 reasoning_notes_anchor: null
 detected_env: claude-code
 triggered_by: cli-flag
