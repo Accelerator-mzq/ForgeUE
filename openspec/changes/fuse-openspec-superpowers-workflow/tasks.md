@@ -67,34 +67,38 @@
 
 ## 4. P3 — Tools(5 个 stdlib-only)
 
-- [ ] 4.1 `tools/__init__.py`(空,sys.path 注册 helper 不需要)
-- [ ] 4.2 `tools/forgeue_env_detect.py`(5 层 env 检测 + plugin 可用性启发式;`--json` / `--review-env <override>` / `--explain`;exit 0/2/1)
-- [ ] 4.3 `tools/forgeue_change_state.py`(回写检测主力):
+- [x] 4.1 `tools/__init__.py`(空,sys.path 注册 helper 不需要)
+- [x] 4.2 `tools/forgeue_env_detect.py`(5 层 env 检测 + plugin 可用性启发式;`--json` / `--review-env <override>` / `--explain`;exit 0/2/1)
+- [x] 4.3 `tools/forgeue_change_state.py`(回写检测主力):
   - state 推断 S0-S9
   - `--writeback-check` 4 类 named DRIFT 检测(对应 design.md §3 taxonomy):
     - `evidence_introduces_decision_not_in_contract`(evidence 含未记录决策)→ exit 5
-    - `evidence_references_missing_anchor`(plan 引用 tasks.md 不存在的 X.Y)→ exit 5
+    - `evidence_references_missing_anchor`(execution_plan / micro_tasks 引用 tasks.md 不存在的 X.Y;**仅扫此两类 evidence_type**,见 design.md §3 / spec.md Scenario 1)→ exit 5
     - `evidence_contradicts_contract`(implementation log 与 design.md 接口不一致)→ exit 5
     - `evidence_exposes_contract_gap`(debug log 揭示 design.md 异常段缺失)→ exit 5
   - **附加 frontmatter 校验**(独立于 4 类 DRIFT,作为 evidence frontmatter 健康性检查):
     - `aligned_with_contract: false` 但 `drift_decision: null` → 报告并暴露给 finish gate(by `forgeue_finish_gate.py` exit 2;`forgeue_change_state` 仅提示)
     - `writeback_commit` 标了但 `git rev-parse <sha>` 失败或 `git show --stat <sha>` 未改对应 artifact → 报告并暴露给 finish gate
   - `--list-active` / `--validate-state <S0..S9>` / `--json` / `--dry-run`
-  - exit 0/2/3/4/5/1
-- [ ] 4.4 `tools/forgeue_verify.py`(Level 0/1/2 编排):
+  - exit 0(PASS)/ 1(IO / change not found)/ 2(`--validate-state` 与 inferred state 不匹配)/ 3(structural inconsistency)/ 5(`--writeback-check` 检出任一 named DRIFT) — exit 4 不再使用
+- [x] 4.4 `tools/forgeue_verify.py`(Level 0/1/2 编排):
   - Level 0 默认必跑;Level 1/2 env guard truthy 集合 `{1,true,yes,on}`(大小写不敏感)
   - mock subprocess + report-out markdown ASCII 落盘
   - exit 0(含 SKIP)/ 2 / 3 / 1
-- [ ] 4.5 `tools/forgeue_doc_sync_check.py`(10 文档静态扫描,标签 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT];`--change <id>` / `--json` / `--dry-run`;exit 0 / 2 / 1)
-- [ ] 4.6 `tools/forgeue_finish_gate.py`(中心化最后防线):
-  - evidence 完整性
-  - frontmatter `aligned_with_contract` 全检 + cross-check disputed_open
-  - `writeback_commit` 真实性(`git rev-parse <sha>` + `git show --stat <sha>` 二次校验)
+- [x] 4.5 `tools/forgeue_doc_sync_check.py`(10 文档静态扫描,标签 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT];`--change <id>` / `--json` / `--dry-run` / `--base <ref>`;exit 0(无 DRIFT)/ 1(IO / git diff failure — 不允 silent PASS)/ 2(任一 [DRIFT])/ 3(change 不存))
+- [x] 4.6 `tools/forgeue_finish_gate.py`(中心化最后防线):
+  - evidence 完整性(按 frontmatter `evidence_type` 索引,**不**绑死 file path;通用 3 项 + claude-code+plugin 6 项 codex/cross-check 条件 REQUIRED;详 design.md §3 "REQUIRED at archive")
+  - helper(`notes/`)与 formal evidence(`{execution,review,verification}/`)区分校验:formal 子目录缺 12-key → blocker `evidence_malformed`
+  - frontmatter `aligned_with_contract` 全检 + `drift_decision: pending` 阻断 + cross-check `disputed_open == 0`
+  - cross-check evidence body 必含 `## A.` / `## B.` / `## C.` / `## D.` 4 段
+  - verify_report self-consistency:`aligned_with_contract: true` 不允 body 含 `[FAIL]`
+  - `writeback_commit` 真实性(`git rev-parse <sha>` + `git show --name-only <sha>` 触对应 artifact 二次校验)
+  - `disputed-permanent-drift` 必有 ≥ 50 字 `drift_reason` + `reasoning_notes_anchor` 解析到 design.md `## Reasoning Notes` 段且段落 ≥ 20 词 / ≥ 60 非空白字符(中英双门槛)
   - tasks unchecked == 0 或带 skip reason
   - `openspec validate <id> --strict` PASS
-  - 检查 `~/.claude/settings.json` 含 review-gate hook → WARN
-  - exit 0(PASS)/ 2(任一 blocker)/ 3 / 1
-- [ ] 4.7 5 tool 手 `--json --dry-run` 自检通过
+  - 检查 `~/.claude/settings.json` 含 `--enable-review-gate` → WARN(malformed JSON 也 WARN,不静默)
+  - exit 0(PASS)/ 1(IO)/ 2(任一 blocker)/ 3(change 不存)
+- [x] 4.7 5 tool 手 `--json --dry-run` 自检通过(self-test 详 `notes/p3_self_test.md`;3 tool exit 0,2 tool exit 2 是设计内行为 — doc_sync_check 与 finish_gate 检出 self-host change 真实 P5-P7 evidence 缺失 + 4 份长期 docs 未触动,这是 tool 工作正确,不是 tool 失败。所有 5 tool JSON 编码合规、`--dry-run` 无副作用)
 
 横切要求:stdlib only;`sys.stdout.reconfigure(encoding="utf-8")` + ASCII fallback;7 种 ASCII 标记(`[OK] [FAIL] [SKIP] [WARN] [DRIFT] [REQUIRED] [OPTIONAL]`);`--json` 时不打 ASCII 标记;`--dry-run` 必无副作用;**不**进 `pyproject.toml` `[project.scripts]`;**不**硬编码 pytest 总数。
 

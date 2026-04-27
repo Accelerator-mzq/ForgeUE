@@ -119,10 +119,23 @@ codex_plugin_available: true
 
 **4 类 DRIFT 检测**(`tools/forgeue_change_state.py --writeback-check` exit 5):
 
-1. `evidence_introduces_decision_not_in_contract`(evidence 含未记录决策)
-2. `evidence_references_missing_anchor`(plan 引用 tasks.md 不存在的 X.Y)
-3. `evidence_contradicts_contract`(implementation log 与 design.md 接口不一致)
-4. `evidence_exposes_contract_gap`(debug log 揭示 design.md 异常段缺失)
+1. `evidence_introduces_decision_not_in_contract`(evidence 含未记录决策)— heuristic 限定:正则扫 `\bD-[A-Za-z][\w-]*\b` 标识符;**跳过 evidence_type ∈ {design_cross_check, plan_cross_check}**(cross-check 协议本身用 D-XXX 作 intra-review tracking ID,本表 §3 模板)。其他 ad-hoc decision 标识需未来 change 扩展协议。
+2. `evidence_references_missing_anchor`(execution_plan / micro_tasks 引用 tasks.md 不存在的 X.Y)— heuristic 限定:**仅扫 evidence_type ∈ {execution_plan, micro_tasks}**(spec.md ADDED Requirement Scenario 1 字面要求),其他 evidence 类型可合理 quote 锚点作示例(如 codex_design_review 引用 spec scenario 中 `tasks.md#99.1` 占位例)。
+3. `evidence_contradicts_contract`(implementation log 与 design.md 接口不一致)— heuristic 限定:仅扫 evidence_type ∈ {tdd_log, debug_log, implementation_log};从 evidence body 的 ` ```python ` fenced 块提 `def`/`class` identifier;contract 已知集 = design.md fenced + 反引号 identifier;evidence 有但 contract 无 = DRIFT。**未扫 ` ```py ` ` ```plain ` 等其他 fence variant**;P4 fence 测试只覆盖 `python` fence,未来扩展走新 change。
+4. `evidence_exposes_contract_gap`(debug log 揭示 design.md 异常段缺失)— heuristic 限定:仅扫 evidence_type ∈ {debug_log, tdd_log};对照 10 个硬编码 failure-mode 关键字(`BudgetExceeded` / `WorkerTimeout` 等);evidence 含但 design.md 文本不含 = DRIFT。
+
+> 上述 heuristic 范围是工具层有意接受的 trade-off(stdlib only 不做 semantic 分析)。P4 fence test 设计 fixture 时与此范围对齐。
+
+**Helper vs formal evidence 区分**(`forgeue_finish_gate.py::check_malformed_evidence` 强制):
+
+| 子目录 | 角色 | frontmatter 要求 |
+|---|---|---|
+| `notes/` | helper bucket(brainstorming / onboarding / pre_p0 / 临时记录)| 不强制 12-key;允许任意 frontmatter shape |
+| `execution/` | formal evidence bucket(execution_plan / micro_tasks / tdd_log / debug_log) | **MUST** 含 `change_id` AND `evidence_type` |
+| `review/` | formal evidence bucket(superpowers_review / codex_*_review / *_cross_check) | **MUST** 含 `change_id` AND `evidence_type` |
+| `verification/` | formal evidence bucket(verify_report / doc_sync_report / finish_gate_report) | **MUST** 含 `change_id` AND `evidence_type` |
+
+`finish_gate` 扫 formal 子目录中缺 12-key 的文件 → blocker `evidence_malformed`(F3 regular fix);`notes/` 子目录里的 helper 不触发(允许 onboarding 类无 frontmatter helper)。
 
 **Artifact 映射表**:
 
@@ -143,6 +156,18 @@ codex_plugin_available: true
 | verify report | `forgeue_verify` | `verification/verify_report.md` | Level 1/2 SKIP 必有 reason | REQUIRED 进 S5 |
 | doc sync report | `forgeue_doc_sync_check` + agent §4.3 | `verification/doc_sync_report.md` | DRIFT 默认以 contract 为真回写 | REQUIRED 进 S8 |
 | finish gate report | `forgeue_finish_gate` | `verification/finish_gate_report.md` | 全部 aligned_with_contract: true 或带 drift 标记 | REQUIRED 进 archive |
+
+**REQUIRED at archive(`forgeue_finish_gate.py::check_evidence_completeness` 索引)**:
+
+`finish_gate` 用 frontmatter `evidence_type` 索引 evidence(不绑死 file path),同一 evidence_type 可对应任意命名的文件(e.g. `review/p3_tools_review_codex.md` 与 `review/codex_verification_review.md` 都匹配 `evidence_type: codex_verification_review`)。S8 archive 前要求:
+
+| 条件 | REQUIRED evidence_type |
+|---|---|
+| 通用(任何 env) | `verify_report`,`doc_sync_report`,`superpowers_review` |
+| `detected_env: claude-code` AND `codex_plugin_available: true` 时**额外**强制 | `codex_design_review`,`codex_plan_review`,`codex_verification_review`,`codex_adversarial_review`,`design_cross_check`,`plan_cross_check`(共 6 种;为 S2 / S3 / S5 / S6 各 stage 与 cross-check 协议各 1) |
+| 其他 env(non-claude-code 或 plugin 不可用)| 仅通用 3 项;6 项 codex+cross-check 降级为 OPTIONAL,不阻断 archive(沿决议 14.16) |
+
+`finish_gate_report` 自身**不**进 REQUIRED 列表(它是当前正在生成的 evidence,不能要求自己存在)。
 
 **Cross-check Protocol**:
 
@@ -214,11 +239,11 @@ frontmatter 必含:`disputed_open: <int>` / `codex_review_ref: <path>` / `create
 
 | Tool | 核心能力 | 关键输出 / exit |
 |---|---|---|
-| `tools/forgeue_env_detect.py` | 5 层 env 检测 + plugin 可用性启发式 | `{detected_env, auto_codex_review, codex_plugin_available, superpowers_plugin_available}`;exit 0/2/1 |
-| `tools/forgeue_change_state.py`(回写检测主力) | state 推断 + 4 类 DRIFT 检测(`--writeback-check`)+ frontmatter `aligned_with_contract` 扫描 + writeback_commit 真实性 | exit 0/2/3/**5(DRIFT)**/4(`--validate-state` 失败)/1 |
-| `tools/forgeue_verify.py` | Level 0/1/2 + verify_report 生成 | exit 0(含 SKIP)/ 2([FAIL])/ 3 / 1 |
-| `tools/forgeue_doc_sync_check.py` | 静态扫 10 文档,标签 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT] | exit 0 / 2([DRIFT])/ 1 |
-| `tools/forgeue_finish_gate.py`(中心化最后防线) | evidence 完整性 + frontmatter 全检 + cross-check disputed_open + writeback_commit `git rev-parse` + `git show --stat` 二次校验 + tasks unchecked + `openspec validate --strict` | exit 0(PASS)/ 2(任一 blocker)/ 3(目录不存)/ 1 |
+| `tools/forgeue_env_detect.py` | 5 层 env 检测(CLI flag → env var `FORGEUE_REVIEW_ENV` → `.forgeue/review_env.json` → auto-detect heuristic → unknown 不 prompt)+ plugin 可用性启发式(扫 `~/.claude*/plugins/cache/*/codex/*/scripts/codex-companion.mjs` 文件存在性,**不**靠目录名 pattern matching)| `{detected_env, auto_codex_review, codex_plugin_available, superpowers_plugin_available}`;exit 0(成功)/ 1(IO)/ 2(invalid args by argparse) |
+| `tools/forgeue_change_state.py`(回写检测主力) | state 推断 + 4 类 DRIFT 检测(`--writeback-check`)+ frontmatter `aligned_with_contract` 扫描 + writeback_commit 真实性 | exit 0(PASS)/ 1(IO / change not found)/ 2(`--validate-state` 与 inferred state 不匹配)/ 3(structural inconsistency,如 active+archive 同存)/ 5(`--writeback-check` 检出任一 named DRIFT)|
+| `tools/forgeue_verify.py` | Level 0/1/2 + verify_report 生成(12-key frontmatter,`created_at` 在 body,严守 12-key audit fields)| exit 0(含 SKIP)/ 1(IO)/ 2([FAIL])/ 3(change not found / report path 不可写) |
+| `tools/forgeue_doc_sync_check.py` | 静态扫 10 文档,标签 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT];diff base 优先用 change bootstrap commit | exit 0(无 DRIFT)/ 1(IO / git failure 不允 silent PASS,详 §11.5 / F11-adv)/ 2(任一 [DRIFT])/ 3(change 不存) |
+| `tools/forgeue_finish_gate.py`(中心化最后防线) | evidence 完整性(按 frontmatter `evidence_type` 索引,**不**绑死 file path)+ helper(`notes/`)与 formal evidence(`{execution,review,verification}/`)区分校验 + frontmatter 全检 + cross-check `disputed_open` + `writeback_commit` 真实性 + tasks unchecked + `openspec validate --strict` | exit 0(PASS)/ 1(IO)/ 2(任一 blocker)/ 3(change 不存) |
 
 **横切**:stdlib only;stdout `sys.stdout.reconfigure(encoding="utf-8")` + ASCII fallback;7 种 ASCII 标记(`[OK] [FAIL] [SKIP] [WARN] [DRIFT] [REQUIRED] [OPTIONAL]`,无 emoji);`--json` 时不打 ASCII 标记;`--dry-run` 必无副作用;不进 `console_scripts`;不硬编码 pytest 总数。
 
