@@ -798,31 +798,11 @@ class TestCliMainAsModule:
 # TestCliImportFence
 # ---------------------------------------------------------------------------
 #
-# CLI import-fence is intentionally aligned with the Task 2 loader fence,
-# NOT with the stricter reporter / diff_engine fence. Background:
-#
-# - The CLI must depend on `framework.comparison.loader` to do its job
-#   (resolve_run_dir + load_run_snapshot are its core orchestration).
-# - The loader currently imports `framework.artifact_store.hashing` to
-#   recompute payload byte hashes. Python's package import semantics
-#   require executing `framework/artifact_store/__init__.py` before any
-#   submodule import resolves.
-# - The current `framework/artifact_store/__init__.py` eager-imports
-#   `repository`, `payload_backends`, `lineage`, and `variant_tracker` to
-#   expose the artifact_store public API. Therefore importing
-#   `framework.artifact_store.hashing` transitively pulls
-#   `framework.artifact_store.repository` and
-#   `framework.artifact_store.payload_backends` into `sys.modules`.
-# - This is NOT a license for the CLI to call `ArtifactRepository.put`,
-#   any payload backend write path, or any artifact_store write operation;
-#   it is purely an acceptance of the import surface the current package
-#   structure makes inevitable. CLI source code remains forbidden from
-#   directly invoking write-side APIs, runtime executors, providers,
-#   review engine, ue_bridge, or workflows.
-# - A future OpenSpec change `lazy-artifact-store-package-exports` is
-#   tracked as Known follow-up to evaluate converting the artifact_store
-#   package init to PEP 562 lazy exports. Until then this fence stays
-#   aligned with the loader's fence.
+# CLI import-fence: framework.comparison.cli must NOT pull any execution-layer
+# module or any artifact_store write-side submodule into sys.modules. The
+# artifact_store lazy-import contract is codified at
+# openspec/specs/artifact-contract/spec.md "Package import surface is lazy-load
+# by default" (delivered by OpenSpec change lazy-artifact-store-package-exports).
 
 _FORBIDDEN_FRAMEWORK_MODULES_CLI: tuple[str, ...] = (
     "framework.runtime",
@@ -834,27 +814,23 @@ _FORBIDDEN_FRAMEWORK_MODULES_CLI: tuple[str, ...] = (
     "framework.server",
     "framework.schemas",
     "framework.pricing_probe",
+    # Tightened by lazy-artifact-store-package-exports: artifact_store now
+    # PEP 562 lazy-export, importing framework.artifact_store.hashing no
+    # longer transitively pulls write-side submodules.
+    "framework.artifact_store.repository",
+    "framework.artifact_store.payload_backends",
+    "framework.artifact_store.lineage",
+    "framework.artifact_store.variant_tracker",
 )
 
 
 class TestCliImportFence:
     def test_cli_import_does_not_pull_in_execution_layers(self) -> None:
-        """Verify importing `framework.comparison.cli` does not pull in any
-        execution-layer module.
-
-        The forbidden list deliberately excludes
-        `framework.artifact_store.repository` and
-        `framework.artifact_store.payload_backends` because they are
-        transitively imported by `framework.artifact_store.hashing` (which
-        the loader genuinely needs) — the current
-        `framework/artifact_store/__init__.py` eager-imports them as part
-        of its public API surface, so banning them here would penalize CLI
-        for an existing package-init structure decision rather than for a
-        real CLI dependency. The Task 2 loader fence makes the same
-        carve-out for the same reason; CLI fence aligns with it.
-
-        See Known follow-up `lazy-artifact-store-package-exports` for the
-        proposed structural fix.
+        """Verify importing `framework.comparison.cli` does not pull any
+        execution-layer module or any artifact_store write-side submodule
+        into sys.modules. The artifact_store lazy-import contract is
+        codified at openspec/specs/artifact-contract/spec.md "Package
+        import surface is lazy-load by default".
         """
         src_dir = Path(__file__).resolve().parents[2] / "src"
         assert (src_dir / "framework" / "comparison" / "cli.py").is_file()
