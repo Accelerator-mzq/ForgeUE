@@ -1,11 +1,15 @@
 # ForgeUE AI Workflow
 
+> **第一次用 ForgeUE Integrated AI Change Workflow?** 先读 [`forgeue_quickstart.md`](forgeue_quickstart.md)(5 分钟上手,按 S0-S9 dev stage 组织);本文档是 OpenSpec 主流程契约规则参考。
+
 本文档面向 AI 编码代理(Claude Code、Codex CLI、其他通用 agent),说明 ForgeUE 在 2026-04-24 之后采用的 OpenSpec 主流程、Documentation Sync Gate 的主规则,以及与 `docs/` 五件套之间的权威关系。
 
 > 相关文档
 > - 行为契约层:`openspec/specs/`(8 个 capability spec)
 > - 未来变更入口:`openspec/changes/`
 > - 需求 / 设计 / 测试 / 验收长期文档:`docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md`
+> - **ForgeUE 工作流上手指南**:[`docs/ai_workflow/forgeue_quickstart.md`](forgeue_quickstart.md)
+> - ForgeUE 工作流深度契约:[`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](forgeue_integrated_ai_workflow.md)
 > - 验证命令矩阵:`docs/ai_workflow/validation_matrix.md`
 > - AI 协作约定:`CLAUDE.md`(Claude Code 专用)、`AGENTS.md`(Codex CLI / Cursor / Aider 等通用 agent)
 
