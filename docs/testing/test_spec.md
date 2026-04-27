@@ -21,10 +21,10 @@
 
 | 原则 | 说明 |
 | --- | --- |
-| **测试即可执行规范** | pytest 用例本身是测试规范(2026-04-23 历史基线 549 用例,2026-04-25 加入 Run Comparison 后实测 848 用例);本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
+| **测试即可执行规范** | pytest 用例本身是测试规范(2026-04-23 历史基线 549 用例,2026-04-25 加入 Run Comparison 后实测 848 用例,2026-04-27 加入 forgeue tooling fence + lazy artifact_store fence 后实测 1144 用例);本文档不重复描述每个用例的断言细节,只建立索引与矩阵 |
 | **零 mock 关键边界** | download / EventBus / DAG / Budget / artifact 流端到端真实对象,不得 mock |
 | **每次修复配一个 fence** | Codex / adversarial review 每条修复对应一个新回归测试 |
-| **单元测试快** | `pytest -q` 全量目标 ≤ 30s(2026-04-23 历史基线 ≤15s @ 549 用例;2026-04-25 含 Run Comparison subprocess integration 后实测 ~28s @ 848 用例,仍在区间内) |
+| **单元测试快** | `pytest -q` 全量目标 ≤ 60s(2026-04-23 历史基线 ≤15s @ 549 用例;2026-04-25 含 Run Comparison subprocess integration 后实测 ~28s @ 848 用例;2026-04-27 加入 forgeue tooling fence + lazy artifact_store subprocess fence 后实测 ~50s @ 1144 用例 —— subprocess fence 数量增加导致总时长增长,仍在 60s 软目标内) |
 | **集成测试表意清晰** | 每个 P0–P4 集成测试一个闭环场景,命名与 SRS 章节对齐 |
 | **fence 测试守门** | 反 fabrication / 反 regression / 反语法回退 |
 
@@ -63,7 +63,8 @@
 | --- | --- | --- | --- | --- |
 | 单元测试 | `tests/unit/` | 多个(以 `ls tests/unit/` 实查) | 以 `pytest -q tests/unit/` 实测为准 | < 15s |
 | 集成测试 | `tests/integration/` | 多个(以 `ls tests/integration/` 实查) | 以 `pytest -q tests/integration/` 实测为准 | < 13s |
-| **合计**(2026-04-25 实测) | — | — | **848** | **~28s** |
+| **合计**(2026-04-27 实测) | — | — | **1144** | **~50s** |
+| 中间基线(2026-04-25) | — | — | 848 | ~28s |
 | 历史基线(2026-04-23) | — | 56 | 549 | ~18s |
 
 ### 2.3 执行方式
@@ -210,6 +211,17 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | --- | --- | --- | --- | --- |
 | `tests/integration/test_run_comparison_cli.py` | 真实 subprocess `python -m framework.comparison` 端到端 / 静态 builder fixture happy path(JSON schema_version=="1" + Markdown ASCII + 三个 ArtifactDiffKind + run-level cost_usd metric diff + Markdown 关键 section 标题)/ `<repo>/demo_artifacts/` 不污染(递归快照 size + mtime_ns + cwd sibling)/ lineage_delta `transformation_kind` 端到端 round-trip / `examples/mock_linear.json` + FakeAdapter 双跑(无 `--live-llm` / 无 `--comfy-url`)/ source run dir 字节级 read-only(对应 runtime-core delta spec) | — | L0 | 4 用例 |
 | `tests/fixtures/comparison/builders.py` | deterministic `build_fixture_pair(root)` / 合成日期 `2000-01-01` / 真实 Pydantic 类构造 / `hash_payload(bytes)` 真实计算 / 不依赖 `datetime.now` / `os.environ` / 网络 / provider | — | — | 公共构造 helper(被 integration test 调用)|
+
+### 3.12 Lazy artifact_store package exports(2026-04-27,OpenSpec change `lazy-artifact-store-package-exports`)
+
+| 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
+| --- | --- | --- | --- | --- |
+| `tests/unit/test_artifact_store_lazy_imports.py` | PEP 562 `__getattr__` + `__dir__` lazy export 契约守门;`_run_clean_subprocess` helper 注 `PYTHONPATH=<repo>/src` env + assert `__file__` 落 working-tree(对应 S3 codex F2 finding writeback)| `openspec/specs/artifact-contract/spec.md` ADDED Requirement 4 Scenarios | L0 | **4 用例** |
+|  | `test_import_artifact_store_does_not_pull_repository_or_payload_backends`(Scenario 1):subprocess `import framework.artifact_store` 后 `sys.modules` 仅含 `framework.artifact_store.hashing`,4 个 lazy submodule 不出现 | | | |
+|  | `test_first_access_of_lazy_symbol_loads_submodule_and_caches`(Scenario 2):`mod.ArtifactRepository` 首次访问后 `repository in sys.modules` + 第二次访问 identity-equal(globals cache);intentional 不 assert cluster siblings absence(spec.md cluster-honest wording)| | | |
+|  | `test_dir_returns_full_public_api_surface_before_any_lazy_access`(Scenario 4,S2 codex F3 `__dir__` 守门):lazy 未访问前 `dir(mod)` 含全 9 个 `__all__` 公共符号 | | | |
+|  | `test_no_callsite_uses_submodule_path`(Scenario 3):repo 全扫 `(?:from|import)\s+framework\.artifact_store\.<lazy>` 形式(S6 codex F3 finding 加 import-form);`^[ \t]*` multiline anchor 防 docstring 假阳性;排除 4 类(`src/framework/artifact_store/**` 包内部 + `tests/unit/test_payload_backends.py` sub-package consumer + 本 change 目录 + bytecode)| | | |
+| 收紧的既有 fence | `test_run_comparison_loader.py::TestLoaderImportFence` + `test_run_comparison_cli.py::TestCliImportFence` `_FORBIDDEN_FRAMEWORK_MODULES_*` 禁止清单从 9 prefix → 13 prefix(原 9 + `framework.artifact_store.{repository,payload_backends,lineage,variant_tracker}`);删 "transitive load is unavoidable" carve-out 段落;`comparison/cli.py` 顶 docstring 同步 trim | spec.md "Package import surface is lazy-load by default" Requirement | L0 | (no new test count;既有 fence 守紧) |
 
 ---
 
@@ -384,8 +396,8 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
 | NFR-SEC | test_secrets |
 | NFR-OBS | test_event_bus,test_progress_passthrough |
-| NFR-MAINT | 所有 L3 fence 守门 + 历史基线 549 用例(491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收);**当前 2026-04-25 实测 848 用例**(基线 549 + Run Comparison 模块 299) |
-| NFR-PORT | CI 能在 Linux 跑(2026-04-23 基线 549 全绿,stub unreal 覆盖 P4 + 真机 commandlet 覆盖 A1;2026-04-25 实测 848 全绿) |
+| NFR-MAINT | 所有 L3 fence 守门 + 历史基线 549 用例(491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收);**当前 2026-04-27 实测 1144 用例**(549 → 848 Run Comparison +299 → 1140 forgeue tooling +292 → 1144 lazy artifact_store +4) |
+| NFR-PORT | CI 能在 Linux 跑(2026-04-23 基线 549 全绿,stub unreal 覆盖 P4 + 真机 commandlet 覆盖 A1;2026-04-25 实测 848 全绿;2026-04-27 实测 1144 全绿) |
 
 ### 6.3 未覆盖 / 部分覆盖
 
@@ -456,11 +468,11 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 
 | 级别 | 标准 |
 | --- | --- |
-| 单元测试 | 100% 通过(以 `pytest -q` 实测为准;2026-04-25 当前 848 用例 = 基线 549 + Run Comparison 299;历史基线 549 = 491 + audit 29 + 后续 fence 23 + A1 + a2_mesh live bundle parametrize 6)|
+| 单元测试 | 100% 通过(以 `pytest -q` 实测为准;2026-04-27 当前 1144 用例 = 549 → 848 Run Comparison +299 → 1140 forgeue tooling +292 → 1144 lazy artifact_store +4;历史基线 549 = 491 + audit 29 + 后续 fence 23 + A1 + a2_mesh live bundle parametrize 6)|
 | 集成测试 | P0–P4 + 5 场景 + Run Comparison 全绿 |
 | Fence 测试 | 每条守护修复不得回退 |
 | 覆盖率 | 每条 FR 至少 1 个对应测试(矩阵 §6.1 全部 ✅) |
-| 性能 | 全量 `pytest -q` 目标 ≤ 30s(历史基线 ≤15s @ 549 用例;2026-04-25 实测 ~28s @ 848 用例,subprocess integration 占主要时间)|
+| 性能 | 全量 `pytest -q` 目标 ≤ 60s(历史基线 ≤15s @ 549 用例;2026-04-25 实测 ~28s @ 848 用例;2026-04-27 实测 ~50s @ 1144 用例,subprocess fence 数量增加导致 ~22s 增量,仍在 60s 软目标内)|
 | 手工验收 | A1 UE 真机、A2 live LLM、A3 pricing probe 按验收文档勾选 |
 
 ---
@@ -498,6 +510,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | v1.1 | 2026-04-22 | 加 §3.10 `test_codex_audit_fixes.py`(29 用例)+ §5 第三段 5 轮 audit fence 表;`NFR-MAINT` / `单元测试` 总数刷新到 520 |
 | v1.2 | 2026-04-23 | A1 UE 真机 ⏳→✅(UE 5.7.4 commandlet 路径,§7.2 / §7.3 状态升级);A2 全集 5/5 ✅(0423 重跑 a2_char/image/review/mesh + a1_demo 含 a2_ue);新增 examples bundle `ue_export_pipeline_live.json` + `image_to_3d_pipeline_live.json`,`test_example_bundles_smoke` 自动 parametrize 收 6 用例,总数刷新到 549 |
 | v1.3 | 2026-04-25 | 加 §3.11 / §3.11A Run Comparison(`tests/unit/test_run_comparison_{models,loader,diff_engine,reporter,cli}.py` 5 文件 + `tests/integration/test_run_comparison_cli.py` 1 文件 + `tests/fixtures/comparison/builders.py` deterministic builder);§4 集成测试场景表加一行 `test_run_comparison_cli.py`;OpenSpec change `add-run-comparison-baseline-regression` 实装侧 6 Task 全部完成,总数刷新到 848(基线 549 + ~299 新用例)|
+| v1.4 | 2026-04-27 | 加 §3.12 Lazy artifact_store package exports(OpenSpec change `lazy-artifact-store-package-exports`):新增 `tests/unit/test_artifact_store_lazy_imports.py` 4 fence(`_run_clean_subprocess` helper + 4 spec scenario 各 1 fence);收紧 `test_run_comparison_loader.py::TestLoaderImportFence` + `test_run_comparison_cli.py::TestCliImportFence` 禁止清单(9→13 prefix);删 `comparison/cli.py` + 2 fence test 内 "transitive load is unavoidable" carve-out 段落;`§5 / §NFR-MAINT / 单元测试 / 性能 / 合计` 全部刷新实测 1144(848 → 1140 中间基线 forgeue tooling fence + 4 lazy artifact_store fence)|
 
 ### 10.3 未决事项
 

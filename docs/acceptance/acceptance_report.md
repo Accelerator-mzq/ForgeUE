@@ -643,7 +643,33 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 - Task 5 第一轮 BLOCK(stdout/stderr ASCII-safe + CR/LF compaction Blocker;由 `_console_safe` + 13 个 ConsoleSafe / EndToEnd / NoHashCheck 测试解决);第二轮 PASS
 - Task 6 第一轮 BLOCK(spec validation gate 缺失 / `demo_artifacts` 浅层快照 / 源 run dir read-only 未守门;由 `test_offline_real_run_pair_via_framework_run` + `_snapshot_tree` 递归 + pre/post 快照断言解决);第二轮 PASS,2 条 Low Risk polish(`_run_comparison_cli` timeout + `_diff_snapshots` helper)吸收
 
-**Deferred follow-up**:`lazy-artifact-store-package-exports`(尚未创建独立 OpenSpec change)。`framework.comparison.loader` 顶层 `from framework.artifact_store.hashing import hash_payload` 必然触发 `framework/artifact_store/__init__.py` 执行,而该 `__init__` 当前 eager-import `repository` / `payload_backends`,导致两者作为 transitive 出现在 `sys.modules`。当前 fence 与 Task 2 loader fence 对齐(只锁 9 个执行链路前缀);**未**改 `artifact_store/__init__.py`,跨子系统改动留独立 change 评估 PEP 562 lazy export。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"`。
+**Deferred follow-up**:~~`lazy-artifact-store-package-exports`~~ 已落地(2026-04-27,见 §6.9 + 本文档 v1.5 changelog row + `CHANGELOG.md [Unreleased].Changed`)。原 deferred 内容(eager `__init__.py` 触发 read-only consumer transitive 加载 write-side `repository` / `payload_backends`,fence 不得不放宽锁 9 个执行链路前缀)由独立 change `lazy-artifact-store-package-exports` 解决:`__init__.py` 改 PEP 562 `__getattr__` + `__dir__` lazy export,fence 收紧到 13 prefix(9 原始 + 4 个 artifact_store 写侧)。
+
+### 6.9 Lazy artifact_store package exports(2026-04-27,OpenSpec change `lazy-artifact-store-package-exports`)
+
+**触发**:`add-run-comparison-baseline-regression` Task 5 deferred follow-up §6.8 关闭。
+
+**实装产出**:
+- `src/framework/artifact_store/__init__.py` 改 PEP 562 `__getattr__` + `__dir__` lazy export(模仿 `src/framework/comparison/__init__.py:50-95`);`__all__` byte-identical 9 名;30+ 既有 callsite 零修改透明兼容。
+- 新 fence 文件 `tests/unit/test_artifact_store_lazy_imports.py`(4 fence + `_run_clean_subprocess` helper 注 `PYTHONPATH=<repo>/src` + `__file__` 守门)。
+- 收紧 `tests/unit/test_run_comparison_loader.py::TestImportFence` + `cli.py::TestCliImportFence` 禁止清单(原 9 → 13 prefix);删 `src/framework/comparison/cli.py` + 2 fence test 内 "transitive load is unavoidable" 段。
+- OpenSpec spec delta `openspec/specs/artifact-contract/spec.md` ADDED Requirement「Package import surface is lazy-load by default」+ 4 Scenarios(`/opsx:archive` 时 sync-specs 合入主 spec)。
+
+**Codex Review Gate**:4 轮全 writeback —— S2 design 4 findings(`5ce16c14`)/ S3 plan 4 findings(`5ce16c14`)/ S5 code review 5 findings 全 out-of-scope / S6 adversarial mixed scope 4 findings(`6df6c812`)。所有输出 verbatim 落 `review/codex_*_review.md`,Claude file:line 独立验证。
+
+**TDD red-baseline 闭环**:G2 之前 stage fence 跑 against eager `__init__.py` 捕获 2/4 FAIL(`evidence/tdd_red_baseline.md`);G3 重建 fence 跑 against lazy 4/4 PASS;证明 fence 不是 green-on-arrival 假绿。
+
+**proposal Success criteria 验收**:
+- ✅ read-only consumer(`framework.comparison.loader`)`sys.modules` 仅含 `hashing`(实跑确认,fence test 1)
+- ✅ 30+ callsite 透明兼容(`pytest -q` 1144/1144 PASS,无 callsite 修改)
+- ✅ `dir()` / `inspect.getmembers()` 见全 9 公共符号(fence test 3 守门)
+- ✅ Risk A 包外 callsite 数 = 0(grep 实测排除包内部 + `tests/unit/test_payload_backends.py` sub-package consumer 后)
+
+**Non-goals 验证**:
+- ❌ 不动 `artifact_store` 任何子模块文件(`hashing.py` / `repository.py` / `payload_backends/*` / `lineage.py` / `variant_tracker.py` 全 0 触动)
+- ❌ 不改 30+ callsite(实测 git diff 仅含 5 implementation file:`__init__.py` + `comparison/cli.py` docstring + 3 test 文件)
+- ❌ 不改 schema(Artifact / Checkpoint / PayloadRef / Lineage 全保留)
+- ❌ 不引入新依赖(PEP 562 是 Python 3.7+ 标准库特性,本项目已 Python 3.12+)
 
 **Non-goals 验证**:
 - ❌ 不改现有 Run 执行链路(Orchestrator / Scheduler / TransitionEngine / Executors 全未触动)— 实测 git diff 仅含 `src/framework/comparison/` + `tests/{unit,integration,fixtures}/comparison*` + 6 份 docs / openspec sync
@@ -687,7 +713,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **848 通过 / 0 失败**(2026-04-25 OpenSpec change `add-run-comparison-baseline-regression` 完成后实测,~28s;基线 549 + Run Comparison 模块 299 用例[`test_run_comparison_models.py` 52 + `test_run_comparison_loader.py` 50 + `test_run_comparison_diff_engine.py` 69 + `test_run_comparison_reporter.py` 65 + `test_run_comparison_cli.py` 59 + integration 4]) |
+| L0 pytest 全量 | ✅ **1144 通过 / 0 失败**(2026-04-27 OpenSpec change `lazy-artifact-store-package-exports` 完成后实测,~50s;前序基线 1140 = 848 Run Comparison 后 + ~292 来自 archived `fuse-openspec-superpowers-workflow` 等 forgeue tooling fence;本 change +4 = `tests/unit/test_artifact_store_lazy_imports.py` 4 fence)|
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L3 UE 真机 | ✅ UE 5.7.4 commandlet 通过(2026-04-23,见 §6.1) |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
@@ -701,7 +727,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 当前 848 用例(2026-04-25 实测);历史基线 549(491 + Codex 5 轮 audit 29 fence + 2026-04-22 A2 根因定位 6 fence + TBD-006 视觉 review 图像压缩 10 fence + TBD-007 mesh 重试塌缩 5 fence + TBD-008 visual review contract 2 fence + A1 + a2_mesh live bundle parametrize 6 自动收);本轮 Run Comparison 模块 +299;另有 60+ L3 fence |
+| 测试覆盖 | ✅ 当前 **1144 用例**(2026-04-27 实测,post-`lazy-artifact-store-package-exports`);中间基线 848(2026-04-25 Run Comparison 后)→ 1140(`fuse-openspec-superpowers-workflow` forgeue tooling fence)→ 1144(本 change `tests/unit/test_artifact_store_lazy_imports.py` 4 fence);历史基线 549 = 491 + Codex 5 轮 audit 29 + A2 根因定位 6 + TBD-006 视觉 review 10 + TBD-007 mesh 重试 5 + TBD-008 visual review 2 + A1 + a2_mesh parametrize 6;另有 60+ L3 fence |
 
 ### 8.3 整体结论
 
@@ -716,7 +742,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 - A3 pricing probe ✅(2026-04-22)
 - A2 char/image/review/mesh live ✅(2026-04-22)
 - **A1 + a2_ue UE 真机 ✅(2026-04-23,UE 5.7.4 commandlet 全自动化)**
-- L0 自动化 **848 用例全绿** ✅(2026-04-25 实测;历史基线 549,本轮 Run Comparison 模块 +299)
+- L0 自动化 **1144 用例全绿** ✅(2026-04-27 实测;历史基线 549 → 848 Run Comparison → 1140 forgeue tooling → 1144 lazy artifact_store 4 fence)
 - 长期 bridge_execute 路径有 TBD-009(RemoteControl HTTP)+ ADR-008 兜底
 
 ---
@@ -740,6 +766,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.2 | 2026-04-23 | A1 UE 真机 + a2_ue 合并通过(UE 5.7.4 commandlet 全自动化路径,Texture .uasset 真落盘 + 视觉确认):P4 ⚠️→✅ / FR-UE-003 ⏳→✅ / a2_ue 跳过→✅ / §3.1 + §4.7 + §6.1 + §6.2 + §6.4 五处状态升级;新增 ADR-008(启用 UE 自带 plugin 不算违反 ADR-001)+ TBD-009(RemoteControl HTTP bridge,future bridge_execute);新增 live bundle `examples/ue_export_pipeline_live.json`(原 `ue_export_pipeline.json` 留 ComfyUI 接口给 P4 集成测试)+ 入口脚本 `ue_scripts/a1_run.py`(后扩展为读 `FORGEUE_RUN_FOLDER` env 优先,支持复用跑不同 run_id) |
 | v1.3 | 2026-04-23 | A2 全集 5/5 ✅ 重跑收尾(0423 重跑 a2_char/image/review/mesh):a2_mesh_0423 用新 `examples/image_to_3d_pipeline_live.json` 跑 Hunyuan 3D 33.3MB .glb + UE 5.7 commandlet 真 import → `Generated/Props/a2_mesh_0423/.../{StaticMeshes/SM_*, Materials/Material_001, Textures/texture_20250901}.uasset` 三类资产 + 用户 GUI 视觉确认 oak barrel 3D mesh;`test_example_bundles_smoke` 自动 parametrize 收 6 用例(2 个新 bundle × 3),总数 546 → 549 |
 | v1.4 | 2026-04-25 | Run Comparison / 基线回归落地(OpenSpec change `add-run-comparison-baseline-regression`):新增 §6.8 验收记录,关闭 `README.md` §"后续扩展" 第 7 项 "`observability/run_comparison.py` 待补" 占位;Codex Review Gate 双轮 PASS(Task 4/5/6 各两轮);proposal.md 4 条 Success criteria 全部达成;Deferred follow-up `lazy-artifact-store-package-exports` 单独 change 待启;§8.1 自动化验收基线 549 → 848(基线 549 + Run Comparison 模块 ~299 新用例)|
+| v1.5 | 2026-04-27 | Lazy artifact_store package exports(OpenSpec change `lazy-artifact-store-package-exports`):新增 §6.9 验收记录,关闭 §6.8 的 deferred follow-up `lazy-artifact-store-package-exports`;`src/framework/artifact_store/__init__.py` 由 eager 改 PEP 562 lazy `__getattr__` + `__dir__`(沿 `comparison/__init__.py:50-95` 模板);新 fence 文件 `tests/unit/test_artifact_store_lazy_imports.py` 4 fence + subprocess `_run_clean_subprocess` helper PYTHONPATH 注入;收紧 `test_run_comparison_loader.py` + `test_run_comparison_cli.py` 禁止清单 9→13 prefix;OpenSpec spec delta `openspec/specs/artifact-contract/spec.md` ADDED Requirement「Package import surface is lazy-load by default」+ 4 Scenarios(`/opsx:archive` sync-specs 合主 spec);4 轮 codex review 全 writeback(S2/S3/S5/S6;13 finding 总,8 accepted-codex 写到 design.md / spec.md / tasks.md / micro_tasks.md / fence test;1 accepted-claude 走 Reasoning Notes anchor;5 out-of-scope 诚实记账);TDD red-baseline 闭环(G2 红 2/4 → G3 绿 4/4);§8.1 自动化验收基线 848 → 1144(848 + ~292 forgeue tooling fence + 4 lazy fence) |
 
 ### 9.3 签收区
 
