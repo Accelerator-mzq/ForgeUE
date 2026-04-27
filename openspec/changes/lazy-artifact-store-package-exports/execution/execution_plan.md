@@ -30,7 +30,7 @@ note: |
 
 **Goal:** Convert `src/framework/artifact_store/__init__.py` from eager re-export to PEP 562 `__getattr__` + `__dir__` lazy export, so read-only consumers (currently `framework.comparison.loader` / `cli`) stop transitively loading `repository` / `payload_backends` / `lineage` / `variant_tracker` into `sys.modules`. Tighten previously-carved-out fence tests. Public API surface (`__all__` + `dir()` + `inspect.getmembers()`) remains byte-identical from caller perspective.
 
-**Architecture:** Single-file refactor of one package `__init__.py`, model on `src/framework/comparison/__init__.py:50-95` reference implementation (already in tree, already shipping). Add `__dir__` function (one improvement over the reference impl, codex F3 finding). Three new fence tests in a new file + four edits to two existing fence test files. Zero changes to any of the 30+ existing call sites or any artifact_store sub-module file.
+**Architecture:** Single-file refactor of one package `__init__.py`, model on `src/framework/comparison/__init__.py:50-95` reference implementation (already in tree, already shipping). Add `__dir__` function (one improvement over the reference impl, codex F3 finding). **Four** new fence tests in a new file (S2 codex F3 added the `__dir__` fence as the 4th) + four edits to two existing fence test files. Zero changes to any of the 30+ existing call sites or any artifact_store sub-module file.
 
 **Tech Stack:** Python 3.12+, PEP 562 (Python 3.7+) `__getattr__` and `__dir__` module hooks, `if TYPE_CHECKING:` block for mypy/pyright static type analysis, `subprocess.run` with explicit `PYTHONPATH` injection for clean-slate `sys.modules` fence verification. Test runner: `pytest -q` (existing 1126-baseline + 4 new fences = 1130). Type checker: `mypy` (config in `pyproject.toml [tool.mypy]`, non-strict baseline). No new project dependencies.
 
@@ -40,20 +40,37 @@ note: |
 
 Single subsystem (`framework.artifact_store` package import surface). No need to break further.
 
-Implementation crosses one production module + three test modules + one production docstring. All changes ride one PR. Out-of-scope (per `proposal.md` Non-Goals + `design.md` §Goals/Non-Goals): any artifact_store sub-module file, any of 30+ call sites, any schema, any new dependency, any other deferred follow-up.
+The change touches files in two distinct buckets — **implementation files** (production code + new fence test, ride together as the lazy-export PR diff) and **authorized auxiliary files** (Documentation Sync Gate edits + change-internal evidence files, ride alongside but answer to a different concern). Boundary check (`/forgeue:change-apply` Step 8) compares git diff against the **implementation files** table only; the authorized auxiliary table is the explicit allow-list for G6 / G7. Out-of-scope (per `proposal.md` Non-Goals + `design.md` §Goals/Non-Goals): any artifact_store sub-module file, any of 30+ call sites, any schema, any new dependency, any other deferred follow-up.
 
 ## File Structure
+
+### Implementation files (production scope, 5 files)
+
+These are the files the boundary check enforces. Any git diff outside this table during G2-G4 implementation is treated as scope creep and must trigger writeback to `design.md` File Structure or revert.
 
 | File | Action | Responsibility |
 | --- | --- | --- |
 | `src/framework/artifact_store/__init__.py` | **Modify** (replace 23-line eager re-export with ~75-line PEP 562 lazy template) | Public API surface for the package. Eager-export `hash_inputs` / `hash_payload` (zero-dep helpers); lazy-route `ArtifactRepository` / `PayloadBackend*` / `get_backend_registry` / `LineageIndex` / `VariantTracker` through `__getattr__`; expose `__dir__` for introspection compatibility |
-| `tests/unit/test_artifact_store_lazy_imports.py` | **Create** (new file, ~120 lines) | Four fence tests (subprocess helper + 4 specific fences)守 the spec contract: clean `sys.modules` after `import framework.artifact_store`, lazy load + cache on first access, `dir()` shows full `__all__` before any access, no out-of-package callsite uses submodule path |
+| `tests/unit/test_artifact_store_lazy_imports.py` | **Create** (new file, ~140 lines) | Four fence tests (subprocess helper + 4 specific fences)守 the spec contract: clean `sys.modules` after `import framework.artifact_store`, lazy load + cache on first access, `dir()` shows full `__all__` before any access, no out-of-package callsite uses submodule path |
 | `tests/unit/test_run_comparison_loader.py` | **Modify** (`TestImportFence` forbidden-prefix list + class docstring) | Existing fence — tighten by adding 4 forbidden prefixes (`framework.artifact_store.repository` / `payload_backends` / `lineage` / `variant_tracker`); remove "transitive load is unavoidable" carve-out paragraph |
 | `tests/unit/test_run_comparison_cli.py` | **Modify** (`TestCliImportFence` forbidden-prefix list + class docstring) | Same as loader fence, applied to CLI fence |
 | `src/framework/comparison/cli.py` | **Modify** (top-of-file docstring) | Replace "transitive load is unavoidable" carve-out paragraph with one-line pointer to new `artifact-contract` spec Requirement |
 
+### Authorized auxiliary files (DocSync + evidence scope)
+
+Boundary check exempts this list — these answer to G6 (Documentation Sync Gate) and G7 (Finish Gate evidence collection), not to the lazy-export production change. Any DocSync edit outside this list during G6 must record a skip-reason or trigger writeback to `tasks.md` G6 row matrix.
+
+| File / Path | Authorized for | Stage |
+| --- | --- | --- |
+| `docs/testing/test_spec.md` | `tasks.md#6.6` REQUIRED — add 4 new fences + tightened forbidden-prefix note | G6 |
+| `docs/acceptance/acceptance_report.md` | `tasks.md#6.7` REQUIRED — close §6.8 deferred-follow-up entry + update §8.1 baseline +4 | G6 |
+| `CHANGELOG.md` | `tasks.md#6.9` REQUIRED — `[Unreleased].Changed` entry | G6 |
+| `openspec/changes/lazy-artifact-store-package-exports/evidence/**` | G7 verify_report / superpowers_review / finish_gate_report / doc_sync_report 落盘 | G6+G7 |
+| `openspec/changes/lazy-artifact-store-package-exports/review/**` | codex_*_review / *_cross_check evidence | already at S2/S3 — boundary-exempt going forward |
+| `openspec/changes/lazy-artifact-store-package-exports/execution/**` | execution_plan.md / micro_tasks.md / tdd_log.md | S3 already + S4 increments |
+
 **Deliberately not touched** (per Non-Goals + grep verification + codex F1 carve-out):
-- `src/framework/artifact_store/{repository,lineage,variant_tracker,hashing,payload_backends/*}.py` — internal sub-module structure unchanged
+- `src/framework/artifact_store/{repository,lineage,variant_tracker,hashing,payload_backends/*}.py` — internal sub-module structure unchanged (S3 codex plan review F1 confirms this is acceptable: cluster materialization is a write-side internal concern, not a contract violation)
 - `tests/unit/test_payload_backends.py` — legitimate sub-package consumer (carve-out (b) in fence 3.1.4); intra-package access of `BlobBackend` / `FileBackend` / `InlineBackend` / `file_backend.FILE_MAX_BYTES` is correct usage of internal symbols not in `__all__`
 - All 30+ call sites importing `from framework.artifact_store import ArtifactRepository, get_backend_registry` (or other public symbols) — PEP 562 transparent forwarding makes them work unchanged
 

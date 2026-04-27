@@ -71,6 +71,30 @@ Record exact pass count from output (e.g., `1126 passed in 27.84s`). Write the n
 **Files:**
 - Modify: `src/framework/artifact_store/__init__.py` (replace full file, ~75 lines)
 
+> **G2 pre-step — Red baseline capture (S3 codex plan review F2 writeback)**
+>
+> Before changing `__init__.py`, **first** stage the new fence file from G3 (Step 3.1 below) onto disk **without** committing, then run the four new fences against the **current eager** `__init__.py`. They MUST FAIL (specifically: `test_import_artifact_store_does_not_pull_repository_or_payload_backends` should fail because eager import pulls all 4 submodules into `sys.modules`). Capture the FAIL stdout into `evidence/tdd_red_baseline.md` (with 12-key audit frontmatter, `evidence_type: tdd_log`, brief paragraph "captured pre-G2 red baseline against eager `__init__.py`"). Only after this red evidence is captured do you proceed to Step 2.1 production change. Commit ordering remains G2 → G3 (production before fence file lands), but the red-baseline evidence proves the fence is meaningful and not green-on-arrival. Reference: `review/plan_cross_check.md` ## B F2 row.
+
+- [ ] **Step 2.0: Capture red baseline (G2 pre-step)**
+
+```bash
+# Stage the new fence file from G3 onto disk without committing
+# (paste the test code from Step 3.1 below into tests/unit/test_artifact_store_lazy_imports.py)
+
+# Run against eager __init__.py — expect FAIL on test_import_..._does_not_pull_repository_...
+python -m pytest tests/unit/test_artifact_store_lazy_imports.py::test_import_artifact_store_does_not_pull_repository_or_payload_backends -v 2>&1 | tee /tmp/red_baseline.txt
+```
+
+Expected: 1 FAIL (assertion: `loaded != ["framework.artifact_store.hashing"]`, list also contains repository / payload_backends / lineage / variant_tracker). Capture key lines into `evidence/tdd_red_baseline.md` with 12-key audit frontmatter (`evidence_type: tdd_log`, `aligned_with_contract: true`).
+
+After capture, **revert the fence file off disk** (don't commit yet — fence file lands in G3 after production is in place):
+
+```bash
+rm tests/unit/test_artifact_store_lazy_imports.py  # red baseline captured, fence file will be re-created in G3
+```
+
+Now proceed to Step 2.1.
+
 - [ ] **Step 2.1: Replace `__init__.py` with PEP 562 lazy template**
 
 ```python

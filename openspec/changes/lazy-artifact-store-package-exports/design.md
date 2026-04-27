@@ -138,6 +138,10 @@ __all__ = [
 - 反过来 `repository` / `payload_backends` 是写侧入口,read-only consumer 永不调用 —— 是延迟的主要受益对象
 - `lineage` / `variant_tracker` 体量小但同样属于写侧索引,顺手归 lazy 保持一致性
 
+**接受的 cluster materialization 副作用**(S3 codex plan review F1 暴露):
+
+`repository.py:24-29` 在模块顶层 import `lineage` / `payload_backends.base` / `variant_tracker`。一旦 `__getattr__("ArtifactRepository")` 触发 `from framework.artifact_store import repository`,Python import 协议会 cascade 加载这三个 submodule + `payload_backends` 包 init + 其下 `inline_backend` / `file_backend` / `blob_backend`(共 ~7-8 个模块同时进 `sys.modules`)。这与最严格的"per-symbol lazy"理想不符,但**与 design value 完全相容** —— design value 是 read-only consumer 不污染,而 read-only consumer 永不访问 write-side 公共符号,所以 cluster 永不材化。`comparison.loader` / `cli` 实测只访问 `hashing.hash_payload`,`sys.modules` 干净。重写 `repository.py` 走 lazy intra-package import 是越界改 sub-module 文件(违反本 change Non-Goals 第 1 条),不在本 change scope。spec.md ADDED Requirement 已诚实记录此 cluster 行为,Scenario 2 显式承认,Scenario 1 锚定真实 design value。
+
 ### Decision 3:Spec 层加 1 个 Requirement,把 fence 从测试提升到契约
 
 `artifact-contract` 现有 Requirement 已规定 "comparison 模块 reads via plain file reads + hash_payload, NOT through repository / payload_backends"(line 173-180),但这是 caller 行为约束。本 change 加一条对**包侧**的对偶约束:
