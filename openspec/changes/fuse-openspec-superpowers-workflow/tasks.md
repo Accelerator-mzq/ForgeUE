@@ -176,25 +176,25 @@ P4 review evidence(`review/p4_tests_review_codex.md`)frontmatter `drift_decision
 
 ## 7. P6 — Documentation Sync
 
-- [ ] 7.1 `python tools/forgeue_doc_sync_check.py --change fuse-openspec-superpowers-workflow --json` 取标签
-- [ ] 7.2 调 `docs/ai_workflow/README.md` §4.3 提示词,以 tool 输出为 context;agent 输出 A/B/C/D 类
-- [ ] 7.3 用户确认 [REQUIRED] 项后应用 patch
-- [ ] 7.4 `verification/doc_sync_report.md` 落盘 + DRIFT 0 + REQUIRED 全应用
+- [x] 7.1 `python tools/forgeue_doc_sync_check.py --change fuse-openspec-superpowers-workflow --json` 取标签(2026-04-27:91 files touched,5 raw DRIFT — HLD + README + CHANGELOG + CLAUDE + AGENTS,全 `required_not_touched`;详 verification/doc_sync_report.md "Tool input" 段)
+- [x] 7.2 调 `docs/ai_workflow/README.md` §4.3 提示词,以 tool 输出为 context;agent 输出 A/B/C/D 类(A=4 REQUIRED 应用 / B=5 SKIP / C=1 SKIP-with-reason HLD 工具误报 / D=4 patch 入文)
+- [x] 7.3 用户确认 [REQUIRED] 项后应用 patch(用户 2026-04-27 选 C 推进 P6;4 patch 顺序 CHANGELOG → README → CLAUDE → AGENTS 应用,内容简洁不复制全文)
+- [x] 7.4 `verification/doc_sync_report.md` 落盘 + DRIFT 0(unresolved=0)+ REQUIRED 全应用(frontmatter `aligned_with_contract: true`)
 
 ### 7.5 Documentation Sync Gate 必检 10 项(沿 docs/ai_workflow/README.md §4.4 模板)
 
-- [ ] 7.5.1 Check whether openspec/specs/* needs update after archive(**REQUIRED** for `openspec/specs/examples-and-acceptance/spec.md`:本 change 含 ADDED Requirement,`/opsx:archive` 跑 sync-specs 时把 ADDED Requirement 合入主 spec,验证合并成功;SKIP for 其他 7 个 capability — `runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation`,reason "no spec delta")
-- [ ] 7.5.2 Check whether docs/requirements/SRS.md needs update(SKIP + reason "no FR/NFR change")
-- [ ] 7.5.3 Check whether docs/design/HLD.md needs update(SKIP + reason "no architectural-boundary change")
-- [ ] 7.5.4 Check whether docs/design/LLD.md needs update(SKIP + reason "no field-level change")
-- [ ] 7.5.5 Check whether docs/testing/test_spec.md needs update(SKIP + reason "no test-strategy change for runtime tests;new tools tests are in tests/unit/test_forgeue_*.py")
-- [ ] 7.5.6 Check whether docs/acceptance/acceptance_report.md needs update(SKIP + reason "no acceptance change")
-- [ ] 7.5.7 Check whether README.md needs update(REQUIRED:加 ForgeUE Integrated AI Change Workflow + `/forgeue:change-*` 8 个命令清单)
-- [ ] 7.5.8 Check whether CHANGELOG.md needs update(REQUIRED:Unreleased Added "ForgeUE Integrated AI Change Workflow:OpenSpec × Superpowers × codex fusion via /forgeue:change-* commands and 5 stdlib tools")
-- [ ] 7.5.9 Check whether CLAUDE.md needs update(REQUIRED:OpenSpec 工作流章末加段;禁用 `/codex:rescue` 工作流内 + 禁用 review-gate)
-- [ ] 7.5.10 Check whether AGENTS.md needs update(REQUIRED:同步 + 视角调整 — Codex / 其他 agent 自决 review)
-- [ ] 7.5.11 Record skipped docs with reason(全部 SKIP 项 reason 已记)
-- [ ] 7.5.12 Mark doc drift for human confirmation if sources conflict(若发现 docs / contract / specs 矛盾 → DRIFT 用户裁决)
+- [x] 7.5.1 Check whether openspec/specs/* needs update after archive(**REQUIRED** for `openspec/specs/examples-and-acceptance/spec.md`:本 change 含 ADDED Requirement,`/opsx:archive` 跑 sync-specs 时把 ADDED Requirement 合入主 spec,验证合并成功;SKIP for 其他 7 个 capability — `runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation`,reason "no spec delta")— 状态:examples-and-acceptance delta 待 P9 archive sync-specs auto-merge;其他 7 capability 已确认 SKIP
+- [x] 7.5.2 Check whether docs/requirements/SRS.md needs update(SKIP + reason "no FR/NFR change")— 已 SKIP 记录于 doc_sync_report §B
+- [x] 7.5.3 Check whether docs/design/HLD.md needs update(SKIP + reason "no architectural-boundary change")— 工具 heuristic 标 DRIFT(P4 §5.8 F1 改 src/framework/comparison/diff_engine.py 触发 non-core 检测),人工裁决 SKIP-with-reason(详 doc_sync_report §C.1):F1 是 stable-key 配对 helper-level bug fix,未引入新对象 / 子系统 / 失败模式 / 接口字段,LLD 未触发,HLD 粒度不达
+- [x] 7.5.4 Check whether docs/design/LLD.md needs update(SKIP + reason "no field-level change")— 已 SKIP 记录于 doc_sync_report §B
+- [x] 7.5.5 Check whether docs/testing/test_spec.md needs update(SKIP + reason "no test-strategy change for runtime tests;new tools tests are in tests/unit/test_forgeue_*.py")— 已 SKIP 记录于 doc_sync_report §B
+- [x] 7.5.6 Check whether docs/acceptance/acceptance_report.md needs update(SKIP + reason "no acceptance change")— 已 SKIP 记录于 doc_sync_report §B
+- [x] 7.5.7 Check whether README.md needs update(REQUIRED:加 ForgeUE Integrated AI Change Workflow + `/forgeue:change-*` 8 个命令清单)— applied:`## AI Workflow / OpenSpec` 段末尾追加 `### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)` 子段(8 命令表 + 5 工具 + 链入主文档)
+- [x] 7.5.8 Check whether CHANGELOG.md needs update(REQUIRED:Unreleased Added "ForgeUE Integrated AI Change Workflow:OpenSpec × Superpowers × codex fusion via /forgeue:change-* commands and 5 stdlib tools")— applied:`[Unreleased]` `### Added` 顶部新增 `**ForgeUE Integrated AI Change Workflow**(2026-04-27)` 多 bullet 条目(覆盖 fusion 三方 + 8 命令 + 5 工具 + 2 skills + 1 spec delta + 12-key frontmatter + 4 类 DRIFT + 测试覆盖 1126)
+- [x] 7.5.9 Check whether CLAUDE.md needs update(REQUIRED:OpenSpec 工作流章末加段;禁用 `/codex:rescue` 工作流内 + 禁用 review-gate)— applied:`## OpenSpec 工作流(2026-04-24 启用)` 章末追加 `### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)` 子段(8 命令逐条 + 5 工具逐条 + 12-key frontmatter 8/4 split + 4 类 DRIFT + 3 条工作流内禁令)
+- [x] 7.5.10 Check whether AGENTS.md needs update(REQUIRED:同步 + 视角调整 — Codex / 其他 agent 自决 review)— applied:`## OpenSpec 工作流(2026-04-24 启用)` 章末追加同款子段,但视角调整为 Codex / 其他 agent("由 Claude Code 主导编排" / "codex 自决 finding" / "cross-check ## A 在 codex 调用前冻结" / disputed-permanent-drift 协议)
+- [x] 7.5.11 Record skipped docs with reason(全部 SKIP 项 reason 已记)— done:5 项 SKIP 全部 reason 入 doc_sync_report §B + §C.1
+- [x] 7.5.12 Mark doc drift for human confirmation if sources conflict(若发现 docs / contract / specs 矛盾 → DRIFT 用户裁决)— done:0 unresolved conflicts;唯一 raw DRIFT(HLD)经人工裁决 SKIP-with-reason(详 §C.1)
 
 ## 8. P7 — Review
 

@@ -169,3 +169,38 @@ ForgeUE 已采用 OpenSpec 作为 AI 主工作流。完整规则见 [`docs/ai_wo
 必须检查的 10 份文档:`openspec/specs/*` / `docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md` / `README.md` / `CHANGELOG.md` / `CLAUDE.md` / `AGENTS.md`。
 
 规则:不机械同步;不更新必须记录原因;docs / tests / code / CHANGELOG 冲突时标记 doc drift,不自行猜测。触发提示词见 `docs/ai_workflow/README.md` §4.3。
+
+### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
+
+中心化融合 OpenSpec(契约锚点)× Superpowers(evidence 生成器)× codex-plugin-cc(stage cross-review hook)。OpenSpec change artifact 是唯一规范源,evidence 服务于契约,实施暴露的契约漏洞必须回写到 design / proposal / tasks。
+
+**8 个 Claude slash 命令**(对应 S0-S9 状态机各 stage,通过 `/forgeue:change-*` 触发):
+
+- `/forgeue:change-status` — 列 active changes / state / evidence(只读)
+- `/forgeue:change-plan` — S2→S3:codex `/codex:adversarial-review` design hook + Superpowers `writing-plans` + 锚点检测
+- `/forgeue:change-apply` — S3→S4-S5:codex plan review hook + `executing-plans` / `test-driven-development` + 越界检测
+- `/forgeue:change-debug` — 显式调 Superpowers `systematic-debugging`;debug_log 增量,暴露异常缺口必回写
+- `/forgeue:change-verify` — Level 0 / 1 / 2 + codex `/codex:review --base main` 验证 hook
+- `/forgeue:change-review` — Superpowers `requesting-code-review` finalize + codex `/codex:adversarial-review` mixed scope + blocker 回写
+- `/forgeue:change-doc-sync` — Documentation Sync Gate(10 文档静态扫 + §4.3 提示词 + 应用 [REQUIRED])
+- `/forgeue:change-finish` — Finish Gate(中心化最后防线;12-key frontmatter + writeback 真实性 + cross-check `disputed_open == 0`)
+
+**5 个 stdlib-only 工具**(沿 design.md §5 Tool Design):
+
+- `tools/forgeue_env_detect.py` — 5 层 env 检测 + plugin 可用性启发式
+- `tools/forgeue_change_state.py` — state 推断 + `--writeback-check` 4 类 named DRIFT 检测(回写检测主力)
+- `tools/forgeue_verify.py` — Level 0/1/2 编排,产 `verification/verify_report.md`(12-key audit frontmatter)
+- `tools/forgeue_doc_sync_check.py` — 10 文档静态扫,标 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT]
+- `tools/forgeue_finish_gate.py` — 中心化最后防线(evidence 完整性 + frontmatter 全检 + cross-check + writeback 真实性 + tasks unchecked + `openspec validate --strict`)
+
+**12-key audit frontmatter**:每份 formal evidence(`execution/` / `review/` / `verification/`)必含 8 个 always-required key(`change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `detected_env` / `triggered_by` / `codex_plugin_available`)+ 4 个 conditional key(`drift_decision` / `writeback_commit` / `drift_reason` / `reasoning_notes_anchor`,在 `aligned_with_contract: false` 时必填);`notes/` helper 子目录不强制。
+
+**4 类 DRIFT taxonomy**:`evidence_introduces_decision_not_in_contract` / `evidence_references_missing_anchor` / `evidence_contradicts_contract` / `evidence_exposes_contract_gap`(`forgeue_change_state.py --writeback-check` exit 5)。
+
+**工作流内禁令**:
+
+- **不调 `/codex:rescue` 在工作流内**:rescue 是单点修复 helper,与 stage gate / cross-check 协议正交;框架级 systematic-debugging 走 `/forgeue:change-debug`
+- **不启 codex review-gate hook**:`~/.claude/settings.json` 含 `--enable-review-gate` → `forgeue_finish_gate` WARN 提示用户 disable(stage gate 与 review-gate 重复且常冲突)
+- **evidence 不能取代 contract**:实施暴露的契约漏洞必须回写到 design / proposal / tasks(走 `drift_decision: written-back-to-*` + 真实 `writeback_commit`),不允许 evidence 自成规范源
+
+完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)(4 section:fusion contract / agent phase gate policy / documentation sync gate / state machine + writeback)。
