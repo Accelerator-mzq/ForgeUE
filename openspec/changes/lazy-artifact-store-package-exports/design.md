@@ -146,9 +146,11 @@ __all__ = [
 
 `artifact-contract` 现有 Requirement 已规定 "comparison 模块 reads via plain file reads + hash_payload, NOT through repository / payload_backends"(line 173-180),但这是 caller 行为约束。本 change 加一条对**包侧**的对偶约束:
 
+**Note (S6 codex F4 writeback)**:本 Decision 3 段曾内嵌 spec excerpt with old per-symbol wording,与 S3 codex F1 writeback 后的 spec.md cluster wording 不一致。已同步为下方 cluster-honest 版本(权威源仍是 `specs/artifact-contract/spec.md`,本段是引述):
+
 > Requirement:Package import surface is lazy-load by default
 >
-> The system SHALL NOT load `framework.artifact_store.repository` / `payload_backends` / `lineage` / `variant_tracker` into `sys.modules` at the time `framework.artifact_store` itself is first imported. These submodules SHALL be loaded only when a caller actually accesses one of their exported symbols.
+> The system SHALL NOT load `framework.artifact_store.repository` / `payload_backends` / `lineage` / `variant_tracker` into `sys.modules` at the time `framework.artifact_store` itself (or its zero-dependency `hashing` submodule) is first imported. These four submodules MAY be loaded as a coupled cluster the first time any write-side public symbol is accessed, due to `repository.py:24-29` intra-package imports. The contract's intent is the **read-only consumer guarantee**(Scenario 1),not strict per-symbol isolation.
 >
 > Scenario:Read-only consumer does not transitively load write-side modules
 >
@@ -156,17 +158,18 @@ __all__ = [
 > - WHEN we inspect `sys.modules`
 > - THEN none of `framework.artifact_store.repository` / `framework.artifact_store.payload_backends` / `framework.artifact_store.lineage` / `framework.artifact_store.variant_tracker` are present
 >
-> Scenario:First attribute access loads the corresponding submodule
+> Scenario:First attribute access loads the directly-targeted submodule plus its intra-package cluster, and caches the symbol
 >
 > - GIVEN a process that imported `framework.artifact_store`
-> - WHEN code first dereferences `framework.artifact_store.ArtifactRepository`(through `from framework.artifact_store import ArtifactRepository` or attribute access)
-> - THEN `framework.artifact_store.repository` is loaded into `sys.modules` AND the same `ArtifactRepository` object is cached on `framework.artifact_store` module globals so subsequent access bypasses `__getattr__`
+> - WHEN code first dereferences `framework.artifact_store.ArtifactRepository`(through `from framework.artifact_store import ArtifactRepository` or `getattr` attribute access)
+> - THEN `framework.artifact_store.repository` is loaded into `sys.modules`;the returned object is the same `ArtifactRepository` class exported by `framework.artifact_store.repository`;a subsequent attribute access on `framework.artifact_store` returns the cached symbol from module globals without re-entering `__getattr__`(PEP 562 cache via `globals()[name] = value` write-back)。Additionally, `lineage` / `payload_backends` / `payload_backends.{base,inline_backend,file_backend,blob_backend}` / `variant_tracker` are also present as cluster materialization, which is acceptable per the read-only consumer guarantee invariant.
 
 这把 `comparison.loader` / `comparison.cli` 的 fence 测试从"防自己跑偏"提升为"包合约保证只读 consumer 不会被强行污染"。
 
 ## Risks / Trade-offs
 
-- **[Risk A] 某包外 callsite 通过 `framework.artifact_store.repository.X` 子模块路径访问** → Mitigation:已 grep 全 repo,排除 `src/framework/artifact_store/**` 包内部 + `tests/unit/test_payload_backends.py`(payload_backends sub-package 专属测试,合法 sub-package consumer)后 0 个匹配。新增 fence `tests/unit/test_artifact_store_lazy_imports.py::test_no_callsite_uses_submodule_path` 守门,扫 `from framework.artifact_store.repository import` / `from framework.artifact_store.payload_backends import` / `lineage import` / `variant_tracker import`(`hashing` 允许;**fence 主动排除三类**:(a) `src/framework/artifact_store/**` 包内部 intra-package import;(b) `tests/unit/test_payload_backends.py` sub-package 专属测试;(c) 本 change 目录自身)
+- **[Risk A] 某包外 callsite 通过 `framework.artifact_store.repository.X` 子模块路径访问** → Mitigation:已 grep 全 repo,排除 `src/framework/artifact_store/**` 包内部 + `tests/unit/test_payload_backends.py`(payload_backends sub-package 专属测试,合法 sub-package consumer)后 0 个匹配。新增 fence `tests/unit/test_artifact_store_lazy_imports.py::test_no_callsite_uses_submodule_path` 守门,扫**两类形式**:`from framework.artifact_store.<lazy>` 与 `import framework.artifact_store.<lazy>`(`hashing` 允许;`<lazy>` ∈ {repository, payload_backends, lineage, variant_tracker};**fence 主动排除三类**:(a) `src/framework/artifact_store/**` 包内部 intra-package import;(b) `tests/unit/test_payload_backends.py` sub-package 专属测试;(c) 本 change 目录自身)。
+  **honest accounting(S6 codex F2 writeback)**:proposal Risk A 旧文 "PEP 562 可覆盖" 不准确 —— 实测 `import framework.artifact_store as m; m.repository.ArtifactRepository` 在 lazy 后会 `AttributeError`(eager 时由 `from .repository import X` 副作用绑定 `repository` 到 package globals;lazy `__getattr__` 仅识别 7 个 public symbol,不识别 submodule 名)。因 0 包外 callsite 走 attribute path 形式(grep 实测),本 change 为 acceptable 边界。需要 `framework.artifact_store.repository.X` 路径的 future caller 必须显式 `from framework.artifact_store.repository import X` 或 `import framework.artifact_store.repository`(Python import resolver 直接命中文件系统)。
 - **[Risk B] `mypy` / `pyright` 静态类型推断在 lazy 模式下失败** → Mitigation:`if TYPE_CHECKING:` 块导入 lazy 符号供静态分析;`framework/comparison/__init__.py:30-48` 已验证此 pattern 在本 repo `mypy` 配置下不产生类型 noise
 - **[Risk C] 循环依赖产生 `AttributeError`** → Mitigation:实测依赖图 `hashing`(零依赖)→ `payload_backends`(依赖 `hashing`)→ `repository`(依赖 `hashing` + `payload_backends`)→ `lineage`(零内部依赖)→ `variant_tracker`(零内部依赖),无 cycle;首次访问任一 lazy 符号都不触发循环
 - **[Risk D] PEP 562 的 `__getattr__` 在 IDE 跳转/补全/`dir()`/`inspect.getmembers()` 中不可见** → Mitigation:`__all__` 显式列出全部公共符号,IDE 补全走 `__all__`;`if TYPE_CHECKING:` 让静态跳转可工作;**实现 `__dir__` 函数返回 `sorted(set(__all__) | set(globals()))`**,使 `dir(framework.artifact_store)` 与 `inspect.getmembers()` 在 lazy 符号未访问前**仍**返回完整公共 API 表面(eager 时代的 introspection 契约保留)。`inspect.getmembers()` 遍历 `dir()` + `getattr-each` 会触发全部 lazy 符号一次性加载,这是它的语义本就如此(O(N) 一次性成本),不是回归。该 mitigation 比 `comparison/__init__.py` reference 实现更严格 —— 后者未实装 `__dir__`,本 change 借机补齐
@@ -212,3 +215,19 @@ __all__ = [
 ## Open Questions
 
 无。所有设计选择有先例(`framework/comparison/__init__.py`)+ 实测调研(callsite grep)支撑,无须 Pre-implementation 决策。
+
+## Reasoning Notes
+
+### reasoning-notes-doc-sync-workflow-ordering
+
+S6 codex `/codex:adversarial-review` mixed scope F1 high finding 提出"Doc Sync 未完成,主文档仍在陈述相反事实"(tasks.md §6 unchecked + main `openspec/specs/artifact-contract/spec.md` 无 lazy-load Requirement + cli.py + `__init__.py` docstring 指向主 spec 但当前不存在该 Requirement)。Claude 独立验证为 PARTIAL valid(grep main spec 实测 0 lazy 段),但 resolution = `accepted-claude`,reason 如下:
+
+OpenSpec 工作流协议(`openspec/AGENTS.md` + ForgeUE `docs/ai_workflow/README.md` §4)规定 spec delta 在 active change 期间生活在 `openspec/changes/<id>/specs/<capability>/spec.md`,**仅在 archive 时**由 `/opsx:archive` sync-specs 阶段合入 `openspec/specs/<capability>/spec.md` 主 spec。这是标准约定,与 `add-run-comparison-baseline-regression` 等已 archive change 同模式。本 change S5→S6 转换不需要主 spec 已合并 lazy-load Requirement —— S7 `/forgeue:change-doc-sync` + S8 `/forgeue:change-finish` 是后续独立 stage,各自负责 doc-sync 矩阵 + sync-specs 触发。
+
+cli.py + `__init__.py` docstring 写"see openspec/specs/artifact-contract/spec.md"是 **forward-looking pointer**,与 OpenSpec sync-specs 约定一致 —— PR review 当下 reader grep 主 spec 不见 Requirement,post-archive 后 sync-specs 把 delta 内容合入主 spec,pointer 解析。这种"指向最终归属位置"是 OpenSpec convention,不是 docstring drift。
+
+tasks.md §6 + §7 unchecked 是**有意的 workflow 边界**:`/forgeue:change-review` slash command 的 8 步 spec 明确 stop after Step 6(blocker resolution + writeback check + S5→S6 advance),不触 §6/§7。codex F1 的 recommendation "完成 doc-sync gate 后再把 superpowers/codex review evidence 作为 S6/S7 依据"颠倒了状态机顺序(stage spec 是 `S5 verify → S6 review → S7 doc-sync → S8 finish-gate → S9 archive`)。
+
+因此 F1 的 high severity 来自对 OpenSpec workflow 的不熟,不来自本 change 真实缺陷。本 change 在 S6 不需 main spec 已合 + 不需 §6/§7 已 [x]。
+
+**注意**:本 reasoning notes anchor 是 cross-check 协议要求的 finding 弃决证据(`accepted-claude` + reason ≥ 50 字 + design.md 锚点)。codex F1 的关切——主 spec 在 PR-review 当下与 docstring pointer 错位——会在 `/forgeue:change-finish` 阶段由 `forgeue_finish_gate.py` 强制要求 strict validate + sync-specs 已就位,届时此问题自然闭合。

@@ -104,8 +104,15 @@ def test_dir_returns_full_public_api_surface_before_any_lazy_access() -> None:
 
 
 def test_no_callsite_uses_submodule_path() -> None:
+    # Catch BOTH forms (S6 codex F3 writeback):
+    #   (1) `from framework.artifact_store.<lazy> import ...`
+    #   (2) `import framework.artifact_store.<lazy>` (with optional `as <alias>`)
+    # Anchor to start-of-line + optional indent so docstring/comment prose like
+    # `MUST NOT import framework.artifact_store.repository` is not a false
+    # positive (those lines start with `MUST` after indent, not `import`).
     forbidden_pattern = re.compile(
-        r"from framework\.artifact_store\.(repository|payload_backends|lineage|variant_tracker)\b"
+        r"^[ \t]*(?:from|import)\s+framework\.artifact_store\.(repository|payload_backends|lineage|variant_tracker)\b",
+        re.MULTILINE,
     )
     # Carve-outs (per design.md callsite table + S2 codex F1 finding):
     #   (a) src/framework/artifact_store/** — intra-package imports are legitimate
