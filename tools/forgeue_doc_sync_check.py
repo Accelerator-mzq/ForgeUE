@@ -181,7 +181,21 @@ def classify_documents(
     has_commits = bool(touched)
     ai_workflow_changed = _has_prefix(touched, "docs/ai_workflow/")
     core_changed = _has_prefix(touched, "src/framework/core/")
-    framework_changed = _has_prefix(touched, "src/framework/") and not core_changed
+    # Per P4 codex review F4 (review/p4_tests_review_codex.md): when a change
+    # touches BOTH src/framework/core/ AND another src/framework/ subsystem,
+    # the prior implementation cleared framework_changed via ``and not
+    # core_changed`` -- the HLD doc would skip even though a non-core
+    # architecture-boundary change occurred. Now ``framework_changed`` tracks
+    # *non-core* framework touches independently of core; HLD triggers when
+    # any non-core subsystem is touched (regardless of whether core also
+    # changed); LLD still only triggers on core_changed. Core-only changes
+    # don't auto-flag HLD (rationale: pure core internals tend to be
+    # field-level / LLD territory; non-core touches are the architectural
+    # boundary signal).
+    framework_changed = any(
+        p.startswith("src/framework/") and not p.startswith("src/framework/core/")
+        for p in touched
+    )
     spec_delta_dir = change_dir / "specs"
     has_spec_delta = (
         spec_delta_dir.is_dir()
@@ -494,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
             # F11-adv: git failure must NOT silent-PASS. Surface as IO error
             # so the caller / agent knows the doc sync gate could not run.
             print(
-                f"[FAIL] cannot evaluate documentation sync — git diff failed: {git_error}",
+                f"[FAIL] cannot evaluate documentation sync -- git diff failed: {git_error}",
                 file=sys.stderr,
             )
             return 1
@@ -548,7 +562,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  reason: {d.reason}")
             print(f"  touched_in_change: {d.touched_in_change}")
         if drifts:
-            print(f"[FAIL] {len(drifts)} DRIFT(s) detected — REQUIRED docs not yet edited")
+            print(f"[FAIL] {len(drifts)} DRIFT(s) detected -- REQUIRED docs not yet edited")
 
     return 2 if drifts else 0
 

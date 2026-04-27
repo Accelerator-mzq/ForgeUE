@@ -106,22 +106,22 @@
 
 ### 5.1 fixture
 
-- [ ] 5.1.1 `tests/fixtures/forgeue_workflow/builders.py`(deterministic change-tree builder)
-- [ ] 5.1.2 `tests/fixtures/forgeue_workflow/fake_change_minimal/`(S1 状态固件)
-- [ ] 5.1.3 `tests/fixtures/forgeue_workflow/fake_change_complete/`(S8 状态固件)
-- [ ] 5.1.4 `tests/fixtures/forgeue_workflow/fake_change_with_drift/`(各类 DRIFT 固件)
+- [x] 5.1.1 `tests/fixtures/forgeue_workflow/builders.py`(deterministic change-tree builder)
+- [x] 5.1.2 `tests/fixtures/forgeue_workflow/fake_change_minimal/`(S1 状态固件;README 引导到 `builders.make_minimal_change`,实际 fixture 在 tmp_path 由 builder 生成 — 避开 frozen sha 不可重现问题)
+- [x] 5.1.3 `tests/fixtures/forgeue_workflow/fake_change_complete/`(S8 状态固件;README 引导到 `builders.make_complete_change`)
+- [x] 5.1.4 `tests/fixtures/forgeue_workflow/fake_change_with_drift/`(各类 DRIFT 固件;README 引导到 `builders.make_drift_change` + `DRIFT_TYPES`)
 
 ### 5.2 5 tool 单测
 
-- [ ] 5.2.1 `tests/unit/test_forgeue_env_detect.py`(5 检测路径 + override 优先级 + Windows env 大小写 + plugin 启发式 + dry-run no-write + ASCII only)
-- [ ] 5.2.2 `tests/unit/test_forgeue_change_state.py`(9 状态 fixture + 矛盾 evidence exit 3 + list-active 排除 archive + JSON 解析 + no-write/no-subprocess + `--validate-state` 断言)
-- [ ] 5.2.3 `tests/unit/test_forgeue_verify.py`(Level 0 默认跑 + pytest count parse + Level 1/2 env guard truthy 集合 + dry-run no-spawn + report-out 落 markdown + exit 2 on FAIL + no paid default + ASCII only + 不硬编码 pytest 总数)
-- [ ] 5.2.4 `tests/unit/test_forgeue_doc_sync_check.py`(commit-touching → CHANGELOG REQUIRED + runtime change → LLD REQUIRED + ai_workflow change → CLAUDE+AGENTS REQUIRED + [DRIFT] → exit 2 + dry-run no-write + JSON 含 10 文件)
-- [ ] 5.2.5 `tests/unit/test_forgeue_finish_gate.py`(S8 完整 → exit 0 + 缺 verify → exit 2 + cross-check disputed_open > 0 → exit 2 + writeback_commit 假 → exit 2 + non-claude-code env 缺 codex → exit 0 + `--no-validate` 不 spawn openspec + dry-run no-write)
+- [x] 5.2.1 `tests/unit/test_forgeue_env_detect.py`(5 检测路径 + override 优先级 + Windows env 大小写 + plugin 启发式 + dry-run no-write + ASCII only — 39 tests)
+- [x] 5.2.2 `tests/unit/test_forgeue_change_state.py`(9 状态 fixture + 矛盾 evidence exit 3 + list-active 排除 archive + JSON 解析 + no-write/no-subprocess + `--validate-state` 断言 — 33 tests)
+- [x] 5.2.3 `tests/unit/test_forgeue_verify.py`(Level 0 默认跑 + pytest count parse + Level 1/2 env guard truthy 集合 + dry-run no-spawn + report-out 落 markdown + exit 2 on FAIL + no paid default + ASCII only + 不硬编码 pytest 总数 — 50 tests)
+- [x] 5.2.4 `tests/unit/test_forgeue_doc_sync_check.py`(commit-touching → CHANGELOG REQUIRED + runtime change → LLD REQUIRED + ai_workflow change → CLAUDE+AGENTS REQUIRED + [DRIFT] → exit 2 + dry-run no-write + JSON 含 10 文件 — 33 tests)
+- [x] 5.2.5 `tests/unit/test_forgeue_finish_gate.py`(S8 完整 → exit 0 + 缺 verify → exit 2 + cross-check disputed_open > 0 → exit 2 + writeback_commit 假 → exit 2 + non-claude-code env 缺 codex → exit 0 + `--no-validate` 不 spawn openspec + dry-run no-write + helper-vs-formal subdir 区分 — 44 tests)
 
 ### 5.3 回写检测 fence(核心)
 
-- [ ] 5.3.1 `tests/unit/test_forgeue_writeback_detection.py`(对应 design.md §3 4 类 named DRIFT taxonomy + 附加 frontmatter 校验):
+- [x] 5.3.1 `tests/unit/test_forgeue_writeback_detection.py`(对应 design.md §3 4 类 named DRIFT taxonomy + 附加 frontmatter 校验,18 tests):
   - **DRIFT type 1: `evidence_introduces_decision_not_in_contract`**:fixture evidence 含 contract 未记录的 decision → tool exit 5 + 报告 type=evidence_introduces_decision_not_in_contract
   - **DRIFT type 2: `evidence_references_missing_anchor`**:fixture execution_plan.md 引用 `tasks.md#99.1` 不存在 → exit 5 + 报告 type=evidence_references_missing_anchor + file/ref 字段
   - **DRIFT type 3: `evidence_contradicts_contract`**:fixture tdd_log.md / debug_log.md 显示与 design.md 接口字段不一致 → exit 5 + 报告 type=evidence_contradicts_contract
@@ -129,32 +129,44 @@
   - **附加 frontmatter 校验**(由 `forgeue_finish_gate.py` exit 2 阻断,本测试 fixture 同时覆盖):
     - frontmatter `aligned_with_contract: false` 而 `drift_decision: null` → finish_gate exit 2
     - `writeback_commit` 标了但 `git rev-parse <sha>` 失败 → finish_gate exit 2
-    - `writeback_commit` 真实但 `git show --stat <sha>` 未改对应 artifact → finish_gate exit 2
+    - `writeback_commit` 真实但 `git show --stat <sha>` 未改对应 artifact → finish_gate exit 2(`test_finish_gate.test_writeback_commit_unrelated_blocks` 覆盖)
     - `disputed-permanent-drift` 但 `drift_reason` < 50 字 → **finish_gate exit 2 阻断**(非 WARN;contract `examples-and-acceptance` ADDED Requirement 是 must)
     - `disputed-permanent-drift` 但 `design.md` 无 `## Reasoning Notes` 段对应 anchor → finish_gate exit 2
 
 ### 5.4 markdown lint fence
 
-- [ ] 5.4.1 `tests/unit/test_forgeue_workflow_plugin_invocation.py`(8 ForgeUE command md 含 `/codex:adversarial-review` 或 `/codex:review`;不含 `/codex:rescue`;不含 `--enable-review-gate`;含 `forgeue_env_detect` 引用)
-- [ ] 5.4.2 `tests/unit/test_forgeue_cross_check_format.py`(fixture 验 `*_cross_check.md` frontmatter `disputed_open` + body A/B/C/D 段)
-- [ ] 5.4.3 `tests/unit/test_forgeue_skill_markdown.py`(2 forgeue-* SKILL.md frontmatter 含 name/description/license/compatibility/metadata)
-- [ ] 5.4.4 `tests/unit/test_forgeue_command_markdown.py`(8 command md 含 frontmatter + Steps + Output + Guardrails 段 + 必绑 active change 前置条件)
+- [x] 5.4.1 `tests/unit/test_forgeue_workflow_plugin_invocation.py`(8 ForgeUE command md 含 `/codex:adversarial-review` 或 `/codex:review`;不含 `/codex:rescue` 作 invocation;不含 `--enable-review-gate` 作 invocation;含 `forgeue_env_detect` 引用 — 5 tests)
+- [x] 5.4.2 `tests/unit/test_forgeue_cross_check_format.py`(实测 self-host change `*_cross_check.md` + builder fixture frontmatter `disputed_open` + body A/B/C/D 段 — 5 tests)
+- [x] 5.4.3 `tests/unit/test_forgeue_skill_markdown.py`(2 forgeue-* SKILL.md frontmatter 含 name/description/license/compatibility/metadata + 反模式占位 — 6 tests)
+- [x] 5.4.4 `tests/unit/test_forgeue_command_markdown.py`(8 command md 含 frontmatter + Steps + Output + Guardrails 段 + 必绑 active change 前置条件 — 8 tests)
 
 ### 5.5 反模式 fence(防回归)
 
-- [ ] 5.5.1 `tests/unit/test_forgeue_codex_review_no_skill_files.py`(`.codex/skills/forgeue-*-review/` 必不存在)
-- [ ] 5.5.2 `tests/unit/test_forgeue_no_duplicated_tdd_skill.py`(`.claude/skills/forgeue-superpowers-tdd-execution/` 必不存在)
+- [x] 5.5.1 `tests/unit/test_forgeue_codex_review_no_skill_files.py`(`.codex/skills/forgeue-*-review/` 必不存在)
+- [x] 5.5.2 `tests/unit/test_forgeue_no_duplicated_tdd_skill.py`(`.claude/skills/forgeue-superpowers-tdd-execution/` 必不存在)
 
 ### 5.6 横切 fence
 
-- [ ] 5.6.1 `tests/unit/test_forgeue_workflow_no_paid_default.py`(扫 5 tool + 8 command md,grep `--level 1` `--level 2` `paid` `live` 默认不开)
-- [ ] 5.6.2 `tests/unit/test_forgeue_workflow_ascii_markers.py`(扫 5 tool 源码,断言 stdout 仅 7 种 ASCII 标记)
-- [ ] 5.6.3 `tests/unit/test_forgeue_workflow_no_hardcoded_test_count.py`(扫 5 tool 源码,断言无 `== 848` 类硬编码)
+- [x] 5.6.1 `tests/unit/test_forgeue_workflow_no_paid_default.py`(forgeue_verify argparse `--level` default = 0;5 tool 中 L1/L2 step 必带 `FORGEUE_VERIFY_LIVE_*` env_var;8 cmd md 中 `paid` / `live` / `--level 1|2` 必伴随 negation/guard 标记 — 7 tests)
+- [x] 5.6.2 `tests/unit/test_forgeue_workflow_ascii_markers.py`(7 tool: `--help` + 各 typical scenario 跑通后 stdout/stderr 全 ASCII;P4 顺带修了 4 处 stdout em-dash + 5 处 plan description § 章节符号 — 7 tests)
+- [x] 5.6.3 `tests/unit/test_forgeue_workflow_no_hardcoded_test_count.py`(扫 5 tool 源码,断言无 `== 848` `== 491` `== 549` `== 880` 类硬编码 + 无 `passed=N(N >= 100)` 类 — 3 tests)
 
 ### 5.7 全量回归
 
-- [ ] 5.7.1 `pytest -q tests/unit/test_forgeue_*.py` 全绿
-- [ ] 5.7.2 `python -m pytest -q` 整体回归(数量以实测为准,2026-04-26 基线 848 passed)
+- [x] 5.7.1 `pytest -q tests/unit/test_forgeue_*.py` 全绿(2026-04-27:262 passed)
+- [x] 5.7.2 `python -m pytest -q` 整体回归(2026-04-27:1110 passed = 848 P3 baseline + 262 P4 新增 fence)
+
+### 5.8 P4 codex review 修复(post-review fixups,2026-04-27)
+
+P4 close-out 跑 codex `/codex:review --base main`(`review/p4_tests_review_codex.md`)暴露 4 finding(1 P1 + 3 P2),全部独立验证 TRUE(沿 ForgeUE memory `feedback_verify_external_reviews`)。用户裁决方案 A "全改",4 个 fix 均落地本 change。
+
+- [x] 5.8.1 **F1 fix-in-tool**(P1 致命):`src/framework/comparison/diff_engine.py` 加 `_stable_aid_key` 助手 + `_compute_artifact_diffs` / `_compute_verdict_diffs` 改 stable-key 配对 + `_diff_one_artifact` 加 per-side aid kw 参数(避免 `payload_missing_on_disk` / `payload_hash_mismatches` 跨边查错)+ `tests/unit/test_run_comparison_diff_engine.py::TestCompareCrossRunIdStableMatching` 6 fence test
+- [x] 5.8.2 **F2 written-back-to-design + fix-in-tool**:`tools/forgeue_finish_gate.py` 加 `_ALWAYS_REQUIRED_FRONTMATTER_KEYS` + `_frontmatter_key_present` + `check_malformed_evidence` 扩到 8 always-required 全检 + `design.md` §3 "Helper vs formal evidence subdir" 表 row 写回("change_id AND evidence_type" → "全部 8 个 always-required audit key" + 8 + 4 split 段)+ 3 fence test(只 2 key / aligned=null / 8 key 过)
+- [x] 5.8.3 **F3 fix-in-tool**:`tools/_common.py` `_CLAUDE_CODE_ENV_VARS` 加 `CLAUDE_CODE_SSE_PORT` + 2 fence test(`test_claude_code_env_var_lists_agree_between_common_and_env_detect` / `test_claude_code_sse_port_alone_yields_claude_code_via_quick_detect_env`)
+- [x] 5.8.4 **F4 fix-in-tool**:`tools/forgeue_doc_sync_check.py` `framework_changed` 改 non-core-detect-independently-of-core + 2 fence test(core+non-core 同时 → LLD+HLD 双 REQUIRED;core-only → 仅 LLD)
+- [x] 5.8.5 全量回归 — `python -m pytest -q` 1123 passed(1110 baseline + 13 新增 fence:6 diff_engine + 3 finish_gate + 2 env_detect + 2 doc_sync_check)
+
+P4 review evidence(`review/p4_tests_review_codex.md`)frontmatter `drift_decision: pending` + body 含 Resolution status 段;commit 后 amend frontmatter 落 `writeback_commit` sha + per-finding 决策(F1/F3/F4 = fix-in-tool;F2 = written-back-to-design)。沿 P3 `5dd870c` → `1c0da37` 的 resolution-commit + evidence-backfill 双 commit 模式。
 
 ## 6. P5 — Validation
 

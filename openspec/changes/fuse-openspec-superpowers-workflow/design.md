@@ -131,11 +131,17 @@ codex_plugin_available: true
 | 子目录 | 角色 | frontmatter 要求 |
 |---|---|---|
 | `notes/` | helper bucket(brainstorming / onboarding / pre_p0 / 临时记录)| 不强制 12-key;允许任意 frontmatter shape |
-| `execution/` | formal evidence bucket(execution_plan / micro_tasks / tdd_log / debug_log) | **MUST** 含 `change_id` AND `evidence_type` |
-| `review/` | formal evidence bucket(superpowers_review / codex_*_review / *_cross_check) | **MUST** 含 `change_id` AND `evidence_type` |
-| `verification/` | formal evidence bucket(verify_report / doc_sync_report / finish_gate_report) | **MUST** 含 `change_id` AND `evidence_type` |
+| `execution/` | formal evidence bucket(execution_plan / micro_tasks / tdd_log / debug_log) | **MUST** 含全部 8 个 always-required audit key(见下) |
+| `review/` | formal evidence bucket(superpowers_review / codex_*_review / *_cross_check) | **MUST** 含全部 8 个 always-required audit key |
+| `verification/` | formal evidence bucket(verify_report / doc_sync_report / finish_gate_report) | **MUST** 含全部 8 个 always-required audit key |
 
-`finish_gate` 扫 formal 子目录中缺 12-key 的文件 → blocker `evidence_malformed`(F3 regular fix);`notes/` 子目录里的 helper 不触发(允许 onboarding 类无 frontmatter helper)。
+**Always-required 8 key**(formal evidence 必含,缺即 `evidence_malformed` blocker):`change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `detected_env` / `triggered_by` / `codex_plugin_available`。
+
+**Conditional 4 key**(只有 `aligned_with_contract: false` 时才必填,由 `check_frontmatter_protocol` 验):`drift_decision` / `writeback_commit` / `drift_reason` / `reasoning_notes_anchor`。
+
+8 + 4 = 12 key 总集。`check_malformed_evidence` 卡 always-required 8 key 漏一个就 blocker;`check_frontmatter_protocol` 验 conditional 4 key 的写回链协议(per design.md §3 frontmatter 写回协议段落)。
+
+`finish_gate` 扫 formal 子目录中缺 always-required key 的文件 → blocker `evidence_malformed`(F3 regular + P4 codex F2 fix:从仅查 `change_id`+`evidence_type` 扩展到全 8 always-required key);`notes/` 子目录里的 helper 不触发(允许 onboarding 类无 frontmatter helper)。
 
 **Artifact 映射表**:
 

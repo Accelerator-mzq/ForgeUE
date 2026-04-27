@@ -109,7 +109,7 @@ def build_plan(level: int) -> list[StepPlan]:
                 "--run-id",
                 "forgeue_verify_smoke",
             ],
-            description="offline mock_linear bundle smoke (validation_matrix §1.2)",
+            description="offline mock_linear bundle smoke (validation_matrix sec 1.2)",
         ),
     ]
     if level >= 1:
@@ -128,7 +128,7 @@ def build_plan(level: int) -> list[StepPlan]:
                     "forgeue_verify_live_llm",
                     "--live-llm",
                 ],
-                description="live LLM structured extraction (validation_matrix §2.1)",
+                description="live LLM structured extraction (validation_matrix sec 2.1)",
             )
         )
     if level >= 2:
@@ -149,7 +149,7 @@ def build_plan(level: int) -> list[StepPlan]:
                         "--live-llm",
                     ],
                     description=(
-                        "live mesh.generation (validation_matrix §3.2). "
+                        "live mesh.generation (validation_matrix sec 3.2). "
                         "Failure surfaces job_id; do NOT auto-retry (ADR-007)."
                     ),
                 ),
@@ -167,7 +167,7 @@ def build_plan(level: int) -> list[StepPlan]:
                         "forgeue_verify_live_ue",
                         "--live-llm",
                     ],
-                    description="live UE export (validation_matrix §3.3 step 1)",
+                    description="live UE export (validation_matrix sec 3.3 step 1)",
                 ),
                 StepPlan(
                     name="live-comfy-pipeline",
@@ -185,7 +185,7 @@ def build_plan(level: int) -> list[StepPlan]:
                         "--comfy-url",
                         "http://127.0.0.1:8188",
                     ],
-                    description="live ComfyUI HTTP pipeline (validation_matrix §3.1)",
+                    description="live ComfyUI HTTP pipeline (validation_matrix sec 3.1)",
                 ),
             ]
         )
@@ -472,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
                 if r.pytest_summary:
                     line += f" ({r.pytest_summary})"
                 if r.reason:
-                    line += f" — {r.reason}"
+                    line += f" -- {r.reason}"
                 print(line)
             if report_path is not None:
                 print(f"[OK] report: {report_path}")

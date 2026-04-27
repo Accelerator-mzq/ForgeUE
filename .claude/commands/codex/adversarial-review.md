@@ -46,7 +46,7 @@ Argument handling:
 Foreground flow:
 - Run:
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" adversarial-review "$ARGUMENTS"
+node "$(printf '%s\n' "${USERPROFILE:-$HOME}"/.claude*/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs 2>/dev/null | sort -V | tail -1)" adversarial-review "$ARGUMENTS"
 ```
 - Return the command stdout verbatim, exactly as-is.
 - Do not paraphrase, summarize, or add commentary before or after it.
@@ -56,7 +56,7 @@ Background flow:
 - Launch the review with `Bash` in the background:
 ```typescript
 Bash({
-  command: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" adversarial-review "$ARGUMENTS"`,
+  command: `node "$(printf '%s\n' "${USERPROFILE:-$HOME}"/.claude*/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs 2>/dev/null | sort -V | tail -1)" adversarial-review "$ARGUMENTS"`,
   description: "Codex adversarial review",
   run_in_background: true
 })
@@ -66,22 +66,31 @@ Bash({
 
 <!--
 ForgeUE local override of openai-codex/codex/1.0.4 plugin command.
-Sole change: removed `disable-model-invocation: true` from frontmatter so
-Claude (the model) can invoke /codex:adversarial-review through the shared
-broker, per design.md §4 commands table assumption that S6 review stage
-hooks into /codex:adversarial-review (mixed scope, blocker independent
-verification). Body verbatim from plugin source so broker behavior remains
-identical.
 
-Note: design.md §3 "Codex Review Output Exposure Protocol (verbatim-first)"
-still applies — when Claude triggers this command, the resulting codex
-output MUST appear verbatim in the same Claude response that contains the
-independent verification table + finding classification + Resolution
-proposal. The command-level lock is removed; the content-level integrity
-contract remains.
+Two changes vs upstream plugin source:
+
+1. Removed `disable-model-invocation: true` from frontmatter so Claude
+   (the model) can invoke /codex:adversarial-review through the shared
+   broker, per design.md sec 4 commands table assumption that S6 review
+   stage hooks into /codex:adversarial-review (mixed scope, blocker
+   independent verification).
+
+   Note: design.md sec 3 "Codex Review Output Exposure Protocol
+   (verbatim-first)" still applies -- when Claude triggers this
+   command, the resulting codex output MUST appear verbatim in the
+   same Claude response that contains the independent verification
+   table + finding classification + Resolution proposal. The
+   command-level lock is removed; the content-level integrity contract
+   remains.
+
+2. Replaced ${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs with an
+   inline broker discovery one-liner (see status.md for full
+   reasoning). Discovery via shell glob over $USERPROFILE / $HOME,
+   version-sorted, picks latest plugin install.
 
 Plugin source: ~/.claude-max/plugins/cache/openai-codex/codex/1.0.4/commands/adversarial-review.md
 Last synced: 2026-04-27 (codex plugin v1.0.4)
-On plugin upgrade: diff this against the new upstream and re-sync if body
-changed; preserve the missing `disable-model-invocation` line.
+On plugin upgrade: preserve BOTH the missing `disable-model-invocation`
+line AND the broker discovery one-liner (do NOT restore
+${CLAUDE_PLUGIN_ROOT}).
 -->

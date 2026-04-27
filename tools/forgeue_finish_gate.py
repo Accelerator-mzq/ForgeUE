@@ -273,13 +273,44 @@ def check_evidence_completeness(
     return blockers
 
 
+# Always-required audit keys for formal evidence (per design.md sec 3
+# 12-key schema). drift_decision / writeback_commit / drift_reason /
+# reasoning_notes_anchor are CONDITIONAL (only required when
+# aligned_with_contract is false), so they are NOT enforced by this presence
+# check; ``check_frontmatter_protocol`` validates their conditional
+# semantics. The 8 keys below are the always-required floor.
+_ALWAYS_REQUIRED_FRONTMATTER_KEYS: tuple[str, ...] = (
+    "change_id",
+    "stage",
+    "evidence_type",
+    "contract_refs",
+    "aligned_with_contract",
+    "detected_env",
+    "triggered_by",
+    "codex_plugin_available",
+)
+
+
 def check_malformed_evidence(change_dir: Path) -> list[Blocker]:
-    """F3-regular fix: files under formal evidence subdirs MUST carry 12-key.
+    """Files under formal evidence subdirs MUST carry the always-required
+    8 audit keys from the 12-key schema.
 
     Files in ``notes/`` are allowed to be helpers (no frontmatter). Files in
-    ``execution/`` / ``review/`` / ``verification/`` MUST have ``change_id``
-    AND ``evidence_type`` set, otherwise they are silently skipped by
-    detectors and could mask real protocol violations.
+    ``execution/`` / ``review/`` / ``verification/`` MUST have all 8
+    always-required audit keys present (the 4 conditional writeback keys --
+    ``drift_decision`` / ``writeback_commit`` / ``drift_reason`` /
+    ``reasoning_notes_anchor`` -- only become required when
+    ``aligned_with_contract: false``, and are validated separately by
+    ``check_frontmatter_protocol``).
+
+    Per P4 codex review F2 (review/p4_tests_review_codex.md): the prior
+    implementation only enforced ``change_id`` + ``evidence_type``,
+    allowing finish_gate to PASS on formal evidence missing audit metadata
+    (``stage`` / ``contract_refs`` / ``detected_env`` / ``triggered_by``
+    etc). Contract write-back: design.md sec 3 "Helper vs formal evidence
+    subdir" table now explicitly says "MUST 含全部 8 个 always-required key"
+    (was "change_id AND evidence_type"). drift_decision / writeback_commit
+    semantics unchanged (still conditional).
     """
     blockers: list[Blocker] = []
     for sub in _FORMAL_EVIDENCE_SUBDIRS:
@@ -294,11 +325,9 @@ def check_malformed_evidence(change_dir: Path) -> list[Blocker]:
             except OSError:
                 continue
             fm, _ = _common.parse_frontmatter(text)
-            missing = []
-            if not fm.get("change_id"):
-                missing.append("change_id")
-            if not fm.get("evidence_type"):
-                missing.append("evidence_type")
+            missing = [
+                key for key in _ALWAYS_REQUIRED_FRONTMATTER_KEYS if not _frontmatter_key_present(fm, key)
+            ]
             if missing:
                 blockers.append(
                     Blocker(
@@ -306,12 +335,43 @@ def check_malformed_evidence(change_dir: Path) -> list[Blocker]:
                         detail=(
                             f"file under {sub}/ is missing "
                             f"frontmatter key(s) {missing}; formal evidence "
-                            "subdirectories require 12-key (notes/ allows helpers)"
+                            "subdirectories require 8 always-required audit "
+                            "keys per design.md sec 3 (notes/ allows helpers)"
                         ),
                         file=p.relative_to(change_dir).as_posix(),
                     )
                 )
     return blockers
+
+
+def _frontmatter_key_present(fm: dict, key: str) -> bool:
+    """A key is "present" when ``key in fm`` (the YAML actually carried it).
+
+    Empty values like ``null`` / empty list count as PRESENT for keys where
+    null is semantically meaningful (e.g. ``aligned_with_contract: null`` is
+    not allowed but ``contract_refs: []`` IS valid). The minimal yaml
+    subset parser stores ``key:`` without value as None and ``key: []`` as
+    empty list, so we treat presence by key existence in the dict.
+
+    Special case: ``aligned_with_contract`` MUST be a boolean (true/false);
+    null indicates the author forgot to set it.
+    """
+    if key not in fm:
+        return False
+    value = fm[key]
+    if key == "aligned_with_contract":
+        return isinstance(value, bool)
+    if key == "contract_refs":
+        # Empty list IS valid (e.g. helper-style evidence with no specific
+        # contract anchor) but None / missing is not.
+        return isinstance(value, list)
+    # For other keys, None / "" / "null" string indicate the author
+    # left the field blank.
+    if value is None:
+        return False
+    if isinstance(value, str) and value.strip() in ("", "null"):
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------

@@ -41,7 +41,7 @@ Argument handling:
 Foreground flow:
 - Run:
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review "$ARGUMENTS"
+node "$(printf '%s\n' "${USERPROFILE:-$HOME}"/.claude*/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs 2>/dev/null | sort -V | tail -1)" review "$ARGUMENTS"
 ```
 - Return the command stdout verbatim, exactly as-is.
 - Do not paraphrase, summarize, or add commentary before or after it.
@@ -51,7 +51,7 @@ Background flow:
 - Launch the review with `Bash` in the background:
 ```typescript
 Bash({
-  command: `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" review "$ARGUMENTS"`,
+  command: `node "$(printf '%s\n' "${USERPROFILE:-$HOME}"/.claude*/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs 2>/dev/null | sort -V | tail -1)" review "$ARGUMENTS"`,
   description: "Codex review",
   run_in_background: true
 })
@@ -61,16 +61,31 @@ Bash({
 
 <!--
 ForgeUE local override of openai-codex/codex/1.0.4 plugin command.
-Sole change: removed `disable-model-invocation: true` from frontmatter so
-Claude (the model) can invoke /codex:review through the shared broker, per
-design.md §4 commands table assumption that S5 verification stage hooks
-into /codex:review --base <main>. Body verbatim from plugin source so
-broker behavior remains identical. Per design.md §3 "Codex Review Output
-Exposure Protocol (verbatim-first)", Claude MUST surface codex output
-verbatim alongside Claude's framing in the same response.
+
+Two changes vs upstream plugin source:
+
+1. Removed `disable-model-invocation: true` from frontmatter so Claude
+   (the model) can invoke /codex:review through the shared broker, per
+   design.md sec 4 commands table assumption that S5 verification stage
+   hooks into /codex:review --base <main>. Per design.md sec 3 "Codex
+   Review Output Exposure Protocol (verbatim-first)", Claude MUST
+   surface codex output verbatim alongside Claude's framing in the same
+   response. The command-level lock is removed; the content-level
+   integrity contract remains.
+
+2. Replaced ${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs with an
+   inline broker discovery one-liner. Reason: Claude Code injects
+   CLAUDE_PLUGIN_ROOT only when invoking the file at the plugin path;
+   files under .claude/commands/ (override path) do NOT receive that
+   env var. Empty interpolation yields /scripts/... which Git-Bash on
+   Windows translates to E:\Program Files\Git\scripts\... (mingw root)
+   and node throws MODULE_NOT_FOUND. Fix: discover the broker via
+   shell glob over $USERPROFILE on Windows / $HOME on POSIX,
+   version-sort, take latest. printf '%s\n' avoids `ls -F` trailing `*`.
 
 Plugin source: ~/.claude-max/plugins/cache/openai-codex/codex/1.0.4/commands/review.md
 Last synced: 2026-04-27 (codex plugin v1.0.4)
 On plugin upgrade: diff this against the new upstream and re-sync if body
-changed; preserve the missing `disable-model-invocation` line.
+changed; preserve BOTH the missing `disable-model-invocation` line AND
+the broker discovery one-liner (do NOT restore ${CLAUDE_PLUGIN_ROOT}).
 -->

@@ -275,9 +275,16 @@ VALID_ENVS = ("claude-code", "codex-cli", "cursor", "aider", "unknown")
 SETTING_FILE_REL = ".forgeue/review_env.json"
 ENV_VAR_NAME = "FORGEUE_REVIEW_ENV"
 
+# Must mirror ``forgeue_env_detect._CLAUDE_CODE_VARS`` exactly. Drift between
+# the two tuples means ``quick_detect_env`` (used by verify + finish_gate)
+# misses signals that ``forgeue_env_detect`` already honors. P4 codex review
+# F3 (review/p4_tests_review_codex.md) caught a missing CLAUDE_CODE_SSE_PORT;
+# tests/unit/test_forgeue_env_detect_var_lists_agree.py guards against future
+# regressions.
 _CLAUDE_CODE_ENV_VARS = (
     "CLAUDECODE",
     "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SSE_PORT",
     "CLAUDE_PROJECT_DIR",
 )
 _CURSOR_ENV_VARS = ("CURSOR_TRACE_ID", "CURSOR_AGENT", "CURSOR_PROJECT_PATH")

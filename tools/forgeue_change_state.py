@@ -592,7 +592,7 @@ def _print_human(report: StateReport, *, writeback_check: bool) -> None:
     if writeback_check:
         if report.drifts:
             for d in report.drifts:
-                print(f"[DRIFT] {d.type}: {d.file} — {d.detail}")
+                print(f"[DRIFT] {d.type}: {d.file} -- {d.detail}")
         else:
             print("[OK] writeback-check: 0 named DRIFT detected")
         if report.frontmatter_issues:
