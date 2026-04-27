@@ -249,12 +249,12 @@ P8 evidence(`review/codex_plan_review.md` + `review/plan_cross_check.md`)frontma
 
 ## 10. P9 — Archive Readiness
 
-- [ ] 10.1 `/opsx:archive fuse-openspec-superpowers-workflow`(OpenSpec 跑 sync-specs;无 spec delta 不动主 spec)
-- [ ] 10.2 archive 后 evidence 子目录 + `notes/pre_p0/` 完整保留(整目录随 change 走)
-- [ ] 10.3 (可选 S9 自动)Superpowers `finishing-a-development-branch` skill auto-trigger,git 层 merge/PR/discard
-- [ ] 10.4 `git status` 干净;不留 `_drafts/` / 临时文件
-- [ ] 10.5 `pytest -q` 整体仍绿
+- [x] 10.1 `openspec archive fuse-openspec-superpowers-workflow -y`(2026-04-27:archived as `2026-04-27-fuse-openspec-superpowers-workflow`;sync-specs 把 examples-and-acceptance ADDED Requirement(`Active change evidence is captured under OpenSpec change subdirectories with writeback protocol`)+ 3 Scenarios 合并入主 spec,主 spec Requirements 12 → 13)
+- [x] 10.2 archive 后 evidence 子目录完整保留(`notes/`(6 onboarding helpers + `pre_p0/` 4 份 plan-level evidence)/ `review/` 13 份 / `verification/` 3 份 / `specs/examples-and-acceptance/spec.md` delta);整目录由 OpenSpec CLI `mv` 搬迁,git 层显示为 31 deletions + 1 untracked archive/ 路径
+- [x] 10.3 Superpowers `finishing-a-development-branch` skill auto-trigger SKIP(用户后续手工决定 merge/PR/discard;本 P9 archive commit 后 branch chore/openspec-superpowers 还含 P0-P9 全部 milestone,等用户 push + 决定 merge 路径)
+- [x] 10.4 archive commit 后 `git status` 干净(无 `_drafts/` / 临时文件;archive `mv` 引起 31 D + 1 ?? + 1 M `openspec/specs/examples-and-acceptance/spec.md` 全部由 archive commit 收口)
+- [x] 10.5 `python -m pytest -q` 整体回归 1138 passed in 34.64s(P8 baseline 维持;archive 不动 src/ tests/ tools/,纯 OpenSpec contract artifact 搬迁)
 
 ## 11. Documentation Sync(必含,沿 docs/ai_workflow/README.md §4.4 模板,本 change 已经在 §7.5 详写,本节是 OpenSpec 标准 footer)
 
-- [ ] 11.1 §7.5 12 项全部完成(已展开)
+- [x] 11.1 §7.5 12 项全部完成(P6 2026-04-27 已展开;archive 后 §7.5.1 examples-and-acceptance delta sync 已落 — 本 P9 archive 把 ADDED Requirement 合入主 spec)
