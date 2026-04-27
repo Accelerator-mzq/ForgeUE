@@ -572,6 +572,7 @@ payload: { status, elapsed_s?, progress?, cost_usd?, ... }
 | 版本 | 日期 | 变更 |
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §A-C+E+L+N 拆分重组 |
+| v1.1 | 2026-04-27 | OpenSpec change `lazy-artifact-store-package-exports`:`framework.artifact_store` 包 init 由 eager re-export 改 PEP 562 lazy `__getattr__` + `__dir__`。**架构层无变化**:子系统边界(§3.1 子系统清单 / §3.2 依赖方向)、对象模型(§4)、Workflow 调度(§5)、subsystem topology 全保留;仅 packaging 机制(包公共 API 表面如何 lazy 暴露 ArtifactRepository / PayloadBackend* / LineageIndex / VariantTracker)被改。`__all__` byte-identical 9 名;30+ 既有 callsite 透明兼容。详见 `CHANGELOG.md [Unreleased].Changed` 与 `docs/acceptance/acceptance_report.md` §6.9 |
 
 ### 14.2 参考
 
