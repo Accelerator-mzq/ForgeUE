@@ -16,11 +16,11 @@ codex_plugin_available: true
 detected_env: claude-code
 triggered_by: forced
 created_at: 2026-04-27T15:30:00+08:00
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
+aligned_with_contract: true
+drift_decision: written-back-to-design
+writeback_commit: 37288fe780b4b2fe7813f3be955ee691b8ee4ffb
 drift_reason: |
-  P4 close-out code-level review (single-direction /codex:review --base main, no cross-check per design.md sec 3). 4 findings: 1 P1 comparison core bug + 3 P2 workflow gate gaps. All 4 independently verified TRUE against real code (file:line). Resolution proposed in 4 buckets (3 C1 code-only + 1 C2 code+design.md write-back). drift_decision will move to written-back-to-* / fix-in-tool per finding once Claude implements + lands commits. Awaiting user judgement on whether to fix in this change or defer.
+  P4 close-out code-level review (single-direction /codex:review --base main, no cross-check per design.md sec 3). 4 findings: 1 P1 comparison core bug + 3 P2 workflow gate gaps. All 4 independently verified TRUE against real code (file:line) per ForgeUE memory feedback_verify_external_reviews. User chose plan A (fix all 4 in this change). Resolution landed in commit 37288fe: F1 fix-in-tool diff_engine cross-run-id stable matching (+ 6 fence test); F2 written-back-to-design (sec 3 "Helper vs formal evidence subdir" table revised + 8/4 split rule added) + finish_gate 8-key validation + 3 fence test; F3 fix-in-tool _common.py CLAUDE_CODE_SSE_PORT alignment + 2 fence test; F4 fix-in-tool doc_sync_check non-core-independent detection + 2 fence test. tasks.md sec 5.8 logs the post-review fixups. Test count 1110 -> 1123 (exact +13 = 6+3+2+2). drift_decision tagged written-back-to-design because the commit touches design.md sec 3 for F2; F1/F3/F4 are code-only resolutions but ride the same commit. aligned_with_contract: true post-fix because the contract (revised) and code (fixed) now agree.
 reasoning_notes_anchor: null
 note: |
   Per design.md sec 3 Codex Review Output Exposure Protocol (verbatim-first), the
