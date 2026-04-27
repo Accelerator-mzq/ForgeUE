@@ -170,9 +170,9 @@ P4 review evidence(`review/p4_tests_review_codex.md`)frontmatter `drift_decision
 
 ## 6. P5 — Validation
 
-- [ ] 6.1 `python tools/forgeue_verify.py --level 0 --change fuse-openspec-superpowers-workflow --json` 全绿
-- [ ] 6.2 Level 1/2 显式 SKIP(本 change 不需要 LLM/UE/ComfyUI live)+ SKIP reason 写入 verify_report
-- [ ] 6.3 `verification/verify_report.md` 落盘 + frontmatter `aligned_with_contract: true`
+- [x] 6.1 `python tools/forgeue_verify.py --level 0 --change fuse-openspec-superpowers-workflow --json` 全绿(2026-04-27:Level 0 [OK]+[OK],pytest summary `1123 passed in 37.37s`,offline-bundle-smoke exit 0)
+- [x] 6.2 Level 1/2 显式 SKIP(本 change 不需要 LLM/UE/ComfyUI live)+ SKIP reason 写入 verify_report(L1 + 3×L2 全 SKIP,reason `opt-in env FORGEUE_VERIFY_LIVE_* not truthy ({1,true,yes,on} required)`)
+- [x] 6.3 `verification/verify_report.md` 落盘 + frontmatter `aligned_with_contract: true`(2026-04-27;6 step body + summary `[OK]: 2 / [FAIL]: 0 / [SKIP]: 4`)
 
 ## 7. P6 — Documentation Sync
 
