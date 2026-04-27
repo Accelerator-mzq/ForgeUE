@@ -375,15 +375,19 @@ class ChangeBuilder:
         if checkmarks_under_3:
             body += "## 3. Implementation\n\n"
             body += "- [x] 3.1 implementation done\n\n"
+        # Unchecked sections sit BELOW the stage-aware filter threshold
+        # (forgeue_finish_gate._SELF_STAGE_SECTION_THRESHOLD = 9) so they
+        # exercise the blocker path; sections >= 9 are reserved for P8 / P9
+        # / footer self-stage tasks that finish_gate is itself the gate for.
         if unchecked_lines:
-            body += "## 99. Unchecked\n\n"
+            body += "## 4. Unchecked\n\n"
             for i in range(unchecked_lines):
-                body += f"- [ ] 99.{i+1} pending task line\n"
+                body += f"- [ ] 4.{i+1} pending task line\n"
             body += "\n"
         if unchecked_with_skip_reason:
-            body += "## 98. Unchecked with SKIP reason\n\n"
+            body += "## 5. Unchecked with SKIP reason\n\n"
             for i in range(unchecked_with_skip_reason):
-                body += f"- [ ] 98.{i+1} pending (SKIP: not applicable for fixture)\n"
+                body += f"- [ ] 5.{i+1} pending (SKIP: not applicable for fixture)\n"
             body += "\n"
         return body
 

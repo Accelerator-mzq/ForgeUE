@@ -818,6 +818,80 @@ def test_tasks_unchecked_with_skip_reason_does_not_block(tmp_path):
     assert "tasks_unchecked" not in types
 
 
+def test_finish_gate_skips_p8_p9_self_stage_unchecked(tmp_path):
+    """P8 self-stage filter: ``check_tasks_unchecked`` MUST skip ``[ ]`` lines
+    inside section ``## N`` for ``N >= 9`` — these are P8 / P9 / footer
+    self-stage tasks that finish_gate is itself the gate for, so requiring
+    them checked before finish_gate runs is a chicken-and-egg trap.
+
+    Specifically: §9 holds the P8 finish-gate tasks that this very tool
+    completion enables ("9.1 finish_gate exit 0"); §10 holds P9 archive tasks
+    that only happen after S8 PASS (``/opsx:archive`` post-S8); §11 is the
+    OpenSpec standard footer reference. Earlier sections (§1-§8) are
+    workflow-prerequisite stages whose unchecked items DO indicate real
+    incomplete work and MUST still block.
+    """
+    b = make_complete_change(tmp_path, "fc-tu-stage")
+    custom_tasks = (
+        "# Tasks: fc-tu-stage\n\n"
+        "## 1. P0 Setup\n\n"
+        "- [x] 1.1 done\n\n"
+        "## 2. P1 Docs\n\n"
+        "- [x] 2.1 done\n\n"
+        "## 9. P8 Finish Gate\n\n"
+        "- [ ] 9.1 finish_gate exit 0\n"
+        "- [ ] 9.2 finish_gate_report landed\n"
+        "- [ ] 9.3 settings.json review-gate hook check\n\n"
+        "## 10. P9 Archive Readiness\n\n"
+        "- [ ] 10.1 /opsx:archive\n"
+        "- [ ] 10.2 evidence preserved\n\n"
+        "## 11. Documentation Sync footer\n\n"
+        "- [ ] 11.1 sync gate items closed\n"
+    )
+    b.write_tasks(content=custom_tasks)
+    blockers = fg.check_tasks_unchecked(b.change_dir)
+    types_files = [(blk.type, blk.detail) for blk in blockers]
+    assert blockers == [], (
+        f"§9 / §10 / §11 unchecked lines must be skipped (P8 / P9 / footer "
+        f"self-stage); got: {types_files}"
+    )
+
+
+def test_finish_gate_does_not_skip_pre_p8_unchecked(tmp_path):
+    """Negative-control for the stage-aware filter: ``[ ]`` lines in sections
+    §1-§8 are workflow-prerequisite stages that MUST still block. Without
+    this guard a sloppy filter (e.g. "skip everything that looks like a TODO")
+    would silently drop real incomplete work.
+    """
+    b = make_complete_change(tmp_path, "fc-tu-stage-neg")
+    custom_tasks = (
+        "# Tasks: fc-tu-stage-neg\n\n"
+        "## 1. P0 Setup\n\n"
+        "- [ ] 1.1 NOT yet done\n\n"
+        "## 8. P7 Review\n\n"
+        "- [ ] 8.1 review NOT done\n\n"
+        "## 9. P8 Finish Gate\n\n"
+        "- [ ] 9.1 finish_gate exit 0\n"
+    )
+    b.write_tasks(content=custom_tasks)
+    blockers = fg.check_tasks_unchecked(b.change_dir)
+    pre_p8_blockers = [
+        blk for blk in blockers
+        if "1.1 NOT yet done" in blk.detail or "8.1 review NOT done" in blk.detail
+    ]
+    p8_blockers = [
+        blk for blk in blockers if "9.1 finish_gate exit 0" in blk.detail
+    ]
+    assert len(pre_p8_blockers) == 2, (
+        f"§1.1 + §8.1 unchecked items MUST still block; got pre-P8 blockers: "
+        f"{[(b.type, b.detail) for b in pre_p8_blockers]}"
+    )
+    assert p8_blockers == [], (
+        f"§9.1 (P8 self-stage) MUST be exempt from blocker; got: "
+        f"{[(b.type, b.detail) for b in p8_blockers]}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # evidence_change_id mismatch / missing
 # ---------------------------------------------------------------------------
@@ -923,6 +997,71 @@ def test_cli_no_validate_skips_openspec_subprocess(tmp_path, monkeypatch):
     )
     # No openspec on PATH but --no-validate still passes
     assert proc.returncode == 0
+
+
+def test_run_openspec_validate_resolves_via_shutil_which(tmp_path, monkeypatch):
+    """P8 §9.5 fix-in-tool: ``run_openspec_validate`` MUST call
+    ``shutil.which`` first so Windows ``.cmd`` shims (npm-installed
+    ``openspec.cmd``) are found. ``subprocess.run([\"openspec\", ...])``
+    without ``shell=True`` does not honor ``PATHEXT`` and raises
+    ``FileNotFoundError`` on Windows even when the user's shell finds the
+    shim fine.
+
+    We assert the executable is resolved (and reused as ``argv[0]``) by
+    monkeypatching ``shutil.which`` and ``subprocess.run`` and verifying
+    finish_gate passes the resolved path through, not the bare ``"openspec"``
+    string.
+    """
+    make_complete_change(tmp_path, "fc-shim")
+    fake_exe = tmp_path / "fake_openspec.cmd"
+    fake_exe.write_text("@echo off\nexit 0\n", encoding="utf-8")
+    captured: dict[str, list[str]] = {}
+
+    def fake_which(name):
+        if name == "openspec":
+            return str(fake_exe)
+        return None
+
+    class FakeCompleted:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = ""
+            self.stderr = ""
+
+    def fake_run(argv, *args, **kwargs):
+        captured["argv"] = list(argv)
+        return FakeCompleted()
+
+    monkeypatch.setattr(fg.shutil, "which", fake_which)
+    monkeypatch.setattr(fg.subprocess, "run", fake_run)
+    blocker = fg.run_openspec_validate(tmp_path, "fc-shim")
+    assert blocker is None
+    assert captured["argv"][0] == str(fake_exe), (
+        f"argv[0] must be the shutil.which-resolved path so .cmd shims work; "
+        f"got {captured['argv']!r}"
+    )
+    assert captured["argv"][1:] == ["validate", "fc-shim", "--strict"]
+
+
+def test_run_openspec_validate_returns_blocker_when_unresolved(tmp_path, monkeypatch):
+    """When ``shutil.which("openspec")`` returns ``None`` (CLI genuinely not
+    installed), ``run_openspec_validate`` MUST return an
+    ``openspec_cli_missing`` blocker WITHOUT attempting subprocess.run (and
+    without raising). Mirrors the prior FileNotFoundError code path but now
+    triggered by explicit resolution failure.
+    """
+    monkeypatch.setattr(fg.shutil, "which", lambda name: None)
+    called = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        called["count"] += 1
+        raise AssertionError("subprocess.run must NOT be called when shutil.which returns None")
+
+    monkeypatch.setattr(fg.subprocess, "run", fake_run)
+    blocker = fg.run_openspec_validate(tmp_path, "fc-noshim")
+    assert blocker is not None
+    assert blocker.type == "openspec_cli_missing"
+    assert called["count"] == 0
 
 
 def test_cli_json_output_shape(tmp_path):

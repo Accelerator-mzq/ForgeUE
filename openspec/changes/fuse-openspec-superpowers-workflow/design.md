@@ -147,6 +147,8 @@ codex_plugin_available: true
 
 **finish_gate_report self-evidence 排除**(P7 codex F-B 写回):`forgeue_finish_gate.py::_filter_formal_evidence` 排除 `evidence_type: finish_gate_report`,因为 `verification/finish_gate_report.md` 是当前 run 自身产物 — 上次 fail 的 report 含 `aligned_with_contract: false` + `drift_decision: pending`,若不排除将在下次 run 触发 frontmatter 阻断,即使原始 blocker 已修复也会被自我污染。当前 run 的 report 每次重新生成,prior runs 不携带审计相关信号。
 
+**tasks_unchecked stage-aware filter**(P8 §9.5 fix-in-tool):`forgeue_finish_gate.py::check_tasks_unchecked` 跟踪 `tasks.md` 当前 `## N` 章节号,`N >= 9` 的 `[ ]` 行不 raise blocker。原因:§9 是 P8 finish gate 任务(self-stage,finish_gate 跑时 §9.1 必然 [ ] — "9.1 finish_gate exit 0" 是 finish_gate 自己负责的 gate,要求 finish_gate 跑前先 [x] 是 chicken-and-egg);§10 是 P9 archive 任务(P8 时 archive 还没发生);§11 是 OpenSpec 标准 footer 引用。早期 §1-§8 是 workflow-prerequisite stage,`[ ]` 仍 raise blocker。`(SKIP` / `(skip` / `SKIP:` inline 标记仍跨章节通用作为额外豁免。fixture 默认 unchecked 章节相应从 §99 / §98 改为 §4 / §5(都 < 9 阈值)以保持原 blocker 测试语义。
+
 **Artifact 映射表**:
 
 | Artifact | 产生方 | 路径 | aligned_with_contract 验证 | conditional REQUIRED |
@@ -276,7 +278,7 @@ protocol 立的根本理由:review 整性的来源是过程纪律(brief 准确 /
 | `tools/forgeue_change_state.py`(回写检测主力) | state 推断 + 4 类 DRIFT 检测(`--writeback-check`)+ frontmatter `aligned_with_contract` 扫描 + writeback_commit 真实性 | exit 0(PASS)/ 1(IO / change not found)/ 2(`--validate-state` 与 inferred state 不匹配)/ 3(structural inconsistency,如 active+archive 同存)/ 5(`--writeback-check` 检出任一 named DRIFT)|
 | `tools/forgeue_verify.py` | Level 0/1/2 + verify_report 生成(12-key frontmatter,`created_at` 在 body,严守 12-key audit fields)| exit 0(含 SKIP)/ 1(IO)/ 2([FAIL])/ 3(change not found / report path 不可写) |
 | `tools/forgeue_doc_sync_check.py` | 静态扫 10 文档,标签 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT];diff base 优先用 change bootstrap commit | exit 0(无 DRIFT)/ 1(IO / git failure 不允 silent PASS,详 §11.5 / F11-adv)/ 2(任一 [DRIFT])/ 3(change 不存) |
-| `tools/forgeue_finish_gate.py`(中心化最后防线) | evidence 完整性(按 frontmatter `evidence_type` 索引,**不**绑死 file path)+ helper(`notes/`)与 formal evidence(`{execution,review,verification}/`)区分校验 + frontmatter 全检 + cross-check `disputed_open` + `writeback_commit` 真实性 + tasks unchecked + `openspec validate --strict` | exit 0(PASS)/ 1(IO)/ 2(任一 blocker)/ 3(change 不存) |
+| `tools/forgeue_finish_gate.py`(中心化最后防线) | evidence 完整性(按 frontmatter `evidence_type` 索引,**不**绑死 file path)+ helper(`notes/`)与 formal evidence(`{execution,review,verification}/`)区分校验 + frontmatter 全检 + cross-check `disputed_open` + `writeback_commit` 真实性 + tasks unchecked(stage-aware,§≥9 self-stage 豁免)+ `openspec validate --strict` | exit 0(PASS)/ 1(IO)/ 2(任一 blocker)/ 3(change 不存) |
 
 **横切**:stdlib only;stdout `sys.stdout.reconfigure(encoding="utf-8")` + ASCII fallback;7 种 ASCII 标记(`[OK] [FAIL] [SKIP] [WARN] [DRIFT] [REQUIRED] [OPTIONAL]`,无 emoji);`--json` 时不打 ASCII 标记;`--dry-run` 必无副作用;不进 `console_scripts`;不硬编码 pytest 总数。
 
@@ -373,6 +375,16 @@ protocol 立的根本理由:review 整性的来源是过程纪律(brief 准确 /
 **理由**:Pre-P0 是本 change 实施前的 plan-level cross-check 预演,在 OpenSpec lifecycle 之外(还没有 contract);Codex 仅产出 markdown(read-only sandbox 物理拦截写代码);**豁免 §4 "工作流内禁用 /codex:rescue" 仅适用本 change Pre-P0 阶段**,未来其他 change 不适用此豁免。
 
 Pre-P0 产物在 `notes/pre_p0/`(`forgeue-fusion-claude.md` / `forgeue-fusion-codex.md` / `forgeue-fusion-codex_prompt.md` / `forgeue-fusion-cross_check.md`)— archive 时随 change 走,作历史 record。
+
+### §11.5 plan-stage codex_plan_review / plan_cross_check 与 design-stage 合并(disputed-permanent-drift,本 change 一次性自托管 bootstrap)
+
+> Anchor: `reasoning-notes-plan-merged-with-design`
+
+**用户裁决 2026-04-27**(P8 finish gate 阶段):本 change 是首个 self-host 跑 ForgeUE Integrated AI Change Workflow 的 change,plan stage(S2→S3)的独立 codex_plan_review + plan_cross_check 未单独产出 — 其内容已经被 Pre-P0 plan-level rehearsal(`notes/pre_p0/forgeue-fusion-cross_check.md`,plan v3 vs codex 独立 alternative,4 disputed 项 user verdict,disputed_open == 0)与 P0 design-stage cross-check(`review/design_cross_check.md`,9 项 finding accepted-codex/claude,disputed_open == 0)合并覆盖;两份合起来提供了 plan-stage cross-check 的全部 substance(Claude vs codex matrix / disputed_open tracking / `## A` 冻结于 codex 调用前 / 用户 verdict 解决路径)。
+
+**reason**:本 change 是 self-host bootstrap 阶段,Pre-P0 + P0 时点 plan-stage 与 design-stage 边界尚未机器化(`/forgeue:change-plan` 命令 P2 才实装),plan-level rehearsal 与 design-stage hook 自然合并执行;P7 已经走完 self-review + adversarial review 链,现在补跑 `/codex:adversarial-review` 只能针对 post-P7 implementation 状态评审,而非 S2→S3 plan stage,无法回填决策历史。`disputed-permanent-drift` 是诚实记账:REQUIRED slot 概念上保持未填(formal `evidence_type=codex_plan_review` 与 `plan_cross_check` 两份 thin evidence 落 `review/`,frontmatter `aligned_with_contract: false` + `drift_decision: disputed-permanent-drift`,body 引用既有覆盖文档),不伪造一份 fresh codex review 假装 plan stage 真有独立 codex 调用。未来其他 change 走标准 S0-S9 lifecycle 时,`/forgeue:change-plan` 自动触发 codex hook,在 S3 产生真实 plan-stage evidence。
+
+**适用范围**:仅本 change Pre-P0 + P0 一次性豁免;未来 change 不适用。`tools/forgeue_finish_gate.py` 仍要求 `evidence_type: codex_plan_review` + `plan_cross_check` 两 slot 在 claude-code+plugin env 下存在,本 change 通过 disputed-permanent-drift 评审填两份 thin evidence 满足 slot 存在性 + 12-key frontmatter 校验,真正的 cross-check substance 见 `notes/pre_p0/forgeue-fusion-cross_check.md` + `review/design_cross_check.md`。
 
 ## Risks / Trade-offs
 

@@ -40,6 +40,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict, dataclass, field
@@ -692,6 +693,19 @@ def _is_substantive_paragraph(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+# Stage-aware filter: section numbers >= this threshold are P8 finish gate /
+# P9 archive / OpenSpec footer slots that finish_gate is itself the gate for.
+# Requiring them checked before finish_gate runs creates a chicken-and-egg
+# trap (§9.1 says "finish_gate exit 0" — that line will be unchecked at the
+# moment finish_gate runs to determine whether it can exit 0). Earlier
+# sections (§1-§8) are workflow-prerequisite stages whose [ ] lines DO
+# indicate real incomplete work and MUST still block. See design.md §5
+# Tool Design table (forgeue_finish_gate row) for the rationale.
+_SELF_STAGE_SECTION_THRESHOLD = 9
+
+_SECTION_HEADING_RE = re.compile(r"^##\s+(\d+)\.\s+", re.MULTILINE)
+
+
 def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
     tasks_path = change_dir / "tasks.md"
     if not tasks_path.is_file():
@@ -701,12 +715,27 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
     except OSError:
         return []
     blockers: list[Blocker] = []
+    current_section: int | None = None
     for ln_no, line in enumerate(text.splitlines(), 1):
+        section_match = _SECTION_HEADING_RE.match(line)
+        if section_match:
+            try:
+                current_section = int(section_match.group(1))
+            except ValueError:
+                current_section = None
+            continue
         m = re.match(r"^- \[ \]\s+(.+)", line)
         if not m:
             continue
         rest = m.group(1)
         if "(SKIP" in rest or "(skip" in rest or "SKIP:" in rest:
+            continue
+        if (
+            current_section is not None
+            and current_section >= _SELF_STAGE_SECTION_THRESHOLD
+        ):
+            # P8 self-stage / P9 archive / footer — finish_gate is the gate
+            # for these, so they cannot be a blocker AT finish_gate time.
             continue
         blockers.append(
             Blocker(
@@ -723,10 +752,33 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
 # ---------------------------------------------------------------------------
 
 
+def _resolve_openspec_executable() -> str | None:
+    """Locate the ``openspec`` CLI entry point in a way subprocess can invoke.
+
+    On Windows, ``npm``-installed binaries land as ``openspec.cmd`` shims in
+    ``%APPDATA%\\npm\\``. Plain ``subprocess.run(["openspec", ...])`` does
+    NOT search ``PATHEXT`` (no ``shell=True``), so Python sees only the
+    extension-less ``openspec`` shell script and raises ``FileNotFoundError``
+    — even though the user's interactive shell finds the ``.cmd`` shim
+    fine. ``shutil.which`` does honor ``PATHEXT`` and returns the resolved
+    path that ``subprocess.run`` can launch directly.
+
+    Returns the absolute path of the chosen executable, or ``None`` if no
+    candidate is found on ``PATH``.
+    """
+    return shutil.which("openspec")
+
+
 def run_openspec_validate(repo: Path, change_id: str) -> Blocker | None:
+    exe = _resolve_openspec_executable()
+    if exe is None:
+        return Blocker(
+            type="openspec_cli_missing",
+            detail="`openspec` CLI not on PATH; cannot run --strict validate (use --no-validate to skip)",
+        )
     try:
         result = subprocess.run(
-            ["openspec", "validate", change_id, "--strict"],
+            [exe, "validate", change_id, "--strict"],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -737,7 +789,10 @@ def run_openspec_validate(repo: Path, change_id: str) -> Blocker | None:
     except FileNotFoundError:
         return Blocker(
             type="openspec_cli_missing",
-            detail="`openspec` CLI not on PATH; cannot run --strict validate (use --no-validate to skip)",
+            detail=(
+                f"`openspec` CLI resolved at {exe!r} but subprocess could not "
+                "launch it (use --no-validate to skip)"
+            ),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return Blocker(
