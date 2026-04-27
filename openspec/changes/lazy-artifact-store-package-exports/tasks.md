@@ -38,23 +38,23 @@
 
 ## 6. Documentation Sync Gate
 
-- [ ] 6.1 Run `/forgeue:change-doc-sync` (or equivalent forgeue_doc_sync_check.py static scan) — produce sync_report under `evidence/doc_sync/`
-- [ ] 6.2 Check `openspec/specs/artifact-contract/spec.md` — will be updated by `/opsx:archive` sync-specs at finish time, NOT this change directly. Spec delta lives at `specs/artifact-contract/spec.md` inside this change
-- [ ] 6.3 Check `docs/requirements/SRS.md` — skip; lazy export is a structural refactor with no FR / NFR-level behavior change. Record skip reason
-- [ ] 6.4 Check `docs/design/HLD.md` — skip; subsystem topology unchanged. Record skip reason
-- [ ] 6.5 Check `docs/design/LLD.md` — likely skip; the `artifact_store` package internal structure (file list / class signatures) is unchanged. Confirm during gate; if LLD §5 references the eager `__init__.py` shape, update; otherwise skip with reason
-- [ ] 6.6 Check `docs/testing/test_spec.md` — update §3 / §5 fence lists to add `test_artifact_store_lazy_imports.py` (**4 new fences**: `test_import_artifact_store_does_not_pull_repository_or_payload_backends` / `test_first_access_of_lazy_symbol_loads_submodule_and_caches` / `test_dir_returns_full_public_api_surface_before_any_lazy_access` (codex F3 `__dir__` 守门) / `test_no_callsite_uses_submodule_path`) and note the tightened forbidden-prefix list in `test_run_comparison_loader.py` / `test_run_comparison_cli.py`
-- [ ] 6.7 Check `docs/acceptance/acceptance_report.md` — update §6.8 (Run Comparison) "Deferred follow-up `lazy-artifact-store-package-exports`" line to reference this change as in-progress / completed; update §8.1 baseline count if total pass count changed
-- [ ] 6.8 Check `README.md` — likely skip; user-facing CLI surface unchanged. Confirm
-- [ ] 6.9 Check `CHANGELOG.md` — update `[Unreleased].Changed` (artifact_store import surface from eager to PEP 562 lazy export) + reference to this change name + closing note on the run-comparison deferred follow-up
-- [ ] 6.10 Check `CLAUDE.md` — skip; no AI-collab convention change
-- [ ] 6.11 Check `AGENTS.md` — mirror CLAUDE.md skip
-- [ ] 6.12 Record any DRIFT (4-class taxonomy in CLAUDE.md §"4 类 DRIFT taxonomy") with `forgeue_change_state.py --writeback-check`
+- [x] 6.1 Run `/forgeue:change-doc-sync` (or equivalent forgeue_doc_sync_check.py static scan) — produce sync_report under `evidence/doc_sync/`
+- [x] 6.2 Check `openspec/specs/artifact-contract/spec.md` — will be updated by `/opsx:archive` sync-specs at finish time, NOT this change directly. Spec delta lives at `specs/artifact-contract/spec.md` inside this change
+- [x] 6.3 Check `docs/requirements/SRS.md` — skip; lazy export is a structural refactor with no FR / NFR-level behavior change. Record skip reason
+- [x] 6.4 Check `docs/design/HLD.md` — skip; subsystem topology unchanged. Record skip reason
+- [x] 6.5 Check `docs/design/LLD.md` — likely skip; the `artifact_store` package internal structure (file list / class signatures) is unchanged. Confirm during gate; if LLD §5 references the eager `__init__.py` shape, update; otherwise skip with reason
+- [x] 6.6 Check `docs/testing/test_spec.md` — update §3 / §5 fence lists to add `test_artifact_store_lazy_imports.py` (**4 new fences**: `test_import_artifact_store_does_not_pull_repository_or_payload_backends` / `test_first_access_of_lazy_symbol_loads_submodule_and_caches` / `test_dir_returns_full_public_api_surface_before_any_lazy_access` (codex F3 `__dir__` 守门) / `test_no_callsite_uses_submodule_path`) and note the tightened forbidden-prefix list in `test_run_comparison_loader.py` / `test_run_comparison_cli.py`
+- [x] 6.7 Check `docs/acceptance/acceptance_report.md` — update §6.8 (Run Comparison) "Deferred follow-up `lazy-artifact-store-package-exports`" line to reference this change as in-progress / completed; update §8.1 baseline count if total pass count changed
+- [x] 6.8 Check `README.md` — likely skip; user-facing CLI surface unchanged. Confirm
+- [x] 6.9 Check `CHANGELOG.md` — update `[Unreleased].Changed` (artifact_store import surface from eager to PEP 562 lazy export) + reference to this change name + closing note on the run-comparison deferred follow-up
+- [x] 6.10 Check `CLAUDE.md` — skip; no AI-collab convention change
+- [x] 6.11 Check `AGENTS.md` — mirror CLAUDE.md skip
+- [x] 6.12 Record any DRIFT (4-class taxonomy in CLAUDE.md §"4 类 DRIFT taxonomy") with `forgeue_change_state.py --writeback-check`
 
 ## 7. Finish gate
 
-- [ ] 7.1 Run `/forgeue:change-verify` — produce `verification/verify_report.md` with 12-key audit frontmatter
-- [ ] 7.2 Run `/forgeue:change-review` — Superpowers `requesting-code-review` finalize + Codex `/codex:adversarial-review` mixed scope (`src/framework/artifact_store/__init__.py` + `tests/unit/test_artifact_store_lazy_imports.py` + 3 fence-tightening edits)
-- [ ] 7.3 Resolve any review blockers; writeback decisions to design / proposal / tasks per 4-class DRIFT taxonomy if any contract gap is exposed
-- [ ] 7.4 Run `/forgeue:change-finish` — Finish Gate enforces evidence completeness, 12-key frontmatter, cross-check `disputed_open == 0`, and `openspec validate --strict`
-- [ ] 7.5 `/opsx:archive lazy-artifact-store-package-exports` — sync-specs merges the artifact-contract delta Requirement into `openspec/specs/artifact-contract/spec.md`
+- [x] 7.1 Run `/forgeue:change-verify` — produce `verification/verify_report.md` with 12-key audit frontmatter
+- [x] 7.2 Run `/forgeue:change-review` — Superpowers `requesting-code-review` finalize + Codex `/codex:adversarial-review` mixed scope (`src/framework/artifact_store/__init__.py` + `tests/unit/test_artifact_store_lazy_imports.py` + 3 fence-tightening edits)
+- [x] 7.3 Resolve any review blockers; writeback decisions to design / proposal / tasks per 4-class DRIFT taxonomy if any contract gap is exposed
+- [x] 7.4 Run `/forgeue:change-finish` — Finish Gate enforces evidence completeness, 12-key frontmatter, cross-check `disputed_open == 0`, and `openspec validate --strict`
+- [x] 7.5 `/opsx:archive lazy-artifact-store-package-exports` — sync-specs merges the artifact-contract delta Requirement into `openspec/specs/artifact-contract/spec.md`
