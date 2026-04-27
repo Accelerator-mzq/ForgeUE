@@ -198,10 +198,37 @@ P4 review evidence(`review/p4_tests_review_codex.md`)frontmatter `drift_decision
 
 ## 8. P7 — Review
 
-- [ ] 8.1 self-review:Superpowers requesting-code-review skill auto-trigger,产物合入 `review/superpowers_review.md` finalize
-- [ ] 8.2 codex adversarial review(claude-code env + plugin 装好):`/codex:adversarial-review --background "<full focus on change>"` → `review/codex_adversarial_review.md`
-- [ ] 8.3 blocker 全清:涉及 design choice → 回写 design.md 或 disputed-permanent-drift 标记 + design.md "Reasoning Notes" 段记录;涉及 tasks 缺失 → 回写 tasks.md;涉及代码 bug → 修代码
-- [ ] 8.4 沿 ForgeUE memory `feedback_verify_external_reviews`:每条 blocker 由 Claude 独立验证 file:line 真实性后才接受
+- [x] 8.1 self-review:Superpowers requesting-code-review skill auto-trigger,产物合入 `review/superpowers_review.md` finalize(2026-04-27,subagent id `a9aeeb7c07026f06f`,7 finding:2 critical + 5 important + 5 minor;独立验证后 7 finding 中 3 fix-in-tool/doc/evidence 决议,4 wontfix,5 minor wontfix)
+- [x] 8.2 codex adversarial review(claude-code env + plugin 装好):`/codex:adversarial-review --background "<full focus on 7 areas>"` → `review/codex_adversarial_review.md`(2026-04-27,codex thread `019dce76-c5cc-7662-b93f-cd0c355304a1`,verdict needs-attention,6 finding:1 critical + 3 high + 2 medium;F-A=self-review C1,F-D=self-review C2,F-B/F-C/F-E/F-F 为 NEW)
+- [x] 8.3 blocker 全清:涉及 design choice → 回写 design.md(F-C 写回 §3 表 + REQUIRED 来源约束段)+ spec.md(F-F 写回 Validation §41 删除 timestamp comparison claim);涉及 evidence 漏洞 → frontmatter amend(F-D codex_design_review.md `written-back-to-design` + writeback_commit P0 sha);涉及代码 bug → 修工具(F-A finish_gate `[FAIL]` substring + F-B finish_gate_report self-pollution + F-C `_scan_evidence_by_type` formal-only + F-E change_state S5 substring);涉及文档不一致 → fix doc(I4 CLAUDE / AGENTS ban list 全集)。**未引入新 disputed-permanent-drift**(7 finding 全部 fix-in-tool / written-back-to-* 路径解决,无 contract 决策分歧)
+- [x] 8.4 沿 ForgeUE memory `feedback_verify_external_reviews`:每条 blocker 由 Claude 独立验证 file:line 真实性后才接受(2 critical + 4 high + 2 medium 各独立验证;reproduction commands 落 superpowers_review.md §"Independent Verification" 与 codex_adversarial_review.md §"Independent Verification";F-A 通过 finish_gate 18→17 blockers 实测确认;F-E 通过 state stuck-at-S4 实测确认;F-D 通过 head -15 evidence 实测确认;F-B / F-C / F-F 通过代码追踪逐行确认)
+
+### 8.5 P7 review 修复(post-review fixups,2026-04-27)
+
+P7 close-out 跑 Superpowers `requesting-code-review`(`review/superpowers_review.md`)+ codex `/codex:adversarial-review --background`(`review/codex_adversarial_review.md`)合并暴露 7 条必修 finding(self-review C1 = codex F-A;self-review C2 = codex F-D;codex F-B/F-C/F-E/F-F 全 NEW;self-review I4)。全部独立验证 TRUE(沿 ForgeUE memory `feedback_verify_external_reviews`)。用户裁决方案 A "全改",7 fix 在本 P7 阶段一次性闭环。
+
+- [x] 8.5.1 **F-A fix-in-tool**(critical):`tools/_common.py` 加 `verify_report_has_real_failures(text)` helper(regex strip `^- \[FAIL\]: \d+$` summary line + 检查剩余 `[FAIL]` token);`tools/forgeue_finish_gate.py:223` 改用 helper,排除 verify_report 的 `[FAIL]: 0` 自动 summary 行误判 + 3 fence test(`test_verify_report_has_real_failures_helper_strips_count_summary` / `test_finish_gate_does_not_block_on_zero_fail_count_summary` / `test_finish_gate_blocks_on_real_fail_step_marker`)
+- [x] 8.5.2 **F-B fix-in-tool**(high):`tools/forgeue_finish_gate.py::_filter_formal_evidence` 加 self-exclusion `evidence_type == "finish_gate_report"`(上次 fail 的 report 不参与下次 frontmatter 审计,避免 aligned=false drift=pending 自我污染)+ 1 fence test(`test_finish_gate_skips_prior_finish_gate_report_in_audit`)
+- [x] 8.5.3 **F-C fix-in-tool + written-back-to-design**(high):`tools/forgeue_finish_gate.py::_scan_evidence_by_type` 改用 `_FORMAL_EVIDENCE_SUBDIRS`(execution / review / verification),不扫 notes/(notes/ helper 不能冒充满足 REQUIRED slot 绕过 8-key 审计)+ design.md §3 "Helper vs formal evidence subdir" 表加新列「是否参与 REQUIRED 满足」(notes/ = 否)+ 新增 "REQUIRED slot 来源约束" 段说明 + 新增 "finish_gate_report self-evidence 排除"段(F-B 写回)+ 1 fence test(`test_finish_gate_required_slot_not_satisfied_by_notes_helper`)
+- [x] 8.5.4 **F-D written-back-to-evidence**(high):amend `review/codex_design_review.md` frontmatter `aligned_with_contract: true` + `drift_decision: written-back-to-design` + `writeback_commit: 73f18e6c4967c07269cf8a3677bafd497d20b946`(P0 bootstrap commit,per tasks.md §1.6 closed 6 codex blockers + 2 non-blockers)+ drift_reason 扩为 resolution narrative。无新 fence(已有 `aligned_false_no_drift` 测试守门)
+- [x] 8.5.5 **F-E fix-in-tool**(medium):`tools/forgeue_change_state.py:195` 改用 F-A 同款 `_common.verify_report_has_real_failures` helper,S5 inference 不再被 `[FAIL]: 0` summary 误判停留 S4 + 2 fence test(`test_S5_inferred_when_verify_report_has_only_zero_fail_count_summary` / `test_S4_stays_when_verify_report_has_real_fail_step`)
+- [x] 8.5.6 **F-F written-back-to-spec**(medium):`specs/examples-and-acceptance/spec.md` Validation §41 entry 重写 — 删除 "frozen-before-codex-call timestamp comparison" 失实声明,改为说明 `## A frozen before codex run` 是 Claude 在 cross-check 工作流中执行的人工协议(YAML 不带 frozen-at vs codex-started-at 时间戳),tests 守 section 结构 + `disputed_open` 完整性,freeze 顺序在 evidence body 人工 attestation 而非测试断言。无新 fence
+- [x] 8.5.7 **I4 fix-in-tool (doc)**(important;来自 self-review,非 codex):`CLAUDE.md:162` + `AGENTS.md:172` ban list 全集化,两边都列 4 路径(`.claude/commands/opsx/*` / `.claude/skills/openspec-*` / `.codex/commands/opsx/*` / `.codex/skills/openspec-*`)避免单 doc 视角缺失。无新 fence(可选 follow-up parity test)
+- [x] 8.5.8 全量回归 — `python -m pytest -q` 1133 passed in 44.91s(1126 baseline + 7 new fence:3 F-A + 1 F-B + 1 F-C + 2 F-E)
+
+P7 review evidence(`review/superpowers_review.md` + `review/codex_adversarial_review.md`)frontmatter 在本 commit 落 `drift_decision: pending`;evidence-backfill commit 后 amend 为 `aligned_with_contract: true` + `drift_decision: written-back-to-tool` + `writeback_commit: <8.5.x resolution-commit sha>`。沿 P3 `5dd870c` → `1c0da37` 与 P4 `37288fe` → `2aceee3` 的 resolution-commit + evidence-backfill 双 commit 模式。
+
+**P7 wontfix 记录**(self-review I1/I2/I3/I5 + M1-M5,共 9 条):
+
+- I1 (`change_state` exit policy):intentional design separation per design.md §3 + tasks.md §4.3 line 80-81;`change_state` 仅诊断 `[WARN]`,`finish_gate` 才升级为 `exit 2` blocker
+- I2 (tasks.md hardcoded test counts):rule 适用于工具源码(`test_forgeue_workflow_no_hardcoded_test_count.py` 守门);tasks.md 中是 historical evidence(类似 verify_report timestamp),不是 normative 断言
+- I3 (`framework_changed` heuristic 太宽):intentional over-conservative per P4 §5.8 F4 设计;由人工 SKIP-with-reason 在 doc_sync_report §C 收口(P6 已演练)
+- I5 (empty change_id pollution):`_validate_evidence_file` 路径已 catch `evidence_change_id_missing` blocker;不是 silent bypass
+- M1 (anchor regex 不接受缩进 `>` blockquote):forward-compat-only,无现有 evidence 用此形态
+- M2 ("12-key (11 audit + 1 wrapper)" 命名):已 ship 7 docs;rename = thrash
+- M3 (`_drafts/` reappear fence):optional follow-up,manual `git status` 已覆盖
+- M4 (mesh job_id grep name-gated):forward-compat,当前 bundle naming 覆盖
+- M5 (`tools/__init__.py` 空):cosmetic,sys.path 重复仅 5 entries
 
 ## 9. P8 — Finish Gate
 

@@ -128,12 +128,12 @@ codex_plugin_available: true
 
 **Helper vs formal evidence 区分**(`forgeue_finish_gate.py::check_malformed_evidence` 强制):
 
-| 子目录 | 角色 | frontmatter 要求 |
-|---|---|---|
-| `notes/` | helper bucket(brainstorming / onboarding / pre_p0 / 临时记录)| 不强制 12-key;允许任意 frontmatter shape |
-| `execution/` | formal evidence bucket(execution_plan / micro_tasks / tdd_log / debug_log) | **MUST** 含全部 8 个 always-required audit key(见下) |
-| `review/` | formal evidence bucket(superpowers_review / codex_*_review / *_cross_check) | **MUST** 含全部 8 个 always-required audit key |
-| `verification/` | formal evidence bucket(verify_report / doc_sync_report / finish_gate_report) | **MUST** 含全部 8 个 always-required audit key |
+| 子目录 | 角色 | frontmatter 要求 | 是否参与 REQUIRED 满足 |
+|---|---|---|---|
+| `notes/` | helper bucket(brainstorming / onboarding / pre_p0 / 临时记录)| 不强制 12-key;允许任意 frontmatter shape | **否**(P7 codex F-C 写回:helper 无审计,不能冒充 formal 满足 REQUIRED) |
+| `execution/` | formal evidence bucket(execution_plan / micro_tasks / tdd_log / debug_log) | **MUST** 含全部 8 个 always-required audit key(见下) | 是 |
+| `review/` | formal evidence bucket(superpowers_review / codex_*_review / *_cross_check) | **MUST** 含全部 8 个 always-required audit key | 是 |
+| `verification/` | formal evidence bucket(verify_report / doc_sync_report / finish_gate_report) | **MUST** 含全部 8 个 always-required audit key | 是 |
 
 **Always-required 8 key**(formal evidence 必含,缺即 `evidence_malformed` blocker):`change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `detected_env` / `triggered_by` / `codex_plugin_available`。
 
@@ -142,6 +142,10 @@ codex_plugin_available: true
 8 + 4 = 12 key 总集。`check_malformed_evidence` 卡 always-required 8 key 漏一个就 blocker;`check_frontmatter_protocol` 验 conditional 4 key 的写回链协议(per design.md §3 frontmatter 写回协议段落)。
 
 `finish_gate` 扫 formal 子目录中缺 always-required key 的文件 → blocker `evidence_malformed`(F3 regular + P4 codex F2 fix:从仅查 `change_id`+`evidence_type` 扩展到全 8 always-required key);`notes/` 子目录里的 helper 不触发(允许 onboarding 类无 frontmatter helper)。
+
+**REQUIRED slot 来源约束**(P7 codex F-C 写回):`forgeue_finish_gate.check_evidence_completeness` 用 `_scan_evidence_by_type` 索引 `evidence_type`;该 scan **仅扫描 formal subdirs**(`execution/` / `review/` / `verification/`),`notes/` 不参与。原因:`notes/` 不强制 12-key,若允许 helper 满足 REQUIRED 则可绕过 8-key always-required 审计(`notes/foo.md` 写 `change_id: ...` + `evidence_type: verify_report` 即冒充 formal verify_report)。bypass 关闭后,REQUIRED slot 必须由 formal subdir 中合规 frontmatter 的 evidence 满足。
+
+**finish_gate_report self-evidence 排除**(P7 codex F-B 写回):`forgeue_finish_gate.py::_filter_formal_evidence` 排除 `evidence_type: finish_gate_report`,因为 `verification/finish_gate_report.md` 是当前 run 自身产物 — 上次 fail 的 report 含 `aligned_with_contract: false` + `drift_decision: pending`,若不排除将在下次 run 触发 frontmatter 阻断,即使原始 blocker 已修复也会被自我污染。当前 run 的 report 每次重新生成,prior runs 不携带审计相关信号。
 
 **Artifact 映射表**:
 

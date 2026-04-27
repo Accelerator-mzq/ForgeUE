@@ -159,7 +159,7 @@ ForgeUE 已采用 OpenSpec 作为 AI 主工作流。完整规则见 [`docs/ai_wo
 - 不提交 `artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径。
 - 不硬编码测试总数;以 `python -m pytest -q` 实测为准。
 - 不硬编码 provider model id(除非 bundle 显式允许)。
-- 不修改 `.claude/commands/opsx/*` / `.claude/skills/openspec-*`(OpenSpec 默认产物)。
+- 不修改 OpenSpec 默认产物全集:`.claude/commands/opsx/*` / `.claude/skills/openspec-*` / `.codex/commands/opsx/*` / `.codex/skills/openspec-*`。
 - 贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);失败时 surface job_id 给用户,先 `probe_hunyuan_3d_query` 再决定 `--resume`。
 
 ### Documentation Sync Gate(摘要)

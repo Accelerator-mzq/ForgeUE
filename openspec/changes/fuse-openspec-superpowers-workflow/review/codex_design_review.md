@@ -7,10 +7,11 @@ contract_refs:
   - design.md
   - tasks.md
   - specs/examples-and-acceptance/spec.md
-aligned_with_contract: false
-drift_decision: null
-writeback_commit: null
-drift_reason: "S2 review found contract drift: proposal/tasks still declare no capability delta/spec sync while design and delta spec add an examples-and-acceptance requirement; P3/P4 tasks also do not faithfully cover the named DRIFT protocol."
+aligned_with_contract: true
+drift_decision: written-back-to-design
+writeback_commit: 73f18e6c4967c07269cf8a3677bafd497d20b946
+drift_reason: |
+  S2 review found contract drift: proposal/tasks still declared no capability delta/spec sync while design and delta spec added an examples-and-acceptance requirement; P3/P4 tasks also did not faithfully cover the named DRIFT protocol. **Resolution**: the 6 codex blockers + 2 non-blockers were addressed pre-P0 inside the bootstrap commit `73f18e6c4967c07269cf8a3677bafd497d20b946` (see `tasks.md` §1.6 "openspec validate fuse-openspec-superpowers-workflow --strict PASS (二次通过 — 经 codex S2→S3 design review hook 手工预演 cross-check, 6 blocker + 2 non-blocker accepted-codex 修完 contract, 1 non-blocker accepted-claude)") which (a) added the `examples-and-acceptance` ADDED Requirement to spec.md, (b) extended design.md §3 with the 4-named DRIFT taxonomy, (c) updated tasks.md to track P3 DRIFT tool implementation. **Frontmatter backfill**: P7 self-review C2 + codex F-D both surfaced that this evidence still carried `aligned_with_contract: false` + `drift_decision: null` + `writeback_commit: null` — pure frontmatter rot, not a remaining contract gap. Per P3 / P4 review evidence backfill pattern (commits `1c0da37` / `2aceee3`), this commit corrects the audit trail to record `written-back-to-design` + the P0 resolution sha. No contract change required.
 reasoning_notes_anchor: null
 detected_env: claude-code
 triggered_by: "forced (manual rehearsal of /forgeue:change-plan codex hook before tool implementation)"
