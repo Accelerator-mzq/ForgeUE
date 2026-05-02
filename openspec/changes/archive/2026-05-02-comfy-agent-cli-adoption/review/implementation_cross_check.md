@@ -15,6 +15,7 @@ triggered_by: forgeue-change-review
 codex_plugin_available: true
 created_at: 2026-05-03T01:50:00+08:00
 aligned_with_contract: true
+disputed_open: 0
 drift_decision: written-back-to-spec-and-impl-codex-review-r1-r5
 writeback_commit: 061b39c
 note: |

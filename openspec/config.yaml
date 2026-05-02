@@ -24,6 +24,9 @@ schema: spec-driven
 # ---------------------------------------------------------------------------
 
 context: |
+  所有 OpenSpec 制品默认使用简体中文撰写，包括 proposal、design、tasks 以及变更过程中新增的说明性文档。
+  保留这些内容的原样格式或原文，不要翻译：文件名、目录名、front matter key、schema 名称、命令、路径、代码、能力标识、Markdown checklist 语法。
+  如果模板或规范要求固定关键字，也必须保留原样，例如 OpenSpec 控制关键字、状态标记和其他机器可解析语法。
   ForgeUE is a UE production-chain multi-model runtime framework.
 
   Positioning:
@@ -64,29 +67,34 @@ context: |
 
 rules:
   proposal: |
+    - 标题与正文使用简体中文，清楚说明做什么、为什么做、范围边界是什么。
     - A non-trivial new requirement (new object, new workflow, new provider, new step type, cross-subsystem refactor, or architecture-boundary change) MUST have an OpenSpec proposal before implementation.
     - A small bugfix MAY skip proposal, but MUST add a regression test or explicitly describe the verification method (see CLAUDE.md "每条 Codex review 修复 = 一条新回归测试").
     - Proposals MUST state: why ForgeUE needs it, what it solves, what it does NOT solve, which modules are affected, which are not, and success criteria.
     - Do NOT copy long sections from SRS / HLD / LLD into proposals; cite the section instead.
 
   design: |
+    - 标题与正文使用简体中文，技术术语可保留英文原词，必要时补充中文解释。
     - Design MUST follow the actual src/framework/ layout, not a guessed directory tree.
     - Design MUST name the capability specs it touches (runtime-core / artifact-contract / workflow-orchestrator / review-engine / provider-routing / ue-export-bridge / probe-and-validation / examples-and-acceptance).
     - Design MUST NOT hardcode provider model ids; use aliases from config/models.yaml.
     - Designs that touch paid providers, mesh workers, or premium per-call APIs MUST explicitly declare: opt-in mechanism, double-bill risk, and probe workflow (see CHANGELOG.md TBD-007 / ADR-007).
 
   tasks: |
+    - 任务描述使用简体中文，保持 Markdown checklist 语法和代码/路径原文不变。
     - Each task MUST be independently executable and verifiable by Claude Code or another coding agent.
     - tasks.md MUST end with a "## Documentation Sync" section listing the ten documents to check before archive (see docs/ai_workflow/README.md §Documentation Sync Gate).
     - Testing-related tasks MUST NOT hardcode total test counts; treat `python -m pytest -q` output as the source of truth.
     - Paid-provider tasks default to opt-in via environment flags (e.g. FORGEUE_PROBE_VISUAL_REVIEW=1, FORGEUE_PROBE_HUNYUAN_3D=1); framework-level tests run offline with FakeAdapter / FakeComfyWorker.
 
   specs: |
+    - 标题与正文使用简体中文，技术术语可保留英文原词，必要时补充中文解释。
     - Delta specs MUST NOT copy the full main spec; they describe only the ADDED / MODIFIED / REMOVED behavior introduced by the change.
     - A delta spec Validation section MUST point at concrete test files (paths), never a total test count.
     - A delta spec MUST include a Non-Goals section.
 
   general: |
+    - 标题与正文使用简体中文，技术术语可保留英文原词，必要时补充中文解释。
     - Communicate in Chinese; keep library / API / file-path / class / capability-key identifiers in English.
     - External review opinions (Codex / adversarial) MUST be independently verified against real code before acting on them (see CLAUDE.md / AGENTS.md).
     - Decision style: present analysis + options + tradeoffs up-front, then execute fully after a single green-light; avoid mid-execution micro-confirmations.
