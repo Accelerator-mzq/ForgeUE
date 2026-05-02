@@ -241,4 +241,35 @@ Commit hash: `f1e790c`
 ### Writeback check (post-commit 4)
 
 state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
+Commit hash: `07c0faa`
+
+---
+
+## Commit 5 — G6 FakeComfyWorker backward-compat fence (2026-05-02 23:50)
+
+### Anchors
+- `tasks.md#6.1` - `tasks.md#6.4`
+
+### Implementation files modified
+
+| File | Action | Details |
+|---|---|---|
+| `tests/unit/test_fake_comfy_worker_schema.py` | Create | 5 fences locking conditional v2 schema gate: legacy spec passes;v2 spec optional comfy_params;non-string comfy_workflow rejected;non-dict comfy_params rejected;non-none comfy_lifecycle rejected |
+
+### Notes
+G4 commit 3 已经实施 v2 schema gate(conditional 只在 spec 含 `comfy_workflow` 时强制)+ docstring + backwards-compat 设计;本 G6 commit 5 只加 5 fence 锁住条件契约;无 callsite 需要 patch(1158 pytest 全绿证明 backwards-compat 工作)。
+
+### Pytest delta
+- Pre-commit:1153
+- Post-commit:**1158 PASS** (+5 G6 fences)
+
+### Boundary check
+| 文件 | In allow-list? |
+|---|---|
+| `tests/unit/test_fake_comfy_worker_schema.py` | ✓ G6 row(implicit Create per micro_tasks Task 6) |
+
+**Boundary check verdict: PASS**
+
+### Writeback check (post-commit 5)
+state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
 Commit hash: pending

@@ -151,3 +151,26 @@ S4-S5 进入条件 待 round 2 plan codex 验证 plan-stage rework 是否真消�
 - `openspec validate --strict` PASS ✓
 - `writeback-check`: state S3, drifts [], frontmatter_issues [], structural_issues [] ✓
 - **round 2 plan codex 验证 plan-stage rework 真消除了 plan-vs-contract drift,user 重触发 `/forgeue:change-apply` 启动实施**(I-A 策略:每 commit 一个 turn,本 turn 完成 plan rework + cross-check + 启 round 2 plan codex,实施 commit chain 从下个 turn 开始)
+
+### D.5 Lean Apply Mode(post-G5 commit 4 protocol adjustment, 2026-05-02)
+
+**Background**:`/forgeue:change-apply` step 5 字面要求每次 apply 跑 codex plan review hook。G2 commit 1 之前 plan codex 跑了 3 轮 (round 1 → 2 → 3) 已 collapsed plan-vs-contract drift,后续 G2/G3/G4/G5 commits 我都**跳过了 step 5 plan codex hook**,直接进 step 7-9(实施 + 越界检测 + writeback check)。
+
+**Decision (user-approved 2026-05-02)**:**Lean Apply Mode** — apply stage 不重跑 plan codex,理由:
+
+1. Plan codex review 关注 plan artifact (execution_plan / micro_tasks) 是否 align contract;plan stage 3 轮已 collapsed,apply 阶段 commit 不改 plan artifact(只在 drift writeback 时 update,且 update 后 writeback-check 已守 drifts: [])
+2. Plan codex 与 production code review 关注点不同 — plan codex 在 apply 中重跑边际收益低
+3. ForgeUE drift 协议在 apply 阶段已强制每 commit `writeback-check exit 0` — DRIFT type 3/4 自动阻断;writeback 真发生时同步更新 plan artifact 也走 writeback-check 验证
+4. **Production code review 推迟到 G11 stage `/forgeue:change-review` 一次性跑**(`/codex:adversarial-review --base main` mixed scope,review 全 commit chain 真实代码),catch sync/async / interface mismatch / Windows edge case 等真实 implementation bug
+
+**Per-commit Apply Steps (Lean)**:
+- step 1-3:env / change-bind / S3 entry confirm(同协议)
+- step 4-6:**SKIP**(plan codex collapsed in plan stage)
+- step 7:实施代码改动 + tdd_log Section append
+- step 8:git diff vs implementation files allow-list 越界检测
+- step 9:`forgeue_change_state.py --writeback-check --json` exit 0(出现 DRIFT 时立即 writeback design/spec/execution_plan + 重 validate)
+- step 10:状态推进(本 commit 完成,下 commit pending)
+
+**Codex Review Consolidation**:全部 G2-G10 commits 完成后,进入 G11 stage 跑 `/forgeue:change-review` 触发 `/codex:adversarial-review --base main`(mixed scope),review 全 commit chain 真实代码。届时 codex 揭 finding 走标准 cross-check 协议(冻结 ## A → codex review → ## B/C/D verify → writeback / disputed)。
+
+**Strategy I-A confirmed (user 2026-05-02)**: G2 → G5 each commit one turn(已完成);G6/G7/G8/G10 单 turn 一气跑完(per-commit user 拍板需求 = 0 under Lean Apply Mode);G11 review stage 单独 turn(codex review surface 真实 finding 时需 user 拍板修法)。
