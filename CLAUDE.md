@@ -9,7 +9,7 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 Bundle 用 `image_local` alias + `spec.comfy_workflow` manifest 名(NOT 整段 workflow_graph inline)。
 
 **双终端工作流(本 change scope 唯一支持模式)**:
-- 终端 1:`python -m comfyui_api serve` 启 ComfyUI(用户自管)
+- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(L2 live smoke evidence:`openspec/changes/archive/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`)
 - 终端 2 export env + 跑 ForgeUE:
   ```bash
   export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
