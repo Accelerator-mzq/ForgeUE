@@ -1,7 +1,7 @@
 ---
 change_id: comfy-agent-cli-adoption
 stage: S2
-evidence_type: design_cross_check_round_2
+evidence_type: design_cross_check
 contract_refs:
   - proposal.md
   - design.md

@@ -95,6 +95,17 @@ providers:
     api_key_env: HUNYUAN_3D_KEY
     api_base: "https://tokenhub.tencentmaas.com/v1/api/3d"
 
+  # 本地 ComfyUI agent CLI(OpenSpec change comfy-agent-cli-adoption,2026-05-02)
+  # 占位 entry —— ComfyUI worker 配置走环境变量(round 2 OQ-6 = F-B 决议):
+  #   FORGEUE_COMFY_SCRIPTS_DIR (REQUIRED;e.g. D:/AI/ComfyUI/scripts)
+  #   FORGEUE_COMFY_PYTHON_EXE  (OPTIONAL,空 = sys.executable)
+  #   FORGEUE_COMFY_LIFECYCLE   (OPTIONAL,空 = "none";本 change 仅接受 "none")
+  # 不在 yaml 加 kind/scripts_dir/python_exe/default_lifecycle 字段(ProviderDef
+  # 现 schema 不支持,silent ignore;F-A schema 扩展登记 SRS TBD-011 后续 change)
+  comfy_api:
+    api_key_env: null      # placeholder
+    api_base: null         # placeholder
+
 # ---------------------------------------------------------------------------
 # ② Models
 # ---------------------------------------------------------------------------
@@ -302,6 +313,16 @@ models:
       sourced_on: '2026-04-22'
       source_url: https://cloud.tencent.com/document/product/1804/123461
       cny_original: 15 积分/次 x ¥0.12/积分 (后付费) = ¥1.80/次
+
+  # 本地 ComfyUI virtual model id(OpenSpec change comfy-agent-cli-adoption)
+  # ComfyUI 真没 model 概念,这是路由占位让 alias 能引用;真"模型"由 bundle
+  # `step.config.spec.comfy_workflow` manifest 名指定。pricing: null 因本地 GPU
+  # 无 per-call cost(metrics["cost_usd"] = 0.0;FR-COST-008/009 接口仍在)
+  comfy_local:
+    id: "comfy/local"
+    provider: comfy_api
+    kind: image
+    pricing: null
 aliases:
   # 别名按「场景能力」命名，不按厂商 / 成本档位命名。想换模型（国内国外、
   # 便宜强力）直接改 preferred / fallback 里引用的 model 名字即可 ——
@@ -353,3 +374,13 @@ aliases:
   mesh_from_image:
     preferred: [hunyuan_3d]
     fallback: [hunyuan_3d]
+
+  # 本地 ComfyUI image generation(OpenSpec change comfy-agent-cli-adoption)
+  # SRS FR-MODEL-007 alias 列表新成员(round 2 OQ-8 = H-A 决议)
+  # bundle 写 provider_policy.models_ref: "image_local" → 解析为 comfy/local
+  # → GenerateImageExecutor._should_use_worker_path 检测 model id → ComfyAgentWorker
+  # fallback: [] 不 fallback 到云端(本地 ComfyUI 是独立 capability;若想 cloud
+  # fallback 用 image_fast 或 step-level fallback_models override)
+  image_local:
+    preferred: [comfy_local]
+    fallback: []
