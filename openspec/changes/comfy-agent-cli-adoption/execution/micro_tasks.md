@@ -25,6 +25,8 @@ note: |
 
 # ComfyUI Agent CLI Adoption — Micro Tasks
 
+> **★ CONTRACT IS THE SOURCE OF TRUTH ★** — This `micro_tasks.md` and its companion `execution_plan.md` are **derived views** of `proposal.md` + `design.md` + `tasks.md` + `specs/*/spec.md`. **When code-block sketches in this file diverge from the contract, prefer the contract.** Particular attention: (a) `tasks.md` `- [ ]` items are the canonical action list; (b) `specs/probe-and-validation/spec.md` is the canonical fence list; (c) `specs/provider-routing/spec.md` Requirement bodies are the canonical interface contract; (d) Code blocks here are规划草样 — re-read the spec / tasks.md before committing each commit.
+
 > **Anchor convention:** every Task header points at one or more `tasks.md#X.Y` IDs that scope its contract authority. If you find an implementation need outside these anchors, **STOP** and write back to `tasks.md` first per ForgeUE 4-class DRIFT taxonomy.
 
 > **TDD discipline:** test-first within each task. For G2/G3/G6 fence tests, write the fence assertion code → run pytest → expect FAIL (e.g. `AttributeError` on missing `subprocess_cli` kind, `WorkerUnsupportedResponse not raised`) → implement minimal production code → re-run pytest → PASS → commit.
@@ -64,107 +66,98 @@ git grep -n "workflow_graph" -- 'src/**/*.py' 'tests/**/*.py' 'examples/**/*.jso
 
 ---
 
-## Task 2: ModelRegistry config + loader + 3 fence (G2 / commit 1)
+## Task 2: ModelRegistry config + 3 fence (G2 / commit 1) — round 2 plan codex Q1 sweep
 
 > Anchors: `tasks.md#2.1`, `#2.2`, `#2.3`, `#2.4`, `#2.5`, `#2.6`
 
-**Files:** `config/models.yaml` (Modify), `src/framework/config/models_yaml.py` or `model_registry.py` (Modify), `tests/unit/test_model_registry.py` (Modify)
+> **⚠ ROUND 2 PLAN CODEX Q1 FIX**: Per round-2 OQ-6 = F-B (env-based config),`providers.comfy_api` 只用 ProviderDef-supported 字段 `api_key_env` + `api_base` 占位;**NOT** 加 `kind` / `scripts_dir` / `python_exe` / `default_lifecycle`(那些是 round-1 已否决路线,会被 `_parse_providers` line 262-278 silent ignore)。worker 配置走 env vars `FORGEUE_COMFY_*`(见 Task 3 Step 3.2 草样)。Loader 不需要扩 `ProviderDef.kind` schema(F-A 登记 TBD-011 后续 change)。
 
-- [ ] **Step 2.1: Add `providers.comfy_api` + `models.comfy/local` + `aliases.image_local` to `config/models.yaml`**
+**Files:** `config/models.yaml` (Modify), `src/framework/providers/model_registry.py` (Modify minimal), `tests/unit/test_model_registry.py` (Modify)
+
+- [ ] **Step 2.1: Add 3 entries to `config/models.yaml` — placeholder provider + virtual model + alias**
 
 ```yaml
 # Append under existing providers / models / aliases blocks; keep ruamel.yaml comment-friendly formatting.
 providers:
   comfy_api:
-    kind: subprocess_cli
-    scripts_dir: "D:/AI/ComfyUI/scripts"
-    python_exe: null              # = sys.executable per OQ-1
-    default_lifecycle: "none"     # only value supported in this change (D6)
+    api_key_env: null     # placeholder; ComfyUI worker config lives in env vars FORGEUE_COMFY_*
+    api_base: null        # placeholder
 
 models:
   comfy/local:
+    id: "comfy/local"     # REQUIRED — _parse_models line 290-293 raises ValueError if missing
     provider: comfy_api
     kind: image
-    pricing: null                 # local GPU, no per-call cost; metrics["cost_usd"] = 0.0
+    pricing: null         # local GPU, no per-call cost; metrics["cost_usd"] = 0.0 at runtime
 
 aliases:
   image_local:
     preferred: ["comfy/local"]
-    fallback: []                  # treat local ComfyUI as independent capability
+    fallback: []          # treat local ComfyUI as independent capability (no cloud fallback)
 ```
 
-- [ ] **Step 2.2: Update loader to accept `subprocess_cli` kind + reject unknown subfields**
+- [ ] **Step 2.2: Verify loader accepts new entries minimal (no ProviderDef schema extension)**
 
 ```python
-# In src/framework/config/models_yaml.py (or src/framework/providers/model_registry.py)
-# 1. Extend ProviderEntry to handle kind="subprocess_cli" with fields:
-#    scripts_dir: Path  (required)
-#    python_exe: Path | None  (optional, default None = sys.executable)
-#    default_lifecycle: str  (required, must be exactly "none" in this change scope)
-# 2. Extend the kind-allowlist + subfield-allowlist tables.
-# 3. Surface RegistryReferenceError on unknown subfields (consistent with existing pricing typo-protection at lines 438-442).
+# In src/framework/providers/model_registry.py — NO schema change required.
+# - _parse_providers line 262-278 reads api_key_env + api_base only (silent-ignores extra fields per H4 ack).
+# - _parse_models line 290-293 already enforces `id` field required.
+# - _parse_aliases unchanged.
+# Just verify the 3 fences pass; if loader fails, debug minimal (do NOT extend ProviderDef.kind).
 ```
 
-- [ ] **Step 2.3: Write fence `test_comfy_api_provider_subprocess_cli_kind_parses` (FAIL first)**
+- [ ] **Step 2.3: Write fence `test_comfy_api_provider_placeholder_parses`**
 
 ```python
 # tests/unit/test_model_registry.py (new test)
-def test_comfy_api_provider_subprocess_cli_kind_parses(tmp_path):
+def test_comfy_api_provider_placeholder_parses(tmp_path):
     yaml_path = tmp_path / "models.yaml"
     yaml_path.write_text(textwrap.dedent("""
         providers:
           comfy_api:
-            kind: subprocess_cli
-            scripts_dir: "D:/AI/ComfyUI/scripts"
-            python_exe: null
-            default_lifecycle: "none"
+            api_key_env: null
+            api_base: null
         models: {}
         aliases: {}
     """), encoding="utf-8")
     registry = ModelRegistry.from_yaml(yaml_path)
     provider = registry.providers["comfy_api"]
-    assert provider.kind == "subprocess_cli"
-    assert str(provider.scripts_dir) == "D:/AI/ComfyUI/scripts"
-    assert provider.python_exe is None
-    assert provider.default_lifecycle == "none"
+    assert provider.name == "comfy_api"
+    assert provider.api_key_env is None
+    assert provider.api_base is None
 ```
 
-Run `python -m pytest tests/unit/test_model_registry.py::test_comfy_api_provider_subprocess_cli_kind_parses -v`. Expected FAIL (kind not yet in allowlist).
-
-- [ ] **Step 2.4: Write fence `test_comfy_api_unknown_subfield_raises`**
+- [ ] **Step 2.4: Write fence `test_comfy_local_model_id_missing_raises`**
 
 ```python
-def test_comfy_api_unknown_subfield_raises(tmp_path):
+def test_comfy_local_model_id_missing_raises(tmp_path):
     yaml_path = tmp_path / "models.yaml"
     yaml_path.write_text(textwrap.dedent("""
         providers:
-          comfy_api:
-            kind: subprocess_cli
-            scripts_dir: "D:/AI/ComfyUI/scripts"
-            python_exe: null
-            default_lifecycle: "none"
-            foo: bar      # unknown subfield
-        models: {}
+          comfy_api: {api_key_env: null, api_base: null}
+        models:
+          comfy/local:
+            # id field intentionally omitted
+            provider: comfy_api
+            kind: image
+            pricing: null
         aliases: {}
     """), encoding="utf-8")
-    with pytest.raises(RegistryReferenceError, match="foo"):
+    with pytest.raises(ValueError, match=r"missing 'id'"):
         ModelRegistry.from_yaml(yaml_path)
 ```
 
-- [ ] **Step 2.5: Write fence `test_comfy_local_model_and_image_local_alias_resolve_via_registry`**
+- [ ] **Step 2.5: Write fence `test_image_local_alias_resolves_via_registry`**
 
 ```python
-def test_comfy_local_model_and_image_local_alias_resolve_via_registry(tmp_path):
+def test_image_local_alias_resolves_via_registry(tmp_path):
     yaml_path = tmp_path / "models.yaml"
     yaml_path.write_text(textwrap.dedent("""
         providers:
-          comfy_api:
-            kind: subprocess_cli
-            scripts_dir: "D:/AI/ComfyUI/scripts"
-            python_exe: null
-            default_lifecycle: "none"
+          comfy_api: {api_key_env: null, api_base: null}
         models:
           comfy/local:
+            id: "comfy/local"
             provider: comfy_api
             kind: image
             pricing: null
@@ -181,18 +174,18 @@ def test_comfy_local_model_and_image_local_alias_resolve_via_registry(tmp_path):
     assert routes.preferred[0].pricing is None
 ```
 
-- [ ] **Step 2.6: Implement loader minimal to make 3 fences pass + run full pytest**
+- [ ] **Step 2.6: Implement loader minimal (if any) to make 3 fences pass + run full pytest**
 
 ```bash
 python -m pytest tests/unit/test_model_registry.py -v
-# Expected: all 3 new fences PASS + no regression in existing test_model_registry.py.
+# Expected: all 3 new fences PASS + no regression. If a fence fails, debug minimal (NOT by extending ProviderDef.kind — that's TBD-011).
 ```
 
 - [ ] **Step 2.7: Commit 1**
 
 ```bash
-git add config/models.yaml src/framework/config/models_yaml.py src/framework/providers/model_registry.py tests/unit/test_model_registry.py
-git commit -m "feat(registry): accept subprocess_cli kind, register comfy_api + comfy/local + image_local"
+git add config/models.yaml src/framework/providers/model_registry.py tests/unit/test_model_registry.py
+git commit -m "feat(registry): register comfy_api placeholder + comfy/local virtual model + image_local alias (env-based worker config per OQ-6)"
 ```
 
 ---
@@ -578,11 +571,11 @@ git commit -m "feat(comfy): FakeComfyWorker enforces new spec schema (comfy_work
 
 **Files:** `tests/unit/test_comfy_subprocess.py` (Create ~250 lines), `tests/unit/test_comfy_http_unsupported.py` (Delete)
 
-- [ ] **Step 6.1: Create `tests/unit/test_comfy_subprocess.py` with all 18 fences**
+- [ ] **Step 6.1: Create `tests/unit/test_comfy_subprocess.py` with all fences listed in `specs/probe-and-validation/spec.md`** — round 2 plan codex Q3 fix:**spec is the source of truth for the full fence list (~22 names);** the snapshot below is round-3 latest state at writeback time but **MUST be re-checked against the spec before commit 6** in case of drift.
 
-Use `monkeypatch.setattr(asyncio, "create_subprocess_exec", ...)` (or worker subprocess facade injection) to mock subprocess boundary. Each fence assertion-only — production code already implemented in G3.
+Use `monkeypatch.setattr(asyncio, "create_subprocess_exec", ...)` (or worker subprocess facade injection) to mock subprocess boundary. Each fence assertion-only — production code already implemented in earlier commits (G4 / G5).
 
-Fence list (per `specs/probe-and-validation/spec.md` Requirement "ComfyUI subprocess contract has dedicated regression fences"):
+Fence list (snapshot from `specs/probe-and-validation/spec.md` Requirement "ComfyUI subprocess contract has dedicated regression fences" at writeback time; **re-read spec before commit 6**):
 
 1. `test_missing_scripts_dir_raises_unsupported_response`
 2. `test_python_module_not_found_raises_unsupported_response`
@@ -600,8 +593,15 @@ Fence list (per `specs/probe-and-validation/spec.md` Requirement "ComfyUI subpro
 14. `test_outputs_audio_non_empty_raises_unsupported_response`
 15. `test_lifecycle_other_than_none_raises_unsupported_response`
 16. `test_cancel_under_to_thread_does_not_orphan_processes`
-17. `test_dry_run_skips_probe_when_no_comfy_api_in_routes`
+17. `test_dry_run_skips_probe_when_no_comfy_local_in_routes` (round 2 plan codex Q3 fix:rename — was `no_comfy_api_in_routes`,spec 已改为 model id-based gate)
 18. `test_dry_run_30s_timeout`
+19. `test_env_unset_raises_unsupported_response` (round 2 G F-B fix:env vars)
+20. `test_project_id_none_raises_unsupported_response_at_init` (round 2 F4 fix)
+21. `test_artifacts_dir_none_raises_unsupported_response_at_init` (round 2 G3 fix)
+22. `test_executor_dispatches_comfy_local_to_worker_not_router` (round 2 G2 fix)
+23. `test_comfy_agent_worker_reads_env_config` (round 2 F-B fix)
+
+**Note**: round 2 plan codex Q3 揭出 round 1 fence 列表 (18) 与 spec 当前 fence 列表 (~22+) 不一致;以 spec `specs/probe-and-validation/spec.md` 为准 — implementer 在 commit 6 前重读 spec,fence 数若 > 23 全实装。本节列表是 round 3 writeback 时的 snapshot,可能过期。
 
 - [ ] **Step 6.2: No HTTP / requests / httpx imports in the new fence file**
 

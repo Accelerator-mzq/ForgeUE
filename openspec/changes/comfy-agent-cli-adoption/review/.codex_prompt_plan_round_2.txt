@@ -1,0 +1,53 @@
+# Target
+
+OpenSpec change comfy-agent-cli-adoption S3 plan-stage ROUND 2 review (validates plan rework after round 1 plan codex feedback).
+
+# Context
+
+Round 1 plan-stage codex review (review/codex_plan_review.md) verdict needs-attention with 4 P-findings (1 critical + 3 high), recommendation rework-plan.
+
+User chose A (rework, then re-run plan codex). Plan rework writeback at commit 656f7e2 (6 files +365/-95) covers all 4:
+
+- P1 critical fix: execution_plan File Structure G2/G4 rewrite — no ProviderDef.kind/scripts_dir/subprocess_cli claims; no capability_router subprocess_cli branch (executor-side dispatch suffices); base.py + orchestrator.py added to allow-list
+- P2 high fix: ComfyAgentWorker.probe_sync sync classmethod added (uses subprocess.run not asyncio); spec/tasks/micro_tasks all updated
+- P3 high fix: Task Group Map reordered — G3 (StepContext) commit 2 (was 4); G4 (ComfyAgentWorker) commit 3 (was 2); G5 (Executor) commit 4 (was 3); micro_tasks Task 3 + Task 5 headers have commit-order warnings; Task 4 Step 4.2-4.4 fully rewritten eliminating ctx.run.artifact_dir residue and capability_router branch task
+- P4 high fix: micro_tasks Task 3 Step 3.2 ComfyAgentWorker __init__ rewritten as keyword-only with REQUIRED args first per Python rules + raise WorkerUnsupportedResponse on None project_id/artifacts_dir
+
+Round 2 plan codex validates whether the rework actually eliminated plan-vs-contract drift before user re-triggers /forgeue:change-apply for actual implementation.
+
+# Files to read first
+
+- review/codex_plan_review.md (round 1 verbatim, 4 P-findings)
+- review/plan_cross_check.md (round 1 ## A frozen + ## B/C/D verification + Decision A rationale)
+- execution/execution_plan.md (post-rework — File Structure table + Task Group Map)
+- execution/micro_tasks.md (post-rework — Task 3 + 5 commit-order warnings; Task 3 Step 3.2 keyword-only sketch; Task 4 Step 4.2-4.4 sync probe + asyncio.run bridge)
+- specs/provider-routing/spec.md (post-rework — Dry-run Requirement specifies probe_sync)
+- tasks.md (post-rework — §3.5 + §4.4 reference probe_sync)
+
+# Round 2 plan-stage adversarial focus
+
+QUESTION 1 — Did the rework ACTUALLY fix each of P1/P2/P3/P4?
+
+Per-finding verdict (fixed-correctly / fixed-with-caveat (explain) / not-actually-fixed (explain)):
+- P1 critical (ProviderDef route claims removed?)
+- P2 high (probe_sync added correctly? subprocess.run not asyncio? DryRunPass dispatch correct?)
+- P3 high (commit order really G3 before G4? micro_tasks Task 3 still labeled commit 3 with warning? ctx.run.artifact_dir residue gone?)
+- P4 high (Step 3.2 code block actually keyword-only valid Python? required args raise on None?)
+
+End with counter "FIXED-CORRECTLY: N/4".
+
+QUESTION 2 — Are there NEW Q-findings introduced by the rework?
+
+Beyond P1-P4 fixes, look for issues introduced. Especially check:
+
+- ComfyAgentWorker probe_sync: are there path / cwd / encoding pitfalls that subprocess.run vs asyncio.create_subprocess_exec handle differently on Windows?
+- micro_tasks Task 3 commit-order warning: does the warning text correctly distinguish Task numbering (Task 3 = ComfyAgentWorker, Task 5 = StepContext) from Commit numbering (commit 3 vs commit 2) without confusion?
+- _generate_via_worker now uses asyncio.run inside sync executor: is there any test fence that locks this pattern (mocking asyncio.run)? Without a fence, future refactor could regress to await
+- Task Group Map shows G3 (StepContext) commit 2 + G4 (ComfyAgentWorker) commit 3 + G5 (Executor) commit 4, but Task heading numbering in micro_tasks is unchanged (Task 3 = ComfyAgentWorker, Task 5 = StepContext). Is the disconnect between Task numbering and commit numbering a future confusion source?
+- Boundary check: now base.py + orchestrator.py + dry_run_pass.py all in allow-list. Is the implementation files table comprehensive enough to catch a real out-of-scope diff?
+
+If new findings (call them Q1, Q2, ... using Q prefix to distinguish from F/G/H/P), report them in standard adversarial-review style.
+
+End with counter + recommendation (proceed-to-apply / rework-plan-again / abort-and-restructure).
+
+Do NOT re-raise design-stage F/G/H findings (round 1/2/3 closed) or P findings (this rework writeback covers them).

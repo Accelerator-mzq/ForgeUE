@@ -28,7 +28,7 @@ resolved_at: 2026-05-02T21:21:35+08:00
 disputed_open: 0
 aligned_with_contract: true
 drift_decision: written-back-to-plan-artifacts-and-spec-tasks
-writeback_commit: pending-this-commit
+writeback_commit: 656f7e2
 drift_reason: |
   Codex plan-stage review (round 1) verdict: needs-attention,
   recommendation: rework-plan. 4 P-findings:
