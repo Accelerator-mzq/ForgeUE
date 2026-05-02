@@ -588,7 +588,7 @@ class ComfyAgentWorker(ComfyWorker):
         except subprocess.TimeoutExpired as exc:
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
-                f"start ComfyUI via `python -m comfyui_api serve` then retry"
+                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir)"
             ) from exc
         except FileNotFoundError as exc:
             raise WorkerUnsupportedResponse(
@@ -598,6 +598,6 @@ class ComfyAgentWorker(ComfyWorker):
         if result.returncode != 0:
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status returned exit {result.returncode}; "
-                f"start ComfyUI via `python -m comfyui_api serve` then retry "
+                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir) "
                 f"(stderr first 500 chars: {(result.stderr or '')[:500]!r})"
             )
