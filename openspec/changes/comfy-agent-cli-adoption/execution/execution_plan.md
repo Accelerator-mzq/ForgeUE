@@ -88,15 +88,15 @@ Boundary check exempts this list — these answer to G6(Documentation Sync Gate)
 
 | File / Path | Authorized for | Stage |
 | --- | --- | --- |
-| `docs/requirements/SRS.md` | `tasks.md#9.2` + `#9.10` + `#9.11` REQUIRED — §5.3 + FR-WORKER-001 + §7.2 v1.X + §7.3 加 TBD-009 + TBD-010 | G6 |
-| `docs/design/HLD.md` | `tasks.md#9.3` REQUIRED — ComfyUI 子系统描述(协议层 + lifecycle=none + virtual model id) | G6 |
-| `docs/design/LLD.md` | `tasks.md#9.4` REQUIRED — ComfyUI worker 详细字段(类名 ComfyAgentWorker、构造参数、subprocess + 失败模式映射 + cancel best-effort) | G6 |
-| `docs/testing/test_spec.md` | `tasks.md#9.5` REQUIRED — 加 `test_comfy_subprocess` 18 fence 描述,删 `test_comfy_http_unsupported` 行 | G6 |
-| `docs/acceptance/acceptance_report.md` | `tasks.md#9.6` REQUIRED — FR-WORKER-001 验收行 + §8.1 v1.5 → v1.6 实测基线 + v1.6 变更行 | G6 |
-| `CHANGELOG.md` | `tasks.md#9.7` REQUIRED — `comfy-agent-cli-adoption` 条目 | G6 |
-| `CLAUDE.md` | `tasks.md#9.8` REQUIRED — 用户本机 live smoke 前置条件(双终端工作流) | G6 |
-| `AGENTS.md` | `tasks.md#9.9` OPTIONAL(若有 ComfyUI 段) | G6 |
-| `openspec/specs/provider-routing/spec.md` | `tasks.md#10.5` REQUIRED — archive 后**手动**改 line 25 Current Behavior(line 211/229 不动) | G7 |
+| `docs/requirements/SRS.md` | `tasks.md#10.2` + `#10.10` + `#10.11` + `#10.12` REQUIRED — §5.3 + FR-WORKER-001 + FR-MODEL-007 加 image_local + §7.2 v1.X + §7.3 加 TBD-009 + TBD-010 + TBD-011 | G9 |
+| `docs/design/HLD.md` | `tasks.md#10.3` REQUIRED — ComfyUI 子系统描述(协议层 + lifecycle=none + virtual model id + env vars) | G9 |
+| `docs/design/LLD.md` | `tasks.md#10.4` REQUIRED — ComfyUI worker 详细字段(类名 ComfyAgentWorker、keyword-only 构造参数、subprocess + 失败模式映射 + cancel best-effort + StepContext.run_dir) | G9 |
+| `docs/testing/test_spec.md` | `tasks.md#10.5` REQUIRED — 加 `test_comfy_subprocess` ~22 fence 描述 + StepContext fences,删 `test_comfy_http_unsupported` 行 | G9 |
+| `docs/acceptance/acceptance_report.md` | `tasks.md#10.6` REQUIRED — FR-WORKER-001 验收行 + §8.1 v1.5 → v1.6 实测基线 + v1.6 变更行 | G9 |
+| `CHANGELOG.md` | `tasks.md#10.7` REQUIRED — `comfy-agent-cli-adoption` 条目 | G9 |
+| `CLAUDE.md` | `tasks.md#10.8` REQUIRED — 用户本机 live smoke 前置条件(双终端工作流 + env vars) | G9 |
+| `AGENTS.md` | `tasks.md#10.9` OPTIONAL(若有 ComfyUI 段) | G9 |
+| `openspec/specs/provider-routing/spec.md` | `tasks.md#11.5` REQUIRED — archive 后**手动**改 line 25 Current Behavior(line 211/229 不动) | G10 |
 | `openspec/changes/comfy-agent-cli-adoption/evidence/**` | G7 verify_report / superpowers_review / finish_gate_report / doc_sync_report 落盘 | G6+G7 |
 | `openspec/changes/comfy-agent-cli-adoption/review/**` | codex_*_review / *_cross_check evidence | already at S2/S3 — boundary-exempt going forward |
 | `openspec/changes/comfy-agent-cli-adoption/execution/**` | execution_plan.md / micro_tasks.md / tdd_log.md | S3 already + S4 increments |
@@ -115,15 +115,16 @@ Boundary check exempts this list — these answer to G6(Documentation Sync Gate)
 | Task Group | tasks.md anchor | Commit | Boundary check focus |
 | --- | --- | --- | --- |
 | G1 Pre-flight | `tasks.md#1.1` / `#1.3` | (no commit) | read-only baseline capture |
-| G2 Registry config | `tasks.md#2.1` - `#2.6` | commit 1(`feat(registry): ...`) | `config/models.yaml` + `model_registry.py` + `test_model_registry.py` 3 fence |
-| G3 ComfyAgentWorker | `tasks.md#3.1` - `#3.6` | commit 2(`feat(comfy): replace ...`) | `comfy_worker.py` 重写,删 HTTP,加 subprocess + probe + copy |
-| G4 Executor + router | `tasks.md#4.1` - `#4.5` | commit 3(`feat(executor+router): ...`) | `generate_image.py` + `dry_run_pass.py` + `capability_router.py` |
-| G5 FakeComfyWorker | `tasks.md#5.1` - `#5.4` | commit 4(`feat(comfy): FakeComfyWorker ...`) | `comfy_worker.py::FakeComfyWorker` schema 守门 + 测试 callsite 补字段 |
-| G6 Test rewrite | `tasks.md#6.1` - `#6.6` | commit 5(`test(comfy): subprocess fences ...`) | 新建 `test_comfy_subprocess.py` 18 fence + 删 `test_comfy_http_unsupported.py` + 实测 pytest 总数 |
-| G7 examples | `tasks.md#7.1` - `#7.4` | commit 6(`examples(comfy): ...`) | `comfy_local_smoke.json` 重写 + 删 `examples/comfy/` v1 三件 |
-| G8 Live smoke(可选) | `tasks.md#8.1` - `#8.5` | (no commit) | 本机跑 ComfyUI + ForgeUE 全链路;evidence 落 `notes/live_smoke_<date>.md` |
-| G9 Doc sync | `tasks.md#9.1` - `#9.12` | commit 7(`docs: ...`) | 10 文档同步 + TBD-009 + TBD-010 register |
-| G10 Verify+Review+Finish | `tasks.md#10.1` - `#10.5` | (per-stage commits) | `/forgeue:change-verify` / `change-review` / `change-doc-sync` / `change-finish` / `openspec archive` + 主 spec line 25 手动改 |
+| G2 Registry config | `tasks.md#2.1` - `#2.6` | commit 1(`feat(registry): ...`) | `config/models.yaml` 占位 entry + `model_registry.py` + `test_model_registry.py` 3 fence + env vars 文档 |
+| G3 ComfyAgentWorker | `tasks.md#3.1` - `#3.6` | commit 2(`feat(comfy): replace ...`) | `comfy_worker.py` 重写,删 HTTP,加 subprocess + keyword-only signature + REQUIRED project_id+artifacts_dir+lifecycle assert + probe + copy |
+| G4 Executor + dryrun + worker dispatch | `tasks.md#4.1` - `#4.5` | commit 3(`feat(executor+dryrun): ...`) | `generate_image.py` 加 `_should_use_worker_path` + `_generate_via_worker`(asyncio.run bridge) + `dry_run_pass.py` 条件探活 |
+| G5 StepContext.run_dir(round 2 NEW)| `tasks.md#5.1` - `#5.5` | commit 4(`feat(runtime-core): StepContext.run_dir ...`) | `base.py StepContext` 加 `run_dir: Path` REQUIRED + `orchestrator.py` 加 `_compute_run_dir` 注入 + 测试 callsite 补 run_dir + 2 fence |
+| G6 FakeComfyWorker | `tasks.md#6.1` - `#6.4` | commit 5(`feat(comfy): FakeComfyWorker ...`) | `comfy_worker.py::FakeComfyWorker` schema 守门 + 测试 callsite 补字段 |
+| G7 Test rewrite | `tasks.md#7.1` - `#7.6` | commit 6(`test(comfy+runtime): subprocess fences ...`) | 新建 `test_comfy_subprocess.py` ~22 fence + `test_step_context.py` + `test_orchestrator.py` fence + 删 `test_comfy_http_unsupported.py` + 实测 pytest 总数 |
+| G8 examples | `tasks.md#8.1` - `#8.4` | commit 7(`examples(comfy): ...`) | `comfy_local_smoke.json` 重写(image_local alias)+ 删 `examples/comfy/` v1 三件 |
+| G9 Live smoke(可选)| `tasks.md#9.1` - `#9.6` | (no commit) | 启 ComfyUI + 设 env + 跑 ForgeUE 全链路;evidence 落 `notes/live_smoke_<date>.md` |
+| G10 Doc sync | `tasks.md#10.1` - `#10.13` | commit 8(`docs: ...`) | 10 文档同步 + FR-MODEL-007 加 image_local + TBD-009/010/011 register |
+| G11 Verify+Review+Finish | `tasks.md#11.1` - `#11.5` | (per-stage commits) | `/forgeue:change-verify` / `change-review` / `change-doc-sync` / `change-finish` / `openspec archive` + 主 spec line 25 手动改 |
 
 ---
 

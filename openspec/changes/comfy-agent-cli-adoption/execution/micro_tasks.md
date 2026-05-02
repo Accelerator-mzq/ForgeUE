@@ -457,9 +457,23 @@ git commit -m "feat(executor+router): bundle uses comfy_workflow + dispatch comf
 
 ---
 
-## Task 5: FakeComfyWorker schema gate + callsite补丁 (G5 / commit 4)
+## Task 5: StepContext.run_dir injection (G5 / commit 4) — round 2 NEW
 
-> Anchors: `tasks.md#5.1`, `#5.2`, `#5.3`, `#5.4`
+> Anchors: `tasks.md#5.1`, `#5.2`, `#5.3`, `#5.4`, `#5.5`
+
+**Files:** `src/framework/runtime/executors/base.py` (Modify), `src/framework/runtime/orchestrator.py` (Modify), `tests/unit/test_step_context.py` (Create), `tests/unit/test_orchestrator.py` (Modify)
+
+- [ ] **Step 5.1: Add `run_dir: Path` field to StepContext dataclass** — REQUIRED, not Optional
+- [ ] **Step 5.2: Add `Orchestrator._compute_run_dir(self, run: Run) -> Path` helper** — `root = getattr(self.checkpoints, "_root", None); if root is None: raise RuntimeError(...); return Path(root) / run.run_id` (NO extra date segment per round 3 H1 fix); inject via `StepContext(..., run_dir=self._compute_run_dir(run))` at all StepContext construction sites
+- [ ] **Step 5.3: Patch all existing StepContext mock callsites in tests** — grep `StepContext(` in tests/, add `run_dir=tmp_path` to each; expect ~10-30 callsites; patch carefully so no test silently passes due to `run_dir=None`
+- [ ] **Step 5.4: Add `tests/unit/test_step_context.py::test_step_context_run_dir_required`** + `tests/unit/test_orchestrator.py::test_orchestrator_injects_run_dir_into_step_context` (verifies `_compute_run_dir` returns `Path(root) / run_id` with no extra date segment)
+- [ ] **Step 5.5: Commit 4** — `git commit -m "feat(runtime-core): StepContext exposes run_dir; Orchestrator injects via _compute_run_dir helper"`
+
+---
+
+## Task 6: FakeComfyWorker schema gate + callsite补丁 (G6 / commit 5)
+
+> Anchors: `tasks.md#6.1`, `#6.2`, `#6.3`, `#6.4`
 
 **Files:** `src/framework/providers/workers/comfy_worker.py::FakeComfyWorker` (already in Step 3.2 above), test callsites (Modify many)
 
@@ -510,9 +524,9 @@ git commit -m "feat(comfy): FakeComfyWorker enforces new spec schema (comfy_work
 
 ---
 
-## Task 6: Test rewrite (G6 / commit 5)
+## Task 7: Test rewrite (G7 / commit 6)
 
-> Anchors: `tasks.md#6.1`, `#6.2`, `#6.3`, `#6.4`, `#6.5`, `#6.6`
+> Anchors: `tasks.md#7.1`, `#7.2`, `#7.3`, `#7.4`, `#7.5`, `#7.6`
 
 **Files:** `tests/unit/test_comfy_subprocess.py` (Create ~250 lines), `tests/unit/test_comfy_http_unsupported.py` (Delete)
 
@@ -578,9 +592,9 @@ git commit -m "test(comfy): subprocess contract fences (18) replace HTTP unsuppo
 
 ---
 
-## Task 7: examples rewrite (G7 / commit 6)
+## Task 8: examples rewrite (G8 / commit 7)
 
-> Anchors: `tasks.md#7.1`, `#7.2`, `#7.3`, `#7.4`
+> Anchors: `tasks.md#8.1`, `#8.2`, `#8.3`, `#8.4`
 
 **Files:** `examples/comfy_local_smoke.json` (Rewrite), `examples/comfy/build_bundle.py` (Delete), `examples/comfy/tavern_door.api.json` (Delete), `examples/comfy/image_z_image_turbo.json` (Delete)
 
@@ -658,9 +672,9 @@ git commit -m "examples(comfy): switch local smoke to manifest workflow + image_
 
 ---
 
-## Task 8: Local live smoke (G8 / optional but recommended)
+## Task 9: Local live smoke (G9 / optional but recommended)
 
-> Anchors: `tasks.md#8.1`, `#8.2`, `#8.3`, `#8.4`, `#8.5`
+> Anchors: `tasks.md#9.1`, `#9.2`, `#9.3`, `#9.4`, `#9.5`, `#9.6`
 
 **Files:** none committed; evidence落 `notes/live_smoke_<date>.md` only.
 
@@ -709,24 +723,24 @@ EOF
 
 ---
 
-## Task 9: Documentation Sync Gate (G9 / commit 7)
+## Task 10: Documentation Sync Gate (G10 / commit 8)
 
-> Anchors: `tasks.md#9.1` through `#9.12`
+> Anchors: `tasks.md#10.1` through `#10.13`
 
 **Files:** 10 doc files per `tasks.md §9` matrix.
 
-- [ ] **Step 9.1: Run doc sync static scan**
+- [ ] **Step 10.1: Run doc sync static scan**
 
 ```bash
 /forgeue:change-doc-sync
 # Get [REQUIRED] / [OPTIONAL] / [SKIP] / [DRIFT] list for 10 docs.
 ```
 
-- [ ] **Step 9.2-9.11: Apply edits per the §9 matrix**
+- [ ] **Step 10.2-10.12: Apply edits per the §10 matrix**
 
-Follow the full task list (`tasks.md#9.2` SRS §5.3 + FR-WORKER-001 + §7.2 v1.X; `#9.3` HLD ComfyUI 子系统; `#9.4` LLD; `#9.5` test_spec; `#9.6` acceptance §8.1 + v1.6; `#9.7` CHANGELOG; `#9.8` CLAUDE.md double-terminal note; `#9.9` AGENTS.md if applicable; `#9.10` SRS §7.3 TBD-009; `#9.11` SRS §7.3 TBD-010).
+Follow the full task list (`tasks.md#10.2` SRS §5.3 + FR-WORKER-001 + FR-MODEL-007 加 image_local + §7.2 v1.X; `#10.3` HLD; `#10.4` LLD; `#10.5` test_spec; `#10.6` acceptance §8.1 + v1.6; `#10.7` CHANGELOG; `#10.8` CLAUDE.md env vars + double-terminal note; `#10.9` AGENTS.md if applicable; `#10.10` SRS §7.3 TBD-009; `#10.11` SRS §7.3 TBD-010; `#10.12` SRS §7.3 TBD-011).
 
-- [ ] **Step 9.12: Commit 7**
+- [ ] **Step 10.13: Commit 8**
 
 ```bash
 git add docs/ CHANGELOG.md CLAUDE.md AGENTS.md
@@ -735,14 +749,14 @@ git commit -m "docs: sync ComfyUI agent CLI adoption (CLI/lifecycle=none/virtual
 
 ---
 
-## Task 10: Verify + Review + Doc-sync二次 + Finish + Archive
+## Task 11: Verify + Review + Doc-sync二次 + Finish + Archive
 
-> Anchors: `tasks.md#10.1`, `#10.2`, `#10.3`, `#10.4`, `#10.5`
+> Anchors: `tasks.md#11.1`, `#11.2`, `#11.3`, `#11.4`, `#11.5`
 
 **Files:** evidence落 `evidence/` (verify_report / superpowers_review / doc_sync_report / finish_gate_report) + manual main spec line 25 update at archive time.
 
-- [ ] **Step 10.1: `/forgeue:change-verify` (Level 0/1/2)**
-- [ ] **Step 10.2: `/forgeue:change-review` (Superpowers + codex blocker writeback)**
-- [ ] **Step 10.3: `/forgeue:change-doc-sync` 二次 (post-implementation真实 vs §9 prediction)**
-- [ ] **Step 10.4: `/forgeue:change-finish` (Finish Gate 12-key frontmatter + writeback真实性 + cross-check + openspec validate --strict)**
-- [ ] **Step 10.5: `openspec archive comfy-agent-cli-adoption`** + **手动**编辑主 spec `openspec/specs/provider-routing/spec.md` line 25 把"ComfyUI HTTP (`providers/workers/comfy_worker.py`)"改为"ComfyUI agent CLI subprocess (`providers/workers/comfy_worker.py::ComfyAgentWorker` invoking `python -m comfyui_api`)";line 211 Invariants + line 229 Non-Goals **保留不动**(D6 选 A 后契约一致)。
+- [ ] **Step 11.1: `/forgeue:change-verify` (Level 0/1/2)**
+- [ ] **Step 11.2: `/forgeue:change-review` (Superpowers + codex blocker writeback)**
+- [ ] **Step 11.3: `/forgeue:change-doc-sync` 二次 (post-implementation真实 vs §10 prediction)**
+- [ ] **Step 11.4: `/forgeue:change-finish` (Finish Gate 12-key frontmatter + writeback真实性 + cross-check + openspec validate --strict)**
+- [ ] **Step 11.5: `openspec archive comfy-agent-cli-adoption`** + **手动**编辑主 spec `openspec/specs/provider-routing/spec.md` line 25 把"ComfyUI HTTP (`providers/workers/comfy_worker.py`)"改为"ComfyUI agent CLI subprocess (`providers/workers/comfy_worker.py::ComfyAgentWorker` invoking the agent CLI)";line 211 Invariants + line 229 Non-Goals **保留不动**(D6 选 A 后契约一致)。
