@@ -272,4 +272,41 @@ G4 commit 3 已经实施 v2 schema gate(conditional 只在 spec 含 `comfy_workf
 
 ### Writeback check (post-commit 5)
 state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
+Commit hash: `89243e4`
+
+---
+
+## Commit 6 — G7 test_comfy_subprocess.py 26 fences (2026-05-03 00:10)
+
+### Anchors
+- `tasks.md#7.1` - `tasks.md#7.6`
+
+### Implementation files modified
+| File | Action |
+|---|---|
+| `tests/unit/test_comfy_subprocess.py` | Create — 26 fences (~430 lines) covering REQUIRED-args + probe_sync + 7-class failure mapping + argv shape + outputs handling + cancel best-effort + executor/dry-run integration |
+
+### Fence list (26 total)
+1-3: REQUIRED-args at __init__ (project_id None, artifacts_dir None, lifecycle != none)
+4-7: probe_sync (missing scripts_dir, module not found, 30s timeout, nonzero exit)
+8-14: 7-class failure mapping (Missing required param / value out of range / value_not_in_list / non-JSON / missing outputs / TimeoutError / unrecognised error)
+15-16: subprocess argv shape (workflow+params+lifecycle+timeout, task.project_id passed as --project)
+17-19: outputs handling (copy-to-tree, glb raise, audio raise)
+20: legacy workflow_graph rejected
+21: cancel under to_thread (narrative — lifecycle=none means no orphan)
+22-26: executor + DryRunPass integration (worker dispatch detection, env config read, env unset raise, dry-run skip / dry-run probe runs)
+
+### Pytest delta
+- Pre-commit:1158
+- Post-commit:**1184 PASS** (+26 G7 fences)
+
+### Boundary check
+| 文件 | In allow-list? |
+|---|---|
+| `tests/unit/test_comfy_subprocess.py` | ✓ (G7 row, Create) |
+
+**Boundary check verdict: PASS**
+
+### Writeback check (post-commit 6)
+state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
 Commit hash: pending
