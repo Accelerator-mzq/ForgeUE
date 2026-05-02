@@ -82,9 +82,9 @@ dry-run 校验:`Path(scripts_dir).exists()` + `(Path(scripts_dir) / "comfyui_api
 3. ComfyUI 自家会按 `<date>/<project>/` 分组累积,长期不清理。ForgeUE artifact 应该是 self-contained 的(用户 `tar` 一个 `artifacts/<run_id>/` 就该能复现 / 归档),不应跨进程依赖外部目录状态
 4. copy 成本可接受:单图 1-5 MB,Windows 同盘 copy < 100 ms,远低于 ComfyUI 生成耗时(20-180 s)
 
-实施:`HTTPComfyWorker._collect_outputs(stdout_json)` 解析 `outputs.images` → `shutil.copy2(src, artifacts_dir / "comfy" / src.name)` → 用新路径构造 `ImageCandidate.data` + 元数据。`artifacts_dir` 由 worker 构造时通过 `run_context` 传入。
+实施:`ComfyAgentWorker._collect_outputs(stdout_json)` 解析 `outputs.images` → `shutil.copy2(src, artifacts_dir / "comfy" / src.name)` → 用新路径构造 `ImageCandidate.data` + 元数据。`artifacts_dir` 由 worker 构造时通过 `run_context` 传入。
 
-跨 worker 复用 `--project=<run_id>` 让 ComfyUI 自动按 run_id 分组(虽然我们 copy 走再用,但留这个映射方便事后人工对照)。
+CLI `--project` 字段传 `task.project_id`(OQ-3 决议;不是 `<run_id>`),让 ComfyUI 原始 outputs 按业务项目分组(`D:/AI/ComfyUI/outputs/main/<date>/<task.project_id>/...`)方便事后人工对照。worker 已 copy 走,ForgeUE artifact tree 不依赖 ComfyUI outputs 子目录命名。
 
 ### D3 — `HTTPComfyWorker` 类完全砍掉,不抽象 `ComfyApi` 接口
 
@@ -142,28 +142,95 @@ class FakeComfyWorker(ComfyWorker):
 | subprocess 返回 exit code 2 + stdout `{"ok": false, "error": "Missing required param" \| "value out of range" \| "value_not_in_list"}` | `submit()` 解析 stdout | `WorkerUnsupportedResponse` | `unsupported_response` | 同上 |
 | subprocess stdout 非 JSON / JSON 但缺 `outputs` 字段 | `submit()` 解析 stdout | `WorkerUnsupportedResponse` | `unsupported_response` | 同上 |
 | subprocess 返回 exit code 2 + stdout `error` 含 `TimeoutError` | `submit()` 解析 stdout | `WorkerTimeout` | `worker_timeout` | `retry_same_step`(默认最多 2 次) |
-| subprocess 进程被 ForgeUE 主动 kill(`asyncio.CancelledError`) | `submit()` Cancel 路径 | re-raise `CancelledError` | n/a | 走 cancel 链路 |
+| subprocess 进程自然结束(用户 cancel 后 to_thread 包装的 worker 仍在线程内跑;subprocess 自然退出 = worker 退出) | n/a(cancel 不可达 worker.submit,见 D6) | n/a | n/a | best-effort:外层 Future 已 cancel,worker 完成后 result 被丢弃 |
 | 其它 exit code 2 + 未识别 error | `submit()` 解析 stdout | `WorkerError` | `worker_error` | `fallback_model` → `retry_same_step`(默认 1 次) |
 
 关键:**所有 unsupported response 必须走 `abort_or_fallback`,绝不回 same step 重计费**(SRS FR-RUNTIME-012 已建立的契约)。本地 GPU `cost_usd=0`,但同 step 重试浪费 30-180 s wall-clock,且若失败原因是 `Missing required param` 这种 deterministic bug,重试也不会成功。
 
-新增 fence(写在 spec 而非这里):
+新增 fence(写在 spec 而非这里):见 `specs/probe-and-validation/spec.md` 的 fence 名单(15 条 + cancel 不可达 best-effort 守门)。
 
-- `tests/unit/test_comfy_subprocess.py::test_missing_scripts_dir_raises_unsupported_response`
-- `tests/unit/test_comfy_subprocess.py::test_exit2_missing_param_maps_to_unsupported`
-- `tests/unit/test_comfy_subprocess.py::test_exit2_value_out_of_range_maps_to_unsupported`
-- `tests/unit/test_comfy_subprocess.py::test_stdout_not_json_maps_to_unsupported`
-- `tests/unit/test_comfy_subprocess.py::test_exit2_timeout_maps_to_worker_timeout`
-- `tests/unit/test_comfy_subprocess.py::test_cancel_terminates_subprocess`
+### D6 — lifecycle scope:本 change 只支持 `lifecycle=none`(用户自管 ComfyUI)
+
+**问题来源:**codex S2→S3 design review F1 critical(2026-05-02 18:35)发现 ForgeUE orchestrator 在 `src/framework/runtime/orchestrator.py:474` 把同步 executor 包 `await asyncio.to_thread(executor.execute, ctx)`,line 286-296 注释明说 sync executors in `asyncio.to_thread` can't be interrupted。即:即便 worker 内部用 `asyncio.create_subprocess_exec` 拿 subprocess handle,上游 cancel 信号也传不到 `worker.submit`(被 to_thread 包装层吸收)。
+
+**3 个选项 trade-off**(详见 cross-check Decision Block A):
+
+- A:lifecycle 只支持 `none`,用户自启 ComfyUI
+- B:支持 `none` + `ensure_running`,spec 写 cancel best-effort + framework 不保证清理远端 ComfyUI server
+- C:重写 GenerateImageExecutor 为 async def,orchestrator 直接 await 不经 to_thread
+
+**选 A**(2026-05-02,user 拍板):
+
+1. 主 spec `provider-routing/spec.md:211` Invariant 本来就写"ComfyUI integration requires a user-owned local ComfyUI ... no framework-managed lifecycle";line 229 Non-Goal 同义。**A 完全延续现有 invariant,F3 (主 spec MODIFIED 范围) 在 A 下最小**,只动 line 25 Current Behavior(协议描述 HTTP→subprocess CLI),line 211/229 不动
+2. F1 critical 在 A 下**完全消失**:lifecycle=none 时 agent CLI 不拉子进程(假设 ComfyUI 已由用户启好),subprocess 退出 = worker 退出,无残留;cancel 不可达只导致 worker 完成后 result 被丢弃,无孤儿进程
+3. F5 在 A 下变成合理 preflight:dry-run 探活 + 30s timeout 完全可行(用户既然自启,框架探活合情合理)
+4. C 是正确但超本 change scope(改框架级 executor 模型);**登记 TBD-010 到 SRS §7.3 后续 change**(见 D-FutureScope 段)
+
+**A 的代价坦白说:**用户接 ComfyUI 第一次会踩坑,要在 CLAUDE.md / README 写明"跑前先 `python -m comfyui_api status` 确认在线,offline 用 `python -m comfyui_api serve` 启"。dry-run 探活 fail 时 error message 直接告诉用户怎么启。
+
+### D7 — ModelRegistry 接入用虚拟 model id `comfy/local`
+
+**问题来源:**codex F2 high 发现 `model_registry.py:438-442` 强制 alias 引用的 model name 必须 `in models`,我之前只在 `providers:` 段加 `comfy_api` entry 但没加 `models:` entry,任何引用 ComfyUI 的 alias 都会 raise `RegistryReferenceError`。
+
+**2 个选项 trade-off**(详见 cross-check Decision Block B):
+
+- A:`models:` 段加虚拟 model id `comfy/local` + 新 alias `image_local`
+- B:bundle 加新字段 `provider_policy.provider: "comfy_api"` bypass ModelRegistry
+
+**选 A**(2026-05-02,user 拍板)。具体落地:
+
+```yaml
+# config/models.yaml
+providers:
+  comfy_api:
+    kind: subprocess_cli
+    scripts_dir: "D:/AI/ComfyUI/scripts"
+    python_exe: null              # = sys.executable (OQ-1)
+    default_lifecycle: "none"     # 写死,本 change 唯一支持(D6)
+
+models:
+  comfy/local:                    # 虚拟 model id;ComfyUI 真没 model 概念,这是路由占位
+    provider: comfy_api
+    kind: image
+    pricing: null                 # 本地 GPU,无 per-call cost(FR-COST-008/009 接口仍在,值 0)
+
+aliases:
+  image_local:                    # 新 alias 专给本地 ComfyUI
+    preferred: ["comfy/local"]
+    fallback: []                  # 不 fallback 到云端(策略上把本地 ComfyUI 当独立 capability)
+```
+
+```json
+// examples/comfy_local_smoke.json (重写后)
+{
+  "steps": [{
+    "step_id": "step_image",
+    "type": "generate",
+    "capability_ref": "image.generation",
+    "provider_policy": {"models_ref": "image_local"},
+    "config": {
+      "spec": {
+        "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+        "comfy_params": {"text": "...", "seed": 42},
+        "comfy_lifecycle": "none"
+      }
+    }
+  }]
+}
+```
+
+理由:符合 ADR-002 (ModelRegistry single source of truth) + FR-MODEL-001;路由统一走 capability_router,新 ComfyUI 跟现有 qwen/hunyuan 一样接入;后续接 ComfyUI 视频/音频/3D workflow 只要在 `models:` 段加新 virtual id。fiction(`comfy/local` 不真是 model)代价小,换"统一路由 + 不破坏现有 schema"值得。
 
 ## Risks / Trade-offs
 
-- **[subprocess 启动冷启动开销] →** ComfyUI agent CLI 在 lifecycle=`ensure_running` 模式下若 ComfyUI 未启,会自启(~30-90 s cold start),首次调用 step 阶段耗时上跳。**Mitigation:** dry-run 阶段调一次 `python -m comfyui_api status` 探活,如果不在线提前 emit `worker_poll` 事件让用户知道在等冷启动;`worker_timeout_s` 默认从原 60 s 调大到 300 s
+- **[用户必须自启 ComfyUI](D6 后果)→** lifecycle=`none` 决策让用户跑 bundle 前必须先 `python -m comfyui_api status` 确认在线,offline 用 `python -m comfyui_api serve` 启;ComfyUI cold start ~30-90 s 由用户在自己终端等。**Mitigation:** dry-run 阶段调一次 `python -m comfyui_api status` 探活(timeout 30 s),不在线时直接 fail Run 并在 error message 中告诉用户怎么启;CLAUDE.md / README 写明前置条件;`worker_timeout_s` 默认从原 60 s 调大到 300 s(覆盖单图 30-180 s 生成)
 - **[`shutil.copy2` 跨盘符性能] →** 用户若把 ComfyUI 装在 E: 而 ForgeUE artifacts 在 D:,copy 走 OS file system 跨设备路径,百 MB 级 mesh / 视频 workflow 可能成本不可忽略。**Mitigation:** 本 change 只覆盖图像 workflow(单图 < 5 MB),3D / 视频 workflow 接入留给后续 change 再评估 hardlink / move 优化
+- **[`shutil.copy2` 在 async 上下文阻塞] →** worker.submit 是 async 但 `shutil.copy2` 是同步 IO;单图 < 5 MB 在 Windows 同盘 < 100 ms 在事件循环可接受;若用户 batch_size 大或跨盘性能差可能短暂阻塞 progress event 推流。**Mitigation:** 本 change 范围内不为单图优化(open question:codex W-CopyAsyncBlocking 标 medium,不阻断 S3,记 TBD-010 一并评估)
 - **[Windows 路径分隔符] →** ComfyUI agent CLI 输出的路径是 Windows backslash,JSON parse 后是字符串,跨 `os.fspath` / `pathlib.Path` 处理时要小心。**Mitigation:** worker 内部统一 `Path(...)` 包一次,所有 path 操作走 pathlib;`tests/unit/test_comfy_subprocess.py` 加 fence 校验 mixed-separator 输入
+- **[Cancel 不可达 worker.submit](F1 critical 后果)→** orchestrator `to_thread` 包装层吸收 cancel 信号,worker.submit 在线程内继续跑直到自然完成。**Mitigation (D6 选 A 后):** lifecycle=none 下 subprocess 自然退出 = worker 退出,无残留;无孤儿进程,result 被外层 Future 丢弃即可。spec scenario 不再宣称"cancel terminates subprocess"(改为"cancel 后 worker 完成 result 被丢弃,best-effort");C 方案(executor async 重写)登记 TBD-010 后续 change
 - **[FakeComfyWorker 与新 contract 偏离] →** FakeComfyWorker scripted 接口不变,但新 bundle 协议字段 `comfy_workflow` / `comfy_params` 它不消费(它直接 dequeue 队列里的 ImageCandidate)。容易让人误以为 fake 在"按 manifest 跑"。**Mitigation:** `FakeComfyWorker.submit` 校验 `spec` 里至少有 `comfy_workflow` 字段(语义只做 schema 守门,不影响 dequeue),缺字段直接 raise `WorkerUnsupportedResponse`;在 docstring 写明"fake 不真跑 manifest,scripted 队列驱动"
-- **[`config/models.yaml` 加 provider entry 触发 strict load schema] →** 已有 RegistryReferenceError 守 typo(SRS FR-COST-002),新加 `kind: subprocess_cli` 字段需要 loader 接受。**Mitigation:** loader 加新 kind 校验 + 单测覆盖
-- **[CHANGELOG / acceptance_report drift] →** SRS §5.3 + FR-WORKER-001 描述变更,acceptance FR-WORKER-001 验收行的"`comfy_worker.py` + `test_comfy_http_unsupported`"指向的测试文件被重写。**Mitigation:** 走 `/forgeue:change-doc-sync` Documentation Sync Gate 强制扫 10 文档
+- **[`config/models.yaml` 加 provider entry + 虚拟 model id 触发 strict load schema] →** 已有 RegistryReferenceError 守 typo(SRS FR-COST-002),新加 `kind: subprocess_cli` provider + `comfy/local` 虚拟 model id + `image_local` alias 需要 loader 接受。**Mitigation:** loader 加新 kind 校验;`tests/unit/test_model_registry.py` 加 3 fence 守 provider/model/alias 各自的解析路径
+- **[CHANGELOG / acceptance_report drift] →** SRS §5.3 + FR-WORKER-001 描述变更,acceptance FR-WORKER-001 验收行的"`comfy_worker.py` + `test_comfy_http_unsupported`"指向的测试文件被重写;acceptance §8.1 自动化验收基线随 fence 增量变化(以 `python -m pytest -q` 实测为准,**不**硬编码总数,对齐 NFR-MAINT-003 + CLAUDE.md 禁令)。**Mitigation:** 走 `/forgeue:change-doc-sync` Documentation Sync Gate 强制扫 10 文档;tasks §9.6 明确"实测记录"
 
 ## Migration Plan
 
@@ -190,6 +257,8 @@ class FakeComfyWorker(ComfyWorker):
 - **OQ-1:** `python_exe` 字段:用 `sys.executable`(ForgeUE 的 venv Python)还是 ComfyUI 自家 venv Python?ComfyUI agent CLI 文档没说,实测看是不是吃 ComfyUI 的 deps。倾向先 `sys.executable` + 文档写"如失败用 `python_exe: D:/AI/ComfyUI/venv/Scripts/python.exe` 显式指";apply 阶段确认
 - **OQ-2:** `outputs.audio` / `outputs.glb` 字段:agent CLI 输出 JSON 含这两个字段(给视频 / 3D workflow 用),本 change 只接图像不读这两个,但 worker 解析时遇到 non-empty 是 raise `WorkerUnsupportedResponse` 还是静默忽略?倾向 raise(明确 scope),后续 change 接入视频 / 3D 时再放开
 - **OQ-3:** ComfyUI agent CLI 的 `--project` 字段我们传 `<run_id>` 还是 ForgeUE 的 `task.project_id`?后者更语义,前者更利于事后人工对照 ComfyUI outputs 与 ForgeUE artifacts。倾向传 `<run_id>`(我们 copy 走后路径不依赖,但 ComfyUI 自家 outputs 留 `<run_id>` 子目录方便诊断)
+- **OQ-4 (codex S2→S3 review post-resolve):** lifecycle 4 模式(`none` / `ensure_running` / `ensure_release` / `self_managed_session`)本 change 接哪些?codex F1 critical 揭出 cancel 不可达 worker.submit。3 个选项 A(只 `none`)/ B(`none` + `ensure_running`)/ C(executor async 重写)
+- **OQ-5 (codex S2→S3 review post-resolve):** ComfyUI 怎么进 ModelRegistry 三段式?ComfyUI 没 model id 概念。codex F2 high 揭出 alias 必须 in models 否则 raise。2 个选项 A(加虚拟 model id `comfy/local`) / B(bundle 加新字段 bypass)
 
 ## Resolved
 
@@ -201,3 +270,27 @@ class FakeComfyWorker(ComfyWorker):
   4. raise = 明确划线,防 image step 配错 workflow(选了 `combined_*` 这种同时出 PNG + GLB 的 manifest)时静默吞掉 GLB 输出造成"看似成功实则丢数据"
   5. 后续 change(暂定 `comfy-agent-mesh-adoption`)单独评估接入 mesh / 视频 / 音频 路径
 - **OQ-3 → 传 `task.project_id`**(2026-05-02)。理由:语义对齐 —— ComfyUI agent CLI 的 `--project` 字段本意是"业务项目分组",ForgeUE 的 `task.project_id` 同义;`<run_id>` 是技术 ID 不是项目分组。事后对照 ComfyUI outputs 看 `D:/AI/ComfyUI/outputs/main/<date>/<task.project_id>/...` 一目了然。worker 已 copy 到 `artifacts/<run_id>/comfy/`,ForgeUE 侧 self-contained 不依赖 ComfyUI outputs 子目录命名
+- **OQ-4 → A(lifecycle 只支持 `none`)**(2026-05-02 user 拍板,详细论证见 D6)。代价:用户必须自启 ComfyUI(双终端工作流);收益:F1 critical / F3 high / F5 high 三连消除,主 spec invariant 完全保留。C 方案(executor async 重写)登记 TBD-010 后续 change(见 D-FutureScope)
+- **OQ-5 → A(虚拟 model id `comfy/local`)**(2026-05-02 user 拍板,详细论证见 D7)。具体 yaml shape 与 bundle JSON 见 D7;符合 ADR-002 + FR-MODEL-001 单一真源
+
+## D-FutureScope — 登记到 SRS §7.3 的后续 change
+
+本 change `tasks.md §9.10` 已登记 **TBD-009: ComfyUI agent CLI mesh / audio / video workflow 接入**(对应 OQ-2 划线,见 design.md `## Resolved` 段)。
+
+D6 决策(选 A)同时产生第二条 follow-up,本 change `tasks.md §9.11` 登记:
+
+> **TBD-010: GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径(orchestrator 直接 await worker.submit 不经 to_thread),取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 `ensure_running` + 主 spec `provider-routing/spec.md:211` Invariant + `:229` Non-Goal 一并 MODIFIED**
+
+TBD-010 触发条件:用户实际使用本 change 后反馈"双终端 UX 痛苦"达到一定阈值,或框架其它 use case(mesh / 视频长任务取消)推动 executor async 化。届时新 change(暂定 `executor-async-rewrite`)需要:
+
+1. 改 `src/framework/runtime/executors/` 下所有 sync `def execute(ctx)` 为 `async def aexecute(ctx)`(影响 generate_image / generate_mesh / generate_structured / review / select / export / import 等;orchestrator.py:474 改 `await executor.aexecute(ctx)` 不经 to_thread)
+2. ComfyUI worker 重新评估 lifecycle scope:`ensure_running` 加回支持(届时 cancel 可达 worker.submit,subprocess 与 ComfyUI server 进程都能干净清理)
+3. 主 spec `provider-routing/spec.md:211` Invariant"ComfyUI integration requires a user-owned local ComfyUI ... no framework-managed lifecycle" → MODIFIED 为"ComfyUI integration MAY use framework-managed lifecycle (`ensure_running` / `ensure_release` / `self_managed_session`) when the executor async rewrite is deployed"
+4. 主 spec `:229` Non-Goal"Framework-managed ComfyUI process lifecycle" → REMOVED(改成 supported scope)
+5. 配套 fence:DAG cascade cancel 实测断言 ComfyUI subprocess 与 server 进程被清理;Windows 下 process tree cleanup 验证
+
+**本 change 作了什么准备**(让 TBD-010 后续易做):
+
+- `ComfyAgentWorker.submit` 内部已用 `asyncio.create_subprocess_exec`(虽然 cancel 当前不可达,但接口已 async-ready,TBD-010 后 executor 改 async 时 worker 这层不用动)
+- spec ADDED Requirement"ComfyUI worker invokes the agent CLI via subprocess" 顶层文字描述了 4 个 lifecycle 模式但本 change scope 只接 `none` —— 措辞预留,TBD-010 加 `ensure_running` 时只需 MODIFIED 同 requirement,不必新增
+- D6 + D7 决策段明确写 "本 change 唯一支持 `none`",后续 change 解锁时改这一处即可

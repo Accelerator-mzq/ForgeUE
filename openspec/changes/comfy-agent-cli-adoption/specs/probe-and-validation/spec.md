@@ -14,13 +14,17 @@ The system SHALL maintain a dedicated unit-test module `tests/unit/test_comfy_su
 - `test_exit2_timeout_maps_to_worker_timeout`
 - `test_exit2_unrecognised_error_maps_to_worker_error`
 - `test_cancel_terminates_subprocess`
-- `test_subprocess_invocation_passes_workflow_params_project_lifecycle_timeout`
+- `test_subprocess_invocation_passes_workflow_params_lifecycle_timeout`
 - `test_subprocess_invocation_passes_task_project_id_as_dash_dash_project`
 - `test_outputs_paths_are_copied_into_run_artifact_tree`
 - `test_outputs_glb_non_empty_raises_unsupported_response`
 - `test_outputs_audio_non_empty_raises_unsupported_response`
+- `test_lifecycle_other_than_none_raises_unsupported_response`
+- `test_cancel_under_to_thread_does_not_orphan_processes`
+- `test_dry_run_skips_probe_when_no_comfy_api_in_routes`
+- `test_dry_run_30s_timeout`
 
-The pre-existing `tests/unit/test_comfy_http_unsupported.py` fence file SHALL be removed in the same change because the HTTP protocol it guarded no longer exists in the worker.
+The pre-existing `tests/unit/test_comfy_http_unsupported.py` fence file SHALL be removed in the same change because the HTTP protocol it guarded no longer exists in the worker. The `test_cancel_terminates_subprocess` fence (originally listed during the cross-check process before user-decided lifecycle scope = `none` only) SHALL be replaced by `test_cancel_under_to_thread_does_not_orphan_processes` because the orchestrator's `asyncio.to_thread` wrapping prevents `CancelledError` from reaching `worker.submit` (see `provider-routing/spec.md` Requirement "ComfyAgentWorker cancel is best-effort under orchestrator to_thread wrapping" + design.md D6).
 
 #### Scenario: Each named fence in test_comfy_subprocess.py is collected and passes
 
