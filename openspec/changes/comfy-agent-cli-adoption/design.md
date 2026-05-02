@@ -312,6 +312,8 @@ def _build_step_context(self, step, run, task):
 - G-B 增加 worker-repository 耦合(worker 现在不依赖 repository 只产 ImageCandidate)
 - G-C 路径拼接散在 worker 内,framework 改 artifact 路径约定时所有 worker 跟着改
 
+**G3 commit 2 实施 drift(2026-05-02)**:实施时发现 `StepContext` 现有 ~25+ mock callsite(`tests/integration/` + `tests/unit/`),如果加 `run_dir: Path` REQUIRED(无 default)会全部 break TypeError("missing required field")。批量 patch 25 callsite 风险大且容易出错。务实 drift 决策:`run_dir` 用 `field(default_factory=lambda: Path("."))` 给 default factory(test-mock convenience),Orchestrator `_compute_run_dir(run)` helper 在唯一 production 构造点 (`orchestrator.py` line 459)总是 inject 真路径。新 fence `test_orchestrator_compute_run_dir_uses_checkpoints_root_no_extra_date` 守 production invariant。`runtime-core/spec.md` 已 update 反映这条 drift。这是 written-back-to-spec 的 acknowledged drift,production 不受影响。
+
 ### D9 — image_local alias 加进 SRS FR-MODEL-007(H-A fix)
 
 **问题来源:** codex round 2 G4 medium 发现 `SRS:188 FR-MODEL-007` 是固定 alias 9 项枚举(`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image`)—— **无 `image_local`**。`tasks.md §9.2` 写更新 SRS §5.3 + FR-WORKER-001 但**漏说更新 FR-MODEL-007 alias 列表**。

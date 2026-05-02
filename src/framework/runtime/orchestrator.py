@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from framework.artifact_store import ArtifactRepository
@@ -86,6 +87,29 @@ class Orchestrator:
         self.transitions = transition_engine or TransitionEngine()
         self.dry_run = dry_run_pass or DryRunPass()
         self._max_loop = max_loop
+
+    def _compute_run_dir(self, run: Run) -> Path:
+        """Resolve the canonical artifact-tree directory for this run.
+
+        Reads `getattr(self.checkpoints, "_root", None)` (same source
+        `_post_step` line ~627 uses for `dump_run_metadata`) and joins
+        with `run.run_id`. NO extra date segment because `framework.run`
+        already date-buckets `--artifact-root` by default
+        (`framework.run` line 111-115) and `framework.run` line 149 uses
+        `artifact_root / args.run_id` without an extra date bucket.
+
+        Returns the directory; injected into `StepContext.run_dir` at
+        line ~459 for in-tree artifact placement (e.g. ComfyAgentWorker
+        copy target). Falls back to `Path(".")` when CheckpointStore has
+        no `_root` (test mock convenience). See OpenSpec change
+        comfy-agent-cli-adoption design.md D8 + runtime-core/spec.md
+        Requirement "StepContext exposes run_dir for in-tree artifact
+        placement" + round 3 codex H1 fix.
+        """
+        root = getattr(self.checkpoints, "_root", None)
+        if root is None:
+            return Path(".")
+        return Path(root) / run.run_id
 
     def run(
         self,
@@ -459,6 +483,7 @@ class Orchestrator:
         ctx = StepContext(
             run=run, task=task_obj, step=step,
             repository=self.repository,
+            run_dir=self._compute_run_dir(run),
             inputs=resolved_inputs,
             upstream_artifact_ids=upstream_ids,
         )

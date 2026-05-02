@@ -75,4 +75,64 @@ note: |
 
 ### Writeback check
 
-`python tools/forgeue_change_state.py --change comfy-agent-cli-adoption --writeback-check --json` (执行后填):state, drifts, frontmatter_issues, structural_issues
+state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
+Commit hash: `9d654d6`
+
+---
+
+## Commit 2 — G3 StepContext.run_dir + Orchestrator inject (2026-05-02 22:10)
+
+### Anchors
+- `tasks.md#5.1` - `#5.5` (G3 Task 5 全部 sub-tasks)
+- `execution/micro_tasks.md` Task 5 (commit-order-warning header,标 commit 2)
+
+### Implementation files modified
+
+| File | Action | Details |
+|---|---|---|
+| `src/framework/runtime/executors/base.py` | Modify | StepContext dataclass 加 `run_dir: Path = field(default_factory=lambda: Path("."))`(放 `repository` 后 `inputs` 前)+ `from pathlib import Path` import |
+| `src/framework/runtime/orchestrator.py` | Modify | 加 `_compute_run_dir(self, run: Run) -> Path` helper(用 `getattr(self.checkpoints, "_root", None) / run.run_id`,无双重 date — round 3 H1 fix)+ `from pathlib import Path` import + line 459 StepContext 构造加 `run_dir=self._compute_run_dir(run)` |
+| `tests/unit/test_step_context.py` | Create | 2 fence:`test_step_context_run_dir_defaults_to_path_dot` + `test_step_context_run_dir_explicit_value_preserved` |
+| `tests/unit/test_orchestrator.py` | Create | 2 fence:`test_orchestrator_compute_run_dir_uses_checkpoints_root_no_extra_date`(守 H1 fix:NO 双重 date)+ `test_orchestrator_compute_run_dir_falls_back_to_path_dot_when_root_missing` |
+
+### TDD cycle
+
+实施直接 GREEN(无 RED 阶段)。原因:default factory 让 25+ 现有 callsite 不破坏,直接加 field + 写 fence + verify GREEN。
+
+### Pytest baseline delta
+
+- Pre-commit:1154 (G2 commit 1 后)
+- Post-commit:**1158 passed** (+4:test_step_context.py 2 + test_orchestrator.py 2)
+- 25+ 现有 StepContext mock callsite 全部仍 PASS(default factory 保护)
+
+### Drift writeback (round 2 OQ-7 G-A → drift_decision: written-back-to-spec)
+
+**Drift discovered**: spec runtime-core 写 `run_dir` REQUIRED but ~25+ existing mock callsites would all break with TypeError if no default. Implementation pragmatically uses `field(default_factory=lambda: Path("."))` — test-mock convenience only; production invariant preserved by Orchestrator always inject via `_compute_run_dir(run)`.
+
+**Writeback**:
+- `specs/runtime-core/spec.md` Requirement updated: added "Implementation note (drift writeback from G3 commit 2)" paragraph documenting the default factory + test-mock convenience + production invariant preserved by Orchestrator injection
+- `design.md` D8 段加 "G3 commit 2 实施 drift" paragraph 同 narrative
+
+**drift_decision**: `written-back-to-spec-runtime-core-and-design-D8`
+
+This is an acknowledged drift; production code path unaffected.
+
+### Boundary check
+
+| 修改文件 | In allow-list? | 验证 |
+|---|---|---|
+| `src/framework/runtime/executors/base.py` | ✓(execution_plan implementation files 表 G3 row) | StepContext 加 run_dir field |
+| `src/framework/runtime/orchestrator.py` | ✓(execution_plan implementation files 表 G3 row;round 1 plan codex P3 fix 加入 allow-list) | _compute_run_dir helper + inject |
+| `tests/unit/test_step_context.py` | ✓(execution_plan implementation files 表 G3 row,Create) | 2 fence |
+| `tests/unit/test_orchestrator.py` | ✓(execution_plan implementation files 表 G3 row,Create) | 2 fence |
+| `openspec/changes/comfy-agent-cli-adoption/specs/runtime-core/spec.md` | ✓(authorized auxiliary;此次 modify 是 drift writeback,合法 contract update) | drift writeback |
+| `openspec/changes/comfy-agent-cli-adoption/design.md` | ✓(authorized auxiliary;drift writeback) | drift writeback |
+
+**未 stage**:`openspec/config.yaml`(M user 私有)+ `1.jpg`(?? user 私有)
+
+**Boundary check verdict: PASS**
+
+### Writeback check (post-commit 2)
+
+state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
+Commit hash: pending(填入本 commit hash 后)
