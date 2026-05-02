@@ -2,23 +2,23 @@
 
 ### Requirement: ComfyUI worker invokes the agent CLI via subprocess
 
-The system SHALL invoke ComfyUI through `python -m comfyui_api run` as a subprocess and parse the stdout JSON envelope, replacing direct `/prompt` + `/history` + `/view` HTTP calls. The worker `ComfyAgentWorker` SHALL accept `scripts_dir` (path to `D:/AI/ComfyUI/scripts/`), optional `python_exe` (default `sys.executable`), and `default_lifecycle` (currently restricted to the single value `"none"` — see D6 in design.md for the rationale; the agent CLI itself supports four lifecycle modes but ForgeUE in this change only allows `none` because the orchestrator's `asyncio.to_thread` wrapping in `src/framework/runtime/orchestrator.py:474` makes upstream `CancelledError` unable to reach `worker.submit`, so any framework-managed lifecycle that spawns a ComfyUI server child process would risk orphan processes on cancel). Each call SHALL pass `--workflow <manifest_name>` (e.g. `GameAssets/01b_singleview_sdxl`) + `--params <json>` + `--project <task.project_id>` (the ForgeUE business project id, NOT the run id) + `--lifecycle none` + `--timeout <s>`, and parse the resulting JSON whose `outputs.images` field carries absolute PNG paths. The worker MUST NOT speak ComfyUI HTTP directly.
+The system SHALL invoke ComfyUI through `python -m comfyui_api run` as a subprocess and parse the stdout JSON envelope, replacing direct `/prompt` + `/history` + `/view` HTTP calls. The worker class `ComfyAgentWorker` SHALL accept `scripts_dir`, `python_exe`, `default_lifecycle`, `run_id`, `project_id`, and `artifacts_dir` as constructor parameters; the **first three** SHALL come from environment variables (`FORGEUE_COMFY_SCRIPTS_DIR`, `FORGEUE_COMFY_PYTHON_EXE`, `FORGEUE_COMFY_LIFECYCLE`) read at executor construction time, NOT from `ProviderDef` fields (the existing `ProviderDef` schema in `src/framework/providers/model_registry.py:117-122` only has `name / api_key_env / api_base` and SHALL NOT be extended in this change — see design.md D7 + D-FutureScope TBD-011 for the deferred schema-extension change). `default_lifecycle` SHALL default to `"none"` if `FORGEUE_COMFY_LIFECYCLE` is unset, and SHALL be restricted to the single value `"none"` in this change scope (see D6 in design.md for the rationale). Each call SHALL pass `--workflow <manifest_name>` + `--params <json>` + `--project <task.project_id>` + `--lifecycle none` + `--timeout <s>`, and parse the resulting JSON whose `outputs.images` field carries absolute PNG paths. The worker MUST NOT speak ComfyUI HTTP directly.
 
-#### Scenario: ComfyAgentWorker calls comfyui_api with the manifest workflow name and JSON params
+#### Scenario: ComfyAgentWorker reads env config and calls comfyui_api with task.project_id
 
-- **GIVEN** a `ComfyAgentWorker(scripts_dir=Path("D:/AI/ComfyUI/scripts"), default_lifecycle="none", run_id="run_abc", project_id="proj_comfy_smoke", artifacts_dir=Path("artifacts/2026-05-02/run_abc"))` constructed by the executor with `project_id=ctx.task.project_id` (the ForgeUE business project id, not the run id)
-- **WHEN** an executor calls `worker.submit(spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl", "comfy_params": {"text": "oak barrel", "seed": 42}, "comfy_lifecycle": "none"}, timeout_s=300)`
-- **THEN** the worker spawns `subprocess` with argv `[sys.executable, "-m", "comfyui_api", "run", "--workflow", "GameAssets/01b_singleview_sdxl", "--params", '{"text":"oak barrel","seed":42}', "--project", "proj_comfy_smoke", "--lifecycle", "none", "--timeout", "300"]` and `cwd=scripts_dir`; `python_exe=None` in the registry resolves to `sys.executable`; the worker decodes `result.stdout` as JSON, asserts `data["ok"] is True` and reads PNG bytes from each path in `data["outputs"]["images"]`; the worker MUST NOT issue any HTTP request to `localhost:8188`
+- **GIVEN** environment variables `FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts`, `FORGEUE_COMFY_PYTHON_EXE` unset (defaults to `sys.executable`), `FORGEUE_COMFY_LIFECYCLE` unset (defaults to `"none"`); a `ctx.run.run_id="run_abc"`; a `ctx.task.project_id="proj_comfy_smoke"`; a `ctx.run_dir=Path("artifacts/2026-05-02/run_abc")` (run_dir injected by Orchestrator per the runtime-core spec delta in this change)
+- **WHEN** an executor constructs `worker = ComfyAgentWorker(scripts_dir=Path(env["FORGEUE_COMFY_SCRIPTS_DIR"]), python_exe=None, default_lifecycle=env.get("FORGEUE_COMFY_LIFECYCLE", "none"), run_id=ctx.run.run_id, project_id=ctx.task.project_id, artifacts_dir=ctx.run_dir)` and calls `worker.submit(spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl", "comfy_params": {"text": "oak barrel", "seed": 42}, "comfy_lifecycle": "none"}, timeout_s=300)`
+- **THEN** the worker spawns `subprocess` with argv `[sys.executable, "-m", "comfyui_api", "run", "--workflow", "GameAssets/01b_singleview_sdxl", "--params", '{"text":"oak barrel","seed":42}', "--project", "proj_comfy_smoke", "--lifecycle", "none", "--timeout", "300"]` and `cwd=scripts_dir`; the worker decodes `result.stdout` as JSON, asserts `data["ok"] is True`, copies each path in `data["outputs"]["images"]` into `artifacts_dir / "comfy" /`, and reads PNG bytes from the copied paths; the worker MUST NOT issue any HTTP request to `localhost:8188`; `project_id` is REQUIRED (not optional with `None` default — `ComfyAgentWorker.__init__` SHALL raise `WorkerUnsupportedResponse` if `project_id is None` or empty)
 
 ### Requirement: ComfyUI bundle spec uses manifest workflow + JSON params
 
-The system SHALL accept `step.config.spec.comfy_workflow` (string, manifest name as listed by `python -m comfyui_api list`), `step.config.spec.comfy_params` (dict, passed to `--params`), and optional `step.config.spec.comfy_lifecycle` (string; in this change scope MUST be `"none"`; defaults to the worker's `default_lifecycle="none"`). The system SHALL reject the legacy `step.config.spec.workflow_graph` field with `WorkerUnsupportedResponse` so a partially migrated bundle fails fast rather than silently going to the wrong code path. The system SHALL also reject any `comfy_lifecycle` value other than `"none"` with `WorkerUnsupportedResponse` until the future `executor-async-rewrite` change (TBD-010) lifts the cancel-reachability constraint.
+The system SHALL accept `step.config.spec.comfy_workflow` (string, manifest name as listed by `python -m comfyui_api list`), `step.config.spec.comfy_params` (dict, passed to `--params`), and optional `step.config.spec.comfy_lifecycle` (string; in this change scope MUST be `"none"`; defaults to `"none"`). The system SHALL reject the legacy `step.config.spec.workflow_graph` field with `WorkerUnsupportedResponse` so a partially migrated bundle fails fast rather than silently going to the wrong code path. The system SHALL also reject any `comfy_lifecycle` value other than `"none"` with `WorkerUnsupportedResponse` until the future `executor-async-rewrite` change (TBD-010) lifts the cancel-reachability constraint.
 
-#### Scenario: Bundle declaring comfy_workflow + comfy_params resolves through ComfyAgentWorker
+#### Scenario: Bundle declaring comfy_workflow + comfy_params resolves through ComfyAgentWorker via worker dispatch
 
-- **GIVEN** a step config `{"spec": {"comfy_workflow": "GameAssets/01b_singleview_sdxl", "comfy_params": {"text": "oak barrel", "seed": 42}, "comfy_lifecycle": "none"}, "num_candidates": 1, "worker_timeout_s": 300}`
-- **WHEN** the `generate_image` executor's `_resolve_spec` reads the config
-- **THEN** the executor passes `{"comfy_workflow": "GameAssets/01b_singleview_sdxl", "comfy_params": {...}, "comfy_lifecycle": "none"}` to `ComfyAgentWorker.submit`; the executor MUST NOT read or accept any `workflow_graph` field
+- **GIVEN** a step config `{"spec": {"comfy_workflow": "GameAssets/01b_singleview_sdxl", "comfy_params": {"text": "oak barrel", "seed": 42}, "comfy_lifecycle": "none"}, "num_candidates": 1, "worker_timeout_s": 300}` whose `provider_policy.models_ref` resolves to a `prepared_routes` containing `ResolvedRoute(model="comfy/local", ...)`
+- **WHEN** the `generate_image` executor's `_resolve_spec` reads the config AND `_should_use_api_path` (the worker-dispatch variant) detects the `comfy/local` model id
+- **THEN** the executor takes the worker-dispatch branch (NOT the router-dispatch branch); it constructs `ComfyAgentWorker` from env config + ctx fields, then calls `await worker.submit(spec={"comfy_workflow": ..., "comfy_params": ..., "comfy_lifecycle": "none"}, timeout_s=300)`; the executor MUST NOT route through `router.image_generation(prompt, n, size, extra)` for `comfy/local`-bearing routes; the executor MUST NOT read or accept any `workflow_graph` field
 
 #### Scenario: Bundle still carrying legacy workflow_graph fails fast
 
@@ -32,29 +32,28 @@ The system SHALL accept `step.config.spec.comfy_workflow` (string, manifest name
 - **WHEN** the executor or worker resolves the spec
 - **THEN** `WorkerUnsupportedResponse` is raised with a message naming the unsupported lifecycle value and citing TBD-010 (`executor-async-rewrite`) as the future change that will lift the restriction; no subprocess is spawned
 
-### Requirement: comfy_api provider, virtual model id, and alias register with ModelRegistry
+### Requirement: comfy_api provider, virtual model id, and alias register with ModelRegistry without extending ProviderDef schema
 
-The system SHALL register three concrete entries in `config/models.yaml` so that ComfyUI integration flows through the standard `provider_policy.models_ref` resolution path (FR-MODEL-001 + ADR-002 single source of truth):
+The system SHALL register three concrete entries in `config/models.yaml` so that ComfyUI integration flows through the standard `provider_policy.models_ref` resolution path (FR-MODEL-001 + ADR-002 single source of truth), WITHOUT extending the existing `ProviderDef` schema:
 
-1. A `providers.comfy_api` entry with `kind: subprocess_cli`, `scripts_dir: <absolute path>`, optional `python_exe` (null = `sys.executable`), and `default_lifecycle: "none"` (only value supported in this change scope per D6).
-2. A `models.comfy/local` entry with `provider: comfy_api`, `kind: image`, `pricing: null` (local GPU has no per-call cost; the FR-COST-008/009 `metrics["cost_usd"]` interface is preserved at `0.0`).
+1. A `providers.comfy_api` entry with ONLY the `ProviderDef`-supported fields `api_key_env: null` and `api_base: null` (the `comfy_api` provider exists in the registry as a placeholder so `models.comfy/local` can reference it; ComfyUI worker config like `scripts_dir` / `python_exe` / `default_lifecycle` lives in environment variables `FORGEUE_COMFY_*`, NOT in the YAML — see design.md D7).
+2. A `models.comfy/local` entry with REQUIRED `id: "comfy/local"` field (the loader at `src/framework/providers/model_registry.py:290-293` raises `ValueError` if `id` is missing — round 1 contract sketch omitted this), plus `provider: comfy_api`, `kind: image`, `pricing: null` (local GPU has no per-call cost; the FR-COST-008/009 `metrics["cost_usd"]` interface is preserved at `0.0`).
 3. An `aliases.image_local` entry with `preferred: ["comfy/local"]` and `fallback: []` (no cross-provider fallback — local ComfyUI is treated as an independent capability path; bundles that want cloud fallback declare it explicitly via Step-level `fallback_models`).
 
-The ModelRegistry loader SHALL accept `subprocess_cli` as a valid `kind` and SHALL surface a `RegistryReferenceError` on unknown subfields under any of the three entries (consistent with the existing typo-protection contract for pricing fields). The `comfy/local` model id is a virtual placeholder — ComfyUI's real "model" is the `comfy_workflow` manifest name carried in `step.config.spec.comfy_workflow`, but the placeholder lets the standard alias-resolution path produce a `PreparedRoute` so `CapabilityRouter` can dispatch to `ComfyAgentWorker` uniformly with all other providers.
+The ModelRegistry loader SHALL surface a `RegistryReferenceError` on unknown subfields under any of the three entries (consistent with the existing typo-protection contract for pricing fields). The `comfy/local` model id is a virtual placeholder — ComfyUI's real "model" is the `comfy_workflow` manifest name carried in `step.config.spec.comfy_workflow`, but the placeholder lets the standard alias-resolution path produce a `ResolvedRoute` so the executor can dispatch on `model == "comfy/local"` uniformly with all other providers (mesh worker uses the same model-id-based dispatch pattern via `HunyuanTokenhubMeshWorker`).
 
-#### Scenario: config/models.yaml comfy_api provider + comfy/local model + image_local alias parse cleanly
+#### Scenario: config/models.yaml comfy_api + comfy/local + image_local parse cleanly without ProviderDef schema extension
 
 - **GIVEN** a `config/models.yaml` containing
   ```yaml
   providers:
     comfy_api:
-      kind: subprocess_cli
-      scripts_dir: "D:/AI/ComfyUI/scripts"
-      python_exe: null
-      default_lifecycle: "none"
+      api_key_env: null     # placeholder; worker config lives in env vars
+      api_base: null
 
   models:
     comfy/local:
+      id: "comfy/local"     # REQUIRED (loader raises if missing)
       provider: comfy_api
       kind: image
       pricing: null
@@ -65,29 +64,45 @@ The ModelRegistry loader SHALL accept `subprocess_cli` as a valid `kind` and SHA
       fallback: []
   ```
 - **WHEN** `ModelRegistry.from_yaml(path)` parses the file
-- **THEN** the registry exposes the `comfy_api` provider with the four declared fields, the `comfy/local` model with `provider="comfy_api"` / `kind="image"` / `pricing=None`, and the `image_local` alias resolves to `[ResolvedRoute(model="comfy/local", api_key_env=None, api_base=None, kind="image", pricing=None)]`; an unknown subfield in any of the three entries (e.g. `comfy_api.foo: bar`, `models["comfy/local"].bar: baz`, `aliases.image_local.zzz: 1`) raises `RegistryReferenceError` so typos do not silently degrade to defaults
+- **THEN** the registry exposes the `comfy_api` provider with `name="comfy_api"`, `api_key_env=None`, `api_base=None` (no extra fields expected); the `comfy/local` model with `id="comfy/local"` / `provider=ProviderDef(name="comfy_api", ...)` / `kind="image"` / `pricing=None`; the `image_local` alias resolves to `[ResolvedRoute(model="comfy/local", api_key_env=None, api_base=None, kind="image", pricing=None)]`; an unknown subfield in any of the three entries raises `RegistryReferenceError`; if the `models.comfy/local.id` field is missing, the loader raises `ValueError("model 'comfy/local' missing 'id'")` per `_parse_models` line 290-293
 
 #### Scenario: Bundle declaring models_ref image_local is expanded via ModelRegistry
 
 - **GIVEN** a bundle Step whose `provider_policy` declares `models_ref: "image_local"` (e.g. the rewritten `examples/comfy_local_smoke.json`)
 - **WHEN** `load_task_bundle` runs `expand_model_refs(raw, get_model_registry())` on the parsed dict before any `Step.model_validate` call
-- **THEN** the alias is replaced in-place by concrete `preferred_models: ["comfy/local"]` + `fallback_models: []`, the resulting Step passes Pydantic validation, and the bundle never reaches the runtime carrying a bare `models_ref: "image_local"` string; downstream `CapabilityRouter` matches `comfy/local` to the (yet-to-be-registered) `ComfyAgentWorker` adapter (registration order: `ComfyAgentWorker` BEFORE `LiteLLMAdapter` wildcard, per the Wildcard-last invariant)
+- **THEN** the alias is replaced in-place by concrete `preferred_models: ["comfy/local"]` + `fallback_models: []`, the resulting Step passes Pydantic validation, and the bundle never reaches the runtime carrying a bare `models_ref: "image_local"` string; downstream `GenerateImageExecutor._should_use_api_path` (worker-dispatch variant) detects the `comfy/local` model id and takes the worker dispatch branch instead of `_generate_via_router`
 
-### Requirement: Dry-run pass validates ComfyUI subprocess reachability when comfy_api is in prepared_routes
+### Requirement: GenerateImageExecutor dispatches comfy/local to ComfyAgentWorker without going through router
 
-The system SHALL extend the dry-run pass (FR-LC-002) to validate ComfyUI reachability ONLY when the resolved `prepared_routes` actually contain a route whose underlying provider is `comfy_api`. The validation SHALL check `Path(scripts_dir).exists()` AND `(Path(scripts_dir) / "comfyui_api").is_dir()` AND `python -m comfyui_api status` returns exit code 0 within a 30-second probe timeout. Any failure SHALL fail the Run before step execution begins, and the error message SHALL tell the user how to start ComfyUI (`python -m comfyui_api serve` then re-run). Bundles that do not resolve to `comfy_api` (e.g. those using `image_fast` / `image_strong` aliases routing to qwen / glm) SHALL NOT trigger the probe.
+The system SHALL extend `GenerateImageExecutor` to detect when any `prepared_route.model == "comfy/local"` is present and, in that case, take a dedicated **worker dispatch branch** that constructs `ComfyAgentWorker` from environment config + `StepContext` and invokes `worker.submit(spec, *, timeout_s)` directly, parallel to how `GenerateMeshExecutor` invokes `HunyuanTokenhubMeshWorker` without going through `CapabilityRouter.image_generation`. The router-dispatch branch (`_generate_via_router` calling `router.image_generation(prompt, n, size, extra)` from `spec.prompt_summary`) SHALL NOT be reached for `comfy/local`-bearing routes — that path expects `prompt_summary` which the new ComfyUI bundle spec does not provide, and `LiteLLMAdapter` wildcard would otherwise wrongly claim `model="comfy/local"`.
 
-#### Scenario: Dry-run pass surfaces missing scripts_dir when bundle uses comfy_api
+#### Scenario: Executor takes worker dispatch branch when prepared_routes contains comfy/local
 
-- **GIVEN** a bundle whose `step_image` resolves through `image_local` alias → `comfy/local` model → `comfy_api` provider, and `config/models.yaml` `providers.comfy_api.scripts_dir` points to a non-existent directory
+- **GIVEN** a step whose `provider_policy.prepared_routes` contains `ResolvedRoute(model="comfy/local", api_key_env=None, api_base=None, kind="image", pricing=None)` (resolved from `models_ref: "image_local"`)
+- **WHEN** `GenerateImageExecutor._should_use_api_path(ctx)` is called (the post-change variant that checks for `comfy/local` model id)
+- **THEN** the method returns False (or routes to a new `_should_use_worker_path` variant returning True for comfy/local); the executor calls `_generate_via_worker(ctx, spec)` (a new method) which constructs `ComfyAgentWorker` from env + ctx and calls `await worker.submit(spec, timeout_s=...)`; `_generate_via_router` is NOT called for this step; `router.image_generation(prompt, ...)` is NOT invoked
+
+#### Scenario: Executor still uses router dispatch for non-comfy/local image routes
+
+- **GIVEN** a step whose `provider_policy.prepared_routes` contains only routes with model ids like `qwen/qwen-image-2.0` or `glm-4.6v` (no `comfy/local`)
+- **WHEN** `GenerateImageExecutor._should_use_api_path(ctx)` is called
+- **THEN** the method returns True (existing behavior preserved); the executor calls `_generate_via_router` which invokes `router.image_generation(prompt, n, size, extra)`; the worker-dispatch branch is NOT taken; existing qwen / glm image paths are unaffected by this change
+
+### Requirement: Dry-run pass validates ComfyUI subprocess reachability when comfy/local is in prepared_routes
+
+The system SHALL extend the dry-run pass (FR-LC-002) to validate ComfyUI reachability ONLY when the resolved `prepared_routes` actually contain a route with `model == "comfy/local"` (this uses the model id as the dispatch key because `ResolvedRoute` does NOT carry `provider` info — see design.md D7 + Round 2 codex G1 finding for why provider.kind dispatch was rejected in this change scope). The validation SHALL check `Path(scripts_dir).exists()` AND `(Path(scripts_dir) / "comfyui_api").is_dir()` AND `python -m comfyui_api status` returns exit code 0 within a 30-second probe timeout. Any failure SHALL fail the Run before step execution begins, and the error message SHALL tell the user how to start ComfyUI (`python -m comfyui_api serve` then re-run) AND remind to set `FORGEUE_COMFY_SCRIPTS_DIR` env var if scripts_dir is unset. Bundles that do not resolve to `comfy/local` (e.g. those using `image_fast` / `image_strong` aliases routing to qwen / glm) SHALL NOT trigger the probe.
+
+#### Scenario: Dry-run pass surfaces missing scripts_dir when bundle uses comfy/local
+
+- **GIVEN** a bundle whose `step_image` resolves through `image_local` alias → `comfy/local` model, and either the env var `FORGEUE_COMFY_SCRIPTS_DIR` is unset OR points to a non-existent directory
 - **WHEN** `framework.run` invokes `DryRunPass.run(...)` before reaching the scheduler
-- **THEN** the Run transitions to `failed` immediately, the failure reason names the missing `scripts_dir` path AND tells the user to verify the path or start ComfyUI via `python -m comfyui_api serve`, and no `subprocess.run` of `python -m comfyui_api` is ever spawned for actual generation
+- **THEN** the Run transitions to `failed` immediately, the failure reason names the missing env var or scripts_dir path AND tells the user to either set `FORGEUE_COMFY_SCRIPTS_DIR` or start ComfyUI via `python -m comfyui_api serve`; no `subprocess.run` of `python -m comfyui_api` is ever spawned for actual generation
 
-#### Scenario: Dry-run pass skips ComfyUI probe when bundle does not use comfy_api
+#### Scenario: Dry-run pass skips ComfyUI probe when bundle does not use comfy/local
 
-- **GIVEN** a bundle whose all `image.generation` steps resolve through `image_fast` alias → qwen / glm models (no route in `prepared_routes` references the `comfy_api` provider)
+- **GIVEN** a bundle whose all `image.generation` steps resolve through `image_fast` alias → qwen / glm models (no route in `prepared_routes` has `model == "comfy/local"`)
 - **WHEN** `framework.run` invokes `DryRunPass.run(...)`
-- **THEN** the dry-run does NOT spawn `python -m comfyui_api status` or otherwise touch `D:/AI/ComfyUI/scripts/`; the Run proceeds to scheduling normally even on a host where ComfyUI is not installed
+- **THEN** the dry-run does NOT spawn `python -m comfyui_api status` or otherwise touch `D:/AI/ComfyUI/scripts/`; the Run proceeds to scheduling normally even on a host where ComfyUI is not installed and `FORGEUE_COMFY_SCRIPTS_DIR` is unset
 
 ### Requirement: ComfyUI subprocess failure modes map into the existing exception hierarchy
 
@@ -95,7 +110,9 @@ The system SHALL map subprocess failures into the existing three-tier worker exc
 
 | Subprocess condition | Mapped exception | FailureMode | Verdict |
 |---|---|---|---|
-| `scripts_dir` missing OR `python -m comfyui_api` module not found | `WorkerUnsupportedResponse` | `unsupported_response` | `abort_or_fallback` |
+| `FORGEUE_COMFY_SCRIPTS_DIR` env unset OR `scripts_dir` missing OR `python -m comfyui_api` module not found | `WorkerUnsupportedResponse` | `unsupported_response` | `abort_or_fallback` |
+| `project_id` is `None` or empty when constructing `ComfyAgentWorker` | `WorkerUnsupportedResponse` | `unsupported_response` | `abort_or_fallback` |
+| `artifacts_dir` is `None` when constructing `ComfyAgentWorker` (G3 fix — `ctx.run_dir` was not injected) | `WorkerUnsupportedResponse` | `unsupported_response` | `abort_or_fallback` |
 | Exit code 2 + stdout `error` matches `Missing required param` / `value out of range` / `value_not_in_list` | `WorkerUnsupportedResponse` | `unsupported_response` | `abort_or_fallback` |
 | Stdout is not valid JSON OR JSON missing `outputs` field | `WorkerUnsupportedResponse` | `unsupported_response` | `abort_or_fallback` |
 | Exit code 2 + stdout `error` matches `TimeoutError` | `WorkerTimeout` | `worker_timeout` | `retry_same_step` |
@@ -139,7 +156,7 @@ The system SHALL treat a non-empty `outputs.audio` or `outputs.glb` field in the
 
 ### Requirement: Non-OpenAI protocols ship dedicated adapters
 
-The system SHALL route non-OpenAI protocols via `model.startswith(...)` prefix matching inside dedicated adapters under `src/framework/providers/`, OR via `provider.kind`-based dispatch for non-HTTP protocols (currently `subprocess_cli` for ComfyUI agent CLI). Each non-OpenAI protocol family SHALL ship its own adapter / worker module: DashScope (`qwen_multimodal_adapter.py`), Hunyuan tokenhub (`hunyuan_tokenhub_adapter.py` for image, `providers/workers/mesh_worker.py` for 3D), and ComfyUI agent CLI (`providers/workers/comfy_worker.py::ComfyAgentWorker` invoking `python -m comfyui_api` as a subprocess; supersedes the previous ComfyUI HTTP adapter).
+The system SHALL route non-OpenAI protocols via either (a) `model.startswith(...)` prefix matching inside dedicated adapters under `src/framework/providers/` (used by qwen/, hunyuan/), OR (b) executor-side **model-id exact-match dispatch** to dedicated worker classes (used by `HunyuanTokenhubMeshWorker` for mesh and, after this change, `ComfyAgentWorker` for ComfyUI image generation). Each non-OpenAI protocol family SHALL ship its own adapter / worker module: DashScope (`qwen_multimodal_adapter.py`), Hunyuan tokenhub image (`hunyuan_tokenhub_adapter.py`), Hunyuan 3D mesh (`providers/workers/mesh_worker.py`), and ComfyUI agent CLI (`providers/workers/comfy_worker.py::ComfyAgentWorker` invoking `python -m comfyui_api` as a subprocess; supersedes the previous ComfyUI HTTP adapter). The executor for the relevant capability (e.g. `GenerateImageExecutor` for image, `GenerateMeshExecutor` for mesh) SHALL detect the dispatch model id and route to the dedicated worker without going through `CapabilityRouter.image_generation` / `mesh_generation` for those routes.
 
 #### Scenario: qwen/ and hunyuan/ prefixes route to their dedicated adapters via supports() prefix match
 
@@ -147,8 +164,8 @@ The system SHALL route non-OpenAI protocols via `model.startswith(...)` prefix m
 - WHEN a request targets a model whose id begins with `qwen/` or `hunyuan/`
 - THEN routing reaches the matching dedicated adapter first because `QwenMultimodalAdapter.supports(model)` returns `model.startswith("qwen/")` (`src/framework/providers/qwen_multimodal_adapter.py`) and `HunyuanImageAdapter.supports(model)` returns `model.startswith("hunyuan/")` (`src/framework/providers/hunyuan_tokenhub_adapter.py`); the call therefore bypasses LiteLLM's OpenAI-compatible chat path and uses the protocol-specific submit / poll / download flow built into the dedicated adapter
 
-#### Scenario: comfy/local routes to ComfyAgentWorker via provider.kind=subprocess_cli dispatch
+#### Scenario: comfy/local routes to ComfyAgentWorker via executor-side model-id exact match (NOT through router)
 
-- GIVEN `CapabilityRouter` with the ComfyUI dispatch path registered ahead of the wildcard `LiteLLMAdapter`, and `config/models.yaml` declaring `providers.comfy_api.kind: subprocess_cli` + `models.comfy/local.provider: comfy_api`
-- WHEN a request targets the `comfy/local` model id (resolved via `image_local` alias)
-- THEN routing dispatches to `ComfyAgentWorker` (matched on `prepared_route.kind == "image"` AND `provider_kind == "subprocess_cli"`) which spawns `python -m comfyui_api run` as a subprocess; the call therefore bypasses the HTTP adapter chain and uses the subprocess JSON envelope flow built into `ComfyAgentWorker`; LiteLLM's wildcard never sees `comfy/local` because the dispatch happens before the adapter chain is walked
+- GIVEN a step whose `provider_policy.prepared_routes` contains `ResolvedRoute(model="comfy/local", ...)` and `GenerateImageExecutor` extended (per the new `GenerateImageExecutor dispatches comfy/local to ComfyAgentWorker without going through router` Requirement) with a worker-dispatch branch
+- WHEN the executor's `execute(ctx)` runs and `_should_use_api_path` (post-change variant) detects the `comfy/local` model id
+- THEN the executor takes the worker dispatch branch and constructs `ComfyAgentWorker` from environment config (`FORGEUE_COMFY_*`) + `ctx.run_dir` + `ctx.task.project_id` + `ctx.run.run_id`; it calls `await worker.submit(spec, timeout_s)`; `CapabilityRouter.image_generation` is NOT called for this step because the dispatch happens upstream of the adapter chain; LiteLLM's wildcard never sees `comfy/local`. This dispatch shape is parallel to how `GenerateMeshExecutor` invokes `HunyuanTokenhubMeshWorker` for mesh routes

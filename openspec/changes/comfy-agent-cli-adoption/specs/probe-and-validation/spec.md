@@ -21,8 +21,13 @@ The system SHALL maintain a dedicated unit-test module `tests/unit/test_comfy_su
 - `test_outputs_audio_non_empty_raises_unsupported_response`
 - `test_lifecycle_other_than_none_raises_unsupported_response`
 - `test_cancel_under_to_thread_does_not_orphan_processes`
-- `test_dry_run_skips_probe_when_no_comfy_api_in_routes`
+- `test_dry_run_skips_probe_when_no_comfy_local_in_routes` (round 2 G1 limitation: gate by model id, not provider info — ResolvedRoute lacks provider field)
 - `test_dry_run_30s_timeout`
+- `test_env_unset_raises_unsupported_response` (round 2 F-B fix: scripts_dir / python_exe / lifecycle from `FORGEUE_COMFY_*` env vars)
+- `test_project_id_none_raises_unsupported_response_at_init` (round 2 F4 fix: ComfyAgentWorker.__init__ rejects project_id=None)
+- `test_artifacts_dir_none_raises_unsupported_response_at_init` (round 2 G3 fix: ComfyAgentWorker.__init__ rejects artifacts_dir=None)
+- `test_executor_dispatches_comfy_local_to_worker_not_router` (round 2 G2 fix: GenerateImageExecutor `_should_use_worker_path` returns True for `comfy/local`, takes `_generate_via_worker` branch instead of `_generate_via_router`)
+- `test_comfy_agent_worker_reads_env_config` (round 2 F-B fix: env vars resolved at executor construction time, passed into ComfyAgentWorker constructor)
 
 The pre-existing `tests/unit/test_comfy_http_unsupported.py` fence file SHALL be removed in the same change because the HTTP protocol it guarded no longer exists in the worker. The `test_cancel_terminates_subprocess` fence (originally listed during the cross-check process before user-decided lifecycle scope = `none` only) SHALL be replaced by `test_cancel_under_to_thread_does_not_orphan_processes` because the orchestrator's `asyncio.to_thread` wrapping prevents `CancelledError` from reaching `worker.submit` (see `provider-routing/spec.md` Requirement "ComfyAgentWorker cancel is best-effort under orchestrator to_thread wrapping" + design.md D6).
 

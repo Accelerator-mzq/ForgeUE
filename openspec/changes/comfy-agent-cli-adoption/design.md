@@ -168,45 +168,80 @@ class FakeComfyWorker(ComfyWorker):
 
 **A 的代价坦白说:**用户接 ComfyUI 第一次会踩坑,要在 CLAUDE.md / README 写明"跑前先 `python -m comfyui_api status` 确认在线,offline 用 `python -m comfyui_api serve` 启"。dry-run 探活 fail 时 error message 直接告诉用户怎么启。
 
-### D7 — ModelRegistry 接入用虚拟 model id `comfy/local`
+### D7 — ModelRegistry 接入用虚拟 model id `comfy/local` + worker 配置走 env(round 2 修订)
 
-**问题来源:**codex F2 high 发现 `model_registry.py:438-442` 强制 alias 引用的 model name 必须 `in models`,我之前只在 `providers:` 段加 `comfy_api` entry 但没加 `models:` entry,任何引用 ComfyUI 的 alias 都会 raise `RegistryReferenceError`。
+**问题来源(round 1):** codex F2 high 发现 `model_registry.py:438-442` 强制 alias 引用的 model name 必须 `in models`。
 
-**2 个选项 trade-off**(详见 cross-check Decision Block B):
+**round 2 codex 揭出更深问题(F2 not-actually-fixed + G1 critical):**
+- `ProviderDef` (line 117-122) 只有 `name / api_key_env / api_base` 三字段,我 round 1 在 yaml 加的 `kind: subprocess_cli` / `scripts_dir` / `python_exe` / `default_lifecycle` 全部被 `_parse_providers` (line 262-278) **silent ignore**(不报错也不存储)
+- `ResolvedRoute` (line 134-142) 字段 `model / api_key_env / api_base / kind / pricing` —— **无 `provider` 字段**,我 spec 写的"用 provider.kind 给 ComfyUI 分派"和"dry-run 在 prepared_routes 找 provider=comfy_api"在现有 schema 不可实现
+- `models.comfy/local` 缺 `id` 字段(line 290-293 强校验)→ load 直接 raise
 
-- A:`models:` 段加虚拟 model id `comfy/local` + 新 alias `image_local`
-- B:bundle 加新字段 `provider_policy.provider: "comfy_api"` bypass ModelRegistry
+**3 个选项(round 2 Decision Block F):**
 
-**选 A**(2026-05-02,user 拍板)。具体落地:
+- F-A:扩 `ProviderDef` 加 `kind` + extra fields;扩 `ResolvedRoute` 加 `provider_name / provider_kind` —— 范围远超本 change scope,是 framework data model refactor
+- F-B:不动 schema,worker 配置走 env,executor 走 model-id-based dispatch(类比 mesh worker)
+- F-C:切两个 change 串行 —— 阻塞 ≥ 1 周
+
+**选 F-B**(2026-05-02 user 拍板,F-A 登记 TBD-011 后续 change)。具体落地:
 
 ```yaml
-# config/models.yaml
+# config/models.yaml — 不扩 ProviderDef schema,只用占位
 providers:
   comfy_api:
-    kind: subprocess_cli
-    scripts_dir: "D:/AI/ComfyUI/scripts"
-    python_exe: null              # = sys.executable (OQ-1)
-    default_lifecycle: "none"     # 写死,本 change 唯一支持(D6)
+    api_key_env: null    # 占位:让 model 引用合法
+    api_base: null       # 占位
 
 models:
-  comfy/local:                    # 虚拟 model id;ComfyUI 真没 model 概念,这是路由占位
+  comfy/local:
+    id: "comfy/local"    # ★ REQUIRED — round 1 漏写,加上;loader 强校验
     provider: comfy_api
     kind: image
-    pricing: null                 # 本地 GPU,无 per-call cost(FR-COST-008/009 接口仍在,值 0)
+    pricing: null        # 本地 GPU 无 per-call cost,FR-COST-008/009 接口仍在值 0.0
 
 aliases:
-  image_local:                    # 新 alias 专给本地 ComfyUI
+  image_local:
     preferred: ["comfy/local"]
-    fallback: []                  # 不 fallback 到云端(策略上把本地 ComfyUI 当独立 capability)
+    fallback: []
+```
+
+```bash
+# 环境变量 — worker 配置真源(类比 API key 走 .env)
+FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts   # REQUIRED;dry-run 校验
+FORGEUE_COMFY_PYTHON_EXE=                         # OPTIONAL;空 → sys.executable (OQ-1)
+FORGEUE_COMFY_LIFECYCLE=none                      # OPTIONAL;空 → "none";本 change 仅接受 "none" (D6)
+```
+
+```python
+# GenerateImageExecutor — 加 worker dispatch 分支(类比 GenerateMeshExecutor)
+def _resolve_spec(spec):
+    # ... 已有逻辑 ...
+    pass
+
+def execute(ctx):
+    # 检测 prepared_routes 含 model == "comfy/local" → 走 worker 路径,不走 router
+    if any(r.model == "comfy/local" for r in ctx.step.provider_policy.prepared_routes):
+        return self._generate_via_worker(ctx)  # 新分支
+    if self._should_use_api_path(ctx):
+        return self._generate_via_router(ctx)  # 现有 qwen/glm 路径
+    # ... fake / fallback ...
+
+def _generate_via_worker(self, ctx):
+    worker = ComfyAgentWorker(
+        scripts_dir=Path(os.environ["FORGEUE_COMFY_SCRIPTS_DIR"]),
+        python_exe=os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None,
+        default_lifecycle=os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none"),
+        run_id=ctx.run.run_id,
+        project_id=ctx.task.project_id,    # F4 fix:必传
+        artifacts_dir=ctx.run_dir,         # G3 fix:用 ctx.run_dir(D8 加),不是 ctx.run.artifact_dir
+    )
+    return self._wrap_async(worker.submit(spec, timeout_s=...))
 ```
 
 ```json
-// examples/comfy_local_smoke.json (重写后)
+// examples/comfy_local_smoke.json
 {
   "steps": [{
-    "step_id": "step_image",
-    "type": "generate",
-    "capability_ref": "image.generation",
     "provider_policy": {"models_ref": "image_local"},
     "config": {
       "spec": {
@@ -219,7 +254,77 @@ aliases:
 }
 ```
 
-理由:符合 ADR-002 (ModelRegistry single source of truth) + FR-MODEL-001;路由统一走 capability_router,新 ComfyUI 跟现有 qwen/hunyuan 一样接入;后续接 ComfyUI 视频/音频/3D workflow 只要在 `models:` 段加新 virtual id。fiction(`comfy/local` 不真是 model)代价小,换"统一路由 + 不破坏现有 schema"值得。
+**理由(F-B):**
+
+- 与 ForgeUE 现有 mesh worker 接入模式一致(`GenerateMeshExecutor` 也是直接 invoke `HunyuanTokenhubMeshWorker` 不走 adapter 链,model id prefix-based dispatch)
+- 不破坏 ModelRegistry schema(零 fanout 改 callsite)
+- ComfyUI 配置走 env 是 ForgeUE 现有惯例(API key 都走 env;`config/models.yaml` 只配 `api_key_env` 引用具体 key 在 .env)—— scripts_dir 类比 API key 走 env 没破坏 ADR-002 精神,只是配置载体 split (key 类型 + reference 类型)
+- 后续接 ComfyUI 视频/音频走"加新 model id"模式,executor 加新分支
+- F-A schema 扩展是 framework data model 改造,如果哪天没有第二个 subprocess provider 就成死投资 → 登记 TBD-011 等需求驱动
+
+**round 1 → round 2 关键 diff:**
+
+| 维度 | round 1(失败) | round 2(F-B 修复) |
+|---|---|---|
+| ProviderDef 字段 | 加 `kind / scripts_dir / python_exe / default_lifecycle`(silent ignored) | 不动,只用 `api_key_env / api_base` 占位 |
+| `models.comfy/local` | 缺 `id` → load fail | `id: "comfy/local"` 必填 |
+| ComfyUI worker 配置 | 从 `ProviderDef` 字段读(读不到) | 从 env vars `FORGEUE_COMFY_*` 读 |
+| Router dispatch | `provider.kind == "subprocess_cli"`(prepared_routes 无 provider 字段,不可达) | executor 检测 `model == "comfy/local"`(model id-based) |
+| dry-run gate | `prepared_routes 含 provider=comfy_api`(同上不可达) | `prepared_routes 含 model="comfy/local"` |
+
+### D8 — `StepContext` 加 `run_dir: Path` 字段(G3 fix)
+
+**问题来源:** codex round 2 G3 high 发现 `Run` 模型(`task.py:83-95`)字段 `run_id / task_id / project_id / status / started_at / ended_at / workflow_id / current_step_id / artifact_ids / checkpoint_ids / trace_id / metrics` —— **真无 `artifact_dir`**;`StepContext`(`base.py:16-24`)字段 `run / task / step / repository / inputs / upstream_artifact_ids` —— **真无 `run_dir`**。round 1 我引用的 `ctx.run.artifact_dir` 是空属性,worker 构造 AttributeError。
+
+**3 个选项(round 2 Decision Block G):**
+
+- G-A:`StepContext` 加 `run_dir: Path` 字段,Orchestrator 注入
+- G-B:`ArtifactRepository` 暴露 `get_run_payload_dir()` 受控接口
+- G-C:ComfyAgentWorker 自拼路径,`artifact_root` 走 env
+
+**选 G-A**(2026-05-02 user 拍板)。具体落地:
+
+```python
+# src/framework/runtime/executors/base.py
+@dataclass
+class StepContext:
+    run: Run
+    task: Task
+    step: Step
+    repository: ArtifactRepository
+    run_dir: Path                  # ★ NEW(G-A)— 由 Orchestrator 注入
+    inputs: dict[str, Any] = field(default_factory=dict)
+    upstream_artifact_ids: list[str] = field(default_factory=list)
+
+# src/framework/runtime/orchestrator.py
+def _build_step_context(self, step, run, task):
+    return StepContext(
+        run=run, task=task, step=step,
+        repository=self.repository,
+        run_dir=self.artifact_root / run.started_at.strftime("%Y-%m-%d") / run.run_id,
+        # ... existing fields ...
+    )
+```
+
+理由:
+- StepContext 是 framework 级清晰边界,所有 worker 复用(mesh / future workers 也需要 in-tree copy)
+- 范围适中:改 StepContext + Orchestrator 几行 + 1-2 fence(在 `runtime-core/spec.md` 新增 ADDED Requirement"StepContext exposes run_dir for in-tree artifact placement")
+- G-B 增加 worker-repository 耦合(worker 现在不依赖 repository 只产 ImageCandidate)
+- G-C 路径拼接散在 worker 内,framework 改 artifact 路径约定时所有 worker 跟着改
+
+### D9 — image_local alias 加进 SRS FR-MODEL-007(H-A fix)
+
+**问题来源:** codex round 2 G4 medium 发现 `SRS:188 FR-MODEL-007` 是固定 alias 9 项枚举(`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image`)—— **无 `image_local`**。`tasks.md §9.2` 写更新 SRS §5.3 + FR-WORKER-001 但**漏说更新 FR-MODEL-007 alias 列表**。
+
+**2 个选项(round 2 Decision Block H):**
+
+- H-A:tasks §9.2 加"更新 SRS FR-MODEL-007 alias 列表加 image_local"
+- H-B:不加 image_local alias,把 `comfy/local` 加进 `image_fast` fallback list
+
+**选 H-A**(2026-05-02 user 拍板)。理由:
+- image_local 是真正的新独立 capability(本地 GPU image generation),应该有自己的 alias
+- SRS alias 面 9 → 10 不算大事(SRS 本来就是会随 capability 增长 grow)
+- H-B 把"本地 ComfyUI 当 cloud preferred 的 fallback"语义反了 —— 本地 ComfyUI 实际比云端慢(30-180s vs 几秒)+ GPU 资源更受限;用户想用本地 ComfyUI 时他们想**显式选**,不想走 cloud fallback
 
 ## Risks / Trade-offs
 
@@ -272,12 +377,39 @@ aliases:
 - **OQ-3 → 传 `task.project_id`**(2026-05-02)。理由:语义对齐 —— ComfyUI agent CLI 的 `--project` 字段本意是"业务项目分组",ForgeUE 的 `task.project_id` 同义;`<run_id>` 是技术 ID 不是项目分组。事后对照 ComfyUI outputs 看 `D:/AI/ComfyUI/outputs/main/<date>/<task.project_id>/...` 一目了然。worker 已 copy 到 `artifacts/<run_id>/comfy/`,ForgeUE 侧 self-contained 不依赖 ComfyUI outputs 子目录命名
 - **OQ-4 → A(lifecycle 只支持 `none`)**(2026-05-02 user 拍板,详细论证见 D6)。代价:用户必须自启 ComfyUI(双终端工作流);收益:F1 critical / F3 high / F5 high 三连消除,主 spec invariant 完全保留。C 方案(executor async 重写)登记 TBD-010 后续 change(见 D-FutureScope)
 - **OQ-5 → A(虚拟 model id `comfy/local`)**(2026-05-02 user 拍板,详细论证见 D7)。具体 yaml shape 与 bundle JSON 见 D7;符合 ADR-002 + FR-MODEL-001 单一真源
+- **OQ-6 → F-B(env-based config + executor model-id dispatch)**(2026-05-02 round 2 user 拍板,详细论证见 D7 round 2 修订段)。round 1 D7 设计("provider.kind dispatch + ProviderDef 加 4 字段")在现有 schema 不可实现(codex round 2 F2 not-actually-fixed + G1 critical);F-A schema 扩展登记 TBD-011 后续 change
+- **OQ-7 → G-A(StepContext.run_dir Orchestrator 注入)**(2026-05-02 round 2 user 拍板,详细论证见 D8)。round 1 引用的 `ctx.run.artifact_dir` 是空属性(codex round 2 G3 high);加 StepContext.run_dir 是 framework 级清晰边界,mesh / future workers 都能复用
+- **OQ-8 → H-A(image_local alias 加进 SRS FR-MODEL-007)**(2026-05-02 round 2 user 拍板,详细论证见 D9)。round 1 漏写 SRS FR-MODEL-007 update task(codex round 2 G4 medium);承认 SRS alias 面 9 → 10
 
 ## D-FutureScope — 登记到 SRS §7.3 的后续 change
 
 本 change `tasks.md §9.10` 已登记 **TBD-009: ComfyUI agent CLI mesh / audio / video workflow 接入**(对应 OQ-2 划线,见 design.md `## Resolved` 段)。
 
-D6 决策(选 A)同时产生第二条 follow-up,本 change `tasks.md §9.11` 登记:
+D6 决策(选 A)产生第二条 follow-up,本 change `tasks.md §9.11` 登记 **TBD-010: GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径**(executor-async-rewrite,见下方 TBD-010 段)。
+
+OQ-6 决策(选 F-B)产生第三条 follow-up,本 change `tasks.md §9.12` 登记:
+
+> **TBD-011: ModelRegistry schema 扩 `ProviderDef.kind` + `extra fields` + `ResolvedRoute.provider_name / provider_kind`(model-registry-provider-kind-schema 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env**
+
+TBD-011 触发条件:第二个 subprocess provider 出现(比如本地 SDXL / 本地 mesh worker / 第三方 CLI 工具),需要框架统一接入路径。届时新 change(`model-registry-provider-kind-schema`)需要:
+
+1. `ProviderDef` 加 `kind: str = "openai_compatible"` + `extra: dict[str, Any] = field(default_factory=dict)`(或具体字段如 `scripts_dir`)
+2. `ResolvedRoute` 加 `provider_name: str` + `provider_kind: str`
+3. `_parse_providers` 接受 extra fields(strict typo 守门保留)
+4. `expand_model_refs` 透传 provider info 到 ResolvedRoute
+5. 改所有 callsite(30+ 处使用 ResolvedRoute / ProviderDef)
+6. 改 `comfy-agent-cli-adoption` 已落地代码:`comfy_api` provider entry 从占位升级到含 `kind: subprocess_cli` + `scripts_dir`等;ComfyAgentWorker 从 env 读改成从 ProviderDef 读;dry-run + executor dispatch 从 model id-based 改回 provider.kind-based
+7. CHANGELOG 记 BREAKING(env vars `FORGEUE_COMFY_*` 弃用)
+
+**本 change 作了什么准备**(让 TBD-011 后续易做):
+
+- ComfyUI 配置走 env(`FORGEUE_COMFY_*`)是 reversible —— TBD-011 后切回 yaml 时改 env 读取为 ProviderDef 读取即可,worker 内部接口不动
+- `models.comfy/local` virtual id + `image_local` alias 不变(TBD-011 不涉及 model id 命名)
+- D-FutureScope 段明确登记 TBD-009 + TBD-010 + TBD-011 三条 follow-on,后续 change 起 propose 时用此段作 input
+
+---
+
+### TBD-010(原 D-FutureScope 内容):
 
 > **TBD-010: GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径(orchestrator 直接 await worker.submit 不经 to_thread),取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 `ensure_running` + 主 spec `provider-routing/spec.md:211` Invariant + `:229` Non-Goal 一并 MODIFIED**
 
