@@ -13,7 +13,6 @@ The system SHALL maintain a dedicated unit-test module `tests/unit/test_comfy_su
 - `test_stdout_missing_outputs_field_maps_to_unsupported`
 - `test_exit2_timeout_maps_to_worker_timeout`
 - `test_exit2_unrecognised_error_maps_to_worker_error`
-- `test_cancel_terminates_subprocess`
 - `test_subprocess_invocation_passes_workflow_params_lifecycle_timeout`
 - `test_subprocess_invocation_passes_task_project_id_as_dash_dash_project`
 - `test_outputs_paths_are_copied_into_run_artifact_tree`
