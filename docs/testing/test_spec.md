@@ -138,8 +138,12 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_providers_async.py` | async 四方法 | FR-MODEL-001 | L1 | acompletion / astructured / aimage / aimage_edit 契约 |
 | `test_cn_image_adapters.py` | Qwen / Hunyuan Image | FR-MODEL-003, FR-WORKER-005 | L1,L2,L3 | 国内 image adapter 全路径、Range 续传、n>1 真并发 |
 | `test_download_async.py` | `_download_async.py` | FR-WORKER-005, NFR-REL-* | L2,L3 | Range 强校验、200 fallback、Content-Range offset 不对齐清空重下 |
-| `test_adapter_budget_clamp.py` | HTTP 下载 budget clamp | FR-WORKER-004, NFR-REL-* | L3 | per-image 30s clamp / mesh 90s clamp / LiteLLM 60s clamp |
-| `test_comfy_http_unsupported.py` | ComfyWorker 三处 unsupported | FR-WORKER-*, NFR-REL-005 | L3 | spec 缺 workflow_graph / /prompt 无 id / outputs 无图 |
+| `test_adapter_budget_clamp.py` | mesh / LiteLLM HTTP 下载 budget clamp(自 v1.6 删 ComfyUI HTTP 部分;ComfyAgentWorker subprocess.run timeout 守等价 invariant)| FR-WORKER-004, NFR-REL-* | L3 | mesh 90s clamp / LiteLLM 60s clamp |
+| `test_comfy_subprocess.py` (自 v1.6) | ComfyAgentWorker 全 subprocess CLI contract(26 fence)| FR-WORKER-001(v1.6 修订), NFR-REL-005 | L1 | REQUIRED-args(project_id/artifacts_dir/lifecycle 3) + probe_sync(missing scripts_dir / module / 30s timeout / 非零 exit 4) + 7-class failure mapping(Missing param / out of range / not_in_list / non-JSON / missing outputs / TimeoutError / unrecognised 7) + argv shape(workflow+params+lifecycle+timeout / task.project_id 2)+ outputs handling(copy-to-tree / glb raise / audio raise / legacy workflow_graph rejected 4)+ cancel under to_thread(narrative 1)+ executor/dryrun integration(_should_use_worker_path / env config read / env unset raise / dry-run skip / dry-run probe runs 5) |
+| `test_step_context.py` (自 v1.6) | StepContext.run_dir 字段 | FR-RUNTIME-* | L1 | default factory Path('.') / explicit value preserved 2 fence |
+| `test_orchestrator.py` (自 v1.6) | Orchestrator._compute_run_dir helper | FR-RUNTIME-* | L1 | uses checkpoints._root NO extra date(round 3 H1 fix)/ falls back to Path('.') 2 fence |
+| `test_fake_comfy_worker_schema.py` (自 v1.6) | FakeComfyWorker conditional v2 schema gate | FR-WORKER-001 | L1 | legacy passes / v2 missing comfy_params optional / non-string comfy_workflow / non-dict comfy_params / non-none lifecycle 5 fence |
+| `test_model_registry.py` (delta 自 v1.6) | comfy_api placeholder + comfy_local virtual id + image_local alias | FR-MODEL-001/007 | L1 | comfy_api placeholder parses / comfy_local id missing raises / image_local alias resolves 3 fence |
 | `test_tripo3d_unsupported.py` | Tripo3D 两处 unsupported | 同上 | L3 | /task 无 task_id / success 无 URL |
 | `test_multi_candidate_parallel.py` | `parallel_candidates=True` | NFR-PERF-003 | L2 | asyncio.gather 真并发,墙钟验证 |
 | `test_router_pricing_stash.py` | route_pricing 透传 | FR-COST-004 | L1 | `_route_pricing` 塞进 raw / usage |
@@ -272,7 +276,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | unsupported → abort_or_fallback | 第二轮 | `test_transition_engine::test_abort_or_fallback_honours_on_fallback` |
 | Probe runtime 格式检测一致 | 第二轮 | `test_probe_framework` |
 | GLM probe import 副作用 | 第二轮 | `test_probe_framework::test_glm_probes_lazy_init` |
-| Comfy 三处 unsupported | 第三轮 PR-1 | `test_comfy_http_unsupported` |
+| Comfy v1.6 agent CLI subprocess(26 fence)| OpenSpec change `comfy-agent-cli-adoption`(2026-05-02)| `test_comfy_subprocess.py` |
 | Tripo3D 两处 unsupported | 第三轮 PR-1 | `test_tripo3d_unsupported` |
 | Hunyuan image submit 无 id | 第三轮 PR-1 | `test_cn_image_adapters` |
 | DashScope 空 choices | 第三轮 PR-1 | `test_cn_image_adapters` |
@@ -382,7 +386,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | FR-REVIEW(评审) | integration/test_p2, test_chief_judge_parallel, test_review_budget | ✅ |
 | FR-STORE(Artifact) | test_core_schemas, test_artifact_repository, test_payload_backends | ✅ |
 | FR-UE(UE Bridge) | test_ue_bridge, integration/test_p4 | ✅(stub) |
-| FR-WORKER(多模态) | test_cn_image_adapters, test_comfy_http_unsupported, test_tripo3d_unsupported, integration/test_l4 | ✅ |
+| FR-WORKER(多模态) | test_cn_image_adapters, **test_comfy_subprocess(自 v1.6 替代 test_comfy_http_unsupported)**, test_tripo3d_unsupported, integration/test_l4 | ✅ |
 | FR-RUNTIME(工程化) | test_failure_mode_map, test_transition_engine, test_budget_tracker, test_cancellation, test_transient_retry, test_retry_async, test_cascade_cancel | ✅ |
 | FR-COST(定价) | test_registry_pricing, test_budget_tracker_pricing, test_router_pricing_stash, test_generate_mesh_cost, test_pricing_* | ✅ |
 | FR-OBS(观测) | test_event_bus, test_progress_passthrough, test_compactor, test_secrets, integration/test_ws_progress | ✅ |

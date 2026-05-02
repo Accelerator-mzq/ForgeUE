@@ -69,7 +69,7 @@
 │      ├── HunyuanTokenhubAdapter    (Image + 3D 基类)                │
 │      └── FakeAdapter               (测试)                           │
 │  └── workers/                                                       │
-│      ├── ComfyWorker  (HTTP)                                        │
+│      ├── ComfyAgentWorker  (subprocess CLI 自 v1.6;v1.5 及之前 HTTP)│
 │      └── MeshWorker   (Hunyuan 3D / Tripo3D)                        │
 ├────────────────────────────────────────────────────────────────────┤
 │  评审引擎 (src/framework/review_engine/)                                 │
