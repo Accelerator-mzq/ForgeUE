@@ -18,32 +18,36 @@
 ## 3. ComfyAgentWorker 实装 — 配置走 env(**commit 3** — round 2 plan codex Q2 fix:execution_plan Task Group Map 重排后 ComfyAgentWorker 是 commit 3,先于 G3 StepContext.run_dir commit 2。strict 顺序:commit 1 (G2 §2) → commit 2 (G3 §5 StepContext) → **commit 3 (G4 本节 §3)** → commit 4 (G5 §4 Executor) → commit 5 (G6 §6 FakeComfy) → commit 6 (G7 §7 Test) → commit 7 (G8 §8 examples) → commit 8 (G10 §10 docs))
 
 - [ ] 3.1 在 `src/framework/providers/workers/comfy_worker.py` 重命名 `HTTPComfyWorker` → `ComfyAgentWorker`,删除全部 HTTP 相关代码(requests / `/prompt` / `/history` / `/view`),保留 `WorkerError` / `WorkerTimeout` / `WorkerUnsupportedResponse` / `ImageCandidate` / `FakeComfyWorker`
-- [ ] 3.2 实装 `ComfyAgentWorker.__init__(*, scripts_dir: Path, run_id: str, project_id: str, artifacts_dir: Path, python_exe: Path | None = None, default_lifecycle: str = "none")`(**keyword-only 签名;required 在 default 之前以满足 Python 语法** — round 3 codex H3 fix:round 2 把 required 放在 default 之后是 SyntaxError at import time);`run_id` / `project_id` / `artifacts_dir` 全部 REQUIRED 不可 None(round 2 codex F4 / G3 fix);`__init__` 内 `if project_id is None or not project_id: raise WorkerUnsupportedResponse(...)` + 同样校验 `artifacts_dir is not None and Path(artifacts_dir).is_dir()`;`assert default_lifecycle == "none"`(D6 守门);构造 cmd `[python_exe or sys.executable, "-m", "comfyui_api", "run", ...]`;subprocess 用 `asyncio.create_subprocess_exec(..., cwd=scripts_dir, stdout=PIPE, stderr=PIPE)` + `await proc.communicate()`
-- [ ] 3.3 `submit(spec, *, timeout_s)` 解析 stdout JSON,按 spec D5 表格 + round 2 修正映射 7 类失败:env unset / scripts_dir 缺失 / module not found / project_id None / artifacts_dir None / 4 类 exit 2 stdout error / stdout 非 JSON / 缺 `outputs` / TimeoutError / 未识别 → 对应异常类型;**`comfy_lifecycle` 非 `"none"` → raise `WorkerUnsupportedResponse`**;成功路径产出 `list[ImageCandidate]`(从 `outputs.images` 读 PNG bytes);**`outputs.glb` / `outputs.audio` non-empty → raise `WorkerUnsupportedResponse`**
+- [ ] 3.2 实装 `ComfyAgentWorker.__init__(*, scripts_dir: Path, run_id: str, project_id: str, artifacts_dir: Path, python_exe: Path | None = None, default_lifecycle: str = "none")`(**keyword-only 签名;required 在 default 之前以满足 Python 语法** — round 3 codex H3 fix:round 2 把 required 放在 default 之后是 SyntaxError at import time);`run_id` / `project_id` / `artifacts_dir` 全部 REQUIRED 不可 None(round 2 codex F4 / G3 fix);`__init__` 内 `if project_id is None or not project_id: raise WorkerUnsupportedResponse(...)` + 同样校验 `artifacts_dir is not None and Path(artifacts_dir).is_dir()`;`assert default_lifecycle == "none"`(D6 守门);构造 cmd `[python_exe or sys.executable, "-m", "comfyui_api", "run", ...]`;subprocess 用 **sync** `subprocess.run(cmd, cwd=scripts_dir, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout_s+30)` (G11 R1 writeback:UTF-8 显式 encoding 防 Windows GBK locale 解码崩;G4 R-writeback:sync subprocess.run 而非 async create_subprocess_exec,匹配 ABC sync `generate`)
+- [ ] 3.3 `generate(spec, num_candidates, seed, timeout_s)`(SYNC ABC 方法 — G11 R4 writeback:实装与 `ComfyWorker` ABC 一致,非 async `submit`)解析 stdout JSON,按 spec D5 表格 + round 2 修正映射 7 类失败:env unset / scripts_dir 缺失 / module not found / project_id None / artifacts_dir None / 4 类 exit 2 stdout error / stdout 非 JSON / 缺 `outputs` / TimeoutError / 未识别 → 对应异常类型;**`comfy_lifecycle` 非 `"none"` → raise `WorkerUnsupportedResponse`**;成功路径产出 `list[ImageCandidate]`(从 `outputs.images` 读 PNG bytes);**`outputs.glb` / `outputs.audio` non-empty → raise `WorkerUnsupportedResponse`**
 - [ ] 3.4 实装"copy 到项目树"逻辑:`outputs.images` 每条路径 `shutil.copy2` 到 `artifacts_dir / "comfy" / src.name`,`ImageCandidate` 的字节读自 copy 后路径(NFR-PORT-004 + A4)
-- [ ] 3.5 实装 dry-run 探活 helper **`ComfyAgentWorker.probe_sync(scripts_dir: Path, python_exe: Path | None, timeout_s: float = 30.0) -> None`** classmethod,**用 `subprocess.run([py, "-m", "comfyui_api", "status"], cwd=scripts_dir, timeout=timeout_s, capture_output=True, text=True)` (NOT `asyncio.create_subprocess_exec` + `asyncio.run`)** — round 3 plan codex P2 fix:`DryRunPass.run` (`src/framework/runtime/dry_run_pass.py:49`) 是 sync method,在 `orchestrator.py:124` 被 sync 调用但 orchestrator.arun 已在 event loop 内 — 嵌套 `asyncio.run` 必崩 `RuntimeError("cannot be called from a running event loop")`;exit 0 = OK;其它 / timeout → raise `WorkerUnsupportedResponse(... "请先 'python -m comfyui_api serve' 启动 ComfyUI 或确认 FORGEUE_COMFY_SCRIPTS_DIR 设置正确")`。**注:async `ComfyAgentWorker.submit` 不变(step 阶段调,经 `_generate_via_worker` 内 `asyncio.run(...)` bridge 调用);只 dry-run preflight 用 sync `probe_sync` 变体。**
+- [ ] 3.5 实装 dry-run 探活 helper **`ComfyAgentWorker.probe_sync(scripts_dir: Path, python_exe: Path | None, timeout_s: float = 30.0) -> None`** classmethod,**用 `subprocess.run([py, "-m", "comfyui_api", "status"], cwd=scripts_dir, timeout=timeout_s, capture_output=True, text=True, encoding="utf-8", errors="replace")` (NOT `asyncio.create_subprocess_exec` + `asyncio.run`)** — round 3 plan codex P2 fix:`DryRunPass.run` (`src/framework/runtime/dry_run_pass.py:49`) 是 sync method,在 `orchestrator.py:124` 被 sync 调用但 orchestrator.arun 已在 event loop 内 — 嵌套 `asyncio.run` 必崩 `RuntimeError("cannot be called from a running event loop")`;G11 R1 writeback:加 `encoding="utf-8", errors="replace"` 防 Windows GBK locale 解码崩;exit 0 = OK;其它 / timeout → raise `WorkerUnsupportedResponse(... "请先 'python -m comfyui_api serve' 启动 ComfyUI 或确认 FORGEUE_COMFY_SCRIPTS_DIR 设置正确")`。**注:`ComfyAgentWorker.generate` 也是 sync(G4 R-writeback:与 `ComfyWorker` ABC 一致),整个 worker 接口都是 sync,无 asyncio bridge。**
 - [ ] 3.6 **commit 3**:`feat(comfy): replace HTTPComfyWorker with ComfyAgentWorker (subprocess CLI, env-based config, REQUIRED project_id+artifacts_dir, lifecycle=none only)`(round 2 plan codex Q2 fix:实际 commit 编号 3,不是 2;commit 2 是 §5 StepContext)
 
 ## 4. Executor + DryRunPass + worker dispatch(**commit 4** — round 2 plan codex Q2 fix:在 §3 ComfyAgentWorker commit 3 之后)
 
 - [ ] 4.1 在 `src/framework/runtime/executors/generate_image.py` 的 `_resolve_spec` 读取 `comfy_workflow` / `comfy_params` / `comfy_lifecycle` 三字段;旧字段 `workflow_graph` 命中时 raise `WorkerUnsupportedResponse`;`comfy_lifecycle` 非 `"none"` 也 raise
 - [ ] 4.2 在 `GenerateImageExecutor.execute` 加 worker dispatch 分支:**检测 `prepared_routes` 含 `model == "comfy/local"`时,调新方法 `_generate_via_worker(ctx, spec)` 而不走 `_generate_via_router`**(G2 fix:round 1 没加分支,所有 image step 都走 router 导致 comfy_workflow 不会进 worker);`_should_use_api_path` 改为 `_should_use_router_path`(语义清晰)+ 新增 `_should_use_worker_path` 检测 `comfy/local`
-- [ ] 4.3 实装 `_generate_via_worker(ctx, spec)`(**SYNC method,内部用 `asyncio.run(...)` bridge 调 async worker,镜像 `_generate_via_router` 已有 pattern at `generate_image.py:295`** — round 3 codex H2 fix:round 2 spec 写 `await worker.submit` 在 sync executor 内是无效 Python):
+- [ ] 4.3 实装 `_generate_via_worker(ctx, spec, num, seed, timeout_s)`(**SYNC method;直接调 SYNC ABC 方法 `worker.generate(spec=..., num_candidates=..., seed=..., timeout_s=...)`,无 asyncio.run bridge** — G11 R4 writeback:G4 commit 3 实装时把 worker.submit 改为 sync `generate` 以匹配 `ComfyWorker` ABC 同步接口,round 2/3 spec 写的 async submit + asyncio.run bridge 已不再适用):
   ```python
-  def _generate_via_worker(self, ctx, spec, timeout_s):
-      async def _aworker_call():
-          worker = ComfyAgentWorker(
-              scripts_dir=Path(os.environ["FORGEUE_COMFY_SCRIPTS_DIR"]),
-              run_id=ctx.run.run_id,
-              project_id=ctx.task.project_id,
-              artifacts_dir=ctx.run_dir,
-              python_exe=Path(os.environ["FORGEUE_COMFY_PYTHON_EXE"]) if os.environ.get("FORGEUE_COMFY_PYTHON_EXE") else None,
-              default_lifecycle=os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none"),
-          )
-          return await worker.submit(spec, timeout_s=timeout_s)
-      return asyncio.run(_aworker_call())
+  def _generate_via_worker(self, *, ctx, spec, num, seed, timeout_s):
+      scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+      if not scripts_dir:
+          raise WorkerUnsupportedResponse("FORGEUE_COMFY_SCRIPTS_DIR env var unset; ...")
+      python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
+      lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
+      worker = ComfyAgentWorker(
+          scripts_dir=Path(scripts_dir),
+          run_id=ctx.run.run_id,
+          project_id=ctx.task.project_id,
+          artifacts_dir=ctx.run_dir,
+          python_exe=Path(python_exe) if python_exe else None,
+          default_lifecycle=lifecycle,
+      )
+      candidates = worker.generate(spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s)
+      return candidates, "comfy/local", None
   ```
-  从 env 读 `FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` / `FORGEUE_COMFY_LIFECYCLE` → 构造 `ComfyAgentWorker`(keyword-only 签名,F4+G3 fix:`project_id` REQUIRED 来自 `ctx.task.project_id`,`artifacts_dir` REQUIRED 来自 `ctx.run_dir` 不是 `ctx.run.artifact_dir`);包装 result 为 `ExecutorResult(artifacts=[...], metrics={"cost_usd": 0.0, "chosen_model": "comfy/local", "_route_pricing": None})`(FR-COST 接口保留)
+  从 env 读 `FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` / `FORGEUE_COMFY_LIFECYCLE` → 构造 `ComfyAgentWorker`(keyword-only 签名,F4+G3 fix:`project_id` REQUIRED 来自 `ctx.task.project_id`,`artifacts_dir` REQUIRED 来自 `ctx.run_dir` 不是 `ctx.run.artifact_dir`);返回 `(candidates, "comfy/local", None)` 由 caller 包装为 `ExecutorResult(artifacts=[...], metrics={"cost_usd": 0.0, "chosen_model": "comfy/local", "_route_pricing": None})`(FR-COST 接口保留)
 - [ ] 4.4 dry-run 钩子:`DryRunPass` 在发现**已解析的 `prepared_routes` 含 `model == "comfy/local"` 的 route**时(用 model id 而非 provider 信息因为 ResolvedRoute 没 provider 字段 — round 2 G1 limitation),**直接 sync 调** `ComfyAgentWorker.probe_sync(scripts_dir=Path(os.environ["FORGEUE_COMFY_SCRIPTS_DIR"]), python_exe=Path(os.environ["FORGEUE_COMFY_PYTHON_EXE"]) if os.environ.get("FORGEUE_COMFY_PYTHON_EXE") else None, timeout_s=30.0)`(round 3 plan codex P2 fix:**NOT** `asyncio.run(probe(...))`,因为 `DryRunPass.run` 是 sync 在 event loop 内被调用,嵌套 asyncio.run 会 `RuntimeError`),失败 fail Run + error message 包含"`python -m comfyui_api serve` 启动 + 检查 FORGEUE_COMFY_SCRIPTS_DIR";env unset 时直接 raise `WorkerUnsupportedResponse`(不跑 probe)
 - [ ] 4.5 **commit 4**:`feat(executor+dryrun): GenerateImageExecutor dispatches comfy/local routes to ComfyAgentWorker (worker path, not router); DryRunPass conditional sync probe_sync`
 

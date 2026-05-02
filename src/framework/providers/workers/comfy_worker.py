@@ -405,6 +405,13 @@ class ComfyAgentWorker(ComfyWorker):
                 timeout=timeout_s + 30.0,        # outer wrap > inner CLI timeout
                 capture_output=True,
                 text=True,
+                # G11 R1 fix: explicit UTF-8 + errors="replace" — Windows
+                # default locale (cp936/cp1252 etc.) can't decode UTF-8
+                # JSON containing non-ASCII filenames / errors / workflows;
+                # raised UnicodeDecodeError would not match WorkerError
+                # branches and would crash the live run unstructured.
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
@@ -495,10 +502,32 @@ class ComfyAgentWorker(ComfyWorker):
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker: outputs.images path does not exist: {src}"
                 )
+            # G11 R2 fix: reject symlinks (and Windows junctions) to prevent
+            # a buggy / compromised agent CLI from redirecting reads to
+            # arbitrary host files (e.g. /etc/secrets via ../symlink).
+            if src.is_symlink():
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker: outputs.images path is a symlink, "
+                    f"refusing to follow: {src}"
+                )
             dst = comfy_subdir / src.name
             shutil.copy2(src, dst)
+            data = dst.read_bytes()
+            # G11 R2 fix: validate PNG magic bytes (8-byte signature
+            # 89 50 4E 47 0D 0A 1A 0A). image-generation path must reject
+            # non-PNG bytes — a workflow producing JPG/WEBP/etc. should be
+            # treated as deterministic mismatch (caller declared image
+            # capability with implicit PNG expectation per ImageCandidate
+            # mime_type default). Future change can broaden the magic
+            # allowlist to JPEG/WEBP if needed.
+            if data[:8] != b"\x89PNG\r\n\x1a\n":
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker: outputs.images file {src.name!r} is "
+                    f"not a valid PNG (first 8 bytes {data[:8]!r}); "
+                    f"image-generation path requires PNG magic bytes"
+                )
             candidates.append(ImageCandidate(
-                data=dst.read_bytes(),
+                data=data,
                 width=width,
                 height=height,
                 seed=seed,
@@ -550,6 +579,10 @@ class ComfyAgentWorker(ComfyWorker):
                 timeout=timeout_s,
                 capture_output=True,
                 text=True,
+                # G11 R1 fix: same UTF-8 + errors="replace" rationale as
+                # ComfyAgentWorker._run_once subprocess.run.
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:

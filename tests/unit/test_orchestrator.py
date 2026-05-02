@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+
 from framework.runtime.orchestrator import Orchestrator
 
 
@@ -43,12 +45,21 @@ def test_orchestrator_compute_run_dir_uses_checkpoints_root_no_extra_date():
     assert "2026-05-02/2026-05-02" not in str(result)
 
 
-def test_orchestrator_compute_run_dir_falls_back_to_path_dot_when_root_missing():
-    """When CheckpointStore has no `_root` attr (test mock), fall back
-    to `Path(".")` instead of raising. Production path always has _root
-    set by `framework.run` at construction time."""
+def test_orchestrator_compute_run_dir_raises_when_root_missing():
+    """G11 R3 fix: `_compute_run_dir` must fail-fast (RuntimeError) when
+    CheckpointStore has no `_root` attribute, instead of silently
+    falling back to `Path(".")`. Earlier draft fell back to cwd as a
+    "test mock convenience", but Orchestrator-injected
+    `StepContext.run_dir` is the production path that
+    `ComfyAgentWorker` writes copied PNGs into. Silent cwd fallback in
+    a live run would scatter artifacts in the process cwd, breaking
+    the `<artifact_root>/<run_id>` self-contained / resume / archive
+    invariants. Tests that need a synthetic run_dir construct
+    StepContext directly with `run_dir=tmp_path` instead of routing
+    through Orchestrator. See comfy-agent-cli-adoption
+    review/codex_implementation_review.md R3."""
     orch = _make_orchestrator(checkpoints_root=None)
     run = MagicMock()
     run.run_id = "run_xyz"
-    result = orch._compute_run_dir(run)
-    assert result == Path(".")
+    with pytest.raises(RuntimeError, match=r"checkpoints\._root"):
+        orch._compute_run_dir(run)

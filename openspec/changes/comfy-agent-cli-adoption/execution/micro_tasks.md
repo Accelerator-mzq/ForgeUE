@@ -369,7 +369,7 @@ def _collect_outputs(self, images: list[str]) -> list[Path]:
 See the `probe_sync` classmethod sketched in Step 3.2 above. Key points:
 - Use `subprocess.run([..., "-m", "comfyui_api", "status"], cwd=scripts_dir, timeout=30, capture_output=True, text=True)` — NOT `asyncio.create_subprocess_exec` + `asyncio.wait_for`.
 - Reason: `DryRunPass.run` (`src/framework/runtime/dry_run_pass.py:49`) is a sync method called from `orchestrator.py:124` inside `arun`'s event loop. Nesting `asyncio.run` there raises `RuntimeError("asyncio.run() cannot be called from a running event loop")`.
-- Async `submit()` is unaffected — it's called by `_generate_via_worker` via `asyncio.run(_aworker_call())` bridge from sync executor (round 3 H2 fix).
+- G11 R4 writeback: G4 commit 3 ended up implementing worker as **sync `generate(...)`** matching `ComfyWorker` ABC, not `async submit`. `_generate_via_worker` calls `worker.generate(...)` directly — NO `asyncio.run` bridge. Both `generate` and `probe_sync` are sync; the entire ComfyAgentWorker public surface is sync.
 - `subprocess.TimeoutExpired` → `WorkerUnsupportedResponse`; non-zero exit → `WorkerUnsupportedResponse` with hint to start ComfyUI + check `FORGEUE_COMFY_SCRIPTS_DIR`.
 
 - [ ] **Step 3.6: Commit 2**
@@ -408,7 +408,7 @@ def _resolve_spec(spec: dict) -> dict:
     return spec
 ```
 
-- [ ] **Step 4.2: Add `_should_use_worker_path` detector + `_generate_via_worker` SYNC method with asyncio.run bridge** (round 3 H1+H2+H3 fix:env-based config + `asyncio.run` bridge + `ctx.run_dir` not `ctx.run.artifact_dir`)
+- [ ] **Step 4.2: Add `_should_use_worker_path` detector + SYNC `_generate_via_worker` calling SYNC `worker.generate(...)`** (round 3 H1+H3 + G11 R4 writeback:env-based config + sync ABC method, NO asyncio.run bridge + `ctx.run_dir` not `ctx.run.artifact_dir`)
 
 ```python
 # In src/framework/runtime/executors/generate_image.py
@@ -419,31 +419,32 @@ def _should_use_worker_path(self, ctx) -> bool:
         return False
     return any(getattr(r, "model", None) == "comfy/local" for r in pp.prepared_routes)
 
-def _generate_via_worker(self, ctx, spec: dict, timeout_s: float) -> tuple[list[ImageCandidate], str, dict | None]:
-    """Round 2 + Round 3 fixes:
+def _generate_via_worker(self, *, ctx, spec: dict, num: int, seed: int | None, timeout_s: float | None) -> tuple[list[ImageCandidate], str, dict | None]:
+    """Round 2/3 + G11 R4 fixes:
     - F-B: ComfyUI worker config via env vars (FORGEUE_COMFY_*), NOT ProviderDef fields.
     - G3 + H1: artifacts_dir=ctx.run_dir (NOT ctx.run.artifact_dir which doesn't exist).
     - F4 + H3: project_id=ctx.task.project_id REQUIRED; worker keyword-only.
-    - H2: SYNC method using asyncio.run(_aworker_call()) bridge (mirrors generate_image.py:295).
+    - G11 R4 writeback: G4 commit 3 implemented worker as SYNC `generate(...)` matching
+      `ComfyWorker` ABC; NO asyncio.run bridge needed (round 2/3 spec was wrong).
     """
-    import os, asyncio
+    import os
     scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
     if not scripts_dir:
         raise WorkerUnsupportedResponse(
             "FORGEUE_COMFY_SCRIPTS_DIR env var is required for ComfyUI worker dispatch; "
             "see CLAUDE.md double-terminal note."
         )
-    async def _aworker_call():
-        worker = ComfyAgentWorker(
-            scripts_dir=Path(scripts_dir),
-            run_id=ctx.run.run_id,
-            project_id=ctx.task.project_id,
-            artifacts_dir=ctx.run_dir,  # G3+H1 fix
-            python_exe=Path(os.environ["FORGEUE_COMFY_PYTHON_EXE"]) if os.environ.get("FORGEUE_COMFY_PYTHON_EXE") else None,
-            default_lifecycle=os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none"),
-        )
-        return await worker.submit(spec, timeout_s=timeout_s)
-    candidates = asyncio.run(_aworker_call())  # H2 fix: bridge sync executor to async worker
+    python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
+    lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
+    worker = ComfyAgentWorker(
+        scripts_dir=Path(scripts_dir),
+        run_id=ctx.run.run_id,
+        project_id=ctx.task.project_id,
+        artifacts_dir=ctx.run_dir,  # G3+H1 fix
+        python_exe=Path(python_exe) if python_exe else None,
+        default_lifecycle=lifecycle,
+    )
+    candidates = worker.generate(spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s)
     return candidates, "comfy/local", None  # (candidates, chosen_model, route_pricing)
 ```
 
