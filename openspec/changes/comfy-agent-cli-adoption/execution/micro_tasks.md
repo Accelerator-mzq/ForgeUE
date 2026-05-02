@@ -197,9 +197,11 @@ git commit -m "feat(registry): accept subprocess_cli kind, register comfy_api + 
 
 ---
 
-## Task 3: ComfyAgentWorker rewrite + probe + copy (G3 / commit 2)
+## Task 3: ComfyAgentWorker rewrite + probe + copy (**G4 / commit 3** — round 3 plan P3 reordered)
 
 > Anchors: `tasks.md#3.1`, `#3.2`, `#3.3`, `#3.4`, `#3.5`, `#3.6`
+
+> **⚠ ROUND 3 PLAN P3 COMMIT ORDER FIX**: This Task is now **commit 3**, NOT commit 2. Execute Task 5 (StepContext.run_dir, commit 2) FIRST so `ctx.run_dir` exists before this worker references it. Strict order per execution_plan Task Group Map: G2 commit 1 → **G3 (Task 5 StepContext) commit 2** → **G4 (this Task ComfyAgentWorker) commit 3** → G5 (Task 4 Executor) commit 4 → G6 (Task 6 FakeComfy) commit 5 → G7 (Task 7 Test) commit 6 → G8 (Task 8 examples) commit 7 → G10 (Task 10 docs) commit 8.
 
 **Files:** `src/framework/providers/workers/comfy_worker.py` (Rewrite ~400 lines)
 
@@ -250,13 +252,26 @@ class ImageCandidate:
 class ComfyAgentWorker:
     def __init__(
         self,
-        scripts_dir: Path,
-        python_exe: Path | None = None,
-        default_lifecycle: str = "none",
-        run_id: str | None = None,
-        project_id: str | None = None,
-        artifacts_dir: Path | None = None,
+        *,                                           # ROUND 3 H3 FIX: keyword-only
+        scripts_dir: Path,                           # REQUIRED
+        run_id: str,                                 # REQUIRED (no None default)
+        project_id: str,                             # REQUIRED
+        artifacts_dir: Path,                         # REQUIRED
+        python_exe: Path | None = None,              # OPTIONAL
+        default_lifecycle: str = "none",             # OPTIONAL
     ):
+        # ROUND 3 F4/G3 FIX: REQUIRED args raise WorkerUnsupportedResponse if None/empty.
+        if not project_id:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.__init__: project_id is REQUIRED; "
+                "executor must pass ctx.task.project_id"
+            )
+        if artifacts_dir is None or not Path(artifacts_dir).is_dir():
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.__init__: artifacts_dir is REQUIRED and must "
+                f"be an existing directory (got {artifacts_dir!r}); "
+                f"executor must pass ctx.run_dir"
+            )
         # D6: lifecycle scope is hard-locked to "none" in this change (TBD-010 will lift).
         assert default_lifecycle == "none", (
             f"ComfyAgentWorker only supports default_lifecycle='none' "
@@ -283,11 +298,36 @@ class ComfyAgentWorker:
         # 10. Build list[ImageCandidate] from copied paths' bytes.
         ...
 
-    @staticmethod
-    async def probe(scripts_dir: Path, python_exe: Path | None, timeout_s: float = 30.0) -> None:
-        # subprocess [python_exe or sys.executable, "-m", "comfyui_api", "status"]; cwd=scripts_dir.
-        # exit 0 = OK; otherwise raise WorkerUnsupportedResponse with hint to start ComfyUI.
-        ...
+    @classmethod
+    def probe_sync(cls, scripts_dir: Path, python_exe: Path | None, timeout_s: float = 30.0) -> None:
+        # ROUND 3 PLAN P2 FIX: SYNCHRONOUS probe using subprocess.run (NOT asyncio.run/create_subprocess_exec)
+        # because DryRunPass.run is sync and gets called from inside Orchestrator.arun's event loop;
+        # nesting asyncio.run there raises "RuntimeError: cannot be called from a running event loop".
+        import subprocess
+        py = Path(python_exe) if python_exe else Path(sys.executable)
+        if not Path(scripts_dir).exists() or not (Path(scripts_dir) / "comfyui_api").is_dir():
+            raise WorkerUnsupportedResponse(
+                f"ComfyUI agent CLI not found at {scripts_dir}; "
+                f"set FORGEUE_COMFY_SCRIPTS_DIR or verify path."
+            )
+        try:
+            result = subprocess.run(
+                [str(py), "-m", "comfyui_api", "status"],
+                cwd=str(scripts_dir),
+                timeout=timeout_s,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.TimeoutExpired:
+            raise WorkerUnsupportedResponse(
+                f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
+                f"start ComfyUI via 'python -m comfyui_api serve' then retry."
+            )
+        if result.returncode != 0:
+            raise WorkerUnsupportedResponse(
+                f"ComfyUI agent CLI status returned exit {result.returncode}; "
+                f"start ComfyUI via 'python -m comfyui_api serve' then retry."
+            )
 
 
 class FakeComfyWorker:
@@ -331,36 +371,13 @@ def _collect_outputs(self, images: list[str]) -> list[Path]:
     return copied
 ```
 
-- [ ] **Step 3.5: Implement `probe()` with 30s timeout (D6 + Risk A)**
+- [ ] **Step 3.5: Implement `probe_sync()` classmethod with 30s timeout (D6 + Risk A; ROUND 3 PLAN P2 FIX: sync not async)**
 
-```python
-@staticmethod
-async def probe(scripts_dir: Path, python_exe: Path | None, timeout_s: float = 30.0) -> None:
-    py = Path(python_exe) if python_exe else Path(sys.executable)
-    if not Path(scripts_dir).exists() or not (Path(scripts_dir) / "comfyui_api").is_dir():
-        raise WorkerUnsupportedResponse(
-            f"ComfyUI agent CLI not found at {scripts_dir}; "
-            f"verify config/models.yaml providers.comfy_api.scripts_dir."
-        )
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            str(py), "-m", "comfyui_api", "status",
-            cwd=str(scripts_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
-    except asyncio.TimeoutError:
-        raise WorkerUnsupportedResponse(
-            f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
-            f"start ComfyUI via 'python -m comfyui_api serve' then retry."
-        )
-    if proc.returncode != 0:
-        raise WorkerUnsupportedResponse(
-            f"ComfyUI agent CLI status returned exit {proc.returncode}; "
-            f"start ComfyUI via 'python -m comfyui_api serve' then retry."
-        )
-```
+See the `probe_sync` classmethod sketched in Step 3.2 above. Key points:
+- Use `subprocess.run([..., "-m", "comfyui_api", "status"], cwd=scripts_dir, timeout=30, capture_output=True, text=True)` — NOT `asyncio.create_subprocess_exec` + `asyncio.wait_for`.
+- Reason: `DryRunPass.run` (`src/framework/runtime/dry_run_pass.py:49`) is a sync method called from `orchestrator.py:124` inside `arun`'s event loop. Nesting `asyncio.run` there raises `RuntimeError("asyncio.run() cannot be called from a running event loop")`.
+- Async `submit()` is unaffected — it's called by `_generate_via_worker` via `asyncio.run(_aworker_call())` bridge from sync executor (round 3 H2 fix).
+- `subprocess.TimeoutExpired` → `WorkerUnsupportedResponse`; non-zero exit → `WorkerUnsupportedResponse` with hint to start ComfyUI + check `FORGEUE_COMFY_SCRIPTS_DIR`.
 
 - [ ] **Step 3.6: Commit 2**
 
@@ -398,68 +415,99 @@ def _resolve_spec(spec: dict) -> dict:
     return spec
 ```
 
-- [ ] **Step 4.2: Construct `ComfyAgentWorker` with full args (incl. `project_id=ctx.task.project_id`)**
+- [ ] **Step 4.2: Add `_should_use_worker_path` detector + `_generate_via_worker` SYNC method with asyncio.run bridge** (round 3 H1+H2+H3 fix:env-based config + `asyncio.run` bridge + `ctx.run_dir` not `ctx.run.artifact_dir`)
 
 ```python
-# In src/framework/runtime/executors/generate_image.py::execute (or _build_worker)
-worker = ComfyAgentWorker(
-    scripts_dir=registry.providers["comfy_api"].scripts_dir,
-    python_exe=registry.providers["comfy_api"].python_exe,
-    default_lifecycle=registry.providers["comfy_api"].default_lifecycle,
-    run_id=ctx.run.run_id,
-    project_id=ctx.task.project_id,
-    artifacts_dir=ctx.run.artifact_dir,
-)
+# In src/framework/runtime/executors/generate_image.py
+def _should_use_worker_path(self, ctx) -> bool:
+    """Round 2 G2 fix: detect comfy/local model id, take worker dispatch (NOT router)."""
+    pp = ctx.step.provider_policy
+    if pp is None or not pp.prepared_routes:
+        return False
+    return any(getattr(r, "model", None) == "comfy/local" for r in pp.prepared_routes)
+
+def _generate_via_worker(self, ctx, spec: dict, timeout_s: float) -> tuple[list[ImageCandidate], str, dict | None]:
+    """Round 2 + Round 3 fixes:
+    - F-B: ComfyUI worker config via env vars (FORGEUE_COMFY_*), NOT ProviderDef fields.
+    - G3 + H1: artifacts_dir=ctx.run_dir (NOT ctx.run.artifact_dir which doesn't exist).
+    - F4 + H3: project_id=ctx.task.project_id REQUIRED; worker keyword-only.
+    - H2: SYNC method using asyncio.run(_aworker_call()) bridge (mirrors generate_image.py:295).
+    """
+    import os, asyncio
+    scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+    if not scripts_dir:
+        raise WorkerUnsupportedResponse(
+            "FORGEUE_COMFY_SCRIPTS_DIR env var is required for ComfyUI worker dispatch; "
+            "see CLAUDE.md double-terminal note."
+        )
+    async def _aworker_call():
+        worker = ComfyAgentWorker(
+            scripts_dir=Path(scripts_dir),
+            run_id=ctx.run.run_id,
+            project_id=ctx.task.project_id,
+            artifacts_dir=ctx.run_dir,  # G3+H1 fix
+            python_exe=Path(os.environ["FORGEUE_COMFY_PYTHON_EXE"]) if os.environ.get("FORGEUE_COMFY_PYTHON_EXE") else None,
+            default_lifecycle=os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none"),
+        )
+        return await worker.submit(spec, timeout_s=timeout_s)
+    candidates = asyncio.run(_aworker_call())  # H2 fix: bridge sync executor to async worker
+    return candidates, "comfy/local", None  # (candidates, chosen_model, route_pricing)
 ```
 
-- [ ] **Step 4.3: Add DryRunPass conditional ComfyUI probe (gated by prepared_routes)**
+In `execute()`, branch BEFORE the existing `_should_use_api_path` check:
+```python
+if self._should_use_worker_path(ctx):
+    candidates, chosen_model, pricing = self._generate_via_worker(ctx, spec, timeout_s=worker_timeout_s)
+elif self._should_use_api_path(ctx):
+    candidates, chosen_model, pricing = self._generate_via_router(...)
+else:
+    # ... existing fake / fallback ...
+```
+
+- [ ] **Step 4.3: Add DryRunPass conditional ComfyUI probe — SYNC call, gated by model id** (round 3 plan P2 fix: NO `asyncio.run`; round 2 G1: model id-based gate)
 
 ```python
 # In src/framework/runtime/dry_run_pass.py::run (or appropriate hook)
-def _check_comfy_reachability(prepared_routes, registry):
+def _check_comfy_reachability(prepared_routes):
+    """Round 2 G1: gate by model id (ResolvedRoute lacks provider field).
+    Round 3 plan P2: SYNC probe_sync call (DryRunPass.run is sync inside arun event loop;
+    nesting asyncio.run raises RuntimeError)."""
     has_comfy_route = any(
-        registry.providers.get(route.provider_id, {}).get("kind") == "subprocess_cli"
+        getattr(route, "model", None) == "comfy/local"
         for route in prepared_routes
     )
     if not has_comfy_route:
         return  # bundle does not use ComfyUI; skip probe
-    comfy_provider = registry.providers["comfy_api"]
-    asyncio.run(ComfyAgentWorker.probe(
-        comfy_provider.scripts_dir,
-        comfy_provider.python_exe,
+    import os
+    scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+    if not scripts_dir:
+        raise WorkerUnsupportedResponse(
+            "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses comfy/local route "
+            "but ComfyUI agent CLI location not configured."
+        )
+    python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
+    ComfyAgentWorker.probe_sync(  # SYNC classmethod — uses subprocess.run, NOT asyncio
+        Path(scripts_dir),
+        Path(python_exe) if python_exe else None,
         timeout_s=30.0,
-    ))
+    )
     # WorkerUnsupportedResponse propagates → DryRunPass marks Run failed.
 ```
 
-- [ ] **Step 4.4: Add `subprocess_cli` dispatch branch in `capability_router`**
-
-```python
-# In src/framework/providers/capability_router.py (or routing.py)
-class ComfyAgentRouter:  # name TBD; could be inline branch
-    def supports(self, model: str, registry: ModelRegistry) -> bool:
-        provider = registry.lookup_provider_of_model(model)
-        return provider is not None and provider.kind == "subprocess_cli"
-
-    async def aimage_generation(self, model, params, ctx) -> ProviderResult:
-        worker = self._build_worker(ctx, registry)  # see Step 4.2
-        candidates = await worker.submit(params["spec"], timeout_s=params["worker_timeout_s"])
-        return ProviderResult(candidates=candidates, raw={"_route_pricing": None})
-# Register ComfyAgentRouter BEFORE LiteLLMAdapter in CapabilityRouter chain.
-```
-
-- [ ] **Step 4.5: Commit 3**
+- [ ] **Step 4.4: Commit 4** (round 3 plan P3 fix: NO capability_router change — round 2 decided executor-side branch is sufficient; ProviderDef.kind dispatch was rejected)
 
 ```bash
-git add src/framework/runtime/executors/generate_image.py src/framework/runtime/dry_run_pass.py src/framework/providers/capability_router.py
-git commit -m "feat(executor+router): bundle uses comfy_workflow + dispatch comfy_api via subprocess_cli kind"
+git add src/framework/runtime/executors/generate_image.py src/framework/runtime/dry_run_pass.py
+git commit -m "feat(executor+dryrun): GenerateImageExecutor dispatches comfy/local routes to ComfyAgentWorker (worker path, not router); DryRunPass conditional sync probe_sync"
 ```
 
 ---
 
-## Task 5: StepContext.run_dir injection (G5 / commit 4) — round 2 NEW
+## Task 5: StepContext.run_dir injection (**G3 / commit 2** — round 3 plan P3 reordered to BEFORE Task 3 ComfyAgentWorker)
 
 > Anchors: `tasks.md#5.1`, `#5.2`, `#5.3`, `#5.4`, `#5.5`
+
+> **⚠ ROUND 3 PLAN P3 COMMIT ORDER FIX**: This Task is **commit 2**, executed BEFORE Task 3 (ComfyAgentWorker, commit 3). Reason: Task 3's worker uses `ctx.run_dir` (G3 fix); commit 3 head must have `ctx.run_dir` already added (this Task). Strict order: G2 (Task 2 Registry) commit 1 → **G3 (Task 5 StepContext) commit 2** → **G4 (Task 3 ComfyAgentWorker) commit 3** → G5 (Task 4 Executor) commit 4 → G6 (Task 6 FakeComfy) commit 5 → ...
 
 **Files:** `src/framework/runtime/executors/base.py` (Modify), `src/framework/runtime/orchestrator.py` (Modify), `tests/unit/test_step_context.py` (Create), `tests/unit/test_orchestrator.py` (Modify)
 
