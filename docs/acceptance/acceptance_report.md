@@ -71,7 +71,7 @@
 | ID | 能力 | 对应需求 | 状态 |
 | --- | --- | --- | --- |
 | L1 | UE5 API 查询 | FR-STRUCT-* + rubric `ue5_api_assist` | ✅ |
-| L2 | 图像生成 API 路径 | FR-WORKER-001(ComfyUI) + `image.*` capability | ✅ |
+| L2 | 图像生成 API 路径 | FR-WORKER-001(ComfyUI agent CLI subprocess,自 v1.6) + `image.*` capability | ✅ |
 | L3 | 视觉 QA | FR-REVIEW-* + rubric `ue_visual_quality` | ✅ |
 | L4 | image → 3D mesh | `integration/test_l4_image_to_3d.py` + Hunyuan 3D + UE 5.7 真 import(2026-04-23 a2_mesh_0423)| ✅ |
 
@@ -180,7 +180,7 @@
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
-| FR-WORKER-001 ComfyUI HTTP | `comfy_worker.py` + test_comfy_http_unsupported | ✅ |
+| FR-WORKER-001 ComfyUI agent CLI(自 v1.6;v1.5 及之前为 HTTP)| `comfy_worker.py::ComfyAgentWorker` + `test_comfy_subprocess.py`(26 fence)+ `test_step_context.py` + `test_orchestrator.py` + `test_fake_comfy_worker_schema.py` | ✅ |
 | FR-WORKER-002 Hunyuan 3D | integration/test_l4 | ✅ |
 | FR-WORKER-003 Tripo3D scaffold | test_tripo3d_unsupported | ⏳ 实装待需求 |
 | FR-WORKER-004 URL ranker + fallthrough | test_cn_image_adapters | ✅ |
@@ -767,6 +767,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.3 | 2026-04-23 | A2 全集 5/5 ✅ 重跑收尾(0423 重跑 a2_char/image/review/mesh):a2_mesh_0423 用新 `examples/image_to_3d_pipeline_live.json` 跑 Hunyuan 3D 33.3MB .glb + UE 5.7 commandlet 真 import → `Generated/Props/a2_mesh_0423/.../{StaticMeshes/SM_*, Materials/Material_001, Textures/texture_20250901}.uasset` 三类资产 + 用户 GUI 视觉确认 oak barrel 3D mesh;`test_example_bundles_smoke` 自动 parametrize 收 6 用例(2 个新 bundle × 3),总数 546 → 549 |
 | v1.4 | 2026-04-25 | Run Comparison / 基线回归落地(OpenSpec change `add-run-comparison-baseline-regression`):新增 §6.8 验收记录,关闭 `README.md` §"后续扩展" 第 7 项 "`observability/run_comparison.py` 待补" 占位;Codex Review Gate 双轮 PASS(Task 4/5/6 各两轮);proposal.md 4 条 Success criteria 全部达成;Deferred follow-up `lazy-artifact-store-package-exports` 单独 change 待启;§8.1 自动化验收基线 549 → 848(基线 549 + Run Comparison 模块 ~299 新用例)|
 | v1.5 | 2026-04-27 | Lazy artifact_store package exports(OpenSpec change `lazy-artifact-store-package-exports`):新增 §6.9 验收记录,关闭 §6.8 的 deferred follow-up `lazy-artifact-store-package-exports`;`src/framework/artifact_store/__init__.py` 由 eager 改 PEP 562 lazy `__getattr__` + `__dir__`(沿 `comparison/__init__.py:50-95` 模板);新 fence 文件 `tests/unit/test_artifact_store_lazy_imports.py` 4 fence + subprocess `_run_clean_subprocess` helper PYTHONPATH 注入;收紧 `test_run_comparison_loader.py` + `test_run_comparison_cli.py` 禁止清单 9→13 prefix;OpenSpec spec delta `openspec/specs/artifact-contract/spec.md` ADDED Requirement「Package import surface is lazy-load by default」+ 4 Scenarios(`/opsx:archive` sync-specs 合主 spec);4 轮 codex review 全 writeback(S2/S3/S5/S6;13 finding 总,8 accepted-codex 写到 design.md / spec.md / tasks.md / micro_tasks.md / fence test;1 accepted-claude 走 Reasoning Notes anchor;5 out-of-scope 诚实记账);TDD red-baseline 闭环(G2 红 2/4 → G3 绿 4/4);§8.1 自动化验收基线 848 → 1144(848 + ~292 forgeue tooling fence + 4 lazy fence) |
+| v1.6 | 2026-05-02 | ComfyUI agent CLI adoption(OpenSpec change `comfy-agent-cli-adoption`):**BREAKING** HTTPComfyWorker 删除替换为 `ComfyAgentWorker`(subprocess `python -m comfyui_api`,lifecycle=none only);bundle `step.config.spec.workflow_graph` 字段废止 → `comfy_workflow` + `comfy_params` + `comfy_lifecycle: "none"`;新虚拟 model id `comfy/local` + alias `image_local`(SRS FR-MODEL-007 第 10 alias);`StepContext.run_dir` REQUIRED 字段 + `Orchestrator._compute_run_dir(run)` helper(round 2 OQ-7 G3 fix);worker 配置走 env vars `FORGEUE_COMFY_*`(F-A schema 扩展登记 SRS TBD-011 后续 change);`GenerateImageExecutor._should_use_worker_path` + sync `_generate_via_worker` 走 ComfyAgentWorker bypass router;`DryRunPass._check_comfy_reachability` 加 conditional sync `probe_sync` warning-not-error;CLI `--comfy-url` deprecated。新增 fence 文件 `test_comfy_subprocess.py`(26)+ `test_step_context.py`(2)+ `test_orchestrator.py`(2)+ `test_fake_comfy_worker_schema.py`(5)+ `test_model_registry.py` 加 3 fence;`test_comfy_http_unsupported.py` DELETED + `test_adapter_budget_clamp.py` 删 2 个 HTTP fence。Examples:`comfy_local_smoke.json` 重写,`examples/comfy/{build_bundle.py, tavern_door.api.json, image_z_image_turbo.json}` DELETED(v1 inline-workflow 留 commit `292420a` 历史快照)。SRS §7.3 加 TBD-009(ComfyUI mesh/audio/video follow-on)+ TBD-010(executor async rewrite,let lifecycle extend)+ TBD-011(ProviderDef.kind schema extension)。3 轮 design codex + 3 轮 plan codex + Lean Apply Mode(per-commit codex skip,production review consolidated to G11 stage)。§8.1 自动化验收基线 1144 → **1184**(post-G7 实测;+36 新 fence + 5 backward-compat 调整 - 1 删除 HTTP fence file - 4 删除 HTTP-specific budget clamp fence)|
 
 ### 9.3 签收区
 

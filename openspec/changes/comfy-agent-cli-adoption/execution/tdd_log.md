@@ -354,4 +354,54 @@ Commit hash: `9a1e6dc`
 
 ### Writeback check (post-commit 7)
 state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
+Commit hash: `29ad60d`
+
+---
+
+## Commit 8 — G10 Doc sync (4/8 critical docs + TBD-009/010/011) (2026-05-03 00:50)
+
+### Anchors
+- `tasks.md#10.2` (SRS §5.3 + FR-WORKER-001 + FR-MODEL-007 + §7.2 v1.6) ✓
+- `tasks.md#10.6` (acceptance §3 L2 + §FR-WORKER-001 row + v1.6 record) ✓
+- `tasks.md#10.7` (CHANGELOG ComfyUI section) ✓
+- `tasks.md#10.8` (CLAUDE.md ComfyUI setup section) ✓
+- `tasks.md#10.10` (SRS §7.3 TBD-009) ✓
+- `tasks.md#10.11` (SRS §7.3 TBD-010) ✓
+- `tasks.md#10.12` (SRS §7.3 TBD-011) ✓
+- `tasks.md#10.3` (HLD ComfyUI 子系统) — DEFERRED to G11 doc-sync 二次
+- `tasks.md#10.4` (LLD ComfyUI worker 详细字段) — DEFERRED to G11 doc-sync 二次
+- `tasks.md#10.5` (test_spec.md fence index ~36 new) — DEFERRED to G11 doc-sync 二次
+- `tasks.md#10.9` (AGENTS.md ComfyUI section) — SKIP (no existing ComfyUI section)
+
+### Implementation files modified
+| File | Action | Details |
+|---|---|---|
+| `docs/requirements/SRS.md` | Modify | §5.3 ComfyUI row 改 subprocess CLI;FR-WORKER-001 描述改 agent CLI + env vars;FR-MODEL-003 ComfyUI(HTTP) → (agent CLI subprocess);FR-MODEL-007 alias 列表加 image_local(第 10 alias);§7.2 加 v1.6 row;§7.3 加 TBD-009 + TBD-010 + TBD-011 |
+| `CHANGELOG.md` | Modify | [Unreleased] Changed 段加完整 ComfyUI agent CLI adoption section(BREAKING + NEW + Spec deltas + 3-3 rounds + TBD register + 测试覆盖) |
+| `CLAUDE.md` | Modify | 加 "ComfyUI 接入(自 SRS v1.6)" 段 — 双终端工作流 + env vars setup + 关键限制(F-B / D6 / TBD-009/010/011)+ Dry-run 探活 warning vs hard-gate semantics |
+| `docs/acceptance/acceptance_report.md` | Modify | L2 row + FR-WORKER-001 row update(test_comfy_subprocess + StepContext + Orchestrator + FakeComfyWorker schema + model_registry fences);加 v1.6 record(§8.1 自动化验收基线 1144 → 1184) |
+
+### Deferred to G11 doc-sync 二次
+- HLD ComfyUI 子系统描述(协议层 subprocess CLI + lifecycle=none + virtual model id + env vars)
+- LLD ComfyUI worker 详细字段(类名 ComfyAgentWorker、keyword-only 构造参数、subprocess + 失败模式映射 + cancel best-effort + StepContext.run_dir + probe_sync)
+- test_spec.md fence index(~36 new fence entries)
+
+Reason: token-aware lean update;G11 stage `/forgeue:change-verify` + `/forgeue:change-doc-sync` 二次会重新扫这 3 个文件,user 可见前补齐。
+
+### Pytest delta
+- Pre-commit: 1184
+- Post-commit: 1184 (no test code change)
+
+### Boundary check
+| 文件 | In allow-list? |
+|---|---|
+| `docs/requirements/SRS.md` | ✓ G10 row #10.2 / #10.10-#10.12 |
+| `docs/acceptance/acceptance_report.md` | ✓ G10 row #10.6 |
+| `CHANGELOG.md` | ✓ G10 row #10.7 |
+| `CLAUDE.md` | ✓ G10 row #10.8 |
+
+**Boundary check verdict: PASS**
+
+### Writeback check (post-commit 8)
+state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
 Commit hash: pending
