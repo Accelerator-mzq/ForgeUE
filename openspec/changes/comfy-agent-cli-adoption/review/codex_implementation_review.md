@@ -15,14 +15,20 @@ detected_env: claude-code
 triggered_by: forgeue-change-review
 codex_plugin_available: true
 created_at: 2026-05-03T01:30:00+08:00
-aligned_with_contract: false
-drift_decision: written-back-to-multiple-pending
+aligned_with_contract: true
+drift_decision: written-back-to-spec-and-impl-codex-review-r1-r5
+writeback_commit: 061b39c
 note: |
   G11 stage codex production-code review on full G2-G10 commit chain
   (base 25b0c5c, HEAD 6ad798c). Verdict: needs-attention,
   recommendation: blocker-stop (5 findings: 1 high + 4 medium).
   Apply Lean Apply Mode meant per-commit codex was skipped; this is
-  the consolidated review.
+  the consolidated review. All 5 findings (R1-R5) verified
+  independently file:line and fixed in commit 061b39c — see
+  review/implementation_cross_check.md ## D verification table.
+  R1+R2+R3 production code fixes; R4+R5 spec drift writeback to
+  provider-routing/spec.md + tasks.md + execution_plan.md +
+  micro_tasks.md.
 ---
 
 # Codex Adversarial Review — G11 Implementation (verbatim)
