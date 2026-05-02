@@ -197,4 +197,48 @@ These cascading imports broke pytest collection. Per ForgeUE drift protocol — 
 ### Writeback check (post-commit 3)
 
 state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
+Commit hash: `f1e790c`
+
+---
+
+## Commit 4 — G5 Executor + DryRunPass + worker dispatch (2026-05-02 23:30)
+
+### Anchors
+- `tasks.md#4.1` - `tasks.md#4.5` (G5 Task 4 全部 sub-tasks;commit 4 编号 per Q2 sweep)
+
+### Implementation files modified
+
+| File | Action | Details |
+|---|---|---|
+| `src/framework/runtime/executors/generate_image.py` | Modify | imports 加 `ComfyAgentWorker` + `WorkerUnsupportedResponse` + `os` + `Path`;`execute()` retry loop 加 `use_worker_path = self._should_use_worker_path(ctx)` 在 `use_api_path` 之前(优先 detect comfy/local);加 `_should_use_worker_path` method(检测 prepared_routes 含 `model == "comfy/local"`);加 sync `_generate_via_worker` method 从 env vars 读 `FORGEUE_COMFY_*` + 构造 `ComfyAgentWorker(scripts_dir, run_id, project_id=ctx.task.project_id, artifacts_dir=ctx.run_dir, ...)` + 同步调 `worker.generate(...)` (G4 commit 3 drift writeback:ABC `generate` 是 sync,no asyncio.run bridge needed) |
+| `src/framework/runtime/dry_run_pass.py` | Modify | `run()` 加 step 5.5 `self._check_comfy_reachability(report, steps=step_list)`;新加 `_check_comfy_reachability` helper:gate by model id (`ResolvedRoute` lacks provider field — round 2 G1 limitation);env unset → `comfy.env_configured=False`;sync 调 `ComfyAgentWorker.probe_sync(scripts_dir, python_exe, timeout_s=30.0)`(round 3 plan codex P2 fix:NOT asyncio.run);failures recorded as `comfy.cli_reachable=False` 阻断 Run |
+
+### TDD cycle
+
+实施直接 GREEN。原因:
+- generate_image.py: worker dispatch 路径只在 `prepared_routes 含 comfy/local` 时触发,现有 1153 个 test 都不用 comfy/local alias → 不触发新分支 → 无 break
+- dry_run_pass.py: `_check_comfy_reachability` early-returns when no `comfy/local` route found → 现有 dry-run 测试都不含 comfy/local → 无 break
+- 新加分支 fence 由 G7 commit 6 `test_comfy_subprocess.py` 一并加(`test_executor_dispatches_comfy_local_to_worker_not_router` / `test_dry_run_skips_probe_when_no_comfy_local_in_routes` / `test_dry_run_30s_timeout`)
+
+### Pytest baseline delta
+
+- Pre-commit:1153 (post G4 commit 3)
+- Post-commit:**1153 passed**(no change — 新加分支不在现有 test scope)
+- G7 commit 6 加 ~22 fence → 期望 ~1175 post G7
+
+### Boundary check
+
+| 修改文件 | In allow-list? | 验证 |
+|---|---|---|
+| `src/framework/runtime/executors/generate_image.py` | ✓ (G5 row) | `_should_use_worker_path` + `_generate_via_worker` |
+| `src/framework/runtime/dry_run_pass.py` | ✓ (G5 row) | `_check_comfy_reachability` |
+| `openspec/changes/comfy-agent-cli-adoption/execution/tdd_log.md` | ✓ (authorized auxiliary) | tdd_log Section 4 append |
+
+**未 stage**: `openspec/config.yaml` (M user) + `1.jpg` (?? user)
+
+**Boundary check verdict: PASS** — 全部 staged 文件在 G5 implementation files allow-list。
+
+### Writeback check (post-commit 4)
+
+state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
 Commit hash: pending

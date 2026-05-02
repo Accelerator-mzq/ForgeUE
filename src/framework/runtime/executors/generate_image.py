@@ -22,7 +22,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import time
+from pathlib import Path
 from typing import Any
 
 from framework.core.artifact import (
@@ -37,10 +39,12 @@ from framework.core.policies import RetryPolicy
 from framework.providers.base import ProviderError, ProviderTimeout
 from framework.providers.capability_router import CapabilityRouter
 from framework.providers.workers.comfy_worker import (
+    ComfyAgentWorker,
     ComfyWorker,
     ImageCandidate,
     WorkerError,
     WorkerTimeout,
+    WorkerUnsupportedResponse,
 )
 from framework.runtime.budget_tracker import estimate_image_call_cost_usd
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
@@ -80,7 +84,13 @@ class GenerateImageExecutor(StepExecutor):
         policy = ctx.step.retry_policy or RetryPolicy()
         attempts = max(1, policy.max_attempts)
 
-        use_api_path = self._should_use_api_path(ctx)
+        # OpenSpec change comfy-agent-cli-adoption (round 2 G2 + post-round-3
+        # plan-stage Q1 sweep): worker-dispatch branch detects model=='comfy/local'
+        # in prepared_routes and constructs ComfyAgentWorker inline from env
+        # config (FORGEUE_COMFY_*) — bypassing the router-dispatch branch which
+        # would otherwise mis-route to LiteLLM wildcard.
+        use_worker_path = self._should_use_worker_path(ctx)
+        use_api_path = (not use_worker_path) and self._should_use_api_path(ctx)
 
         last_exc: Exception | None = None
         candidates: list[ImageCandidate] | None = None
@@ -90,7 +100,11 @@ class GenerateImageExecutor(StepExecutor):
         for attempt in range(attempts):
             attempt_count = attempt + 1
             try:
-                if use_api_path:
+                if use_worker_path:
+                    candidates, chosen_model, route_pricing = self._generate_via_worker(
+                        ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
+                    )
+                elif use_api_path:
                     candidates, chosen_model, route_pricing = self._generate_via_router(
                         ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
                     )
@@ -228,6 +242,51 @@ class GenerateImageExecutor(StepExecutor):
         return ExecutorResult(artifacts=[*image_arts, bundle], metrics=metrics)
 
     # ---- path selection + API routing ----------------------------------------
+
+    def _should_use_worker_path(self, ctx: StepContext) -> bool:
+        """OpenSpec change comfy-agent-cli-adoption (round 2 G2): detect
+        `model == "comfy/local"` in prepared_routes — take inline
+        ComfyAgentWorker dispatch branch instead of router/api path.
+        Without this branch, the router-dispatch path would forward
+        `comfy/local` to LiteLLMAdapter wildcard which would fail (HTTP
+        OpenAI call with non-OpenAI model id).
+        """
+        pp = ctx.step.provider_policy
+        if pp is None or not pp.prepared_routes:
+            return False
+        return any(getattr(r, "model", None) == "comfy/local" for r in pp.prepared_routes)
+
+    def _generate_via_worker(
+        self, *, ctx: StepContext, spec: dict, num: int,
+        seed: int | None, timeout_s: float | None,
+    ) -> tuple[list[ImageCandidate], str, dict[str, float] | None]:
+        """OpenSpec change comfy-agent-cli-adoption (round 2 OQ-6 = F-B):
+        construct ComfyAgentWorker inline from env config + StepContext
+        and call sync `generate()`. Bypasses CapabilityRouter — analogous
+        to mesh worker injection pattern but with executor-side model-id
+        branch (NEW pattern). G4 commit 3 drift writeback documented:
+        ABC `generate` is sync, no asyncio.run bridge needed."""
+        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+        if not scripts_dir:
+            raise WorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses comfy/local "
+                "route but ComfyUI agent CLI location not configured "
+                "(see CLAUDE.md double-terminal setup)"
+            )
+        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
+        lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
+        worker = ComfyAgentWorker(
+            scripts_dir=Path(scripts_dir),
+            run_id=ctx.run.run_id,
+            project_id=ctx.task.project_id,
+            artifacts_dir=ctx.run_dir,
+            python_exe=Path(python_exe) if python_exe else None,
+            default_lifecycle=lifecycle,
+        )
+        candidates = worker.generate(
+            spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
+        )
+        return candidates, "comfy/local", None
 
     def _should_use_api_path(self, ctx: StepContext) -> bool:
         pp = ctx.step.provider_policy

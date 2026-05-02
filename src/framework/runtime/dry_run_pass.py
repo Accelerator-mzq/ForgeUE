@@ -94,6 +94,13 @@ class DryRunPass:
         # an open-ended run — but a warning so nobody burns spend silently.
         self._check_budget_cap(report, task=task, steps=step_list)
 
+        # 5.5. ComfyUI agent CLI reachability (OpenSpec change
+        # comfy-agent-cli-adoption round 2 G1 + round 3 P2 fix). Gated by
+        # model id (`comfy/local`) because ResolvedRoute lacks provider info.
+        # SYNC probe — DryRunPass.run is sync inside Orchestrator.arun's
+        # event loop; nesting asyncio.run would raise RuntimeError.
+        self._check_comfy_reachability(report, steps=step_list)
+
         # 6. Extra checks (providers / budget / secrets registered by outer code)
         for fn in self._extra_checks:
             try:
@@ -106,6 +113,67 @@ class DryRunPass:
         return report
 
     # ---- helpers ----
+
+    def _check_comfy_reachability(
+        self,
+        report: DryRunReport,
+        *,
+        steps: list[Step],
+    ) -> None:
+        """OpenSpec change comfy-agent-cli-adoption (round 2 G1 + round 3 P2):
+        SYNC probe gated by `model == "comfy/local"` in any step's
+        prepared_routes (model id-based gate because ResolvedRoute lacks
+        provider field). Bundles that don't use comfy/local skip the
+        probe entirely (qwen / glm image steps unaffected on hosts
+        without ComfyUI installed).
+        """
+        import os
+
+        from framework.providers.workers.comfy_worker import (
+            ComfyAgentWorker, WorkerUnsupportedResponse,
+        )
+
+        has_comfy_local = False
+        for s in steps:
+            pp = getattr(s, "provider_policy", None)
+            if pp is None or not getattr(pp, "prepared_routes", None):
+                continue
+            if any(
+                getattr(r, "model", None) == "comfy/local"
+                for r in pp.prepared_routes
+            ):
+                has_comfy_local = True
+                break
+        if not has_comfy_local:
+            # No comfy/local route — skip probe entirely.
+            return
+
+        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+        if not scripts_dir:
+            self._record(
+                report, "comfy.env_configured", False,
+                error=(
+                    "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses "
+                    "comfy/local route but ComfyUI agent CLI location not "
+                    "configured (see CLAUDE.md double-terminal setup)"
+                ),
+            )
+            return
+
+        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
+        try:
+            ComfyAgentWorker.probe_sync(
+                Path(scripts_dir),
+                Path(python_exe) if python_exe else None,
+                timeout_s=30.0,
+            )
+        except WorkerUnsupportedResponse as exc:
+            self._record(
+                report, "comfy.cli_reachable", False,
+                error=str(exc),
+            )
+            return
+        self._record(report, "comfy.cli_reachable", True)
 
     def _check_budget_cap(
         self,
