@@ -2,18 +2,28 @@
 
 HunyuanMeshWorker already respects `remaining = budget - elapsed` per
 download attempt (§M 2026-04 round). This file extends the same fence
-to three siblings that pre-fix used hardcoded timeouts:
+to two siblings that pre-fix used hardcoded timeouts:
 
-  - HTTPComfyWorker._collect_outputs  (per-image /view fetch)
   - Tripo3DWorker.generate            (poll + model download)
   - LiteLLMAdapter._acollect_image_results  (per-URL httpx fetch)
 
-Design of the fences: we capture the `timeout` kwarg passed into the
-HTTP client and assert it respects `min(hardcoded_cap, remaining)` —
-rather than trying to simulate a real slow CDN, which would just
-add flakiness. The invariant we care about is "per-request timeout
-must not silently exceed remaining step budget"; the capture-and-
-assert approach pins that invariant directly.
+Note: HTTPComfyWorker fences (originally a third sibling) were removed
+when OpenSpec change `comfy-agent-cli-adoption` (commit chain post
+292420a) replaced the HTTP client with a subprocess-based agent CLI
+worker (`ComfyAgentWorker`). The new worker uses a single
+`subprocess.run(..., timeout=...)` call so per-image budget clamping
+is no longer applicable; the equivalent timeout invariant is enforced
+by Python's subprocess timeout itself. The two former HTTPComfyWorker
+fences (`test_comfy_collect_outputs_clamps_per_image_timeout_to_
+remaining_budget` + `test_comfy_collect_outputs_raises_worker_timeout_
+when_budget_exhausted`) are intentionally absent.
+
+Design of the remaining fences: we capture the `timeout` kwarg passed
+into the HTTP client and assert it respects `min(hardcoded_cap,
+remaining)` — rather than trying to simulate a real slow CDN, which
+would just add flakiness. The invariant we care about is "per-request
+timeout must not silently exceed remaining step budget"; the capture-
+and-assert approach pins that invariant directly.
 """
 from __future__ import annotations
 
@@ -23,10 +33,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from framework.providers.workers.comfy_worker import (
-    HTTPComfyWorker,
-    WorkerTimeout,
-)
 from framework.providers.workers.mesh_worker import (
     MeshWorkerTimeout,
     Tripo3DWorker,
@@ -45,100 +51,10 @@ class _FakeResp:
         return self._json
 
 
-# ---------- HTTPComfyWorker._collect_outputs ----------------------------------
-
-
-def test_comfy_collect_outputs_clamps_per_image_timeout_to_remaining_budget():
-    """With budget=5s and three images, each `/view` fetch timeout must
-    respect `min(30, remaining)`. Pre-fix every fetch used 30s, so the
-    collection could block for 90s past a budget=5s step. After the
-    共性平移 fix, per-image timeout is clamped so the third image sees
-    a timeout < 30s even if the first two returned instantly."""
-    captured_timeouts: list[float] = []
-
-    def _post(url, **kw):
-        return _FakeResp(status_code=200, json_body={"prompt_id": "pid_1"})
-
-    def _get(url, **kw):
-        if "/history/" in url:
-            return _FakeResp(status_code=200, json_body={"pid_1": {"outputs": {
-                "n1": {"images": [
-                    {"filename": "a.png"}, {"filename": "b.png"}, {"filename": "c.png"},
-                ]},
-            }}})
-        # /view fetch
-        captured_timeouts.append(kw.get("timeout"))
-        return _FakeResp(status_code=200, content=b"PNG-OK")
-
-    worker = HTTPComfyWorker(base_url="http://mock-comfy:8188")
-    worker._import_requests = lambda: SimpleNamespace(post=_post, get=_get)
-    worker._poll_interval_s = 0.0
-
-    worker.generate(
-        spec={"workflow_graph": {"nodes": []}, "width": 64, "height": 64},
-        num_candidates=1, timeout_s=5.0,
-    )
-
-    assert len(captured_timeouts) == 3, (
-        f"expected 3 /view fetches, got {len(captured_timeouts)}"
-    )
-    # Every per-image timeout must be ≤ 30 (the hardcoded cap) AND ≤ budget.
-    for t in captured_timeouts:
-        assert t is not None
-        assert t <= 30.0, f"per-image timeout {t} exceeds cap"
-        assert t <= 5.0, (
-            f"per-image timeout {t} exceeds step budget 5.0 — budget "
-            f"clamp regressed"
-        )
-
-
-def test_comfy_collect_outputs_raises_worker_timeout_when_budget_exhausted(
-    monkeypatch,
-):
-    """If collection runs past `budget_s` between images, the next fetch
-    must raise WorkerTimeout rather than use a negative timeout (which
-    would cause an immediate httpx error and be mis-classified as a
-    transient worker_error)."""
-    def _post(url, **kw):
-        return _FakeResp(status_code=200, json_body={"prompt_id": "pid_2"})
-
-    call_n = {"i": 0}
-
-    def _get(url, **kw):
-        if "/history/" in url:
-            return _FakeResp(status_code=200, json_body={"pid_2": {"outputs": {
-                "n1": {"images": [{"filename": "a.png"}, {"filename": "b.png"}]},
-            }}})
-        # First /view returns fine; before the second /view the budget
-        # will already be exhausted because we advance the clock below.
-        call_n["i"] += 1
-        return _FakeResp(status_code=200, content=b"PNG-OK")
-
-    # Freeze time at T0, let the budget-check see "elapsed > budget" on
-    # the second image fetch.
-    t0 = time.monotonic()
-    times = iter([t0, t0, t0 + 0.1, t0 + 0.1, t0 + 99.0, t0 + 99.0])
-
-    def _fake_monotonic():
-        try:
-            return next(times)
-        except StopIteration:
-            return t0 + 99.0
-
-    monkeypatch.setattr(
-        "framework.providers.workers.comfy_worker.time.monotonic",
-        _fake_monotonic,
-    )
-
-    worker = HTTPComfyWorker(base_url="http://mock-comfy:8188")
-    worker._import_requests = lambda: SimpleNamespace(post=_post, get=_get)
-    worker._poll_interval_s = 0.0
-
-    with pytest.raises(WorkerTimeout, match="_collect_outputs"):
-        worker.generate(
-            spec={"workflow_graph": {"nodes": []}, "width": 64, "height": 64},
-            num_candidates=1, timeout_s=5.0,
-        )
+# ---------- HTTPComfyWorker fences removed ------------------------------------
+# (See module docstring — replaced by ComfyAgentWorker subprocess in
+# OpenSpec change comfy-agent-cli-adoption; subprocess.run timeout
+# enforces the equivalent invariant directly.)
 
 
 # ---------- Tripo3DWorker -----------------------------------------------------

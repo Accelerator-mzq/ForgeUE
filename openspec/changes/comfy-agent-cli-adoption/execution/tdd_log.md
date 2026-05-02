@@ -135,4 +135,66 @@ This is an acknowledged drift; production code path unaffected.
 ### Writeback check (post-commit 2)
 
 state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
-Commit hash: pending(填入本 commit hash 后)
+Commit hash: `592eb43`
+
+---
+
+## Commit 3 — G4 ComfyAgentWorker rewrite (2026-05-02 22:50)
+
+### Anchors
+- `tasks.md#3.1` - `tasks.md#3.6` (G4 Task 3 全部 sub-tasks;commit 3 编号 per Q2 sweep)
+
+### Implementation files modified
+
+| File | Action | Details |
+|---|---|---|
+| `src/framework/providers/workers/comfy_worker.py` | Rewrite (336 → ~470 lines) | Removed `HTTPComfyWorker` (lines 188-336 v1)。Added `ComfyAgentWorker` 含:keyword-only `__init__(*, scripts_dir, run_id, project_id, artifacts_dir, python_exe=None, default_lifecycle="none")` 满足 H3 fix + REQUIRED-args fail-fast(F4+G3 fix)+ `default_lifecycle != "none"` raise(D6)+ `generate(spec, num_candidates, seed, timeout_s)` sync method 适配 ABC + 内部 `_run_once` 调 `subprocess.run` blocking + JSON envelope parsing + 失败模式 7 类映射(scripts_dir/module/exit-2/non-JSON/missing outputs/timeout/unrecognised)+ outputs.glb/audio raise(non-image rejection) + copy 到 `artifacts_dir/comfy/` + classmethod `probe_sync(scripts_dir, python_exe, timeout_s=30)` for DryRunPass(P2 fix:sync subprocess.run NOT asyncio.run)。FakeComfyWorker 加 v2 schema gate(`comfy_workflow` non-empty str + `comfy_params` dict + `comfy_lifecycle == "none"`,只在 spec 含 `comfy_workflow` 时生效;legacy `prompt_summary` 路径 back-compat) |
+| `src/framework/providers/workers/__init__.py` | Modify (cascade fix) | 删 HTTPComfyWorker import + export;加 ComfyAgentWorker + WorkerUnsupportedResponse import + export |
+| `src/framework/run.py` | Modify (cascade fix + drift writeback) | 删 HTTPComfyWorker import;`comfy_base_url` (`--comfy-url` flag) 分支 deprecated → 打印 stderr warning + fallback FakeComfyWorker(production ComfyAgentWorker 由 GenerateImageExecutor inline 构造,per F-B + 后续 G5 dispatch) |
+| `tests/unit/test_adapter_budget_clamp.py` | Modify (cascade fix) | 删 HTTPComfyWorker import + 删 2 个 HTTP-specific budget clamp fence(协议层不存在了;subprocess.run timeout 守等价 invariant);保留 Tripo3D + LiteLLM fence;module docstring 加 explanation paragraph |
+| `tests/unit/test_comfy_http_unsupported.py` | DELETE (G7 plan moved up to G4) | 121 行旧 HTTP fence 全删除。原计划在 G7 commit 6,但本 commit `from comfy_worker import HTTPComfyWorker` import 链 cascade 触发 collection error,提前删 |
+
+### Drift writeback (G4 commit 3 cascade — written-back-to-execution_plan)
+
+**Drift discovered**: design + execution_plan File Structure table only listed `comfy_worker.py` + `comfy_local_smoke.json` for G4 commit 3, but rewriting `comfy_worker.py` removed `HTTPComfyWorker` symbol that was imported by:
+- `src/framework/providers/workers/__init__.py` (re-export)
+- `src/framework/run.py` (CLI worker injection)
+- `tests/unit/test_adapter_budget_clamp.py` (HTTP-specific budget clamp fence)
+- `tests/unit/test_comfy_http_unsupported.py` (already-marked-for-deletion in G7)
+
+These cascading imports broke pytest collection. Per ForgeUE drift protocol — evidence (implementation) exposed contract gap.
+
+**Writeback** (this commit):
+- `execution/execution_plan.md` File Structure table (G4 row): added 4 cascade entries (`workers/__init__.py` Modify + `framework/run.py` Modify + `test_adapter_budget_clamp.py` Modify + `test_comfy_http_unsupported.py` Delete moved up from G7)
+- Removed duplicate `test_comfy_http_unsupported.py` Delete entry from G7 row range (was line 87)
+
+**Spec-level drift acknowledged in `comfy_worker.py` docstring**: spec round 2/3 wrote async `submit` + `asyncio.run` bridge based on assumption that worker.submit is async; actual implementation made `generate` sync to match ABC `ComfyWorker.generate` signature. Sync subprocess.run blocking is correct simpler design — no asyncio.run bridge needed. This is design-time assumption drift; documented in module docstring + execution_plan File Structure G4 row.
+
+**drift_decision**: `written-back-to-execution_plan-cascade-cleanup`
+
+### Pytest baseline delta
+
+- Pre-commit: 1158 (post G3 commit 2)
+- After comfy_worker rewrite: 1158 → collection error (cascade import)
+- After 4 cascade fixes: 1153 PASS (-5: -2 HTTP budget clamp fence -2 HTTPComfyWorker mock generate test paths -1 `test_comfy_http_unsupported.py` deleted)
+- Note: net reduction from removing HTTP-protocol coverage; G7 commit 6 will add ~22 new fences for ComfyAgentWorker subprocess contract → net 1153 + 22 = ~1175 expected post G7
+
+### Boundary check
+
+| 修改文件 | In allow-list? | 验证 |
+|---|---|---|
+| `src/framework/providers/workers/comfy_worker.py` | ✓ (G4 row) | Rewrite |
+| `src/framework/providers/workers/__init__.py` | ✓ (post-writeback drift cleanup) | cascade fix |
+| `src/framework/run.py` | ✓ (post-writeback drift cleanup) | cascade fix + deprecation |
+| `tests/unit/test_adapter_budget_clamp.py` | ✓ (post-writeback drift cleanup) | partial cleanup |
+| `tests/unit/test_comfy_http_unsupported.py` | ✓ (G7→G4 移动) | DELETE |
+| `openspec/changes/comfy-agent-cli-adoption/execution/execution_plan.md` | ✓ (authorized auxiliary;此次 modify 是 drift writeback) | drift writeback |
+
+**未 stage**: openspec/config.yaml (M user) + 1.jpg (?? user)
+
+**Boundary check verdict: PASS** (post-writeback)
+
+### Writeback check (post-commit 3)
+
+state: S3, drifts: [], frontmatter_issues: [], structural_issues: []
+Commit hash: pending
