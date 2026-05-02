@@ -8,7 +8,7 @@ contract_refs:
   - specs/provider-routing/spec.md
   - specs/runtime-core/spec.md
   - specs/probe-and-validation/spec.md
-  - review/codex_implementation_review.md
+  - review/codex_adversarial_review.md
 prev_round_writeback_commit: 6ad798c
 detected_env: claude-code
 triggered_by: forgeue-change-review

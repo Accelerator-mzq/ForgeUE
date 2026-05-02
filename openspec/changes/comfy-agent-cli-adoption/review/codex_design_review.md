@@ -18,6 +18,7 @@ codex_plugin_available: true
 created_at: 2026-05-02T18:35:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-multiple-pending
+writeback_commit: 53397b2
 note: |
   Codex returned verdict needs-attention with 6 findings (1 critical + 4 high
   + 1 medium). All findings concern contract-level holes (cancel reachability,

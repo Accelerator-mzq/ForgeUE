@@ -17,6 +17,7 @@ codex_plugin_available: true
 created_at: 2026-05-02T21:08:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-plan-artifacts-and-spec-tasks
+writeback_commit: 656f7e2
 note: |
   Plan-stage codex review (round 1, post-design-stage round 3 commit
   85a0f5e). Verdict: needs-attention, recommendation: rework-plan.

@@ -16,6 +16,7 @@ codex_plugin_available: true
 created_at: 2026-05-02T21:14:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-plan-artifacts-via-Q1Q2Q3-sweep
+writeback_commit: ed68e9f
 note: |
   Round 2 plan codex (post round 1 plan rework commit 656f7e2). Verdict
   needs-attention, FIXED-CORRECTLY 1/4 + 3 Q-findings (Q1 critical, Q2/Q3

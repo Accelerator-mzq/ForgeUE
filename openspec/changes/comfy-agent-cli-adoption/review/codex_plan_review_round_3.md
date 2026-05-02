@@ -15,6 +15,7 @@ codex_plugin_available: true
 created_at: 2026-05-02T21:30:00+08:00
 aligned_with_contract: true
 drift_decision: written-back-to-spec-cancel-fence-deduplication
+writeback_commit: 25b0c5c
 note: |
   Round 3 plan codex (post Q1-Q3 sweep commit ed68e9f). Verdict
   needs-attention but FIXED-CORRECTLY 2/3 + 1 narrow Q3-residue

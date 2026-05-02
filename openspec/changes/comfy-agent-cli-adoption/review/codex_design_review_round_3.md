@@ -23,6 +23,7 @@ codex_plugin_available: true
 created_at: 2026-05-02T20:08:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-multiple-pending
+writeback_commit: 79ec6c7
 note: |
   Round 3 codex review re-evaluated the round 2 writeback (commit 53397b2).
   Verdict: needs-attention. FIXED-CORRECTLY: 3/7 (F5, G1, G4 only).

@@ -1,7 +1,7 @@
 ---
 change_id: comfy-agent-cli-adoption
 stage: S5
-evidence_type: codex_implementation_review
+evidence_type: codex_adversarial_review
 contract_refs:
   - design.md
   - tasks.md
