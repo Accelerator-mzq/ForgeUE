@@ -3,9 +3,9 @@
     "task_id": "task_comfy_smoke",
     "task_type": "asset_generation",
     "run_mode": "basic_llm",
-    "title": "Local ComfyUI smoke (HTTPComfyWorker, single step)",
+    "title": "Local ComfyUI smoke (ComfyAgentWorker, single step)",
     "input_payload": {
-      "prompt": "single oak barrel isolated white background (seed 7777)"
+      "prompt": "single oak barrel isolated white background"
     },
     "expected_output": {
       "artifact_types": [
@@ -31,122 +31,23 @@
       "name": "comfy-local-txt2img",
       "risk_level": "medium",
       "capability_ref": "image.generation",
+      "provider_policy": {
+        "capability_required": "image.generation",
+        "models_ref": "image_local"
+      },
       "config": {
         "num_candidates": 1,
-        "seed": 17,
+        "seed": 7777,
         "worker_timeout_s": 300,
-        "model_hint": "comfy-local",
         "spec": {
-          "prompt_summary": "single oak barrel isolated white background (seed 7777)",
-          "width": 512,
-          "height": 512,
-          "workflow_graph": {
-            "3": {
-              "inputs": {
-                "seed": 7777,
-                "steps": 25,
-                "cfg": 7,
-                "sampler_name": "dpmpp_2m",
-                "scheduler": "karras",
-                "denoise": 1,
-                "model": [
-                  "4",
-                  0
-                ],
-                "positive": [
-                  "6",
-                  0
-                ],
-                "negative": [
-                  "7",
-                  0
-                ],
-                "latent_image": [
-                  "5",
-                  0
-                ]
-              },
-              "class_type": "KSampler",
-              "_meta": {
-                "title": "K采样器"
-              }
-            },
-            "4": {
-              "inputs": {
-                "ckpt_name": "anything-v5-PrtRE.safetensors"
-              },
-              "class_type": "CheckpointLoaderSimple",
-              "_meta": {
-                "title": "Checkpoint加载器(简易)"
-              }
-            },
-            "5": {
-              "inputs": {
-                "width": 512,
-                "height": 512,
-                "batch_size": 1
-              },
-              "class_type": "EmptyLatentImage",
-              "_meta": {
-                "title": "空Latent"
-              }
-            },
-            "6": {
-              "inputs": {
-                "text": "masterpiece, best quality, highly detailed, single oak barrel, one wooden wine barrel, iron banding, weathered wood, isolated object, centered composition, product shot, studio lighting, plain white background, simple background, sharp focus",
-                "clip": [
-                  "4",
-                  1
-                ]
-              },
-              "class_type": "CLIPTextEncode",
-              "_meta": {
-                "title": "CLIP文本编码器"
-              }
-            },
-            "7": {
-              "inputs": {
-                "text": "bad anatomy, low quality, worst quality, blurry, deformed, watermark, signature, text, ugly, jpeg artifacts, cropped, out of frame, 1girl, 1boy, person, people, character, human, face, hands, multiple views, frame, border, tavern, cellar, room interior, scenery, landscape, multiple barrels, multiple objects, table, chair, shelf, wall, floor, window, ceiling, bottle, glass",
-                "clip": [
-                  "4",
-                  1
-                ]
-              },
-              "class_type": "CLIPTextEncode",
-              "_meta": {
-                "title": "CLIP文本编码器"
-              }
-            },
-            "8": {
-              "inputs": {
-                "samples": [
-                  "3",
-                  0
-                ],
-                "vae": [
-                  "4",
-                  2
-                ]
-              },
-              "class_type": "VAEDecode",
-              "_meta": {
-                "title": "VAE解码"
-              }
-            },
-            "9": {
-              "inputs": {
-                "filename_prefix": "Result",
-                "images": [
-                  "8",
-                  0
-                ]
-              },
-              "class_type": "SaveImage",
-              "_meta": {
-                "title": "保存图像"
-              }
-            }
-          }
+          "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+          "comfy_params": {
+            "text": "single oak barrel isolated white background, masterpiece, best quality, highly detailed, iron banding, weathered wood, isolated object, centered composition, product shot, studio lighting, plain white background, simple background, sharp focus",
+            "seed": 7777,
+            "width": 512,
+            "height": 512
+          },
+          "comfy_lifecycle": "none"
         }
       }
     }

@@ -16,6 +16,7 @@ providers:
   test_dashscope: {}
   test_hunyuan: {}
   test_hunyuan_3d: {}
+  comfy_api: {}    # OpenSpec change comfy-agent-cli-adoption (placeholder; worker config via FORGEUE_COMFY_*)
 
 models:
   # text
@@ -110,6 +111,14 @@ models:
     provider: test_xai
     kind: text
 
+  # OpenSpec change comfy-agent-cli-adoption: local ComfyUI virtual model id
+  # ComfyUI 没真 model 概念,这是 routing 占位让 alias 能引用;真"模型"由 bundle
+  # spec.comfy_workflow manifest 名指定。pricing: null 因本地 GPU 无 per-call cost
+  comfy_local:
+    id: "comfy/local"
+    provider: comfy_api
+    kind: image
+
 aliases:
   # capability-named aliases only —— swap models freely without renaming
 
@@ -140,3 +149,7 @@ aliases:
   mesh_from_image:
     preferred: [tripo_v2]
     fallback:  [hunyuan_3d]
+  # OpenSpec change comfy-agent-cli-adoption: local ComfyUI image generation
+  image_local:
+    preferred: [comfy_local]
+    fallback: []
