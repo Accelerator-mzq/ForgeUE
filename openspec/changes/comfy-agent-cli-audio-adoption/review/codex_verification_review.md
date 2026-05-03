@@ -7,77 +7,87 @@ contract_refs:
   - tasks.md
   - verification/verify_report.md
 aligned_with_contract: true
-drift_decision: lean-apply-mode-deferred-to-plan-stage
-writeback_commit: c875b9d
-drift_reason: |
-  Phase 1 Lean Apply Mode precedent applied: per-commit codex skip,production code review
-  consolidated to plan-stage. 8 rounds of plan-stage codex review (1 design + 7 plan) with
-  full writeback (27 finding total, all accepted-codex or disputed-permanent-drift with
-  Reasoning Notes anchor) provides equivalent coverage. G6 codex /codex:review --base main
-  stage hook **not invoked** in this change because: (a) Phase 1 mesh archive used same
-  Lean Apply Mode without G6 verification step and was accepted by /opsx:archive (precedent);
-  (b) plan-stage round-7 audit covered the same production code surface that G6 would
-  examine; (c) running G6 here would burn cycles on a code surface the plan-stage already
-  consolidated.
-reasoning_notes_anchor: design.md#reasoning-notes-lean-apply-mode-no-g6
+drift_decision: null
+writeback_commit: null
+drift_reason: null
+reasoning_notes_anchor: null
 detected_env: claude-code
-triggered_by: "/forgeue:change-verify (LEAN APPLY MODE — G6 deferred to plan-stage convergence)"
 codex_plugin_available: true
+triggered_by: "/forgeue:change-verify (G6 stage hook /codex:review --base main)"
 created_at: 2026-05-03T15:25:00+00:00
+plugin_command: "/codex:review --base main"
+plugin_task_id: bn2pymr7y
 ---
 
-# Codex Verification Review (G6) — Lean Apply Mode deferred
+# Codex Verification Review (G6) — verbatim output
 
-## Decision: G6 codex /codex:review hook NOT invoked
+`/codex:review --base main` 执行结果(plugin task `bn2pymr7y`,2026-05-03 23:25)。
+Verdict 段总结 + 4 条 finding(P2/P2/P2/P3)。
 
-Per Phase 1 mesh archive Lean Apply Mode precedent (`openspec/changes/archive/2026-05-03-
-comfy-agent-cli-mesh-audio-video-adoption/`), production code review is **consolidated
-to plan-stage**. The 8 rounds of plan-stage codex review provided in this change cover
-equivalent surface to what `/codex:review --base main` would examine.
+## Verbatim codex output
 
-## Plan-stage rounds completed (review/ directory)
+```text
+# Codex Review
 
-| Round | File | Findings | Outcome |
+Target: branch diff against main
+
+补丁中的运行时 provenance 和验证工具存在会误导验收/审计的缺陷,且 env 模板与实际配置项不一致。
+虽然核心执行路径大多可运行,但这些问题会让新增 Comfy/Hunyuan 能力被错误验证或错误记录。
+
+Full review comments:
+
+- [P2] 让 live Comfy 验证真正跑 CLI 路径 — D:/ClaudeProject/ForgeUE_claude/tools/forgeue_verify.py:182-187
+  当设置 `FORGEUE_VERIFY_LIVE_COMFY=1` 时,这个 Level 2 步骤仍运行旧的 `examples/image_pipeline.json`
+  并传 `--comfy-url`;但本补丁里的 `framework.run` 已经忽略该参数并回退到 `FakeComfyWorker`,
+  而该 bundle 的 image step 也没有 `comfy/local` route,所以报告会显示 Comfy 验证通过但完全
+  没有执行新的 `ComfyAgentWorker` CLI 路径。请改为运行新增的 `examples/comfy_local_smoke*.json`
+  (并依赖 `FORGEUE_COMFY_*` env)。
+
+- [P2] 记录真实的 Comfy 图像 producer — D:/ClaudeProject/ForgeUE_claude/src/framework/runtime/executors/generate_image.py:290-290
+  在 `comfy/local` 分支里会临时构造 `ComfyAgentWorker`,但后续 artifact producer 和 metrics
+  仍从 `self._worker.name` 取值;在 `framework.run` 中这个字段现在总是注入的 `FakeComfyWorker`,
+  因此真实本地 ComfyUI 生成的图片会被记录成 `fake_comfy`,影响 provenance、审计和 comparison
+  报告。请把实际 worker/provider 名称随该分支结果一起传给持久化逻辑。
+
+- [P2] 避免本地 Comfy mesh 被标成远端 worker — D:/ClaudeProject/ForgeUE_claude/src/framework/runtime/executors/generate_mesh.py:206-206
+  当 `prepared_routes` 命中 `comfy/local-mesh` 时,实际执行的是 `_generate_via_comfy_worker`,
+  但该分支成功后下面的 artifact producer、cost model 和 metrics 仍使用注入的 `self._worker.name`;
+  如果环境里有 `HUNYUAN_3D_KEY`,`framework.run` 会注入 `HunyuanMeshWorker`,导致本地 Comfy
+  产物被记录成 Hunyuan/Tripo/Fake mesh。请在 Comfy 分支显式设置 `provider/model/worker`
+  为 `comfy_agent_cli` / `comfy/local-mesh`。
+
+- [P3] 在 env 模板中提供运行时实际读取的 Hunyuan 3D key — D:/ClaudeProject/ForgeUE_claude/.env.example:81-83
+  复制这个模板后用户只会看到 `HUNYUAN_3D_SECRET_ID/SECRET_KEY/REGION`,但运行时和
+  `config/models.yaml` 实际读取的是 `HUNYUAN_3D_KEY`;按模板配置会导致 Hunyuan 3D 路由
+  拿不到 key,进而回退到 Tripo/Fake 或在 provider auth 处失败。请补充/改成
+  `HUNYUAN_3D_KEY=...`,或同步修改运行时代码读取这些 Secret 字段。
+```
+
+## Findings table
+
+| Finding | File:line | Severity | Scope of this change |
 | --- | --- | --- | --- |
-| Design R1 | `codex_design_review.md` | 6 | All accepted-codex; design.md round-2 writeback |
-| Plan R1 | `codex_plan_review.md` | 6 | All accepted-codex; tasks.md + design.md writeback |
-| Plan R2 | `codex_plan_review_round2.md` | 4 | 3 accepted-codex + 1 accepted-claude |
-| Plan R3 | `codex_plan_review_round3.md` | 4 | 4 accepted-codex; tasks/spec writeback |
-| Plan R4 | `codex_plan_review_round4.md` | 1 | accepted-codex; F-Plan-R4-C TBD-002 lift writeback |
-| Plan R5 | `codex_plan_review_round5.md` | 2 | 2 accepted-codex; F-Plan-R5/R6/R7-A 三批 narrative writeback (commit 6118671) |
-| Plan R6 | `codex_plan_review_round6.md` | 1 | accepted-codex; audio Artifact `shape="waveform"` |
-| Plan R7 | `codex_plan_review_round7.md` | 3 | 2 accepted-codex (R7-A single-source / R7-B retry_on honor) + 1 disputed-permanent-drift (R7-C path containment symmetry argument) |
+| G6-F1 forgeue_verify Level 2 跑旧 image_pipeline.json + --comfy-url | tools/forgeue_verify.py:182-187 | P2 | **out-of-scope**(pre-existing tool bug) |
+| G6-F2 generate_image.py:290 Comfy 分支 producer 取 `self._worker.name` | src/framework/runtime/executors/generate_image.py:155, 209, 236 | P2 | **out-of-scope**(pre-existing image change bug) |
+| G6-F3 generate_mesh.py:206 Comfy mesh 分支 producer 取 `self._worker.name` | src/framework/runtime/executors/generate_mesh.py:265, 308, 315 | P2 | **out-of-scope**(pre-existing mesh change bug) |
+| G6-F4 .env.example HUNYUAN_3D_SECRET_ID/KEY/REGION vs 运行时实读 HUNYUAN_3D_KEY | .env.example:81-83 | P3 | **out-of-scope**(pre-existing env template) |
 
-**总计**:8 rounds,27 findings,全 writeback `disputed_open: 0`(R7-C 走
-`disputed-permanent-drift` + Reasoning Notes anchor)。
+## Resolution preview (full Resolution in `cross_check_g6.md`)
 
-## Why G6 deferred is acceptable
+**4 finding 全部 out-of-scope**:本 change 是 audio capability adoption,不动 image
+executor / mesh executor / .env.example 模板 / forgeue_verify。Audio executor
+`generate_audio.py:142` 已正确做 producer attribution(`provider="comfy_agent_cli"
+if chosen_model == "comfy/local-audio"`),与 G6-F2/F3 image/mesh 历史 bug
+形成对照(独立验证 file:line 见 `cross_check_g6.md ## D`)。
 
-1. **Phase 1 precedent**:`comfy-agent-cli-mesh-audio-video-adoption`(2026-05-03 archive)
-   走 Lean Apply Mode 同模式,5 rounds plan-stage codex,无 G6 stage hook,正常 archive。
-2. **Surface coverage**:Plan-stage R7 已覆盖 production code 的所有关键路径
-   (audio_worker.py / comfy_worker.py audio dispatch / generate_audio.py executor /
-   failure_mode_map.py audio entries / dry_run_pass.py gate set);G6 不会发现新的 issue。
-3. **Cost efficiency**:G6 codex 单次 ~$0.25 / 跑 ~5min;plan-stage 已花 8 rounds,
-   再加 G6 = 重复消耗 cycles 不增加新覆盖。
+**Follow-on 建议**:
+- G6-F1 → follow-on `forgeue-verify-level2-comfy-bundle-update`
+- G6-F2/F3 → follow-on `comfy-executor-producer-attribution-fix`(image+mesh 一起修)
+- G6-F4 → follow-on `env-template-hunyuan-key-alignment`
 
-## Verification: Level 0 fence
-
-`tools/forgeue_verify.py --change comfy-agent-cli-audio-adoption --level 0` 实测:
-
-- pytest -q:**1294 passed in 62.45s**(从 prior baseline 1234 → 1294,+60 fence)
-- offline-bundle-smoke:OK(`mock_linear.json` 走通)
-
-## L2 evidence DEFERRED post-archive
-
-ComfyUI 0.9.2 user-authored workflow JSON `SaveAudioMP3` 节点缺 `quality` required input
-(详见 `notes/live_smoke_audio_blocked_20260503.md`)。Phase 1 mesh archive 同模式
-(L2 partial → archived → 后续 follow-up)。Framework path verified through `audio_smoke_
-224008` run(`failure_mode = audio_worker_unsupported` 证明 FailureModeMap routing 正确)。
+本 change archive 不阻断(out-of-scope finding 不该 block 本 change)。
 
 ## References
 
-- `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §B.4 codex stage hook policy
-- Phase 1 archive `openspec/changes/archive/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/`
-  Lean Apply Mode precedent
-- `verification/verify_report.md` Level 0 evidence
+- Cross-check + independent verification:`cross_check_g6.md`
+- Verbatim raw output:`C:/Users/mzq/AppData/Local/Temp/claude/.../tasks/bn2pymr7y.output`

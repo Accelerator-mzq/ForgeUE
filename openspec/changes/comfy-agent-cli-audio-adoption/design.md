@@ -493,3 +493,21 @@ def _generate_via_comfy_worker(
 5. **Risk acceptance**:在 follow-on 落地之前,ComfyUI buggy CLI 返回站外路径的可能性低(用户本地 subprocess + ComfyUI 节点稳定性历史良好),且 magic bytes 校验提供了第二层 defense-in-depth(任意 host 文件需要同时是 valid FLAC/MP3/WAV magic 才会被读 — 显著降低误用面)。Risk 接受度高于 R7-C 推荐的 「立即修」级别。
 
 **结论**:F-Plan-R7-C `disputed-permanent-drift / accepted-claude`;本 change 不加 path containment;follow-on change `comfy-agent-cli-path-containment-hardening` 三 capability 统一处理。Cross-check `## C` 标 `disputed-permanent-drift`,`drift_reason` 引用本 anchor。
+
+### G11-F2 round-8: codex re-pushback at [high] severity — Claude 反驳维持 disputed-permanent-drift
+
+**G11 codex re-finding**(2026-05-03 G11 mixed-scope adversarial,task `b86swn4sj`):"`outputs.audio` can read files outside the ComfyUI output boundary (`comfy_worker.py:1017-1040`)。`_run_once_audio()` converts each stdout path to `Path`, checks only `is_file()` and `is_symlink()`, then reads the bytes. A buggy or compromised local CLI can return any accessible non-symlink `.flac/.mp3/.wav` path outside the ComfyUI run/output tree; magic-byte table only proves it is audio-like, not that it was produced by this run. The symmetry argument with image/mesh repeats an existing trust-boundary gap instead of reducing it."
+
+**Claude 反驳维持 disputed-permanent-drift**(沿 R7-C 论证 + 补充 G11 codex 提出的具体异议):
+
+1. **Codex 第一论点(symmetry argument 复制了缺口)**:技术正确。本 change 的 audio path 防护与 image / mesh 同 G11 R2 fix 模式,确实把现有 `is_file()`+`is_symlink()` 但**无 containment** 模式扩展到 audio。Claude 接受此事实。但 R7-C 论证不依赖于 "三处都安全",而依赖于 "**asymmetric fix is wrong fix**":如果三 capability 中只 audio 加 containment,审计者读 image / mesh 代码会 mistakenly assume 同样防护(false sense of security on image/mesh paths,前者贴图 / 模型产物比 audio 更敏感);相反,**统一在 follow-on 同步加**才是正确解。
+
+2. **Codex 第二论点(magic bytes 只证明 audio-like 不证 produced by this run)**:技术正确。Magic bytes 防误读 binary garbage(防被骗读到非音频文件然后 UE 崩),不防 buggy CLI 故意指向他处合法 audio 文件。但实际威胁面分析:(a) ComfyUI 是用户本地 subprocess(NOT 网络对手 controlled),需要 ComfyUI 自身 bug 才会输出 D 盘外路径;(b) ComfyUI 输出路径由其内部 `comfyui_api/runner.py extract_outputs` 拼到 `comfy_run_root` 下(F4 round-1 静态阅读 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py:31` 验证);(c) 如果 ComfyUI 已被 compromise 到能返回任意路径,用户机器的 root 文件系统已暴露,framework 加 containment 也救不回来。Threat model 是 buggy CLI(误差范围内的 path bug),NOT compromised CLI(信任边界已破)。
+
+3. **Codex [high] 评级 vs Claude 风险评估**:Codex 给 [high] 因为 trust-boundary 缺口在抽象层永远是 [high]。Claude 评估实际危害:(a) defense-in-depth 第二层(magic bytes whitelist)要求文件至少是 valid FLAC/MP3/WAV,显著缩窄潜在 leak 面到"已是合法 audio 的本机文件";(b) ComfyUI subprocess 跑同 user 权限,subprocess 输出 ≈ user 自己读;(c) `forgeue_<sha1>.png` mesh 路径同样问题已延 ~3 周生产无 incident。Risk = 抽象 [high] × 实际触发条件低 + 第二层防护 = 实际生产 risk 可接受。
+
+4. **Architectural decision recap**:F-Plan-R7-C 的 disputed-permanent-drift 立场建立在 "**asymmetric fix is wrong fix** + follow-on change 是正确解" 双前提下。G11-F2 codex re-pushback 没有改变这两个前提,只是上调 severity rating。Claude 维持 R7-C 立场,但 cross-check `## D` 独立验证将记录 codex 的具体异议条款,确保 future 审计能完整看到双方论点(NOT silent accept/reject)。
+
+5. **Follow-on commitment 重申**:`comfy-agent-cli-path-containment-hardening` change 必须包含:(a) 三 capability 同步加 `Path.resolve().is_relative_to(comfy_run_root)` 校验、(b) `comfy_run_root` 由 agent CLI metadata `comfy_run_root` 字段 derive(已在本 change `AudioCandidate.metadata` 落记)、(c) 三 fence 各加 `path_outside_run_root_raises_unsupported_response`、(d) cross-reference G11-F2 finding 作为 motivating evidence 之一。
+
+**结论**:G11-F2 维持 R7-C 立场 = `disputed-permanent-drift`;cross-check 记录 codex re-pushback 全文 + Claude 反驳全文,确保审计透明。
