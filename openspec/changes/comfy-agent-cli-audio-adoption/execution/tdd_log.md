@@ -157,3 +157,50 @@ note: |
 
 无。F5 + F-Plan-3 + F-Plan-4 + F-Plan-R3-A + F-Plan-R5-A + F-Plan-R7-A 全部修订都在本 commit 落实;F-Plan-R7-C disputed-permanent-drift(path containment)按设计**不**加 — 保留与 image / mesh G11 R2 fix 对称;follow-on `comfy-agent-cli-path-containment-hardening` 三 capability 统一处理。
 
+
+## Commit 4 — GenerateAudioExecutor + ExecutorRegistry + 14 fence (2026-05-03 22:30)
+
+### Anchors
+- `tasks.md#5.1` - `#5.7` (§5 GenerateAudioExecutor + ExecutorRegistry 注册)
+- `execution/micro_tasks.md` Commit 4 (4.1-4.7)
+- F1 round-1 + F-Plan-R4-C round-4: capability_ref="audio.t2a" (NOT new step type)
+- F2 round-1 + F-Plan-R7-B round-7: 三 except 块 + _should_retry honor RetryPolicy.retry_on
+- F-Plan-R6-A round-6: Artifact shape="waveform" + UE bridge integration
+- F-Plan-R7-A round-7: metadata single-source
+
+### Implementation files
+
+| File | Action | Details |
+|---|---|---|
+| `src/framework/runtime/executors/generate_audio.py` | Create | GenerateAudioExecutor 类(`step_type=StepType.generate, capability_ref="audio.t2a"`)+ `_should_use_comfy_worker_path` + `_generate_via_comfy_worker`(F2 三 except 块拆分 + F-Plan-R7-B `_should_retry` honor retry_on)+ execute() 含 `repo.put(artifact_type=ArtifactType(modality="audio", shape="waveform", display_name="audio_asset"), file_suffix=f".{cand.format}", metadata={...format/duration_seconds/sample_rate/worker_metadata})` 持久化(F-Plan-R6-A + F-Plan-R7-A)+ `_audio_mime_type` helper + `_should_retry` helper |
+| `src/framework/runtime/executors/__init__.py` | Modify | 加 `from .generate_audio import GenerateAudioExecutor` import + `__all__` 加 `GenerateAudioExecutor` |
+| `src/framework/run.py` | Modify | imports 加 `GenerateAudioExecutor`;`execs.register(GenerateAudioExecutor())` 在 `register(GenerateMeshExecutor(...))` 之后(F1 round-1:沿 image / mesh registration 模式;无 worker 注入因本 change scope 仅 ComfyUI 第一客户) |
+| `tests/unit/test_generate_audio_comfy.py` | Create | 14 fence:executor dispatch(4)+ F2 三 except 块 + F-Plan-R7-B retry_on(4)+ 持久化 shape/metadata(2)+ ADR-007 边界(1)+ _should_retry helper(3) |
+
+### TDD cycle
+
+1. **GREEN-first**(依赖 commit 1 AudioCandidate + commit 2 model registry + commit 3 ComfyAgentWorker.generate_audio):写 production code → 运行 fence,2 处 contract 不一致触发 RED:
+   - ExecutorResult 字段名:`artifact_ids` → 实际是 `artifacts: list[Artifact]`(只 artifacts + metrics 两字段)
+   - test 用 walrus 操作符 `:=` 在函数签名里 — Python 不支持(SyntaxError)
+2. **FIX**:删 `artifact_ids=` field、改 test 用 `[a.artifact_id for a in result.artifacts]`、删除 walrus 操作符
+3. **GREEN**:14/14 fence PASS
+
+### Pytest baseline delta
+
+- Pre-commit:1268
+- Post-commit:**1282 passed**(+14)
+- 零回归
+
+### Boundary check
+
+- `git diff --name-only`:
+  - `src/framework/runtime/executors/generate_audio.py` ✅(execution_plan.md File Structure 表 §5.1 显式列)
+  - `src/framework/runtime/executors/__init__.py` ✅(execution_plan.md File Structure 表 §5.3 显式列)
+  - `src/framework/run.py` ✅(execution_plan.md File Structure 表 §5.4 + F1 round-1 修订:NOT 改 loader.py)
+  - `tests/unit/test_generate_audio_comfy.py` ✅(execution_plan.md Test files 表 §5.5 列)
+- 0 越界
+
+### Drift events
+
+无。F1/F2/F-Plan-R4-C/F-Plan-R5-A/F-Plan-R6-A/F-Plan-R7-A/F-Plan-R7-B round-X 修订全部落实。F-Plan-R7-C disputed-permanent-drift(path containment)按设计**不**加(本 commit 不读 outputs.audio bytes,bytes-reading 在 commit 3 ComfyAgentWorker.generate_audio 内,沿 image/mesh symmetry)。
+

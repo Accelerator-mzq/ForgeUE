@@ -25,6 +25,7 @@ from framework.providers.workers.mesh_worker import (
 from framework.runtime.executors import (
     ExecutorRegistry,
     ExportExecutor,
+    GenerateAudioExecutor,
     GenerateImageEditExecutor,
     GenerateImageExecutor,
     GenerateMeshExecutor,
@@ -114,6 +115,11 @@ def _build_orchestrator(
     execs.register(GenerateImageExecutor(worker=worker, router=router))
     execs.register(GenerateImageEditExecutor(router=router))
     execs.register(GenerateMeshExecutor(worker=mesh_worker))
+    # OpenSpec change comfy-agent-cli-audio-adoption Phase 2:
+    # `audio.t2a` capability_ref → ExecutorRegistry `(StepType.generate, "audio.t2a")` entry
+    # (F1 round-1 + F-Plan-R4-C round-4:沿用 StepType.generate 已有枚举,**不**新增 step type;
+    # ComfyUI dispatch via executor-side model-id branch per spec/provider-routing pattern c)
+    execs.register(GenerateAudioExecutor())
     execs.register(ExportExecutor())
 
     orch = Orchestrator(

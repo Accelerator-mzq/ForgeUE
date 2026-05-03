@@ -6,6 +6,7 @@ from framework.runtime.executors.base import (
     get_executor_registry,
 )
 from framework.runtime.executors.export import ExportExecutor
+from framework.runtime.executors.generate_audio import GenerateAudioExecutor
 from framework.runtime.executors.generate_image import GenerateImageExecutor
 from framework.runtime.executors.generate_image_edit import GenerateImageEditExecutor
 from framework.runtime.executors.generate_mesh import GenerateMeshExecutor
@@ -16,6 +17,7 @@ __all__ = [
     "ExecutorRegistry",
     "ExecutorResult",
     "ExportExecutor",
+    "GenerateAudioExecutor",
     "GenerateImageEditExecutor",
     "GenerateImageExecutor",
     "GenerateMeshExecutor",
