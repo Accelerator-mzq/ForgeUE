@@ -227,6 +227,33 @@ def _step_artifacts(step_id: str, snapshot: RunSnapshot) -> dict[str, Artifact]:
     return {aid: art for aid, art in snapshot.artifacts.items() if art.producer.step_id == step_id}
 
 
+def _stable_aid_key(aid: str, run_id: str, step_id: str) -> str:
+    """Strip the executor's ``<run_id>_<step_id>_`` prefix from ``aid``.
+
+    All runtime executors construct ``artifact_id`` via
+    ``f"{ctx.run.run_id}_{ctx.step.step_id}_..."`` (see
+    ``src/framework/runtime/executors/`` -- generate_image / generate_mesh /
+    export / review / validate / select / mock_executors / generate_structured
+    all follow this convention). Using the full id as a comparison key makes
+    paired artifacts across runs with different ``run_id`` mismatch every
+    time (which is the typical baseline-regression scenario), so every
+    matching output gets reported as ``missing_in_*``.
+
+    Stripping the prefix yields a stable per-step identity (e.g.
+    ``cand_xyz_0`` / ``manifest`` / ``export_bundle``) that matches across
+    runs. Falls back to ``aid`` unchanged when the convention does not apply
+    (legacy fixtures, hand-written snapshots) so the function is a monotonic
+    refinement -- never WORSE than raw matching.
+    """
+    full = f"{run_id}_{step_id}_"
+    if aid.startswith(full):
+        return aid[len(full):]
+    short = f"{run_id}_"
+    if aid.startswith(short):
+        return aid[len(short):]
+    return aid
+
+
 def _compute_step_diffs(baseline: RunSnapshot, candidate: RunSnapshot) -> list[StepDiff]:
     union_steps = sorted(_collect_step_ids(baseline) | _collect_step_ids(candidate))
     out: list[StepDiff] = []
@@ -256,10 +283,40 @@ def _compute_artifact_diffs(
 ) -> list[ArtifactDiff]:
     b_arts = _step_artifacts(step_id, baseline)
     c_arts = _step_artifacts(step_id, candidate)
-    union_aids = sorted(b_arts.keys() | c_arts.keys())
+    # Pair by stable key so cross-run-id comparisons match equivalent
+    # outputs. Without this, executors that prefix aid with run_id (image /
+    # mesh / export / review / etc) would all show as missing_in_*.
+    b_keyed: dict[str, tuple[str, Artifact]] = {
+        _stable_aid_key(aid, baseline.run_id, step_id): (aid, art)
+        for aid, art in b_arts.items()
+    }
+    c_keyed: dict[str, tuple[str, Artifact]] = {
+        _stable_aid_key(aid, candidate.run_id, step_id): (aid, art)
+        for aid, art in c_arts.items()
+    }
     out: list[ArtifactDiff] = []
-    for aid in union_aids:
-        out.append(_diff_one_artifact(aid, b_arts.get(aid), c_arts.get(aid), baseline, candidate))
+    for key in sorted(b_keyed.keys() | c_keyed.keys()):
+        b_pair = b_keyed.get(key)
+        c_pair = c_keyed.get(key)
+        b_aid, b_art = b_pair if b_pair else (None, None)
+        c_aid, c_art = c_pair if c_pair else (None, None)
+        # Display aid: prefer candidate (the "current" run); fall back to
+        # baseline when only that side exists. The kind / hashes still
+        # convey actual status; per-side aids below are passed for
+        # side-specific lookups (payload_missing_on_disk etc).
+        rep_aid = c_aid if c_aid is not None else b_aid
+        assert rep_aid is not None
+        out.append(
+            _diff_one_artifact(
+                rep_aid,
+                b_art,
+                c_art,
+                baseline,
+                candidate,
+                b_aid=b_aid,
+                c_aid=c_aid,
+            )
+        )
     return out
 
 
@@ -269,7 +326,19 @@ def _diff_one_artifact(
     c_art: Artifact | None,
     baseline: RunSnapshot,
     candidate: RunSnapshot,
+    *,
+    b_aid: str | None = None,
+    c_aid: str | None = None,
 ) -> ArtifactDiff:
+    """``aid`` is the display id used in the resulting ``ArtifactDiff``;
+    ``b_aid`` / ``c_aid`` are the per-side ids used for snapshot-keyed
+    lookups (``payload_missing_on_disk`` / ``payload_hash_mismatches`` /
+    ``review_payloads``). Defaults: when callers don't pair across run_ids
+    (legacy / pre-stable-key paths), ``b_aid == c_aid == aid`` keeps the
+    original behavior.
+    """
+    b_aid = b_aid if b_aid is not None else aid
+    c_aid = c_aid if c_aid is not None else aid
     if b_art is None and c_art is not None:
         # Single-sided artifact: still surface candidate's tamper / missing-on-disk
         # signals via note so the data-integrity contract from the artifact-contract
@@ -279,21 +348,21 @@ def _diff_one_artifact(
             artifact_id=aid,
             kind="missing_in_baseline",
             candidate_hash=c_art.hash,
-            note=_single_side_integrity_note("candidate", aid, candidate),
+            note=_single_side_integrity_note("candidate", c_aid, candidate),
         )
     if c_art is None and b_art is not None:
         return ArtifactDiff(
             artifact_id=aid,
             kind="missing_in_candidate",
             baseline_hash=b_art.hash,
-            note=_single_side_integrity_note("baseline", aid, baseline),
+            note=_single_side_integrity_note("baseline", b_aid, baseline),
         )
     assert b_art is not None and c_art is not None  # union guarantees one side
 
     # payload_missing_on_disk takes precedence: without on-disk bytes, neither
     # hash equality nor metadata equality conveys the actual story.
-    b_missing = aid in baseline.payload_missing_on_disk
-    c_missing = aid in candidate.payload_missing_on_disk
+    b_missing = b_aid in baseline.payload_missing_on_disk
+    c_missing = c_aid in candidate.payload_missing_on_disk
     if b_missing or c_missing:
         sides: list[str] = []
         if b_missing:
@@ -313,8 +382,8 @@ def _diff_one_artifact(
     # payload_hash_mismatch on either side: per delta artifact-contract spec
     # "Tampered payload is surfaced", emit content_changed + note even when
     # the recorded hashes happen to match across sides.
-    b_mismatch = baseline.payload_hash_mismatches.get(aid)
-    c_mismatch = candidate.payload_hash_mismatches.get(aid)
+    b_mismatch = baseline.payload_hash_mismatches.get(b_aid)
+    c_mismatch = candidate.payload_hash_mismatches.get(c_aid)
     if b_mismatch is not None or c_mismatch is not None:
         notes: list[str] = []
         if b_mismatch is not None:
@@ -466,11 +535,21 @@ def _diff_lineage(b_art: Artifact, c_art: Artifact) -> dict[str, tuple[Any, Any]
 def _compute_verdict_diffs(step_id: str, baseline: RunSnapshot, candidate: RunSnapshot) -> list[VerdictDiff]:
     b_aids = _verdict_aids_for_step(step_id, baseline)
     c_aids = _verdict_aids_for_step(step_id, candidate)
-    union_aids = sorted(b_aids | c_aids)
+    # Pair by stable key for cross-run-id matching (mirror artifact diff
+    # path). Verdict aids follow the same `<run_id>_<step_id>_report_<fp>`
+    # convention (see runtime/executors/review.py:348).
+    b_keyed: dict[str, str] = {
+        _stable_aid_key(aid, baseline.run_id, step_id): aid for aid in b_aids
+    }
+    c_keyed: dict[str, str] = {
+        _stable_aid_key(aid, candidate.run_id, step_id): aid for aid in c_aids
+    }
     out: list[VerdictDiff] = []
-    for aid in union_aids:
-        b_body = baseline.review_payloads.get(aid)
-        c_body = candidate.review_payloads.get(aid)
+    for key in sorted(b_keyed.keys() | c_keyed.keys()):
+        b_aid_full = b_keyed.get(key)
+        c_aid_full = c_keyed.get(key)
+        b_body = baseline.review_payloads.get(b_aid_full) if b_aid_full else None
+        c_body = candidate.review_payloads.get(c_aid_full) if c_aid_full else None
         if b_body is None and c_body is None:
             # Verdict artifact exists in _artifacts.json on at least one side
             # but loader could not extract the JSON body on either side. We

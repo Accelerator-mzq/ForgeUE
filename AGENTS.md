@@ -169,7 +169,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 - 不提交 `artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径。
 - 不硬编码测试总数;以 `python -m pytest -q` 实测为准。
 - 不硬编码 provider model id(除非 bundle 显式允许)。
-- 不修改 `.codex/skills/openspec-*`(OpenSpec 默认 skill,与 `.claude/` 下的相同)。
+- 不修改 OpenSpec 默认产物全集:`.claude/commands/opsx/*` / `.claude/skills/openspec-*` / `.codex/commands/opsx/*` / `.codex/skills/openspec-*`。
 - 贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);失败时 surface job_id 给用户,先 `probe_hunyuan_3d_query` 再决定 `--resume`。
 
 ### Documentation Sync Gate(摘要)
@@ -179,3 +179,17 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 必须检查的 10 份文档:`openspec/specs/*` / `docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md` / `README.md` / `CHANGELOG.md` / `CLAUDE.md` / `AGENTS.md`。
 
 规则:不机械同步;不更新必须记录原因;docs / tests / code / CHANGELOG 冲突时标记 doc drift,不自行猜测。触发提示词见 `docs/ai_workflow/README.md` §4.3。
+
+### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
+
+> 本节与 `CLAUDE.md` §"ForgeUE Integrated AI Change Workflow" 保持语义同步;视角调整为 Codex / 其他外部 agent。
+
+中心化融合 OpenSpec × Superpowers × codex-plugin-cc。**由 Claude Code 主导编排**,Codex 通过 `/codex:*` slash commands 在 plan / apply / verify / review 4 个 stage 各 1-2 次接受 cross-review 调用。Codex / 其他 agent 视角:
+
+- **不调 `/codex:rescue` 在工作流内**:rescue 是单点修复 helper,与 stage gate / cross-check 协议正交。框架级 systematic-debugging 走 Claude `/forgeue:change-debug` + Superpowers skill。
+- **review-gate hook 默认禁用**:`~/.claude/settings.json` 含 `--enable-review-gate` 由 `forgeue_finish_gate` WARN 提示用户 disable(stage gate 与 review-gate 重复且常冲突)。
+- **每个 codex review 输出**(`/codex:review` / `/codex:adversarial-review`)需被 Claude 端独立验证 file:line 真实性后,作为 `review/codex_*_review.md` evidence 落 12-key frontmatter;blocker 涉及 contract 必须回写到 design / proposal / tasks(`drift_decision: written-back-to-*` + 真实 `writeback_commit`,由 `forgeue_finish_gate` `git rev-parse <sha>` + `git show --stat <sha>` 二次校验)。
+- **codex 自决何时调 review**:Claude 在每个 stage 触发 `/codex:adversarial-review` / `/codex:review --base main` 时给出 prompt + scope,Codex 自主裁决 finding,不预设结论;Claude 端的 cross-check matrix 必含 `## A. Claude's Decision Summary (frozen before codex run)` / `## B. Cross-check Matrix` / `## C. Disputed Items Pending Resolution` / `## D. Verification Note` 4 段,`## A` 在 codex 调用前冻结。
+- **`disputed-permanent-drift`**:若 codex finding 被 cross-check 标记为 permanent disagreement,evidence frontmatter 用 `drift_decision: disputed-permanent-drift` + ≥ 50 字 `drift_reason` + `reasoning_notes_anchor` 指向 `design.md ## Reasoning Notes` 段对应 anchor(段落 ≥ 20 词且 ≥ 60 非空白字符;由 `forgeue_finish_gate` 强制)。
+
+完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)。

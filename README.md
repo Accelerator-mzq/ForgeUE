@@ -368,6 +368,25 @@ python -m pytest -v -k p3           # 关键字过滤
 
 `docs/` 五件套仍是长期权威;OpenSpec 通过"契约抽取"与之互补,不替代。详见 `docs/ai_workflow/README.md`。
 
+### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
+
+OpenSpec change `fuse-openspec-superpowers-workflow` 引入中心化融合工作流:OpenSpec(契约锚点)× Superpowers(evidence 生成器)× codex-plugin-cc(stage cross-review hook)。OpenSpec change artifact 是唯一规范源,evidence 服务于契约,实施暴露的契约漏洞必须回写到 design / proposal / tasks。
+
+8 个 Claude slash 命令(对应 S0-S9 状态机各 stage):
+
+| 命令 | 用途 |
+|---|---|
+| `/forgeue:change-status` | 列 active changes / state / evidence(只读) |
+| `/forgeue:change-plan` | S2→S3:codex `/codex:adversarial-review` design hook + Superpowers writing-plans + 锚点检测 |
+| `/forgeue:change-apply` | S3→S4-S5:codex plan review hook + executing-plans/TDD + 越界检测 |
+| `/forgeue:change-debug` | 显式调 Superpowers `systematic-debugging`;debug_log 增量,暴露异常缺口必回写 |
+| `/forgeue:change-verify` | Level 0/1/2 + codex `/codex:review --base main` 验证 hook |
+| `/forgeue:change-review` | Superpowers `requesting-code-review` + codex `/codex:adversarial-review` mixed scope + blocker 回写 |
+| `/forgeue:change-doc-sync` | Documentation Sync Gate(10 文档静态扫 + §4.3 提示词 + 应用 [REQUIRED]) |
+| `/forgeue:change-finish` | Finish Gate(中心化最后防线,12-key frontmatter + writeback 真实性 + cross-check `disputed_open == 0`) |
+
+5 个 stdlib-only 工具支撑:`tools/forgeue_env_detect.py` / `forgeue_change_state.py`(回写检测主力)/ `forgeue_verify.py` / `forgeue_doc_sync_check.py` / `forgeue_finish_gate.py`。完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)(4 section:fusion contract / agent phase gate policy / documentation sync gate / state machine + writeback)。
+
 ---
 
 ## 后续扩展

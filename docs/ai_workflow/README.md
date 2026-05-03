@@ -208,9 +208,9 @@ D. 建议 patch
 | Agent | 地位 | 备注 |
 |---|---|---|
 | Claude Code | 主实现 agent | 读 `CLAUDE.md` + 本文件;用 `/opsx:*` slash command |
-| Codex CLI(GPT-5.4)| 交叉评审 / rescue | 读 `AGENTS.md` + 本文件;用 `openspec new change` / `openspec status` CLI 等价形式 |
+| Codex CLI(GPT-5.4)| 交叉评审 | 读 `AGENTS.md` + 本文件;`openspec new change` / `openspec status` CLI 等价形式。Claude Code 内通过 codex-plugin-cc 自动 stage cross-review(S2/S3 doc-level 强制 cross-check / S5 code-level 单向挑错 / S6 adversarial mixed scope),blocker 涉及 contract 必须回写;`/codex:rescue` 在 ForgeUE workflow 内**禁用**(详 `forgeue_integrated_ai_workflow.md` §B.5),工作流外仍可 ad-hoc。Claude Code 之外 env 由用户自决 review 是否接入 |
 | 其他通用 agent(Cursor / Aider / 通义灵码)| 辅助编码 | 读 `AGENTS.md` + 本文件;语义与 Claude Code 一致,措辞按各自工具定位 |
-| Superpowers | **暂不接入主线** | 留作未来评估 |
+| Superpowers | **OpenSpec evidence 生成器**(2026-04-26 升级,详 `forgeue_integrated_ai_workflow.md` §A + §B.3) | 跨 env 装(`/plugin install superpowers@claude-plugins-official`);brainstorming / writing-plans / TDD / debugging / requesting-code-review / verification-before-completion 等 skill auto-trigger,产物绑 active change 子目录(`openspec/changes/<id>/{notes,execution,review,verification}/`);实施暴露的 contract 漏洞**必须回写**到 OpenSpec contract artifact(evidence frontmatter `aligned_with_contract: false` 必带 `drift_decision`,详 `forgeue_integrated_ai_workflow.md` §D.4 writeback 协议)。`using-git-worktrees` 禁用;`subagent-driven-development` paid API 拦截(env guard + ADR-007) |
 | gstack | **不进入主线** | 只能作为临时外部审查工具,不归档其产物 |
 
 > 当前仓库未声明其他 agent,不要在 change artifact 里引用未声明的 agent 名。
@@ -271,11 +271,17 @@ D. 建议 patch
 
 ## 8. 进入下一阶段的入口
 
-| 动作 | Claude Code | Codex / 其他 agent |
-|---|---|---|
-| 新建 change | `/opsx:propose <name>` | `openspec new change "<name>"` |
-| 查看 change 状态 | `/opsx:apply <name>`(会先调 status) | `openspec status --change "<name>"` |
-| 归档 change | `/opsx:archive <name>` | 手工移动 + sync spec |
-| 触发 Sync Gate | 粘 §4.3 提示词 | 同上 |
+| 动作 | Claude Code(OpenSpec)| Codex / 其他 agent | ForgeUE(`/forgeue:change-*`,详 `forgeue_integrated_ai_workflow.md` §B)|
+|---|---|---|---|
+| 新建 change | `/opsx:propose <name>` | `openspec new change "<name>"` | —(走 `/opsx:new` / `/opsx:propose`;ForgeUE 不包 facade,强调 OpenSpec 中心地位)|
+| 查看 change 状态 | `/opsx:apply <name>`(会先调 status) | `openspec status --change "<name>"` | `/forgeue:change-status [<id>]`(调 `forgeue_change_state`;列 active changes / state / evidence + 回写状态)|
+| 进入 S2→S3:execution plan | —(走 ForgeUE)| —(走 ForgeUE)| `/forgeue:change-plan <id>`(codex design hook + cross-check + Superpowers writing-plans 配路径 + 锚点检测)|
+| 进入 S3→S4-S5:implementation | —(走 ForgeUE)| —(走 ForgeUE)| `/forgeue:change-apply <id>`(codex plan hook + cross-check + executing-plans / TDD + 越界检测)|
+| S4 systematic debug | — | — | `/forgeue:change-debug <id>`(显式调 Superpowers `systematic-debugging`)|
+| Level 0/1/2 验证 | — | — | `/forgeue:change-verify <id> --level 0\|1\|2`(`forgeue_verify` + codex `/codex:review --base <main>`)|
+| review finalize | — | — | `/forgeue:change-review <id>`(`superpowers_review` finalize + codex adversarial review + blocker 回写)|
+| 触发 Sync Gate | 粘 §4.3 提示词 | 同上 | `/forgeue:change-doc-sync <id>`(`forgeue_doc_sync_check` 静态扫描 + §4.3 提示词 + 应用 [REQUIRED])|
+| Finish Gate | — | — | `/forgeue:change-finish <id>`(`forgeue_finish_gate` 中心化最后防线;evidence frontmatter 全检 + cross-check disputed_open + writeback_commit `git rev-parse` + `git show --stat` 二次校验)|
+| 归档 change | `/opsx:archive <name>` | 手工移动 + sync spec | —(走 `/opsx:archive`;ForgeUE 不包 facade,sync-specs 由 OpenSpec 自动跑)|
 
 Gate 通过后再 merge 或 push,保持 docs / openspec / code / tests 的一致性。

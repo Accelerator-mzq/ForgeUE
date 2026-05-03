@@ -1449,6 +1449,182 @@ _FORBIDDEN_FRAMEWORK_MODULES_DIFF_ENGINE: tuple[str, ...] = (
 )
 
 
+class TestCompareCrossRunIdStableMatching:
+    """Fence per ``review/p4_tests_review_codex.md`` F1: when baseline and
+    candidate have different ``run_id`` values, executor-prefixed artifact_ids
+    (``f"{run_id}_{step_id}_..."``) must still pair across runs.
+
+    Pre-fix behavior: ``b_arts.keys() | c_arts.keys()`` set-union on raw aids
+    sees ``run_a_s1_cand_xyz_0`` and ``run_b_s1_cand_xyz_0`` as DIFFERENT
+    entries -> reports both as missing_in_*.
+    Post-fix: ``_stable_aid_key`` strips the ``<run_id>_<step_id>_`` prefix
+    so ``cand_xyz_0`` matches across runs.
+    """
+
+    def test_run_id_prefixed_aids_match_across_runs(self) -> None:
+        b_art = _make_artifact(
+            aid="run_a_s1_cand_xyz_0",
+            run_id="run_a",
+            step_id="s1",
+            hash_str="HSAME",
+        )
+        c_art = _make_artifact(
+            aid="run_b_s1_cand_xyz_0",
+            run_id="run_b",
+            step_id="s1",
+            hash_str="HSAME",
+        )
+        report = _run_compare(
+            _make_snapshot(run_id="run_a", artifacts=[b_art]),
+            _make_snapshot(run_id="run_b", artifacts=[c_art]),
+        )
+        sd = report.step_diffs[0]
+        # Pre-fix: would have produced two diffs (missing_in_baseline +
+        # missing_in_candidate). Post-fix: single unchanged diff.
+        assert len(sd.artifact_diffs) == 1, (
+            f"cross-run-id pairing failed; got {len(sd.artifact_diffs)} diffs: "
+            f"{[d.kind for d in sd.artifact_diffs]}"
+        )
+        assert sd.artifact_diffs[0].kind == "unchanged"
+
+    def test_run_id_prefixed_aids_with_hash_diff_yields_content_changed(self) -> None:
+        b_art = _make_artifact(
+            aid="run_a_s1_manifest",
+            run_id="run_a",
+            step_id="s1",
+            hash_str="HB",
+        )
+        c_art = _make_artifact(
+            aid="run_b_s1_manifest",
+            run_id="run_b",
+            step_id="s1",
+            hash_str="HC",
+        )
+        report = _run_compare(
+            _make_snapshot(run_id="run_a", artifacts=[b_art]),
+            _make_snapshot(run_id="run_b", artifacts=[c_art]),
+        )
+        sd = report.step_diffs[0]
+        assert len(sd.artifact_diffs) == 1
+        assert sd.artifact_diffs[0].kind == "content_changed"
+        assert sd.artifact_diffs[0].baseline_hash == "HB"
+        assert sd.artifact_diffs[0].candidate_hash == "HC"
+
+    def test_truly_missing_artifact_still_reported_as_missing(self) -> None:
+        """Stable-key matching must not paper over actual single-side
+        artifacts. When candidate has a stable key the baseline lacks,
+        missing_in_baseline still fires."""
+        b_art = _make_artifact(
+            aid="run_a_s1_manifest",
+            run_id="run_a",
+            step_id="s1",
+            hash_str="H1",
+        )
+        c_art1 = _make_artifact(
+            aid="run_b_s1_manifest",
+            run_id="run_b",
+            step_id="s1",
+            hash_str="H1",
+        )
+        c_art2 = _make_artifact(
+            aid="run_b_s1_extra_artifact",
+            run_id="run_b",
+            step_id="s1",
+            hash_str="HEXTRA",
+        )
+        report = _run_compare(
+            _make_snapshot(run_id="run_a", artifacts=[b_art]),
+            _make_snapshot(run_id="run_b", artifacts=[c_art1, c_art2]),
+        )
+        sd = report.step_diffs[0]
+        kinds = sorted(d.kind for d in sd.artifact_diffs)
+        assert kinds == ["missing_in_baseline", "unchanged"]
+
+    def test_aid_without_run_id_prefix_falls_back_to_raw_match(self) -> None:
+        """Legacy / hand-written fixtures don't follow the executor prefix
+        convention; raw aid match still works (regression for existing tests
+        that use bare aids like ``a1``)."""
+        b_art = _make_artifact(aid="legacy_aid", run_id="run_a", step_id="s1", hash_str="HX")
+        c_art = _make_artifact(aid="legacy_aid", run_id="run_b", step_id="s1", hash_str="HX")
+        report = _run_compare(
+            _make_snapshot(run_id="run_a", artifacts=[b_art]),
+            _make_snapshot(run_id="run_b", artifacts=[c_art]),
+        )
+        sd = report.step_diffs[0]
+        assert len(sd.artifact_diffs) == 1
+        assert sd.artifact_diffs[0].kind == "unchanged"
+
+    def test_verdict_diff_pairs_across_run_ids(self) -> None:
+        """Mirror fence for `_compute_verdict_diffs`: review payload aids
+        also follow the run_id prefix convention (review.py:348)."""
+        b_art = _make_artifact(
+            aid="run_a_s1_report_fp1",
+            run_id="run_a",
+            step_id="s1",
+            modality="report",
+            shape="review_report",
+            hash_str="VB",
+        )
+        c_art = _make_artifact(
+            aid="run_b_s1_report_fp1",
+            run_id="run_b",
+            step_id="s1",
+            modality="report",
+            shape="review_report",
+            hash_str="VC",
+        )
+        report = _run_compare(
+            _make_snapshot(
+                run_id="run_a",
+                artifacts=[b_art],
+                review_payloads={"run_a_s1_report_fp1": {"decision": "PASS", "confidence": 0.9}},
+            ),
+            _make_snapshot(
+                run_id="run_b",
+                artifacts=[c_art],
+                review_payloads={"run_b_s1_report_fp1": {"decision": "FAIL", "confidence": 0.4}},
+            ),
+        )
+        sd = report.step_diffs[0]
+        assert len(sd.verdict_diffs) == 1, (
+            f"cross-run-id verdict pairing failed; got {len(sd.verdict_diffs)} diffs: "
+            f"{[d.kind for d in sd.verdict_diffs]}"
+        )
+        assert sd.verdict_diffs[0].kind == "decision_changed"
+        assert sd.verdict_diffs[0].baseline_decision == "PASS"
+        assert sd.verdict_diffs[0].candidate_decision == "FAIL"
+
+    def test_per_side_payload_missing_lookup(self) -> None:
+        """When stable-key pairs aid_b ('run_a_s1_x') with aid_c ('run_b_s1_x'),
+        ``payload_missing_on_disk`` lookup must use per-side aid, not the
+        display aid. Otherwise the baseline missing-on-disk signal gets
+        looked up against candidate's set and incorrectly cleared."""
+        b_art = _make_artifact(
+            aid="run_a_s1_export_bundle",
+            run_id="run_a",
+            step_id="s1",
+            hash_str="HX",
+        )
+        c_art = _make_artifact(
+            aid="run_b_s1_export_bundle",
+            run_id="run_b",
+            step_id="s1",
+            hash_str="HX",
+        )
+        report = _run_compare(
+            _make_snapshot(
+                run_id="run_a",
+                artifacts=[b_art],
+                payload_missing_on_disk={"run_a_s1_export_bundle"},
+            ),
+            _make_snapshot(run_id="run_b", artifacts=[c_art]),
+        )
+        sd = report.step_diffs[0]
+        assert len(sd.artifact_diffs) == 1
+        assert sd.artifact_diffs[0].kind == "payload_missing_on_disk"
+        assert "baseline" in (sd.artifact_diffs[0].note or "")
+
+
 class TestDiffEngineImportFence:
     def test_diff_engine_import_does_not_pull_in_execution_or_write_layers(
         self,

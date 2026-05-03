@@ -154,6 +154,29 @@ The system SHALL NOT hardcode real calendar dates into fixture Run directories; 
 - WHEN `build_fixture_pair(root)` lays out fixture Run directories
 - THEN they live under `<root>/2000-01-01/<run_id>/` regardless of `datetime.now()`; payload bytes, recorded `created_at`, and `Checkpoint.completed_at` are all derived from fixed constants, so fixture output stays byte-deterministic over time and no real calendar date leaks into hashes or paths
 
+### Requirement: Active change evidence is captured under OpenSpec change subdirectories with writeback protocol
+
+The system SHALL store all implementation, review, and verification evidence (brainstorming notes / execution plan / micro tasks / TDD log / debug log / Superpowers review / codex stage reviews / cross-checks / verify report / doc sync report / finish gate report) under the active OpenSpec change at `openspec/changes/<id>/{notes,execution,review,verification}/`. Each evidence file SHALL carry a 12-key frontmatter (1 wrapper key `change_id` plus 11 audit fields: `stage`, `evidence_type`, `contract_refs`, `aligned_with_contract`, `drift_decision`, `writeback_commit`, `drift_reason`, `reasoning_notes_anchor`, `detected_env`, `triggered_by`, `codex_plugin_available`). When `aligned_with_contract: false`, the file MUST carry a `drift_decision` of `pending` / `written-back-to-<artifact>` / `disputed-permanent-drift`; `written-back-to-*` MUST reference a real `writeback_commit` that actually modifies the named contract artifact (proposal.md / design.md / tasks.md / specs/<cap>/spec.md); `disputed-permanent-drift` MUST carry a ≥ 50 character `drift_reason` plus a corresponding `reasoning_notes_anchor` in the change's `design.md` `## Reasoning Notes` section (heading level 2). Evidence files MUST NOT introduce new normative decisions; any decision exposed during implementation MUST be written back to the OpenSpec contract artifact, never declared inside an evidence file as a new contract source.
+
+#### Scenario: Implementation plan that references a non-existent tasks.md anchor is blocked at the S2 to S3 transition
+
+- GIVEN an active OpenSpec change at `openspec/changes/<change-id>/` with a populated `tasks.md` declaring task groups 1-N and an `execution/execution_plan.md` produced by Superpowers writing-plans skill referencing tasks via `tasks.md#<group>.<index>` anchors
+- AND `execution/execution_plan.md` contains an entry that references `tasks.md#99.1` which is NOT present in `tasks.md`
+- WHEN the implementing agent runs `python tools/forgeue_change_state.py --change <change-id> --writeback-check --json` to gate the S2 to S3 transition
+- THEN the tool emits a structured DRIFT record `{"type": "evidence_references_missing_anchor", "file": "execution/execution_plan.md", "ref": "tasks.md#99.1"}` and exits with code 5, blocking the transition; the implementing agent MUST either remove the offending plan entry or write back a corresponding task to `tasks.md` (creating a real `writeback_commit`) and re-run the writeback-check before proceeding to S3
+
+#### Scenario: Codex stage review evidence with aligned_with_contract false but no drift_decision is blocked at finish gate
+
+- GIVEN `review/codex_design_review.md` produced by `/codex:adversarial-review --background` that surfaces a design choice not present in `design.md`, where the implementing agent left frontmatter `aligned_with_contract: false` together with `drift_decision: null` (i.e. did neither write back nor mark as permanent drift)
+- WHEN the implementing agent runs `python tools/forgeue_finish_gate.py --change <change-id> --json` before invoking `/opsx:archive`
+- THEN the tool emits `[FAIL] aligned_with_contract=false but drift_decision=null in review/codex_design_review.md` and exits with code 2, preventing archive; the implementing agent MUST either (a) write back the surfaced decision to `design.md` and update `writeback_commit` to a real git commit sha that touches `design.md`, or (b) mark `drift_decision: disputed-permanent-drift` with a ≥ 50 character `drift_reason` and a `reasoning_notes_anchor` whose target paragraph exists in `design.md`'s `## Reasoning Notes` section
+
+#### Scenario: disputed-permanent-drift requires a real Reasoning Notes anchor in design.md
+
+- GIVEN an evidence file with frontmatter `drift_decision: disputed-permanent-drift`, `reasoning_notes_anchor: reasoning-notes-commands-count`, and `drift_reason` of length 87 characters
+- WHEN `forgeue_finish_gate.py` parses `design.md`'s `## Reasoning Notes` section searching for an anchor `reasoning-notes-commands-count`
+- THEN if the named anchor exists in `design.md` with a substantive paragraph (≥ 20 words) explaining the rationale, the evidence file passes finish gate; otherwise the tool emits `[FAIL] disputed-permanent-drift in <file>: missing Reasoning Notes anchor 'reasoning-notes-commands-count' in design.md` and exits with code 2; the implementing agent MUST add the anchor and an explanatory paragraph in `design.md` `## Reasoning Notes` before retrying finish gate
+
 ## Invariants
 
 - Bundle Artifact flow is end-to-end real objects — no mocks across Step boundaries (NFR-MAINT-005).
