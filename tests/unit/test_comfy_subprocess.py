@@ -1097,3 +1097,100 @@ def test_generate_mesh_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
         f"Expected per-candidate mesh seed override 100/101/102, got {seeds_seen}; "
         f"setdefault bug would return [42, 42, 42]"
     )
+
+
+# ---- G6-F2 follow-on: producer attribution for comfy/local image path -------
+# OpenSpec change `comfy-executor-producer-attribution-fix`(2026-05-04):
+# fence 守门 comfy/local 分支活跃时,Artifact.producer.provider == "comfy_agent_cli"
+# (NOT self._worker.name 注入的 fallback worker 名)。
+
+
+def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
+    """G6-F2 follow-on:comfy/local 路径活跃时,Artifact.producer.provider
+    == "comfy_agent_cli",NOT injected worker name(framework.run 注入的
+    FakeComfyWorker name 会污染 audit / comparison report)。"""
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+    from framework.artifact_store import ArtifactRepository, get_backend_registry
+    from framework.core.enums import RiskLevel, RunMode, RunStatus, StepType, TaskType
+    from framework.core.policies import PreparedRoute, ProviderPolicy
+    from framework.core.task import Run, Step, Task
+    from framework.providers.model_registry import ResolvedRoute
+    from framework.runtime.executors.base import StepContext
+    from framework.runtime.executors.generate_image import GenerateImageExecutor
+
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+    (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+
+    fake_png = tmp_path / "out.png"
+    _make_png_file(fake_png)
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    policy = ProviderPolicy(
+        capability_required="image.generation",
+        prepared_routes=[PreparedRoute(
+            model="comfy/local", api_key_env=None, api_base=None,
+            kind="image", pricing=None,
+        )],
+    )
+    step = Step(
+        step_id="step_image", type=StepType.generate, name="img",
+        risk_level=RiskLevel.medium, capability_ref="image.generation",
+        config={
+            "num_candidates": 1,
+            "seed": 0,
+            "worker_timeout_s": 60,
+            "spec": {
+                "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+                "comfy_params": {"prompt": "test"},
+                "comfy_lifecycle": "none",
+            },
+        },
+        provider_policy=policy,
+    )
+    task = Task(
+        task_id="t", task_type=TaskType.asset_generation,
+        run_mode=RunMode.basic_llm, title="img",
+        input_payload={}, expected_output={}, project_id="proj_img",
+    )
+    run = Run(
+        run_id="run_img", task_id="t", project_id="proj_img",
+        status=RunStatus.running,
+        started_at=datetime.now(timezone.utc),
+        workflow_id="w", trace_id="tr",
+    )
+    ctx = StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[], run_dir=tmp_path / "run_dir",
+    )
+    (tmp_path / "run_dir").mkdir()
+
+    # injected worker(FakeComfyWorker-like)— 其 name 不应 leak 到 producer
+    injected_worker = MagicMock()
+    injected_worker.name = "fake_comfy_injected"
+    executor = GenerateImageExecutor(worker=injected_worker)
+
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_stdout([str(fake_png)]))
+        result = executor.execute(ctx)
+
+    # 应有 1 image artifact + 1 bundle artifact
+    image_arts = [a for a in result.artifacts if a.artifact_type.modality == "image"]
+    bundle_arts = [a for a in result.artifacts if a.artifact_type.modality == "bundle"]
+    assert len(image_arts) == 1, f"expected 1 image artifact, got {len(image_arts)}"
+    assert len(bundle_arts) == 1, f"expected 1 bundle artifact, got {len(bundle_arts)}"
+    # G6-F2 fix:image artifact provider == "comfy_agent_cli"
+    assert image_arts[0].producer.provider == "comfy_agent_cli", (
+        f"Expected provider='comfy_agent_cli' for comfy/local path, "
+        f"got {image_arts[0].producer.provider!r}; pre-fix would yield 'fake_comfy_injected'"
+    )
+    # bundle producer 同样 attribution
+    assert bundle_arts[0].producer.provider == "comfy_agent_cli", (
+        f"Bundle producer should also be 'comfy_agent_cli', "
+        f"got {bundle_arts[0].producer.provider!r}"
+    )
+    # metrics["worker"] 同样 comfy_agent_cli
+    assert result.metrics["worker"] == "comfy_agent_cli", (
+        f"metrics.worker should be 'comfy_agent_cli', got {result.metrics['worker']!r}"
+    )

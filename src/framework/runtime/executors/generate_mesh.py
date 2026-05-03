@@ -200,10 +200,16 @@ class GenerateMeshExecutor(StepExecutor):
         candidates: list[MeshCandidate] | None = None
         attempt_count = 0
 
+        # G6-F3 follow-on(`comfy-executor-producer-attribution-fix`):跟踪
+        # 当前 step 是否走本地 ComfyAgentWorker 路径,后续 producer / metrics
+        # 用此 flag 决定 attribution(避免误用 `self._worker.name`,该字段是
+        # framework.run 注入的 fallback worker 名,不一定是当前活跃 worker)。
+        use_comfy_worker_path = self._should_use_comfy_worker_path(ctx)
+
         # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1:
         # comfy/local-mesh route → 走本地 ComfyAgentWorker 自有 retry loop;
         # 远端 mesh route 走原 executor 主流程 attempts=1 强制(ADR-007 不变)。
-        if self._should_use_comfy_worker_path(ctx):
+        if use_comfy_worker_path:
             attempt_count = 1
             try:
                 candidates = self._generate_via_comfy_worker(
@@ -262,8 +268,14 @@ class GenerateMeshExecutor(StepExecutor):
                 payload_kind=PayloadKind.file,
                 producer=ProducerRef(
                     run_id=ctx.run.run_id, step_id=ctx.step.step_id,
-                    provider=self._worker.name,
-                    model=cfg.get("model_hint", self._worker.name),
+                    # G6-F3 follow-on:Comfy 分支显式 attribution(`comfy_agent_cli`
+                    # / `comfy/local-mesh`),否则会误用 framework.run 注入的
+                    # mesh worker 名(可能是 HunyuanMeshWorker / FakeMeshWorker)
+                    provider=("comfy_agent_cli" if use_comfy_worker_path else self._worker.name),
+                    model=(
+                        "comfy/local-mesh" if use_comfy_worker_path
+                        else cfg.get("model_hint", self._worker.name)
+                    ),
                 ),
                 lineage=Lineage(
                     source_artifact_ids=[source_image_artifact_id] if source_image_artifact_id else [],
@@ -305,14 +317,15 @@ class GenerateMeshExecutor(StepExecutor):
         # the step's ProviderPolicy instead).
         route_pricing = _first_mesh_route_pricing(ctx)
         cost_usd = estimate_mesh_call_cost_usd(
-            model=self._worker.name,
+            model=("comfy/local-mesh" if use_comfy_worker_path else self._worker.name),
             num_candidates=len(mesh_ids),
             route_pricing=route_pricing,
         )
         metrics = {
             "attempts": attempt_count,
             "mesh_count": len(mesh_ids),
-            "worker": self._worker.name,
+            # G6-F3 follow-on:metrics.worker 与 producer.provider 对齐
+            "worker": ("comfy_agent_cli" if use_comfy_worker_path else self._worker.name),
             "source_image_artifact_id": source_image_artifact_id,
             "cost_usd": cost_usd,
         }
