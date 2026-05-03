@@ -1133,8 +1133,14 @@ class ComfyAgentWorker(ComfyWorker):
                 )
             # F-Plan-R6-A:Artifact `shape="waveform"` 与 UE bridge `_KIND_MAP` 唯一映射
             # 对齐(executor 在 repo.put 时设置);本 candidate 仅持 audio bytes + format。
-            # F-Plan-R7-A:metadata 仅 5 个 comfy_* provenance keys;duration/sample_rate
-            # 顶层 None always(本 change scope ComfyUI agent CLI extract_outputs 不暴露)
+            # F-Plan-R7-A:metadata 仅 5 个 comfy_* provenance keys。
+            # OpenSpec change `audio-metadata-parser`(2026-05-04 follow-on for D10):
+            # duration_seconds / sample_rate 由 stdlib parser 从 audio bytes 提取
+            # (FLAC STREAMINFO / WAV fmt chunk / MP3 first frame header)。
+            # 解析失败时 silent fallback (None, None)(audio still persists with
+            # missing metadata fields — 不阻断,匹配先前 always-None 行为）。
+            from framework.providers.workers.audio_metadata import parse_audio_metadata
+            duration_seconds, sample_rate = parse_audio_metadata(audio_bytes, ext)
             candidates.append(AudioCandidate(
                 data=audio_bytes,
                 format=ext,  # type: ignore[arg-type]
@@ -1150,8 +1156,8 @@ class ComfyAgentWorker(ComfyWorker):
                         "model_id": self.model_id,
                     },
                 },
-                duration_seconds=None,  # 本 change scope always None
-                sample_rate=None,  # 本 change scope always None
+                duration_seconds=duration_seconds,
+                sample_rate=sample_rate,
             ))
         return candidates
 
