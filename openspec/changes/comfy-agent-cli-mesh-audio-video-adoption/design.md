@@ -382,7 +382,81 @@ else:
 
 异常族 wrap 让 `FailureModeMap.resolve(MeshWorkerTimeout(...))` 走标准 mesh worker 路径,与远端 Hunyuan / Tripo3D 行为一致;executor 之外的代码(orchestrator / FailureModeMap / BudgetTracker)对 ComfyWorker vs MeshWorker 无感知。
 
-### D8 — Source image param key 推断:实施阶段对照 manifest schema 确认(round 2 新增)
+### D10 — Source image bytes 写到 ComfyUI 自己的 input/ 目录,不在 ForgeUE 项目树内(round 5 新增,Phase B Task 1.3 implementation discovery)
+
+**Round 5 implementation discovery(Phase B Task 1.3,2026-05-03)**:实地跑 `comfyui_api params --workflow 3D_Hunyuan/3d_hunyuan3d-v2.1` 暴露:
+
+- 唯一适合 ForgeUE image-to-mesh DAG 的 mesh manifest 是 `3D_Hunyuan/3d_hunyuan3d-v2.1`(其它要么用 `LoadImageOutput` 只读 ComfyUI 历史输出,要么是 self-contained text-to-mesh)
+- 该 manifest 的 `input_image` 参数走 `LoadImage` 节点,**只读 ComfyUI 自己的 `input/` 目录的 filename**,不接受任意绝对路径
+- design D7 round 1 假设「ComfyUI 接受任意绝对路径」错误;round 1-4 codex review 全部 miss(无人跑过真机 probe)
+
+**修订选项(详见 execution/debug_log.md)**:
+
+- **A:** 加 `FORGEUE_COMFY_INPUT_DIR` env var(REQUIRED for mesh path);executor 写 source bytes 到 `Path(FORGEUE_COMFY_INPUT_DIR) / f"forgeue_<sha1>.png"`;注入 `comfy_params["input_image"] = f"forgeue_<sha1>.png"`(filename)
+- B 双拷贝(in-tree + ComfyUI input/):I/O 浪费 + cleanup 责任不清
+- C 用接受绝对路径的自定义 ComfyUI 节点:本机 18 manifest 全无此节点,不可行
+- D Abort Phase 1:浪费 4 轮 codex 工作
+
+**选 A**(用户授权 2026-05-03),理由:
+
+1. 与 ComfyUI LoadImage 节点语义对齐(filename 而非绝对路径)
+2. NFR-PORT-004 影响有限:input 文件不是 ForgeUE「产物」(产物是 GLB output,仍 in-tree by `repo.put`),input 是 ForgeUE 给 ComfyUI 的「输入副本」;真源 source image artifact(`<run_id>_img`)仍在 ForgeUE artifact tree 内;ComfyUI input/ 的 `forgeue_<sha1>.png` 是临时副本,不构成 lineage 关键
+3. 已有 `FORGEUE_COMFY_*` env var 模式(F-B round 2 决议),加一个不破坏架构
+4. B 双拷贝增加复杂度但 NFR 收益小
+
+**NFR-PORT-004 重新解读**(适用范围调整):
+
+- **"产物落项目树"** 仍适用于 Artifact(GLB output 走 `repo.put` 落 `<artifact_root>/<run_id>/<artifact_id>.glb`,不变)
+- **"输入副本"** 不属于 NFR-PORT-004 适用范围(input image 副本写到 ComfyUI input/ 是为了 LoadImage 节点访问;`tar artifacts/<run_id>/` 仍能 self-contained 重现 GLB output;input 副本 cleanup 由用户/ComfyUI 自行管理)
+
+**具体形式**:
+
+```python
+# generate_mesh.py _generate_via_comfy_worker(round 5 修订后)
+def _generate_via_comfy_worker(self, *, ctx, spec, source_image_bytes, ...):
+    scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+    if not scripts_dir:
+        raise MeshWorkerUnsupportedResponse("FORGEUE_COMFY_SCRIPTS_DIR env unset...")
+    # round 5 D10:写到 ComfyUI input/ 目录(REQUIRED env)
+    comfy_input_dir = os.environ.get("FORGEUE_COMFY_INPUT_DIR")
+    if not comfy_input_dir:
+        raise MeshWorkerUnsupportedResponse(
+            "FORGEUE_COMFY_INPUT_DIR env var unset; mesh path requires "
+            "ComfyUI input/ directory (e.g. D:/AI/ComfyUI/apps/<install>/input/) "
+            "for LoadImage node — see CLAUDE.md mesh adoption section"
+        )
+    input_dir = Path(comfy_input_dir)
+    input_dir.mkdir(parents=True, exist_ok=True)
+    sha1_hex = hashlib.sha1(source_image_bytes).hexdigest()[:16]
+    # round 5 D10:filename prefix 'forgeue_' 避免与 ComfyUI 自家 input 文件冲突
+    input_filename = f"forgeue_{sha1_hex}.png"
+    input_path = input_dir / input_filename
+    if not input_path.exists():
+        input_path.write_bytes(source_image_bytes)
+    # ... worker 调用传 source_image_filename(filename only,LoadImage 自动 prefix ComfyUI input/)
+    return worker.generate_mesh(
+        spec=spec,
+        source_image_filename=input_filename,    # filename only
+        ...
+    )
+```
+
+```python
+# comfy_worker.py generate_mesh(round 5 修订后)
+def generate_mesh(self, *, spec, source_image_filename: str, ...):  # str not Path
+    # ...
+    image_param_key = spec.get("comfy_image_param_key") or "input_image"  # round 5 默认改
+    enriched_params[image_param_key] = source_image_filename               # filename only
+    # ...
+    # metadata 记录 filename + ComfyUI input dir(diagnostic);不记 in-tree path 因为没有
+    metadata={
+        ...,
+        "comfy_input_filename": source_image_filename,
+        "comfy_input_dir": "<from caller / env>",
+    }
+```
+
+### D8 — Source image param key 默认值 round 5 修订:`"input_image"`(round 2 新增,round 5 默认值修订)
 
 **问题**:不同 ComfyUI mesh manifest 的 source image input 参数 key 名不同(`image_path` / `input_image` / `image` / `source_image` 等);worker 需要在哪里决定注入哪个 key?
 
@@ -397,13 +471,13 @@ else:
 1. A 的内部表会与 ComfyUI 侧 manifest 命名 / 参数变更紧耦合,manifest 重命名 / 加新 manifest 都要改 worker 源码
 2. C 的运行时 schema 检测增加 ~1s 启动开销,且 ComfyUI agent CLI `params` 输出格式 ForgeUE 没有稳定 parser
 3. B 把 image key 决策推到 bundle(谁知道 manifest 谁声明),框架不感知 manifest 内部参数语义;bundle 一处改,worker 零变化
-4. 默认值:若 `spec.comfy_image_param_key` 缺失,worker 用 `"image_path"`(常见 ComfyUI mesh manifest 的 default key 名,实施 §1.3 探明确认)
+4. 默认值(**round 5 修订**):若 `spec.comfy_image_param_key` 缺失,worker 用 `"input_image"`(round 5 Phase B Task 1.3 实地 probe 确认 `3D_Hunyuan/3d_hunyuan3d-v2.1` 的 LoadImage 节点 image input key 是 `input_image`;round 1-2 默认 `"image_path"` 是凭直觉,实测错)
 
 具体形式:
 
 ```python
 def _infer_image_param_key(self, manifest_name: str | None, spec: dict) -> str:
-    return spec.get("comfy_image_param_key") or "image_path"
+    return spec.get("comfy_image_param_key") or "input_image"  # round 5 默认值
 ```
 
 bundle 示例:
@@ -413,20 +487,22 @@ bundle 示例:
   "spec": {
     "comfy_workflow": "Mesh/02_mini_textured_3d_hunyuan",
     "comfy_params": { "seed": 42 },
-    "comfy_image_param_key": "image_path",
+    "comfy_image_param_key": "input_image",
     "comfy_lifecycle": "none"
   }
 }
 ```
 
-实施 §1.3 跑 `comfyui_api params --workflow <选定 manifest>` 时若发现 image key 不是 `image_path`(例如 `input_image`),example bundle `comfy_image_param_key` 字段写 `"input_image"`。
+实施 §1.3 跑 `comfyui_api params --workflow <选定 manifest>` 时若发现 image key 不是默认 `input_image`,example bundle `comfy_image_param_key` 字段显式写实际 key。Round 5 实地 probe `3D_Hunyuan/3d_hunyuan3d-v2.1` 确认默认 `input_image` 是正确选择(LoadImage 节点的 `image` field 经 patches 暴露为 `input_image` 参数)。
 
 ## Risks / Trade-offs
 
 - **[Risk] ComfyUI scripts/ 下没有可用的 mesh manifest** → Mitigation:tasks §1.2 跑 `comfyui_api list` 探明;若无 mesh manifest,本 change abort + SRS §7.3 TBD-009 行降级为「ComfyUI agent CLI 长期 image-only,mesh 走 Hunyuan3D / Tripo3D」
 - **[Risk] B4 修订后 mesh-mode auxiliary `outputs.images` 不被 framework 消费,用户可能期望看到 PNG preview** → Mitigation:worker 在 `_run_subprocess_and_validate` 内部 debug log 「auxiliary outputs.images count=N at <path>」;preview 文件仍在 ComfyUI 原始 outputs 目录(`D:/AI/ComfyUI/outputs/main/<date>/<project>/`),用户可手工查;若强需求,follow-on change 加「auxiliary preview 也落 artifact」
 - **[Risk] D7 image-to-mesh 路径要求 bundle 含上游 image step,但 ComfyUI 自家有些 manifest 是 standalone 文生 mesh** → Mitigation:本 change 不支持 standalone(D7 决策已说明);若 §1.2 选定 manifest 是 standalone,要么换一个 image-to-mesh manifest,要么 abort change;若 standalone 是真实需求,follow-on change 给 `MeshWorker` ABC 加 standalone 模式
-- **[Risk] D8 `comfy_image_param_key` 默认 `"image_path"` 与选定 manifest 实际 key 不符** → Mitigation:tasks §1.3 强制要求实施阶段确认 key 名,bundle 显式写;若不写也用 default,subprocess 会因为 `Missing required param` raise → `WorkerUnsupportedResponse`,fail-fast 不静默
+- **[Risk] D8 `comfy_image_param_key` 默认与选定 manifest 实际 key 不符** → Mitigation:tasks §1.3 强制要求实施阶段确认 key 名,bundle 显式写;若不写也用 default(round 5 修订为 `"input_image"`,与 `3D_Hunyuan/3d_hunyuan3d-v2.1` 匹配),subprocess 会因为 `Missing required param` raise → `WorkerUnsupportedResponse`,fail-fast 不静默
+- **[Risk] D10 `FORGEUE_COMFY_INPUT_DIR` env 未设 / 路径错** → Mitigation:`_generate_via_comfy_worker` 检查 env,空时立即 raise `MeshWorkerUnsupportedResponse` 含明确提示(指向 ComfyUI input/ 目录,例如 `D:/AI/ComfyUI/apps/<install>/input/`);用户跑 mesh smoke 前必配
+- **[Risk] D10 ComfyUI input/ 目录长期累积 `forgeue_<sha1>.png` 文件无 cleanup** → Mitigation:文件名 sha1 prefix `forgeue_` 让用户能用 `find ... -name "forgeue_*.png" -mtime +7 -delete` 周期清理;本 change 不实施自动 cleanup(留 follow-on);CLAUDE.md mesh adoption 段加用户提示
 - **[Risk] D5 不保留 ComfyUI 原文件名,长期诊断「这个 GLB 来自哪个 manifest 哪次跑」靠 metadata** → Mitigation:`Artifact.metadata["worker_metadata"]` 含 `comfy_manifest` / `comfy_params_snapshot` / `comfy_original_filename` / `comfy_source_image_path` 4 key,信息密度大于 round 1 的「文件名记录」方案
 - **[Risk] D4 `per_task_usd > 0` 一刀切判定,假如未来某 provider 用 `pricing.per_token_usd` 等其它字段(非 mesh per-call),边界判定漏判** → Mitigation:本 change scope 只覆盖 mesh capability;其它 capability(image / audio / video)的 ADR-007 边界由 follow-on change 各自定义
 - **[Trade-off] D5 `repo.put` 用 `<artifact_id>.glb` 命名,不保留 ComfyUI 原文件名** → 接受:与现有 mesh executor 命名约定一致(Hunyuan / Tripo3D 同样不保留远端文件名),`worker_metadata.comfy_original_filename` 提供回溯
@@ -436,9 +512,9 @@ bundle 示例:
 
 (round 2 微调:沿用 D5 现有 `repo.put` 流程,不动 PayloadRef schema)
 
-1. **bundle 协议**:`comfy_workflow` / `comfy_params` / `comfy_lifecycle` 三字段不变;**新增可选字段** `comfy_image_param_key`(D8,缺省 `"image_path"`);bundle 必须含上游 image step + DAG 依赖(D7)
+1. **bundle 协议**:`comfy_workflow` / `comfy_params` / `comfy_lifecycle` 三字段不变;**新增可选字段** `comfy_image_param_key`(D8,**round 5 修订** 缺省 `"input_image"`);bundle 必须含上游 image step + DAG 依赖(D7)
 2. **`config/models.yaml`**:Phase 1 新增 `models.comfy/local-mesh` + `aliases.mesh_local`;`providers.comfy_api` 不动
-3. **环境变量**:`FORGEUE_COMFY_*` 完全复用,无新 env var
+3. **环境变量**:`FORGEUE_COMFY_*` 复用 image change 已有的 `_SCRIPTS_DIR / _PYTHON_EXE / _LIFECYCLE`;**round 5 D10 新增** `FORGEUE_COMFY_INPUT_DIR`(REQUIRED for mesh path,指向 ComfyUI 自己的 input/ 目录,例如 `D:/AI/ComfyUI/apps/official-main-git-v092/input`)
 4. **Rollback 策略**:本 change 全部改动通过 git revert 单 commit 回退;`comfy/local-mesh` model + `mesh_local` alias 移除后,任何引用它们的 bundle 立即 fail-fast(loader 报 unknown alias)
 5. **tests/integration/ 现有用例**:不受影响(image-mode fence 全保留;新 mesh fence 加在 `tests/unit/test_comfy_subprocess.py` + `tests/unit/test_generate_mesh.py`)
 6. **Follow-on change 衔接**:本 change archive 后,audio / video follow-on change 直接复用本 change 的 capability dispatch + 三段表 + ADR-007 边界判定模式
@@ -456,5 +532,6 @@ bundle 示例:
 - ✅ Q7 ComfyUI mesh = image-to-mesh,bundle 含上游 image step → D7(round 2 新增)
 - ✅ Q8 source image param key bundle 显式声明 + 默认 `"image_path"` → D8(round 2 新增)
 - 🔍 Q9 ComfyUI stdout 是否暴露 vertex / face count → 实施 tasks §1.5 探明;不暴露则 `MeshCandidate.poly_count = None`(沿用 dataclass default,worker 不引入 `pygltflib`)
-- 🔍 Q10 选定 mesh manifest 实际 image param key 是否 `"image_path"` → 实施 tasks §1.3 跑 `comfyui_api params --workflow <manifest>` 确认;若不是,example bundle `comfy_image_param_key` 字段写实际 key
+- ✅ Q10 选定 mesh manifest 实际 image param key → **round 5 实地 probe 确认**:`3D_Hunyuan/3d_hunyuan3d-v2.1` 的 image input 参数是 `input_image`(LoadImage 节点 `image` field 经 patches 暴露);D8 默认值改 `"input_image"`
+- ✅ Q11 ComfyUI LoadImage 是否接受任意绝对路径 → **round 5 实地 probe 确认**:**否**(只读 ComfyUI 自己的 input/ filename);D7 修订加 D10 处理(写 ComfyUI input/ via `FORGEUE_COMFY_INPUT_DIR` env)
 - 🔍 Q11 `tests/integration/` 是否需要新 mesh ComfyUI 端到端 fence,还是 unit fence 已足够 → 实施阶段读现有 P3 测试结构后决定;倾向新建独立 unit fence 文件,集成层 fence 视 §7 live smoke 是否需要 CI 重放决定

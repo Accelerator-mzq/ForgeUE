@@ -651,7 +651,7 @@ def test_generate_mesh_raises_on_image_mode_worker(tmp_path):
     with pytest.raises(WorkerUnsupportedResponse, match="capability='image'"):
         worker.generate_mesh(
             spec={"comfy_workflow": "x", "comfy_params": {}},
-            source_image_path=tmp_path / "fake.png",
+            source_image_filename="fake.png",     # round 5 D10:filename only
             num_candidates=1,
         )
 
@@ -670,7 +670,7 @@ def test_mesh_mode_raises_on_missing_outputs_glb(tmp_path):
         with pytest.raises(WorkerUnsupportedResponse, match=r"outputs\.glb empty"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "Mesh/01", "comfy_params": {}},
-                source_image_path=fake_input,
+                source_image_filename=fake_input.name,
                 num_candidates=1,
             )
 
@@ -690,7 +690,7 @@ def test_mesh_mode_accepts_non_empty_outputs_images_as_auxiliary(tmp_path):
         ))
         cands = worker.generate_mesh(
             spec={"comfy_workflow": "Mesh/02_with_preview", "comfy_params": {}},
-            source_image_path=fake_input,
+            source_image_filename=fake_input.name,
             num_candidates=1,
         )
         # 只 1 个 MeshCandidate;preview PNG 被忽略不构造任何 candidate
@@ -716,7 +716,7 @@ def test_mesh_mode_emits_info_log_for_auxiliary_outputs_images_with_count_and_pa
         ))
         worker.generate_mesh(
             spec={"comfy_workflow": "Mesh/02", "comfy_params": {}},
-            source_image_path=fake_input,
+            source_image_filename=fake_input.name,
             num_candidates=1,
         )
     matched = [r for r in caplog.records
@@ -740,7 +740,7 @@ def test_mesh_mode_raises_on_rejected_outputs_audio(tmp_path):
         with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*audio"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "Mesh/03", "comfy_params": {}},
-                source_image_path=fake_input,
+                source_image_filename=fake_input.name,
                 num_candidates=1,
             )
 
@@ -759,7 +759,7 @@ def test_mesh_mode_raises_on_rejected_outputs_video(tmp_path):
         with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*video"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "Mesh/04", "comfy_params": {}},
-                source_image_path=fake_input,
+                source_image_filename=fake_input.name,
                 num_candidates=1,
             )
 
@@ -795,7 +795,7 @@ def test_comfy_mesh_candidate_data_is_glb_bytes_read_from_outputs_glb_path(tmp_p
         run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
         cands = worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": {}},
-            source_image_path=fake_input,
+            source_image_filename=fake_input.name,
             num_candidates=1,
         )
     assert len(cands) == 1
@@ -818,18 +818,20 @@ def test_comfy_mesh_candidate_metadata_records_comfy_provenance(tmp_path):
                 "comfy_workflow": "Mesh/02_mini_textured_3d_hunyuan",
                 "comfy_params": {"texture_quality": "high"},
             },
-            source_image_path=fake_input,
+            source_image_filename=fake_input.name,
             num_candidates=1,
         )
     md = cands[0].metadata
     assert md["comfy_manifest"] == "Mesh/02_mini_textured_3d_hunyuan"
     assert md["comfy_capability"] == "mesh"
     assert md["comfy_original_filename"] == "asset_textured_00001.glb"
-    assert md["comfy_source_image_path"] == str(fake_input)
-    # snapshot 含 user 显式 params + executor 注入的 image_path + seed
+    # round 5 D10:metadata 字段 comfy_input_filename(filename only,不是绝对路径);
+    # ComfyUI input dir 由 executor 知道,worker 不记 dir(executor 会另补)
+    assert md["comfy_input_filename"] == fake_input.name
+    # snapshot 含 user 显式 params + executor 注入的 input_image(round 5 D8 默认 key)+ seed
     snap = md["comfy_params_snapshot"]
     assert snap["texture_quality"] == "high"
-    assert snap["image_path"] == str(fake_input)
+    assert snap["input_image"] == fake_input.name
 
 
 def test_comfy_mesh_candidate_metadata_snapshot_isolated_from_spec_mutation(tmp_path):
@@ -847,7 +849,7 @@ def test_comfy_mesh_candidate_metadata_snapshot_isolated_from_spec_mutation(tmp_
     with patch("subprocess.run") as run_mock:
         run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
         cands = worker.generate_mesh(
-            spec=spec, source_image_path=fake_input, num_candidates=1,
+            spec=spec, source_image_filename=fake_input.name, num_candidates=1,
         )
     # mutate caller spec.comfy_params
     spec["comfy_params"]["steps"] = 999
@@ -870,7 +872,7 @@ def test_comfy_mesh_rejects_non_glb_magic_bytes(tmp_path):
         with pytest.raises(WorkerUnsupportedResponse, match="glTF binary magic"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "M/01", "comfy_params": {}},
-                source_image_path=fake_input,
+                source_image_filename=fake_input.name,
                 num_candidates=1,
             )
 
@@ -892,7 +894,7 @@ def test_comfy_mesh_rejects_symlink_outputs_glb_path(tmp_path):
         with pytest.raises(WorkerUnsupportedResponse, match="symlink"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "M/01", "comfy_params": {}},
-                source_image_path=fake_input,
+                source_image_filename=fake_input.name,
                 num_candidates=1,
             )
 
@@ -900,8 +902,9 @@ def test_comfy_mesh_rejects_symlink_outputs_glb_path(tmp_path):
 # ---- Source image path injection (D7 + D8) ----------------------------------
 
 
-def test_generate_mesh_injects_source_image_path_into_comfy_params_under_default_image_path_key(tmp_path):
-    """D8: bundle 不声明 comfy_image_param_key 时,默认注入到 'image_path'。"""
+def test_generate_mesh_injects_source_image_filename_into_comfy_params_under_default_input_image_key(tmp_path):
+    """D8 round 5 修订:bundle 不声明 comfy_image_param_key 时,默认注入到 'input_image'
+    (对齐 LoadImage 节点参数名;round 1-4 默认 'image_path' 是凭直觉错值)。"""
     worker = _make_mesh_worker(tmp_path)
     fake_input = tmp_path / "src.png"
     fake_input.write_bytes(b"<png>")
@@ -914,20 +917,21 @@ def test_generate_mesh_injects_source_image_path_into_comfy_params_under_default
     with patch("subprocess.run", side_effect=_capture):
         worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": {"steps": 20}},
-            source_image_path=fake_input,
+            source_image_filename=fake_input.name,
             num_candidates=1,
         )
     assert len(captured_argv) == 1
     cmd = captured_argv[0]
-    # --params 后的 JSON 含 image_path = str(fake_input)
+    # --params 后的 JSON 含 input_image = filename(round 5 D10:filename only,不是绝对路径)
     params_idx = cmd.index("--params")
     params_dict = json.loads(cmd[params_idx + 1])
-    assert params_dict["image_path"] == str(fake_input)
+    assert params_dict["input_image"] == fake_input.name  # filename only
     assert params_dict["steps"] == 20
 
 
 def test_generate_mesh_injects_under_custom_comfy_image_param_key_when_bundle_declares_it(tmp_path):
-    """D8: bundle 显式声明 comfy_image_param_key='input_image' 时,注入到该 key。"""
+    """D8: bundle 显式声明 comfy_image_param_key='image' 时,注入到该 key
+    (round 5 修订:用 'image' 测 override,因为新默认 'input_image' 与某些 fence 默认值重合)。"""
     worker = _make_mesh_worker(tmp_path)
     fake_input = tmp_path / "src.png"
     fake_input.write_bytes(b"<png>")
@@ -942,16 +946,16 @@ def test_generate_mesh_injects_under_custom_comfy_image_param_key_when_bundle_de
             spec={
                 "comfy_workflow": "M/01",
                 "comfy_params": {"steps": 20},
-                "comfy_image_param_key": "input_image",
+                "comfy_image_param_key": "image",   # custom override
             },
-            source_image_path=fake_input,
+            source_image_filename=fake_input.name,
             num_candidates=1,
         )
     cmd = captured_argv[0]
     params_idx = cmd.index("--params")
     params_dict = json.loads(cmd[params_idx + 1])
-    assert params_dict["input_image"] == str(fake_input)
-    assert "image_path" not in params_dict  # 不污染默认 key
+    assert params_dict["image"] == fake_input.name  # custom key
+    assert "input_image" not in params_dict  # 不污染默认 key(因 override)
 
 
 def test_generate_mesh_does_not_mutate_caller_spec_comfy_params(tmp_path):
@@ -967,7 +971,7 @@ def test_generate_mesh_does_not_mutate_caller_spec_comfy_params(tmp_path):
         run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
         worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": caller_params},
-            source_image_path=fake_input,
+            source_image_filename=fake_input.name,
             num_candidates=1,
         )
     # caller dict 未被注入 image_path / seed

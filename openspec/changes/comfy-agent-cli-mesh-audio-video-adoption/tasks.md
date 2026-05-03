@@ -6,7 +6,15 @@
 > - **B2**:ComfyUI mesh = image-to-mesh,bundle 含上游 image step,executor **不**短路 `_resolve_source_image`
 > - **B3**:ADR-007 premium 判定用 `pricing.per_task_usd > 0`,**不**新增 `BudgetTracker.is_premium` API
 > - **B4**:mesh-mode `_validate_outputs` 三段表(REQUIRED + auxiliary + rejected),`outputs.images` 列入 auxiliary 容忍
-> - **D8 新增**:bundle 可选字段 `comfy_image_param_key`(默认 `"image_path"`)
+> - **D8 新增**:bundle 可选字段 `comfy_image_param_key`(默认 `"input_image"` per round 5 修订;round 1-4 默认 `"image_path"` 是凭直觉错值)
+>
+> **Round 5 修订**(Phase B Task 1.3 implementation discovery,2026-05-03 user 授权方案 A):
+>
+> - **D10 新增**:source image bytes 写到 **ComfyUI 自己的 `input/` 目录**(via REQUIRED env var `FORGEUE_COMFY_INPUT_DIR`,e.g. `D:/AI/ComfyUI/apps/<install>/input`),filename `forgeue_<sha1>.png`;round 1-4 写到 `<run_dir>/comfy/input/<sha1>.png` 是错的(ComfyUI LoadImage 节点只读自己 input/ 目录的 filename,不接绝对路径)
+> - **`generate_mesh` signature 修订**:`source_image_path: Path` → `source_image_filename: str`(filename only)
+> - **`comfy_image_param_key` 默认值修订**:`"image_path"` → `"input_image"`(对齐 LoadImage 节点参数名)
+> - **MeshCandidate.metadata 字段修订**:`comfy_source_image_path` 拆为 `comfy_input_filename` + `comfy_input_dir`
+> - **本 tasks.md 内伪代码块多处仍写 round 1-4 假设**(`source_image_path` / `image_path` / `<ctx.run_dir>/comfy/input/...`),implementer 应以 design.md D10 + spec/{artifact-contract,provider-routing}/spec.md round 5 修订段为准,**不**直接复制 tasks 伪代码;若需更新 tasks 伪代码,见 round 5 writeback commit notes
 >
 > **Scope:** Phase 1 mesh-only。audio / video 各自开 follow-on change。
 

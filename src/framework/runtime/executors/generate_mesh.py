@@ -107,12 +107,25 @@ class GenerateMeshExecutor(StepExecutor):
                 "comfy/local-mesh route but ComfyUI agent CLI location "
                 "not configured (see CLAUDE.md double-terminal setup)"
             )
-        # B2 + D7:source bytes 写入 in-tree input 文件(<run_dir>/comfy/input/<sha1>.png),
-        # idempotent via sha1(同样 source bytes → 同样 in-tree path,跨 retry 无重写)
-        input_dir = ctx.run_dir / "comfy" / "input"
+        # round 5 D10:source bytes 写到 ComfyUI 自家 input/ 目录(via REQUIRED env
+        # FORGEUE_COMFY_INPUT_DIR),不是 ForgeUE in-tree(round 1-4 假设错 — ComfyUI
+        # LoadImage 节点只读自己 input/ 的 filename,不接绝对路径)。
+        comfy_input_dir = os.environ.get("FORGEUE_COMFY_INPUT_DIR")
+        if not comfy_input_dir:
+            raise MeshWorkerUnsupportedResponse(
+                "FORGEUE_COMFY_INPUT_DIR env var unset; mesh path requires "
+                "ComfyUI installation's own input/ directory (e.g. "
+                "D:/AI/ComfyUI/apps/official-main-git-v092/input) for "
+                "LoadImage node to resolve source image filename — see "
+                "CLAUDE.md mesh adoption section"
+            )
+        input_dir = Path(comfy_input_dir)
         input_dir.mkdir(parents=True, exist_ok=True)
         sha1_hex = hashlib.sha1(source_image_bytes).hexdigest()[:16]
-        input_path = input_dir / f"{sha1_hex}.png"
+        # round 5 D10:filename 'forgeue_' prefix 避免与 ComfyUI 自家 input 文件冲突;
+        # idempotent via sha1(同 source bytes → 同 filename → 跨 retry 无重写)
+        input_filename = f"forgeue_{sha1_hex}.png"
+        input_path = input_dir / input_filename
         if not input_path.exists():
             input_path.write_bytes(source_image_bytes)
 
@@ -135,9 +148,11 @@ class GenerateMeshExecutor(StepExecutor):
         last_exc: Exception | None = None
         for attempt in range(attempts):
             try:
+                # round 5 D10:filename only(LoadImage 节点 prefix 自动 ComfyUI input/);
+                # source_image_filename 由 executor 算好,worker 只看 filename
                 return worker.generate_mesh(
                     spec=spec,
-                    source_image_path=input_path,
+                    source_image_filename=input_filename,
                     num_candidates=num,
                     seed=seed,
                     timeout_s=timeout_s,

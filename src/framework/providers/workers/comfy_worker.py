@@ -630,19 +630,22 @@ class ComfyAgentWorker(ComfyWorker):
         self,
         *,
         spec: dict[str, Any],
-        source_image_path: Path,
+        source_image_filename: str,
         num_candidates: int = 1,
         seed: int | None = None,
         timeout_s: float | None = None,
     ) -> list[MeshCandidate]:
         """Mesh capability path(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption
-        design D7 + D8)。
+        design D7 + D8 + round 5 D10 修订)。
 
         与 image-mode `generate()` 平行,但:
         - 仅在 `_capability == "mesh"` 时可调(否则 raise)
-        - 接 source_image_path:executor 已把 source bytes 写入 in-tree input 文件
-          (`<run_dir>/comfy/input/<sha1>.png`),把 path 注入 spec.comfy_params 的
-          image input key(由 spec.comfy_image_param_key 决定,默认 "image_path";D8)
+        - 接 source_image_filename:**filename only**(round 5 D10 修订:从 round 1-4
+          的 `source_image_path: Path` 改为 `source_image_filename: str`)。
+          executor 已把 source bytes 写入 ComfyUI 自己的 input/ 目录
+          (via FORGEUE_COMFY_INPUT_DIR env);本方法把 filename 注入 spec.comfy_params
+          的 image input key(由 spec.comfy_image_param_key 决定,默认 "input_image";
+          round 5 D8 修订:对齐 LoadImage 节点参数名)
         - 返 MeshCandidate(data=GLB bytes, metadata={comfy provenance};D5)
         - 不走 ComfyWorker ABC `generate`(后者返 list[ImageCandidate],类型不兼容)
 
@@ -677,23 +680,26 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyAgentWorker.generate_mesh: spec.comfy_lifecycle must be "
                 f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
             )
-        # D8:image input param key 由 bundle 显式声明(默认 "image_path");
+        # D8 round 5 修订:image input param key 由 bundle 显式声明(默认 "input_image",
+        # 对齐 LoadImage 节点参数名);round 1-4 默认 "image_path" 是凭直觉错值。
         # 不修改 caller 的 spec["comfy_params"](deep copy)。
-        image_param_key = spec.get("comfy_image_param_key") or "image_path"
+        image_param_key = spec.get("comfy_image_param_key") or "input_image"
         per_call_timeout = float(timeout_s) if timeout_s else 600.0
         results: list[MeshCandidate] = []
         for i in range(max(1, num_candidates)):
             call_seed = (seed or 0) + i
             params_for_call = dict(comfy_params)
             params_for_call.setdefault("seed", call_seed)
-            params_for_call[image_param_key] = str(source_image_path)
+            # round 5 D10:filename only(LoadImage 节点自动 prefix ComfyUI input/);
+            # source_image_filename 已由 executor 写到 FORGEUE_COMFY_INPUT_DIR
+            params_for_call[image_param_key] = source_image_filename
             results.extend(self._run_once_mesh(
                 comfy_workflow=comfy_workflow,
                 params=params_for_call,
                 params_snapshot=dict(params_for_call),    # snapshot 隔离 caller spec mutation(D5)
                 seed=call_seed,
                 timeout_s=per_call_timeout,
-                source_image_path=source_image_path,
+                source_image_filename=source_image_filename,
             ))
         return results
 
@@ -705,7 +711,7 @@ class ComfyAgentWorker(ComfyWorker):
         params_snapshot: dict[str, Any],
         seed: int,
         timeout_s: float,
-        source_image_path: Path,
+        source_image_filename: str,
     ) -> list[MeshCandidate]:
         """One subprocess.run for mesh capability → 1+ MeshCandidate(per outputs.glb)。
 
@@ -822,7 +828,10 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_params_snapshot": params_snapshot,
                     "comfy_capability": "mesh",
                     "comfy_original_filename": src.name,
-                    "comfy_source_image_path": str(source_image_path),
+                    # round 5 D10:input 文件在 ComfyUI 自家 input/ 目录(by FORGEUE_COMFY_INPUT_DIR);
+                    # 本 worker 不知道 dir 绝对路径(由 executor 传 filename only),所以 metadata 里
+                    # 只记 filename;executor 会另外补 comfy_input_dir(round 5 D10 修订)。
+                    "comfy_input_filename": source_image_filename,
                     "comfy_project_id": self.project_id,
                     "source": "comfy_agent_cli",
                     "seed": seed,

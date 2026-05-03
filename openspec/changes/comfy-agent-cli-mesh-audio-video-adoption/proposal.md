@@ -6,6 +6,8 @@
 
 > **Scope split 决策(design D3 已锁定)**:本 change 实际 scope = **mesh-only**;audio / video 各自开 follow-on change(`comfy-agent-cli-audio-adoption` / `comfy-agent-cli-video-adoption`)。umbrella name `comfy-agent-cli-mesh-audio-video-adoption` 保留作为 split 决策的归档入口。
 >
+> **Round 5 修订(2026-05-03,Phase B Task 1.3 implementation discovery + user 授权方案 A)**:design D7 round 1-4 「source bytes 写到 in-tree `<ctx.run_dir>/comfy/input/`」假设错误 — ComfyUI LoadImage 节点只读自己 input/ 目录的 filename 不接绝对路径;round 5 加 design D10 修订:写到 ComfyUI 自己 input/ 目录(via REQUIRED env `FORGEUE_COMFY_INPUT_DIR`),filename `forgeue_<sha1>.png`,注入 `comfy_params["input_image"] = "forgeue_<sha1>.png"`(D8 默认 key 改 `image_path` → `input_image`)。NFR-PORT-004 适用范围调整(input 副本不算产物;GLB output 仍 in-tree)。详见 design D10 + execution/debug_log.md。
+>
 > **本 round codex S2 review 修订(round 2)**:design / spec / tasks 在 codex 4 项 high/medium finding 全部 accepted-codex 后系统回写;关键修订:provenance 走 `MeshCandidate.metadata["worker_metadata"]` 不造 `PayloadRef.metadata`(B1);ComfyUI mesh 沿用 image-to-mesh 路径,bundle 含上游 image step,executor 不动 `_resolve_source_image`(B2);ADR-007 premium 判定改为 `pricing.per_task_usd > 0`,不引入新 `is_premium` API(B3);mesh-mode 容忍 `outputs.images` 作为 auxiliary preview(忽略,不构造 ImageCandidate),只 raise `outputs.audio / video`(B4)。
 
 - **解锁 mesh capability**:`ComfyAgentWorker` 加 `model_id` 构造参数 + `_capability` 内部状态 + `_CAPABILITY_BY_MODEL_ID` dispatch 表(`comfy/local` → `image`,`comfy/local-mesh` → `mesh`);unknown model id raise `WorkerUnsupportedResponse`,不静默 fallback。
@@ -67,7 +69,7 @@
 - **测试**:`tests/unit/test_comfy_subprocess.py` 扩 ~18 fence(capability dispatch / mesh outputs / repo.put 流程 / source bytes 注入 / ADR-007 边界);`tests/unit/test_generate_mesh.py` 加 comfy-mesh dispatch fence;`tests/unit/test_model_registry.py` 加 mesh model + alias fence;`tests/integration/test_example_bundles_smoke.py` 自动覆盖新 bundle(loader-only,无 ComfyUI 依赖)
 - **examples**:`examples/comfy_local_smoke_mesh.json` 新建,含上游 image step
 - **依赖**:Phase 1 mesh **不新增** Python 包(GLB 文件 IO 由 `repo.put` + `FileBackend` 处理;source image bytes-to-file 用 stdlib `Path.write_bytes`)
-- **环境**:复用 image change `FORGEUE_COMFY_*` env vars;双终端工作流不变
+- **环境**:复用 image change `FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` / `FORGEUE_COMFY_LIFECYCLE` env vars;**round 5 D10 新增** `FORGEUE_COMFY_INPUT_DIR`(REQUIRED for mesh path,指向 ComfyUI 自己 input/ 目录,例如 `D:/AI/ComfyUI/apps/official-main-git-v092/input`);双终端工作流不变
 - **不影响**:`HunyuanTokenhubMeshWorker` / `Tripo3DMeshWorker`(现有远端 mesh 路径完全独立);`FakeComfyWorker` / `FakeMeshWorker` scripted 接口(扩 capability 守门时 FakeComfyWorker 同步加,不破现有 image-mode 调用);`MeshCandidate` / `ImageCandidate` dataclass(**不**扩字段,B1 / B5 修订);`PayloadRef` 字段(**不**扩 `file` / `metadata`,B1 修订);`ComfyWorker` ABC `generate` 签名(image-mode 仍返 `list[ImageCandidate]`,mesh-mode 走新 public 方法 `generate_mesh`)
 - **明确不做**:
   - 远端 Hunyuan3D 接入方式(已锁 ADR-007;本 change 在 spec 写明本地 vs 远端 `per_task_usd > 0` 边界对照)
