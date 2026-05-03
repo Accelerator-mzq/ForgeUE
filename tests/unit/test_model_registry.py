@@ -482,3 +482,79 @@ def test_load_task_bundle_expands_models_ref(tmp_path):
     # text_cheap in test fixture: [gpt_4o_mini (test_openai)] + [claude_haiku (test_anthropic)]
     assert pp.prepared_routes[0].model == "gpt-4o-mini"
     assert pp.prepared_routes[1].model == "anthropic/claude-haiku-4-5-20251001"
+
+
+# ---- ComfyUI agent CLI adoption (OpenSpec change comfy-agent-cli-adoption) -----
+# Round 2 OQ-6 = F-B (env-based config; no ProviderDef schema extension).
+# 3 fences守门 yaml 加占位 entry + virtual model id + alias 解析路径。
+
+def test_comfy_api_provider_placeholder_parses(tmp_path):
+    """providers.comfy_api 用 api_key_env: null + api_base: null 占位
+    被 _parse_providers 接受(round 2 OQ-6 = F-B 决议:不扩 ProviderDef.kind
+    schema;ComfyUI worker 配置走 env vars FORGEUE_COMFY_*)。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api:
+    api_key_env: null
+    api_base: null
+models: {}
+aliases: {}
+""")
+    reg = ModelRegistry.from_yaml(path)
+    provider = reg.provider("comfy_api")
+    assert provider.name == "comfy_api"
+    assert provider.api_key_env is None
+    assert provider.api_base is None
+    assert "comfy_api" in reg.provider_names()
+
+
+def test_comfy_local_model_id_missing_raises(tmp_path):
+    """models.comfy/local 缺 id 字段时 _parse_models line 290-293 raise
+    ValueError("model ... missing 'id'")。round 1 contract sketch 漏 id 字段
+    被 round 2 codex F2 揭出,本 fence 守门。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local:
+    # id field intentionally omitted
+    provider: comfy_api
+    kind: image
+    pricing: null
+aliases: {}
+""")
+    with pytest.raises(ValueError, match="missing 'id'"):
+        ModelRegistry.from_yaml(path)
+
+
+def test_image_local_alias_resolves_via_registry(tmp_path):
+    """alias image_local → comfy/local 全链路解析:
+    bundle 写 provider_policy.models_ref: "image_local"
+    → loader expand → ResolvedRoute(model="comfy/local", kind="image", pricing=None)
+    → GenerateImageExecutor._should_use_worker_path 检测 → ComfyAgentWorker dispatch。
+    本 fence 守门 alias-to-route 解析路径完整。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local:
+    id: "comfy/local"
+    provider: comfy_api
+    kind: image
+    pricing: null
+aliases:
+  image_local:
+    preferred: ["comfy/local"]
+    fallback: []
+""")
+    reg = ModelRegistry.from_yaml(path)
+    alias = reg.resolve("image_local")
+    assert alias.name == "image_local"
+    assert len(alias.preferred) == 1
+    route = alias.preferred[0]
+    assert route.model == "comfy/local"
+    assert route.kind == "image"
+    assert route.pricing is None
+    assert route.api_key_env is None
+    assert route.api_base is None
+    assert alias.fallback == []

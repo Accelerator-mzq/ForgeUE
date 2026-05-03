@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from framework.artifact_store import ArtifactRepository
@@ -14,12 +15,25 @@ from framework.core.task import Run, Step, Task
 
 @dataclass
 class StepContext:
-    """Everything a Step executor sees when it runs."""
+    """Everything a Step executor sees when it runs.
+
+    `run_dir` is the canonical artifact-tree directory for this run
+    (`<artifact_root>/<run_id>/`). Workers needing in-tree file placement
+    (e.g. ComfyAgentWorker copying ComfyUI outputs from external dir)
+    SHALL read this field directly. Orchestrator injects via
+    `_compute_run_dir(run)` helper at construction time. The default
+    `Path('.')` is a test-mock convenience — production code path
+    via Orchestrator always injects the real path.
+    See OpenSpec change comfy-agent-cli-adoption: design.md D8 +
+    runtime-core/spec.md "StepContext exposes run_dir for in-tree
+    artifact placement" Requirement.
+    """
 
     run: Run
     task: Task
     step: Step
     repository: ArtifactRepository
+    run_dir: Path = field(default_factory=lambda: Path("."))
     inputs: dict[str, Any] = field(default_factory=dict)
     upstream_artifact_ids: list[str] = field(default_factory=list)
 

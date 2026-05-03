@@ -88,12 +88,22 @@ def test_builder_complete_fixture_cross_check_format(tmp_path):
 
 def test_real_cross_check_files_have_evidence_type(test_files=_real_cross_check_files()):
     """All real cross-check files must have evidence_type ∈ {design_cross_check,
-    plan_cross_check}."""
+    plan_cross_check, implementation_cross_check}.
+
+    `implementation_cross_check` added 2026-05-03 via OpenSpec change
+    `2026-05-02-comfy-agent-cli-adoption` to cover S5 production-code
+    review cross-checks (codex /codex:adversarial-review on full G2-G10
+    commit chain). Same A/B/C/D protocol applies.
+    """
     for f in test_files:
         text = f.read_text(encoding="utf-8")
         fm, _ = _common.parse_frontmatter(text)
         ev_type = fm.get("evidence_type")
-        assert ev_type in ("design_cross_check", "plan_cross_check"), (
+        assert ev_type in (
+            "design_cross_check",
+            "plan_cross_check",
+            "implementation_cross_check",
+        ), (
             f"{f.name} has unexpected evidence_type={ev_type!r}"
         )
 

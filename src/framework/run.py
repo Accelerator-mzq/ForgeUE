@@ -16,7 +16,7 @@ from framework.observability.tracing import configure_tracing
 from framework.providers.capability_router import CapabilityRouter
 from framework.providers.litellm_adapter import LiteLLMAdapter
 from framework.runtime.checkpoint_store import CheckpointStore
-from framework.providers.workers.comfy_worker import FakeComfyWorker, HTTPComfyWorker
+from framework.providers.workers.comfy_worker import FakeComfyWorker
 from framework.providers.workers.mesh_worker import (
     FakeMeshWorker,
     HunyuanMeshWorker,
@@ -73,7 +73,25 @@ def _build_orchestrator(
         router.register(HunyuanImageAdapter())
         router.register(LiteLLMAdapter())
 
-    worker = HTTPComfyWorker(base_url=comfy_base_url) if comfy_base_url else FakeComfyWorker()
+    # OpenSpec change comfy-agent-cli-adoption (post 292420a):
+    # HTTPComfyWorker has been replaced by ComfyAgentWorker (subprocess CLI
+    # invocation of `python -m comfyui_api`). The new worker is constructed
+    # INLINE inside GenerateImageExecutor when a step's prepared_routes
+    # contains model=='comfy/local' (round 2 OQ-6 = F-B; env-based config
+    # via FORGEUE_COMFY_*). This injection point now only wires the offline
+    # FakeComfyWorker for tests / mocks; the legacy `--comfy-url` flag is
+    # silently ignored (deprecated). See SRS TBD-011 for the future
+    # ProviderDef schema extension that may revive HTTP-based wiring.
+    if comfy_base_url:
+        # Print deprecation hint instead of crashing; FakeComfyWorker is still injected.
+        print(
+            f"[framework.run] WARNING: --comfy-url={comfy_base_url!r} is deprecated "
+            f"since OpenSpec change comfy-agent-cli-adoption; the new ComfyAgentWorker "
+            f"is constructed inline by GenerateImageExecutor when needed (env config "
+            f"via FORGEUE_COMFY_SCRIPTS_DIR). Falling back to FakeComfyWorker.",
+            file=sys.stderr,
+        )
+    worker = FakeComfyWorker()
 
     # Mesh worker selection (priority: Hunyuan3D tokenhub > Tripo3D > Fake).
     # HunyuanMeshWorker 用 Bearer sk-xxx 单 key，通过 HUNYUAN_3D_KEY 环境变量。

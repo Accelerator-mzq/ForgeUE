@@ -181,11 +181,11 @@ ForgeUE **不做**:
 | --- | --- |
 | FR-MODEL-001 | 系统应通过 `config/models.yaml` 三段式(providers / models / aliases)注册模型,作为单一真源 |
 | FR-MODEL-002 | TaskBundle 应通过 `provider_policy.models_ref: "<alias>"` 引用 alias,`loader` 展开为 `prepared_routes` |
-| FR-MODEL-003 | 系统应支持至少以下 provider 接入:OpenAI 兼容(GLM / DeepSeek / PackyCode)、Anthropic(via PackyCode)、DashScope(Qwen 系列)、Hunyuan(Image + 3D)、MiniMax、ComfyUI(HTTP)、Tripo3D(预留) |
+| FR-MODEL-003 | 系统应支持至少以下 provider 接入:OpenAI 兼容(GLM / DeepSeek / PackyCode)、Anthropic(via PackyCode)、DashScope(Qwen 系列)、Hunyuan(Image + 3D)、MiniMax、ComfyUI(agent CLI subprocess,自 v1.6 起;v1.5 及之前为 HTTP)、Tripo3D(预留) |
 | FR-MODEL-004 | 新增 OpenAI 兼容端口 provider 应仅需在 registry 填 `api_base` + `api_key_env`,bundle 写 `openai/<id>`,**零新代码** |
 | FR-MODEL-005 | 非 OpenAI 协议 provider 应通过在 `src/framework/providers/` 加 adapter 接入,路由按 `model.startswith(...)` 前缀匹配 |
 | FR-MODEL-006 | `CapabilityRouter` 应按注册顺序调用 `ProviderAdapter.supports(model)`,`LiteLLMAdapter`(wildcard)**必须最后**注册 |
-| FR-MODEL-007 | 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image` |
+| FR-MODEL-007 | 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image / image_local`(`image_local` 自 v1.6 起,本地 ComfyUI agent CLI;OpenSpec change `comfy-agent-cli-adoption`)|
 | FR-MODEL-008 | ProviderPolicy 应支持 `fallback_models` 列表,首选失败时按序降级 |
 
 ### 3.4 结构化生成(FR-STRUCT)
@@ -239,7 +239,7 @@ ForgeUE **不做**:
 
 | 编号 | 需求 |
 | --- | --- |
-| FR-WORKER-001 | 系统应支持 ComfyUI HTTP worker,生成贴图类 Artifact |
+| FR-WORKER-001 | 系统应支持 ComfyUI worker,生成贴图类 Artifact(自 v1.6 起改为 agent CLI subprocess `python -m comfyui_api`,lifecycle=none only,worker 配置走 `FORGEUE_COMFY_*` env vars;v1.5 及之前为 HTTP `/prompt` + `/history` + `/view`,见 OpenSpec change `comfy-agent-cli-adoption`)|
 | FR-WORKER-002 | 系统应支持 Hunyuan 3D worker(tokenhub 协议),生成 `mesh.gltf` / `mesh.fbx` |
 | FR-WORKER-003 | Tripo3D worker 应保留接口实现(scaffold),per-task 价格未公开时 parser 以 `NotImplementedError` 守门 |
 | FR-WORKER-004 | Mesh worker 应对返回的 URL 做 rank,按 `strong / ok / key / other / zip` 桶序排列;fallthrough 循环遍历候选 URL,`MeshWorkerUnsupportedResponse` 继续,`MeshWorkerError` 终止 |
@@ -420,7 +420,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | Hunyuan Image | Tencent tokenhub | `hunyuan_tokenhub_adapter.py` |
 | Hunyuan 3D | Tencent tokenhub | `providers/workers/mesh_worker.py` |
 | MiniMax | OpenAI 兼容 | LiteLLM |
-| ComfyUI | HTTP(`/prompt` + `/history` + `/view`) | `providers/workers/comfy_worker.py` |
+| ComfyUI(自 v1.6) | subprocess CLI(`python -m comfyui_api`,lifecycle=none only)| `providers/workers/comfy_worker.py::ComfyAgentWorker`(配置走 `FORGEUE_COMFY_*` env)|
 | Tripo3D | 预留(`/task` + 轮询) | `providers/workers/mesh_worker.py`(scaffold) |
 
 详细 API 契约见 `docs/api_des/*.md`。
@@ -495,6 +495,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | --- | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 `claude_unified_architecture_plan_v1.md` 拆分重组 | ForgeUE Team |
 | v1.1 | 2026-04-22 | Codex 5 轮 audit(21 条)修复后 strengthen:新增 FR-LC-006~008、FR-WORKER-009~010、FR-COST-008~009、FR-RUNTIME-008~012、FR-REVIEW-009、NFR-REL-009、ADR-006;`NFR-MAINT-003` 基线 491 → 520;实装一致性见 LLD v1.1 与 acceptance v1.1 | ForgeUE Team |
+| v1.6 | 2026-05-02 | OpenSpec change `comfy-agent-cli-adoption`:ComfyUI worker 协议层从 HTTP 重写为 subprocess CLI 调用 `python -m comfyui_api`,bundle 协议从 inline `workflow_graph` 简化为 `comfy_workflow` + `comfy_params` + `comfy_lifecycle`(only `"none"` 此 change 范围);新虚拟 model id `comfy/local` + alias `image_local`;ComfyUI worker 配置走 env vars `FORGEUE_COMFY_*`(F-A schema 扩展登记 TBD-011 后续 change);`StepContext.run_dir` 字段 + Orchestrator `_compute_run_dir` helper(round 2 OQ-7 G3 fix)。BREAKING:`step.config.spec.workflow_graph` 字段废止;HTTPComfyWorker 删除;`--comfy-url` CLI flag deprecated。FR-WORKER-001 / FR-MODEL-003 / FR-MODEL-007 / §5.3 全 update;§7.3 加 TBD-009 / TBD-010 / TBD-011 follow-on。Plan-stage 3 轮 codex review + Apply-stage 8-commit chain + Lean Apply Mode。 | ForgeUE Team |
 
 ### 7.3 未决事项
 
@@ -505,3 +506,6 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | TBD-003 | WS 鉴权 / 多租户 session | 接入 UI 时再设计 |
 | TBD-004 | FBX self-containment 校验 | 有 PyFBX / ufbx 绑定后 |
 | TBD-005 | DashScope / Tripo3D 下辖 parser 实装 | 有人工作流真实使用时 |
+| TBD-009 | ComfyUI agent CLI mesh / audio / video workflow 接入(本 change `comfy-agent-cli-adoption` 只接 image;mesh/audio/video 因 metadata parsing + capability split 留作后续 change) | 本 change 归档后再评估 |
+| TBD-010 | GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主 spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED | 用户实际使用本 change 后反馈双终端 UX 痛苦阈值或框架其它 long-task cancel use case 推动 |
+| TBD-011 | ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env | 第二个 subprocess provider 出现时(本地 SDXL / 第三方 CLI 工具 / 本地 mesh worker)|

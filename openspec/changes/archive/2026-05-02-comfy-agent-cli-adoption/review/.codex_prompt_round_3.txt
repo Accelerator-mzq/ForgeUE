@@ -1,0 +1,96 @@
+# Target
+
+OpenSpec change comfy-agent-cli-adoption Round 3 design contract review (S2 to S3 design hook, third pass).
+
+# Context
+
+This is the third review pass.
+- Round 1 (codex output review/codex_design_review.md, writeback commit a45d30b): 6 F-findings.
+- Round 2 (codex output review/codex_design_review_round_2.md, writeback commit 53397b2): FIXED-CORRECTLY 2/6 + 4 new G-findings; user decisions F-B (env-based config, no ProviderDef schema extension, F-A registered as TBD-011) + G-A (StepContext.run_dir injection) + H-A (image_local in SRS FR-MODEL-007).
+
+Round 3 validates whether round 2 writeback ACTUALLY fixed the round 2 outputs (Q1 carryovers F2/F4/F5 + G1/G2/G3/G4) AND whether round 2 introduced new contract holes.
+
+Per ForgeUE memory feedback_verify_external_reviews: never assume one's own fix is correct, always re-verify via codex independent pass.
+
+# Files to read first (round 2 evidence + current contract)
+
+Round 2 evidence:
+- review/codex_design_review_round_2.md (round 2 codex verbatim, 4 G-findings + Q1 verdicts on F1-F6)
+- review/design_cross_check_round_2.md (round 2 frozen ## A + verification table D.1 + Decision Block F/G/H)
+
+Current post-round-2-writeback contract (commit 53397b2):
+- proposal.md (revised What Changes incl env vars BREAKING + worker dispatch BREAKING + StepContext.run_dir; Modified Capabilities adds runtime-core)
+- design.md (D7 round 2 rewrite + D8 NEW StepContext.run_dir + D9 NEW image_local SRS update + Resolved OQ-6/7/8 + D-FutureScope adds TBD-011)
+- tasks.md (11 task groups; §1.2 marks F/G/H resolved; §2 yaml NO schema extension + env vars convention; §3 worker REQUIRED project_id+artifacts_dir+lifecycle assert; §4 executor worker dispatch branch + dry-run model-id gate; §5 NEW StepContext run_dir injection task group; §10.2 SRS FR-MODEL-007 update; §10.12 TBD-011 register)
+- specs/provider-routing/spec.md (rewrite: 7 ADDED Requirements + 1 MODIFIED; F-B + G2 + F4 + G3 + dry-run gate + cancel best-effort + non-image rejection)
+- specs/runtime-core/spec.md (NEW capability delta: 1 ADDED Requirement StepContext.run_dir + 2 scenarios)
+- specs/probe-and-validation/spec.md (fence list extended to ~22 with env_unset / project_id_none / artifacts_dir_none / executor_worker_dispatch / env_config fences)
+- specs/artifact-contract/spec.md (unchanged from round 1; copy-to-tree contract)
+- specs/examples-and-acceptance/spec.md (unchanged from round 1)
+
+Contract integrity check post round 2 writeback:
+- openspec validate comfy-agent-cli-adoption --strict — PASS
+- python tools/forgeue_change_state.py --change comfy-agent-cli-adoption --writeback-check --json — needs to be re-run by reviewer to confirm state still S3, drifts [], frontmatter_issues [], structural_issues [].
+
+# KNOWN GAP (do NOT flag as new finding)
+
+execution/execution_plan.md + execution/micro_tasks.md are still round 1 state (commit 79ec6c7); they have NOT been updated to reflect round 2 contract changes. This is intentional: avoid double rewrite if round 3 surfaces more findings. Plan is to update execution evidence batch-style after round 3 verdict. So please do NOT report drift between tasks.md (post round 2) and execution_plan.md (round 1) as a new finding — that drift is acknowledged and queued for cleanup.
+
+# Round 3 adversarial focus
+
+Two questions to answer:
+
+QUESTION 1 — Are the round 2 carryover findings ACTUALLY fixed by the round 2 writeback?
+
+Per-finding verdict:
+- F2 (was NOT-actually-fixed in round 2: models.comfy/local missing id; ProviderDef silent-ignore extra fields)
+- F4 (was fixed-with-caveat in round 2: project_id still optional with None default)
+- F5 (was NOT-actually-fixed in round 2: prepared_routes lacked provider field)
+- G1 (was new critical in round 2: provider.kind dispatch field absent)
+- G2 (was new high in round 2: image_local routes through API path, comfy spec dropped)
+- G3 (was new high in round 2: ctx.run.artifact_dir does not exist)
+- G4 (was new medium in round 2: SRS FR-MODEL-007 alias drift)
+
+For each, verdict: fixed-correctly / fixed-with-caveat (explain) / not-actually-fixed (explain). End with counter "FIXED-CORRECTLY: N/7".
+
+Specifically interrogate Claude's self-identified weaknesses listed in design_cross_check_round_3.md ## A:
+- W-MicroTasksStale (acknowledged GAP — see above)
+- W-WorkerSubmitSyncWrap: GenerateImageExecutor.execute is sync def (wrapped by orchestrator.py:474 to_thread); ComfyAgentWorker.submit is async def (uses asyncio.create_subprocess_exec). How does _generate_via_worker bridge this? asyncio.run inside a thread is a known anti-pattern (deadlock or loop leak risk). Did round 2 writeback resolve this impedance mismatch? If not, F-B as designed cannot actually run.
+- W-FrozenDataclassBreakage: StepContext is @dataclass with new REQUIRED field run_dir. Existing test code that constructs StepContext(run=, task=, step=, repository=) without run_dir will TypeError. tasks.md §5.3 says grep callsites and add run_dir=tmp_path, but the actual callsite count is unknown. Is this risk fully captured?
+- W-DryRunRouteResolved: spec says dry-run sees prepared_routes after expansion. But when does loader expand models_ref into prepared_routes? Does DryRunPass actually have access to expanded prepared_routes at the right hook point?
+- W-CapRouterRegistration: MODIFIED Requirement Non-OpenAI protocols 2nd scenario says comfy/local "routes to ComfyAgentWorker via executor-side model-id exact match" — but ComfyAgentWorker is NOT an adapter (does not implement supports(model)). Is this scenario wording misleading?
+- W-EnvVarValidation: env vars FORGEUE_COMFY_* must be exported BEFORE starting framework.run. Does spec / tasks document this UX clearly? Is there a CLI flag fallback?
+- W-RuntimeCoreSpecScope: The new runtime-core spec delta has only 1 ADDED Requirement. Will OpenSpec archive correctly merge this single ADDED into the existing main runtime-core/spec.md?
+- W-TasksTaskCount: tasks.md now has 11 Task Groups (added §5). /forgeue:change-apply Boundary Check Step 8 may have been written against the old 10-Task-Group structure. Does the apply step survive task renumbering?
+
+QUESTION 2 — Did round 2 writeback introduce any NEW contract holes?
+
+Beyond the W-* weaknesses Claude self-identified, look for issues missed. Especially check:
+
+- F-B compatibility with existing worker construction patterns: Look at GenerateMeshExecutor (the existing model that round 2 cites as parallel). Does GenerateMeshExecutor actually invoke HunyuanTokenhubMeshWorker directly, or via CapabilityRouter? Is ComfyAgentWorker's "executor-side dispatch" really parallel, or is it actually different?
+- Env vars and config/models.yaml split: providers.comfy_api is a placeholder with api_key_env: null + api_base: null but worker config in env vars. If user adds providers.comfy_api.scripts_dir: ... in yaml (instinctively, since it looks like provider config), will that field be silent-ignored (round 1 problem reappears)? Should there be a yaml-level fence rejecting unknown subfields?
+- StepContext.run_dir injection at Orchestrator: tasks.md §5.2 says "grep StepContext( in src/framework/runtime/orchestrator.py and inject run_dir=self.artifact_root / run.started_at.strftime(...) / run.run_id". Is self.artifact_root actually a field on Orchestrator? Verify.
+- spec MODIFIED Requirement edit completeness: Per OpenSpec instruction "MODIFIED Requirements MUST include full updated content + locate the existing requirement, copy ENTIRE block, paste under MODIFIED, edit". Did the round 2 MODIFIED edit copy the full block, or did it rewrite top text?
+- Mesh worker analogy fidelity: Spec MODIFIED Requirement scenario 2 says the dispatch is "parallel to how GenerateMeshExecutor invokes HunyuanTokenhubMeshWorker for mesh routes". Verify this analogy by reading GenerateMeshExecutor — is the dispatch shape really parallel (executor-side branch on model id), or is it different (e.g. via CapabilityRouter.mesh_generation)?
+- TBD-011 scope description: tasks §10.12 lists specific implementation steps for TBD-011. SRS §7.3 existing TBDs (001-005) are open-question style. Is TBD-011 too prescriptive?
+
+# What to return
+
+For QUESTION 1, give a per-finding verdict (F2 + F4 + F5 + G1 + G2 + G3 + G4 = 7 items):
+- fixed-correctly / fixed-with-caveat (explain) / not-actually-fixed (explain)
+End with a counter "FIXED-CORRECTLY: N/7"
+
+For QUESTION 2, return new findings in standard adversarial-review style:
+- finding id (H1, H2, ... — use H prefix to distinguish from round 1 F prefix and round 2 G prefix)
+- severity (blocker / high / medium / low)
+- claim (file:line)
+- evidence (why this is a problem)
+- suggested fix (if applicable)
+
+End with finding count + severity distribution.
+
+Claude will independently file:line verify each new H-finding (per ForgeUE memory feedback_verify_external_reviews) + decide accepted-codex (writeback) or disputed (with verdict in section D.1 Round 3 Verification Note).
+
+Do NOT propose new features or refactors (this change scope is locked).
+Do NOT re-raise round 1 F-findings or round 2 G-findings — only Q1 verdicts on round 2 carryovers (F2/F4/F5/G1/G2/G3/G4) plus Q2 new H-findings.
+Do NOT flag execution_plan/micro_tasks drift as a new finding (acknowledged GAP, see above).

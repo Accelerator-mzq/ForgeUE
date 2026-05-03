@@ -1,0 +1,55 @@
+{
+  "task": {
+    "task_id": "task_comfy_smoke",
+    "task_type": "asset_generation",
+    "run_mode": "basic_llm",
+    "title": "Local ComfyUI smoke (ComfyAgentWorker, single step)",
+    "input_payload": {
+      "prompt": "single oak barrel isolated white background"
+    },
+    "expected_output": {
+      "artifact_types": [
+        "concept_image",
+        "candidate_bundle"
+      ]
+    },
+    "project_id": "proj_comfy_smoke"
+  },
+  "workflow": {
+    "workflow_id": "wf_comfy_smoke",
+    "name": "comfy_smoke",
+    "version": "1.0.0",
+    "entry_step_id": "step_image",
+    "step_ids": [
+      "step_image"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "step_image",
+      "type": "generate",
+      "name": "comfy-local-txt2img",
+      "risk_level": "medium",
+      "capability_ref": "image.generation",
+      "provider_policy": {
+        "capability_required": "image.generation",
+        "models_ref": "image_local"
+      },
+      "config": {
+        "num_candidates": 1,
+        "seed": 7777,
+        "worker_timeout_s": 300,
+        "spec": {
+          "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+          "comfy_params": {
+            "text": "single oak barrel isolated white background, masterpiece, best quality, highly detailed, iron banding, weathered wood, isolated object, centered composition, product shot, studio lighting, plain white background, simple background, sharp focus",
+            "seed": 7777,
+            "width": 512,
+            "height": 512
+          },
+          "comfy_lifecycle": "none"
+        }
+      }
+    }
+  ]
+}

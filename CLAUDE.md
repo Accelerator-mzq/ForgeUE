@@ -3,6 +3,28 @@
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
 
+## ComfyUI 接入(自 SRS v1.6,OpenSpec change `comfy-agent-cli-adoption`)
+
+ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**。
+Bundle 用 `image_local` alias + `spec.comfy_workflow` manifest 名(NOT 整段 workflow_graph inline)。
+
+**双终端工作流(本 change scope 唯一支持模式)**:
+- 终端 1:`python -m comfyui_api serve` 启 ComfyUI(用户自管)
+- 终端 2 export env + 跑 ForgeUE:
+  ```bash
+  export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
+  # FORGEUE_COMFY_PYTHON_EXE 留空 → sys.executable;FORGEUE_COMFY_LIFECYCLE 留空 → "none"(本 change 仅接受)
+  python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>
+  ```
+- 产物:`artifacts/<today>/<run_id>/comfy/<filename>.png`(ForgeUE in-tree copy);原 ComfyUI 输出 `D:/AI/ComfyUI/outputs/main/<today>/<task.project_id>/...` 留作人工对照
+
+**关键限制(round 2 OQ-6 + D6)**:
+- worker 配置走 env vars `FORGEUE_COMFY_*`,**不**进 `config/models.yaml`(F-A schema 扩展登记 SRS TBD-011 后续 change)
+- `comfy_lifecycle: "none"` only(`ensure_running` / `ensure_release` / `self_managed_session` 留 SRS TBD-010 `executor-async-rewrite` 后续 change 解锁)
+- Mesh / audio / video ComfyUI workflow **不**支持(image-generation path 遇到 non-empty `outputs.glb` / `outputs.audio` raise);留 SRS TBD-009 后续 change
+
+**Dry-run 探活**:bundle 含 `image_local` 时 DryRunPass 跑一次 `comfyui_api status`(timeout 30s);env unset / probe failure → warning(NOT block,G8 commit 7 drift writeback)。Hard fail-fast 在 step 时 `ComfyAgentWorker.__init__` 守门(REQUIRED 字段 None / env unset 都 raise `WorkerUnsupportedResponse`)。
+
 ## 架构权威(2026-04-22 文档重构后)
 
 五件套为当前唯一权威,plan_v1 降级为归档史料(ADR-005):

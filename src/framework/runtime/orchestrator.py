@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from framework.artifact_store import ArtifactRepository
@@ -86,6 +87,41 @@ class Orchestrator:
         self.transitions = transition_engine or TransitionEngine()
         self.dry_run = dry_run_pass or DryRunPass()
         self._max_loop = max_loop
+
+    def _compute_run_dir(self, run: Run) -> Path:
+        """Resolve the canonical artifact-tree directory for this run.
+
+        Reads `getattr(self.checkpoints, "_root", None)` (same source
+        `_post_step` line ~627 uses for `dump_run_metadata`) and joins
+        with `run.run_id`. NO extra date segment because `framework.run`
+        already date-buckets `--artifact-root` by default
+        (`framework.run` line 111-115) and `framework.run` line 149 uses
+        `artifact_root / args.run_id` without an extra date bucket.
+
+        G11 R3 fix (codex implementation review):
+        Raises RuntimeError when `_root is None` instead of silently
+        returning `Path(".")`. Earlier draft fell back to cwd as a
+        "test-mock convenience", but Orchestrator-injected
+        `StepContext.run_dir` is also the production path that
+        `ComfyAgentWorker` writes copied PNGs into. Silent cwd fallback
+        meant any in-memory CheckpointStore live run would scatter
+        artifacts in the process cwd, breaking the
+        `<artifact_root>/<run_id>` self-contained / resume / archive
+        invariants. Tests that need a synthetic run_dir construct
+        StepContext directly with `run_dir=tmp_path` instead of going
+        through Orchestrator. See comfy-agent-cli-adoption
+        review/codex_implementation_review.md R3.
+        """
+        root = getattr(self.checkpoints, "_root", None)
+        if root is None:
+            raise RuntimeError(
+                "Orchestrator._compute_run_dir requires checkpoints._root "
+                "to be set so StepContext.run_dir can resolve to "
+                "<artifact_root>/<run_id>; got None. Tests should "
+                "construct StepContext directly with run_dir=tmp_path "
+                "rather than route through Orchestrator."
+            )
+        return Path(root) / run.run_id
 
     def run(
         self,
@@ -459,6 +495,7 @@ class Orchestrator:
         ctx = StepContext(
             run=run, task=task_obj, step=step,
             repository=self.repository,
+            run_dir=self._compute_run_dir(run),
             inputs=resolved_inputs,
             upstream_artifact_ids=upstream_ids,
         )
