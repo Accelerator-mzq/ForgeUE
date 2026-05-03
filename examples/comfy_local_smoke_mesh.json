@@ -72,11 +72,11 @@
         "seed": 8888,
         "worker_timeout_s": 600,
         "spec": {
-          "comfy_workflow": "3D_Hunyuan/3d_hunyuan3d-v2.1",
+          "comfy_workflow": "GameAssets/03_mini_image_to_3d_hunyuan_loadimage",
           "comfy_params": {
-            "seed": 8888,
-            "steps": 30,
-            "cfg": 5.0
+            "mesh_seed": 8888,
+            "mesh_steps": 20,
+            "mesh_target_faces": 200000
           },
           "comfy_image_param_key": "input_image",
           "comfy_lifecycle": "none"

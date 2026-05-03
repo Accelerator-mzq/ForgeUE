@@ -7,10 +7,14 @@
 
 ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**。
 - **Image** capability:bundle 用 `image_local` alias + `spec.comfy_workflow` manifest 名(NOT 整段 workflow_graph inline)
-- **Mesh** capability(round 5 D10 起):bundle 用 `mesh_local` alias + image-to-mesh DAG(上游 image step + 下游 mesh step `depends_on`),mesh manifest 例 `3D_Hunyuan/3d_hunyuan3d-v2.1`,可选 `spec.comfy_image_param_key`(默认 `"input_image"`)
+- **Mesh** capability(round 5 D10 起):bundle 用 `mesh_local` alias + image-to-mesh DAG(上游 image step + 下游 mesh step `depends_on`),mesh manifest 例 `GameAssets/03_mini_image_to_3d_hunyuan_loadimage`(round 5 partial → full L2 evidence 时 user 授权 + Claude 写的 mini-LoadImage 变体,使用 `hunyuan3d-dit-v2-mini.safetensors` 自动下载模型;原 `3D_Hunyuan/3d_hunyuan3d-v2.1` 也可用但需手工下 6GB 主模型),可选 `spec.comfy_image_param_key`(默认 `"input_image"`)
 
 **双终端工作流(本 change scope 唯一支持模式)**:
-- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(image L2 live smoke evidence:`openspec/changes/archive/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`;mesh L2 live smoke evidence:`openspec/changes/comfy-agent-cli-mesh-audio-video-adoption/notes/live_smoke_mesh_<date>.md`)
+- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(image L2 live smoke evidence:`openspec/changes/archive/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`;mesh L2 live smoke evidence:`openspec/changes/comfy-agent-cli-mesh-audio-video-adoption/notes/live_smoke_mesh_20260503_full.md`,GLB 真实生成 3.5MB)
+- **ComfyUI 共享目录新增 ForgeUE 依赖**(round 5 user-authored mini-LoadImage 变体,本 change 必须):
+  - `D:/AI/ComfyUI/workflows/official_main_validated_api/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(API workflow,LoadImage 变体)
+  - `D:/AI/ComfyUI/scripts/comfyui_api/manifests/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(manifest,暴露 input_image patches)
+  - 这两个文件是 user-authored ComfyUI 配置,ComfyUI 重装时**手工保留**(否则 ForgeUE mesh smoke 失败)
 - 终端 2 export env + 跑 ForgeUE(或 `.env` 文件持久化,`framework.run` 启动会 `hydrate_env` 自动加载):
   ```bash
   export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
