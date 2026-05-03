@@ -323,6 +323,16 @@ models:
     provider: comfy_api
     kind: image
     pricing: null
+
+  # 本地 ComfyUI mesh virtual model id(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1)
+  # 与 comfy_local 平行,但 kind=mesh;真"workflow" 由 bundle `step.config.spec.comfy_workflow`
+  # 指定的 mesh manifest 决定。pricing: null 触发 ADR-007 边界判定为非 premium
+  # ((None or {}).get("per_task_usd", 0) == 0),走 _generate_via_comfy_worker 内部 retry loop。
+  comfy_local_mesh:
+    id: "comfy/local-mesh"
+    provider: comfy_api
+    kind: mesh
+    pricing: null
 aliases:
   # 别名按「场景能力」命名，不按厂商 / 成本档位命名。想换模型（国内国外、
   # 便宜强力）直接改 preferred / fallback 里引用的 model 名字即可 ——
@@ -383,4 +393,13 @@ aliases:
   # fallback 用 image_fast 或 step-level fallback_models override)
   image_local:
     preferred: [comfy_local]
+    fallback: []
+
+  # 本地 ComfyUI mesh generation(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1)
+  # bundle 写 provider_policy.models_ref: "mesh_local" → 解析为 comfy/local-mesh
+  # → GenerateMeshExecutor._should_use_comfy_worker_path 检测 model id → ComfyAgentWorker.generate_mesh
+  # fallback: [] 不 fallback 到 hunyuan(本地 ComfyUI mesh 是独立 capability;若想云 fallback
+  # 用 mesh_default 或 step-level fallback_models override)
+  mesh_local:
+    preferred: [comfy_local_mesh]
     fallback: []

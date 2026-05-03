@@ -558,3 +558,56 @@ aliases:
     assert route.api_key_env is None
     assert route.api_base is None
     assert alias.fallback == []
+
+
+def test_comfy_local_mesh_model_id_missing_raises(tmp_path):
+    """models.comfy/local-mesh 缺 id 字段时 _parse_models raise ValueError。
+    OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1 mesh:
+    本 fence 与 image-mode 的 test_comfy_local_model_id_missing_raises 平行,
+    守门 mesh model entry 同样必须显式声明 id。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local-mesh:
+    # id field intentionally omitted
+    provider: comfy_api
+    kind: mesh
+    pricing: null
+aliases: {}
+""")
+    with pytest.raises(ValueError, match="missing 'id'"):
+        ModelRegistry.from_yaml(path)
+
+
+def test_mesh_local_alias_resolves_via_registry(tmp_path):
+    """alias mesh_local → comfy/local-mesh 全链路解析:
+    bundle 写 provider_policy.models_ref: "mesh_local"
+    → loader expand → ResolvedRoute(model="comfy/local-mesh", kind="mesh", pricing=None)
+    → GenerateMeshExecutor._should_use_comfy_worker_path 检测 → ComfyAgentWorker.generate_mesh dispatch。
+    本 fence 守门 mesh alias-to-route 解析路径完整(D1 + D7 + D9 invariants)。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local-mesh:
+    id: "comfy/local-mesh"
+    provider: comfy_api
+    kind: mesh
+    pricing: null
+aliases:
+  mesh_local:
+    preferred: ["comfy/local-mesh"]
+    fallback: []
+""")
+    reg = ModelRegistry.from_yaml(path)
+    alias = reg.resolve("mesh_local")
+    assert alias.name == "mesh_local"
+    assert len(alias.preferred) == 1
+    route = alias.preferred[0]
+    assert route.model == "comfy/local-mesh"
+    assert route.kind == "mesh"
+    assert route.pricing is None
+    assert route.api_key_env is None
+    assert route.api_base is None
+    assert alias.fallback == []
