@@ -1,7 +1,7 @@
 ---
 change_id: comfy-agent-cli-audio-adoption
 stage: S6
-evidence_type: cross_check
+evidence_type: implementation_cross_check
 contract_refs:
   - design.md
   - tasks.md

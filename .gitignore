@@ -20,3 +20,4 @@ build/
 .ruff_cache/
 htmlcov/
 coverage.xml
+.claude/scheduled_tasks.lock

@@ -152,7 +152,15 @@ class GenerateImageExecutor(StepExecutor):
                 payload_kind=PayloadKind.file,
                 producer=ProducerRef(
                     run_id=ctx.run.run_id, step_id=ctx.step.step_id,
-                    provider=("litellm" if use_api_path else (self._worker.name if self._worker else "fake")),
+                    # G6-F2 follow-on(`comfy-executor-producer-attribution-fix`):
+                    # ComfyUI subprocess CLI 路径活跃时 provider="comfy_agent_cli",
+                    # NOT injected `self._worker.name`(后者可能是 FakeComfyWorker
+                    # 注入名,会污染 audit / comparison report)
+                    provider=(
+                        "comfy_agent_cli" if use_worker_path
+                        else "litellm" if use_api_path
+                        else (self._worker.name if self._worker else "fake")
+                    ),
                     model=chosen_model or cfg.get("model_hint", "unknown"),
                 ),
                 lineage=Lineage(
@@ -206,7 +214,12 @@ class GenerateImageExecutor(StepExecutor):
             payload_kind=PayloadKind.inline,
             producer=ProducerRef(
                 run_id=ctx.run.run_id, step_id=ctx.step.step_id,
-                provider=("litellm" if use_api_path else (self._worker.name if self._worker else "fake")),
+                # G6-F2 follow-on:bundle producer 与 candidate producer 对齐
+                provider=(
+                    "comfy_agent_cli" if use_worker_path
+                    else "litellm" if use_api_path
+                    else (self._worker.name if self._worker else "fake")
+                ),
                 model=chosen_model or cfg.get("model_hint", "unknown"),
             ),
             lineage=Lineage(
@@ -233,7 +246,12 @@ class GenerateImageExecutor(StepExecutor):
         metrics = {
             "attempts": attempt_count,
             "candidate_count": len(image_ids),
-            "worker": ("litellm" if use_api_path else (self._worker.name if self._worker else "fake")),
+            # G6-F2 follow-on:metrics.worker 与 producer.provider 对齐
+            "worker": (
+                "comfy_agent_cli" if use_worker_path
+                else "litellm" if use_api_path
+                else (self._worker.name if self._worker else "fake")
+            ),
             "chosen_model": chosen_model,
             "revised": bool(hint),
             "seed": seed,

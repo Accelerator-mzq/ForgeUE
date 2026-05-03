@@ -59,17 +59,24 @@ def test_build_plan_level_1_adds_live_llm_only():
     # No mesh / UE / comfy at level 1
     assert "live-mesh-generation" not in names
     assert "live-ue-export" not in names
-    assert "live-comfy-pipeline" not in names
+    assert "live-comfy-image" not in names
+    assert "live-comfy-mesh" not in names
+    assert "live-comfy-audio" not in names
 
 
 def test_build_plan_level_2_adds_mesh_ue_comfy():
+    """OpenSpec change `forgeue-verify-level2-comfy-bundle-update`(2026-05-04):
+    `live-comfy-pipeline` 单步骤拆为 image / mesh / audio 三 capability-specific
+    步骤,各自 env var,各自跑对应 `comfy_local_smoke*.json` bundle。"""
     plan = fv.build_plan(2)
     names = [s.name for s in plan]
     for live_step in (
         "live-llm-character-extract",
         "live-mesh-generation",
         "live-ue-export",
-        "live-comfy-pipeline",
+        "live-comfy-image",
+        "live-comfy-mesh",
+        "live-comfy-audio",
     ):
         assert live_step in names
 

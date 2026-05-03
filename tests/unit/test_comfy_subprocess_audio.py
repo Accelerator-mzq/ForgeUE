@@ -38,7 +38,12 @@ from framework.providers.workers.comfy_worker import (
 
 
 def _make_audio_worker(tmp_path: Path) -> ComfyAgentWorker:
-    """Audio-mode worker fixture (model_id='comfy/local-audio' → _capability='audio')."""
+    """Audio-mode worker fixture (model_id='comfy/local-audio' → _capability='audio').
+
+    Path containment heuristic uses `scripts_dir.parent` = `tmp_path`,
+    so fake outputs in tmp_path pass the containment check
+    (`comfy-agent-cli-path-containment-hardening` 2026-05-04).
+    """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(exist_ok=True)
     (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
@@ -462,3 +467,27 @@ def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypat
         cmd = run_mock.call_args[0][0]
         assert "-m" in cmd
         assert "comfyui_api" in cmd
+
+
+# ---- G11-F2 follow-on: path containment for outputs.audio --------------------
+
+def test_audio_outputs_path_outside_comfy_output_root_raises_unsupported_response(tmp_path):
+    """G11-F2 follow-on:audio worker outputs.audio path 在 comfy_output_root 之外
+    → raise WorkerUnsupportedResponse(`comfy-agent-cli-path-containment-hardening`
+    2026-05-04 兑现 R7-C disputed-permanent-drift 之 follow-on commitment)。"""
+    worker = _make_audio_worker(tmp_path)
+    bad_dir = Path(tmp_path).parent / "bad_outside_root_audio"
+    bad_dir.mkdir(exist_ok=True)
+    bad_flac = bad_dir / "leak.flac"
+    _make_flac_file(bad_flac)
+    assert not bad_flac.resolve().is_relative_to(worker.comfy_output_root), (
+        f"Test setup error: bad_flac {bad_flac.resolve()} unexpectedly under "
+        f"comfy_output_root {worker.comfy_output_root}"
+    )
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_audio_stdout([str(bad_flac)]))
+        with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
+            worker.generate_audio(
+                spec={"comfy_workflow": "x", "comfy_params": {}},
+                num_candidates=1,
+            )

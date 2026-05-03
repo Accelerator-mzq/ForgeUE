@@ -471,3 +471,65 @@ def test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch
         W.assert_not_called()
     assert result.metrics["mesh_count"] == 1
     assert result.metrics["cost_usd"] == pytest.approx(0.25)
+
+
+# ---- G6-F3 follow-on: producer attribution for comfy/local-mesh path -------
+# OpenSpec change `comfy-executor-producer-attribution-fix`(2026-05-04):
+# fence 守门 comfy/local-mesh 分支活跃时,Artifact.producer.provider == "comfy_agent_cli"
+# (NOT self._worker.name 注入的 fallback worker 名);metrics["worker"] 同样走 comfy_agent_cli。
+
+
+def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
+    """G6-F3 follow-on:comfy/local-mesh 路径活跃时,Artifact.producer.provider
+    == "comfy_agent_cli",NOT injected worker name(框架 self._worker.name 注入的
+    HunyuanMeshWorker / FakeMeshWorker 名会污染 audit / comparison report)。"""
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))
+    ctx, repo, src_bytes = _make_comfy_mesh_ctx(tmp_path, num_candidates=1)
+
+    # injected worker:其 name 是 "injected_test_worker",但本 change 后该字段
+    # 不应出现在 Artifact.producer 里
+    injected_worker = MagicMock(spec=MeshWorker)
+    injected_worker.name = "injected_test_worker"
+    executor = GenerateMeshExecutor(worker=injected_worker)
+
+    fake_cand = _fake_mesh_candidate()
+    with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
+        W.return_value.generate_mesh.return_value = [fake_cand]
+        result = executor.execute(ctx)
+
+    assert len(result.artifacts) == 1
+    art = result.artifacts[0]
+    assert art.producer.provider == "comfy_agent_cli", (
+        f"Expected provider='comfy_agent_cli' for comfy/local-mesh path, "
+        f"got {art.producer.provider!r}; pre-fix would yield 'injected_test_worker'"
+    )
+    assert art.producer.model == "comfy/local-mesh", (
+        f"Expected model='comfy/local-mesh' for comfy path, got {art.producer.model!r}"
+    )
+    # metrics["worker"] 同样应为 comfy_agent_cli(audit / comparison 走此字段)
+    assert result.metrics["worker"] == "comfy_agent_cli", (
+        f"Expected metrics.worker='comfy_agent_cli', got {result.metrics['worker']!r}"
+    )
+
+
+def test_executor_remote_hunyuan_path_records_provider_as_worker_name(tmp_path):
+    """regression:non-comfy 路径(远端 Hunyuan / Tripo)producer.provider == self._worker.name,
+    保留原行为(本 change 只改 comfy 分支 attribution,不改远端 mesh 分支)。"""
+    extra = [PreparedRoute(model="hunyuan/hy-3d-3.1", api_key_env="HUNYUAN_3D_KEY",
+                           kind="mesh", pricing={"per_task_usd": 0.25})]
+    ctx, _, _ = _make_comfy_mesh_ctx(tmp_path,
+                                      use_comfy_local_mesh_route=False,
+                                      extra_routes=extra,
+                                      num_candidates=1)
+    fake_worker = FakeMeshWorker()
+    executor = GenerateMeshExecutor(worker=fake_worker)
+    result = executor.execute(ctx)
+    assert len(result.artifacts) == 1
+    art = result.artifacts[0]
+    # FakeMeshWorker.name == "fake_mesh"
+    assert art.producer.provider == fake_worker.name, (
+        f"Expected provider='{fake_worker.name}' for remote/fake mesh path, "
+        f"got {art.producer.provider!r}"
+    )
+    assert result.metrics["worker"] == fake_worker.name

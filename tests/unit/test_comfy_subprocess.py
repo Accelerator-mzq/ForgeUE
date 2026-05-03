@@ -45,7 +45,13 @@ from framework.providers.workers.comfy_worker import (
 def _make_worker(tmp_path: Path) -> ComfyAgentWorker:
     """Construct a ComfyAgentWorker with valid REQUIRED args + a stub
     scripts_dir / artifacts_dir under tmp_path. Tests replace
-    subprocess.run via patch to mock the actual CLI invocation."""
+    subprocess.run via patch to mock the actual CLI invocation.
+
+    OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04):
+    `comfy_output_root` heuristic falls back to `scripts_dir.parent`
+    (= `tmp_path`)so fake outputs written directly to tmp_path/out_*.png
+    pass the containment check `_assert_path_within_comfy_output_root`.
+    """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "comfyui_api").mkdir()
@@ -571,7 +577,11 @@ from framework.providers.workers.mesh_worker import MeshCandidate
 
 
 def _make_mesh_worker(tmp_path: Path) -> ComfyAgentWorker:
-    """Mesh-mode worker fixture(model_id='comfy/local-mesh' → _capability='mesh')。"""
+    """Mesh-mode worker fixture(model_id='comfy/local-mesh' → _capability='mesh')。
+
+    Path containment heuristic uses `scripts_dir.parent` = `tmp_path`,
+    so fake outputs in tmp_path pass the containment check.
+    """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(exist_ok=True)
     (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
@@ -1030,3 +1040,215 @@ def test_dry_run_skips_probe_when_no_comfy_local_or_local_mesh_in_routes(tmp_pat
     with patch("subprocess.run") as run_mock:
         dry_run._check_comfy_reachability(report, steps=[step])
         assert run_mock.call_count == 0  # 完全跳过 probe
+
+
+# ---- G11-F3 follow-on: per-candidate seed override (image + mesh) ------------
+# OpenSpec change `comfy-worker-seed-setdefault-bug-fix`(2026-05-04):
+# 镜像 audio fence
+# `tests/unit/test_comfy_subprocess_audio.py::test_generate_audio_per_candidate_seed_overrides_comfy_params_seed`
+# 模式;验证 image / mesh per-candidate seed 直接覆盖 `comfy_params.seed`。
+
+
+def test_generate_image_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
+    """G11-F3 follow-on:`comfy_params` 已含 `seed: 42` 时,per-candidate seed 偏移
+    仍生效(每个 candidate 拿 100 / 101 / 102 不是同 42)。fence 守门
+    `setdefault → 直接覆盖` 修复(防 num_candidates>1 时 candidate 重复)。"""
+    worker = _make_worker(tmp_path)
+    fakes = [tmp_path / f"out_{i}.png" for i in range(3)]
+    for f in fakes:
+        _make_png_file(f)
+    with patch("subprocess.run") as run_mock:
+        run_mock.side_effect = [
+            _make_completed(_ok_stdout([str(f)])) for f in fakes
+        ]
+        worker.generate(
+            spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
+            num_candidates=3,
+            seed=100,  # base seed
+        )
+    # 提取每个 subprocess.run 调用的 --params JSON 里的 seed 字段
+    seeds_seen: list[int] = []
+    for call in run_mock.call_args_list:
+        argv = call.args[0]
+        idx = argv.index("--params")
+        params = json.loads(argv[idx + 1])
+        seeds_seen.append(params["seed"])
+    assert seeds_seen == [100, 101, 102], (
+        f"Expected per-candidate seed override 100/101/102, got {seeds_seen}; "
+        f"setdefault bug would return [42, 42, 42]"
+    )
+
+
+def test_generate_mesh_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
+    """G11-F3 follow-on (mesh):`comfy_params` 已含 `seed: 42` 时,per-candidate
+    seed 偏移仍生效。Mirror image fence 模式;mesh path 走 image-to-mesh DAG,
+    需要 source_image_filename 参数,但 seed 注入 logic 与 image / audio 一致。"""
+    worker = _make_mesh_worker(tmp_path)
+    fakes = [tmp_path / f"out_{i}.glb" for i in range(3)]
+    for f in fakes:
+        _make_glb_file(f)
+    with patch("subprocess.run") as run_mock:
+        run_mock.side_effect = [
+            _make_completed(_ok_mesh_stdout([str(f)])) for f in fakes
+        ]
+        worker.generate_mesh(
+            spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
+            source_image_filename="forgeue_test.png",
+            num_candidates=3,
+            seed=100,  # base seed
+        )
+    seeds_seen: list[int] = []
+    for call in run_mock.call_args_list:
+        argv = call.args[0]
+        idx = argv.index("--params")
+        params = json.loads(argv[idx + 1])
+        seeds_seen.append(params["seed"])
+    assert seeds_seen == [100, 101, 102], (
+        f"Expected per-candidate mesh seed override 100/101/102, got {seeds_seen}; "
+        f"setdefault bug would return [42, 42, 42]"
+    )
+
+
+# ---- G6-F2 follow-on: producer attribution for comfy/local image path -------
+# OpenSpec change `comfy-executor-producer-attribution-fix`(2026-05-04):
+# fence 守门 comfy/local 分支活跃时,Artifact.producer.provider == "comfy_agent_cli"
+# (NOT self._worker.name 注入的 fallback worker 名)。
+
+
+def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
+    """G6-F2 follow-on:comfy/local 路径活跃时,Artifact.producer.provider
+    == "comfy_agent_cli",NOT injected worker name(framework.run 注入的
+    FakeComfyWorker name 会污染 audit / comparison report)。"""
+    from datetime import datetime, timezone
+    from unittest.mock import MagicMock
+    from framework.artifact_store import ArtifactRepository, get_backend_registry
+    from framework.core.enums import RiskLevel, RunMode, RunStatus, StepType, TaskType
+    from framework.core.policies import PreparedRoute, ProviderPolicy
+    from framework.core.task import Run, Step, Task
+    from framework.providers.model_registry import ResolvedRoute
+    from framework.runtime.executors.base import StepContext
+    from framework.runtime.executors.generate_image import GenerateImageExecutor
+
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+    (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+
+    fake_png = tmp_path / "out.png"
+    _make_png_file(fake_png)
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    policy = ProviderPolicy(
+        capability_required="image.generation",
+        prepared_routes=[PreparedRoute(
+            model="comfy/local", api_key_env=None, api_base=None,
+            kind="image", pricing=None,
+        )],
+    )
+    step = Step(
+        step_id="step_image", type=StepType.generate, name="img",
+        risk_level=RiskLevel.medium, capability_ref="image.generation",
+        config={
+            "num_candidates": 1,
+            "seed": 0,
+            "worker_timeout_s": 60,
+            "spec": {
+                "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+                "comfy_params": {"prompt": "test"},
+                "comfy_lifecycle": "none",
+            },
+        },
+        provider_policy=policy,
+    )
+    task = Task(
+        task_id="t", task_type=TaskType.asset_generation,
+        run_mode=RunMode.basic_llm, title="img",
+        input_payload={}, expected_output={}, project_id="proj_img",
+    )
+    run = Run(
+        run_id="run_img", task_id="t", project_id="proj_img",
+        status=RunStatus.running,
+        started_at=datetime.now(timezone.utc),
+        workflow_id="w", trace_id="tr",
+    )
+    ctx = StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[], run_dir=tmp_path / "run_dir",
+    )
+    (tmp_path / "run_dir").mkdir()
+
+    # injected worker(FakeComfyWorker-like)— 其 name 不应 leak 到 producer
+    injected_worker = MagicMock()
+    injected_worker.name = "fake_comfy_injected"
+    executor = GenerateImageExecutor(worker=injected_worker)
+
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_stdout([str(fake_png)]))
+        result = executor.execute(ctx)
+
+    # 应有 1 image artifact + 1 bundle artifact
+    image_arts = [a for a in result.artifacts if a.artifact_type.modality == "image"]
+    bundle_arts = [a for a in result.artifacts if a.artifact_type.modality == "bundle"]
+    assert len(image_arts) == 1, f"expected 1 image artifact, got {len(image_arts)}"
+    assert len(bundle_arts) == 1, f"expected 1 bundle artifact, got {len(bundle_arts)}"
+    # G6-F2 fix:image artifact provider == "comfy_agent_cli"
+    assert image_arts[0].producer.provider == "comfy_agent_cli", (
+        f"Expected provider='comfy_agent_cli' for comfy/local path, "
+        f"got {image_arts[0].producer.provider!r}; pre-fix would yield 'fake_comfy_injected'"
+    )
+    # bundle producer 同样 attribution
+    assert bundle_arts[0].producer.provider == "comfy_agent_cli", (
+        f"Bundle producer should also be 'comfy_agent_cli', "
+        f"got {bundle_arts[0].producer.provider!r}"
+    )
+    # metrics["worker"] 同样 comfy_agent_cli
+    assert result.metrics["worker"] == "comfy_agent_cli", (
+        f"metrics.worker should be 'comfy_agent_cli', got {result.metrics['worker']!r}"
+    )
+
+
+# ---- G11-F2 follow-on: path containment for outputs.images / .glb / .audio --
+# OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04):
+# fence 守门 ComfyUI subprocess 返回 `comfy_output_root` 之外的路径时,
+# `_run_once*` raise WorkerUnsupportedResponse(NOT 静默读 bytes)。
+
+
+def test_image_outputs_path_outside_comfy_output_root_raises_unsupported_response(tmp_path):
+    """G11-F2 follow-on:image worker outputs.images path 在 comfy_output_root 之外
+    (即 scripts_dir.parent 之外)→ raise WorkerUnsupportedResponse。"""
+    worker = _make_worker(tmp_path)
+    # 创建一个 BAD path 在 worker.comfy_output_root 之外(系统 temp 一级以上)
+    bad_dir = Path(tmp_path).parent / "bad_outside_root"
+    bad_dir.mkdir(exist_ok=True)
+    bad_png = bad_dir / "leak.png"
+    _make_png_file(bad_png)
+    # confirm bad_png 真的 outside output_root
+    assert not bad_png.resolve().is_relative_to(worker.comfy_output_root), (
+        f"Test setup error: bad_png {bad_png.resolve()} is unexpectedly under "
+        f"comfy_output_root {worker.comfy_output_root}"
+    )
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_stdout([str(bad_png)]))
+        with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
+            worker.generate(
+                spec={"comfy_workflow": "x", "comfy_params": {}},
+                num_candidates=1,
+            )
+
+
+def test_mesh_outputs_path_outside_comfy_output_root_raises_unsupported_response(tmp_path):
+    """G11-F2 follow-on:mesh worker outputs.glb path 在 comfy_output_root 之外
+    → raise WorkerUnsupportedResponse。"""
+    worker = _make_mesh_worker(tmp_path)
+    bad_dir = Path(tmp_path).parent / "bad_outside_root_mesh"
+    bad_dir.mkdir(exist_ok=True)
+    bad_glb = bad_dir / "leak.glb"
+    _make_glb_file(bad_glb)
+    assert not bad_glb.resolve().is_relative_to(worker.comfy_output_root)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(bad_glb)]))
+        with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
+            worker.generate_mesh(
+                spec={"comfy_workflow": "x", "comfy_params": {}},
+                source_image_filename="forgeue_test.png",
+                num_candidates=1,
+            )

@@ -11,11 +11,15 @@ is the contract; this tool is its machine version.
 - **Level 1** (opt-in via ``FORGEUE_VERIFY_LIVE_LLM``): one live LLM bundle
   (``examples/character_extract.json``). Requires a configured ``.env``.
 - **Level 2** (opt-in via ``FORGEUE_VERIFY_LIVE_MESH`` / ``_UE`` /
-  ``_COMFY``): mesh.generation / UE commandlet / ComfyUI bundles. Per
-  ADR-007 + ForgeUE memory ``feedback_no_silent_retry_on_billable_api``,
+  ``_COMFY`` / ``_COMFY_MESH`` / ``_COMFY_AUDIO``): mesh.generation /
+  UE commandlet / ComfyUI image / ComfyUI mesh / ComfyUI audio bundles.
+  Per ADR-007 + ForgeUE memory ``feedback_no_silent_retry_on_billable_api``,
   the tool never auto-retries paid endpoints; failure surfaces job_id and
   exits non-zero. Truthy values follow the strict
-  ``{1, true, yes, on}`` set, case-insensitive.
+  ``{1, true, yes, on}`` set, case-insensitive. ComfyUI Level 2 steps
+  require ``FORGEUE_COMFY_SCRIPTS_DIR`` env to point at a working
+  ComfyUI agent CLI install; the mesh step additionally needs
+  ``FORGEUE_COMFY_INPUT_DIR`` (per CLAUDE.md double-terminal setup).
 
 CLI:
 
@@ -171,7 +175,7 @@ def build_plan(level: int) -> list[StepPlan]:
                     description="live UE export (validation_matrix sec 3.3 step 1)",
                 ),
                 StepPlan(
-                    name="live-comfy-pipeline",
+                    name="live-comfy-image",
                     level=2,
                     env_var="FORGEUE_VERIFY_LIVE_COMFY",
                     command=[
@@ -179,14 +183,55 @@ def build_plan(level: int) -> list[StepPlan]:
                         "-m",
                         "framework.run",
                         "--task",
-                        "examples/image_pipeline.json",
+                        "examples/comfy_local_smoke.json",
                         "--run-id",
-                        "forgeue_verify_live_comfy",
+                        "forgeue_verify_live_comfy_image",
                         "--live-llm",
-                        "--comfy-url",
-                        "http://127.0.0.1:8188",
                     ],
-                    description="live ComfyUI HTTP pipeline (validation_matrix sec 3.1)",
+                    description=(
+                        "live ComfyUI agent CLI image pipeline (validation_matrix "
+                        "sec 3.1; v1.6 subprocess CLI replaces deprecated --comfy-url "
+                        "HTTP path; requires FORGEUE_COMFY_SCRIPTS_DIR env)"
+                    ),
+                ),
+                StepPlan(
+                    name="live-comfy-mesh",
+                    level=2,
+                    env_var="FORGEUE_VERIFY_LIVE_COMFY_MESH",
+                    command=[
+                        sys.executable,
+                        "-m",
+                        "framework.run",
+                        "--task",
+                        "examples/comfy_local_smoke_mesh.json",
+                        "--run-id",
+                        "forgeue_verify_live_comfy_mesh",
+                        "--live-llm",
+                    ],
+                    description=(
+                        "live ComfyUI agent CLI mesh pipeline (Phase 1 mesh "
+                        "adoption 2026-05-03; requires FORGEUE_COMFY_SCRIPTS_DIR + "
+                        "FORGEUE_COMFY_INPUT_DIR env)"
+                    ),
+                ),
+                StepPlan(
+                    name="live-comfy-audio",
+                    level=2,
+                    env_var="FORGEUE_VERIFY_LIVE_COMFY_AUDIO",
+                    command=[
+                        sys.executable,
+                        "-m",
+                        "framework.run",
+                        "--task",
+                        "examples/comfy_local_smoke_audio.json",
+                        "--run-id",
+                        "forgeue_verify_live_comfy_audio",
+                        "--live-llm",
+                    ],
+                    description=(
+                        "live ComfyUI agent CLI audio pipeline (Phase 2 audio "
+                        "adoption 2026-05-03; requires FORGEUE_COMFY_SCRIPTS_DIR env)"
+                    ),
                 ),
             ]
         )

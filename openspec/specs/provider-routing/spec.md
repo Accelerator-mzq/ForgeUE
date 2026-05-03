@@ -864,6 +864,168 @@ The wrap SHALL preserve the original exception via `wrapped.__cause__ = inner_ex
 - **WHEN** `_generate_via_comfy_worker(...)` catches the exception
 - **THEN** it wraps to `AudioWorkerUnsupportedResponse(...)` (NOT `AudioWorkerTimeout`, NOT generic `AudioWorkerError`); `FailureModeMap` resolves to `audio_worker_unsupported` mode → `Decision.abort_or_fallback`; `tests/unit/test_generate_audio_comfy.py::test_comfy_unsupported_wrapped_as_audio_unsupported` fences this
 
+### Requirement: ComfyAgentWorker per-candidate seed offset overrides comfy_params.seed
+
+The system SHALL ensure that when `ComfyAgentWorker.generate` / `generate_mesh` /
+`generate_audio` enters its per-candidate loop with `num_candidates > 1`, each
+subprocess invocation MUST receive a distinct `seed` value computed as
+`call_seed = base_seed + i` (i ∈ [0, num_candidates)), even when `step.config.spec.
+comfy_params.seed` is already populated by the bundle. Implementation MUST use
+direct assignment `params_for_call["seed"] = call_seed` rather than
+`params_for_call.setdefault("seed", call_seed)`. The same rule applies symmetrically
+across all three capabilities (image / mesh / audio), so audit and provenance
+metadata reporting incrementing seeds matches the actual seeds delivered to
+ComfyUI subprocesses.
+
+#### Scenario: num_candidates > 1 with comfy_params.seed already set
+
+- **GIVEN** caller invokes `worker.generate(spec={"comfy_workflow": "x", "comfy_params":
+  {"seed": 42}, ...}, num_candidates=3, seed=100)`
+- **WHEN** worker runs 3 subprocess calls (per-candidate loop)
+- **THEN** subprocess `i` receives `--params` JSON with `seed = 100 + i`
+  (i ∈ {0, 1, 2})
+- **AND** the inner `comfy_params.seed = 42` value MUST NOT survive into the
+  subprocess invocation
+- **AND** behavior is identical across image / mesh / audio capabilities
+
+#### Scenario: num_candidates = 1 default behavior unchanged
+
+- **GIVEN** `num_candidates=1` (default for canonical bundles)
+- **WHEN** worker runs single subprocess
+- **THEN** subprocess receives `seed = base_seed + 0 = base_seed`
+- **AND** behavior is functionally identical to pre-fix (since `setdefault` and
+  direct overwrite both yield base_seed when num_candidates=1)
+
+### Requirement: ComfyUI subprocess CLI path artifact MUST be attributed to comfy_agent_cli
+
+The system SHALL ensure that when `GenerateImageExecutor` or
+`GenerateMeshExecutor` dispatches a step to the ComfyUI agent CLI subprocess
+path (i.e. `_should_use_worker_path()` / `_should_use_comfy_worker_path()`
+returns True because the step's `prepared_routes` contain `comfy/local` /
+`comfy/local-mesh`), the resulting `Artifact.producer.provider` field MUST
+equal `"comfy_agent_cli"` (with `model` set to the matching `comfy/local*`
+virtual model id), NOT the name of the executor's injected fallback worker
+(`self._worker.name`, which may be `"fake_comfy"` or
+`"hunyuan-tokenhub-mesh"` depending on what `framework.run.build_runtime()`
+injected at startup).
+
+The same attribution rule MUST hold for:
+
+- the candidate-set bundle Artifact's `producer` field
+- the executor's `metrics["worker"]` field
+- (mesh only) the mesh cost-model `model=` argument when computing
+  `cost_usd`
+
+The audio executor (`GenerateAudioExecutor`) already implements this
+attribution correctly at
+`src/framework/runtime/executors/generate_audio.py:142` and serves as the
+reference template.
+
+#### Scenario: comfy/local image path attribution
+
+- **GIVEN** a Step with `provider_policy.prepared_routes` containing
+  `ResolvedRoute(model="comfy/local", ...)` and an executor injected with
+  a `FakeComfyWorker` (which is what `framework.run` does for image
+  fallback)
+- **WHEN** `executor.execute(ctx)` runs and dispatches via
+  `_should_use_worker_path() == True` and `_generate_via_worker()`
+- **THEN** the resulting image `Artifact.producer.provider` MUST equal
+  `"comfy_agent_cli"`
+- **AND** the bundle Artifact's `producer.provider` MUST also equal
+  `"comfy_agent_cli"`
+- **AND** `result.metrics["worker"]` MUST equal `"comfy_agent_cli"`
+- **AND** these MUST NOT be `"fake_comfy"` (the injected worker's name)
+
+#### Scenario: comfy/local-mesh attribution
+
+- **GIVEN** a Step with `prepared_routes` containing `comfy/local-mesh`
+  and a mesh executor injected with `HunyuanMeshWorker` or `FakeMeshWorker`
+- **WHEN** `executor.execute(ctx)` dispatches via
+  `_should_use_comfy_worker_path() == True` and
+  `_generate_via_comfy_worker()`
+- **THEN** the mesh `Artifact.producer.provider` MUST equal
+  `"comfy_agent_cli"` and `model` MUST equal `"comfy/local-mesh"`
+- **AND** the mesh cost model MUST be computed against
+  `model="comfy/local-mesh"` (not the injected mesh worker's name)
+- **AND** `result.metrics["worker"]` MUST equal `"comfy_agent_cli"`
+
+#### Scenario: Remote / fake mesh path attribution unchanged
+
+- **GIVEN** a Step with `prepared_routes` containing only remote routes
+  (e.g. `hunyuan/hy-3d-3.1`) and no `comfy/local-mesh`
+- **WHEN** `executor.execute(ctx)` runs via the regular
+  `self._worker.generate(...)` path (NOT comfy branch)
+- **THEN** `Artifact.producer.provider` MUST equal `self._worker.name`
+  (regression-safe — remote mesh path attribution is unchanged)
+- **AND** `result.metrics["worker"]` MUST equal `self._worker.name`
+
+### Requirement: ComfyAgentWorker MUST assert subprocess output paths are contained within comfy_output_root
+
+The system SHALL verify that every output file path returned by the
+ComfyUI agent CLI subprocess (in stdout JSON `outputs.images` /
+`outputs.glb` / `outputs.audio` arrays) resolves to a location *under*
+the worker's `comfy_output_root` before reading the file's bytes. The
+check MUST use `Path.resolve()` to normalise symlinks and relative
+segments before `Path.is_relative_to()` containment testing. If a path
+resolves outside `comfy_output_root`, `ComfyAgentWorker._run_once*` MUST
+raise `WorkerUnsupportedResponse`.
+
+`comfy_output_root` is determined at `ComfyAgentWorker.__init__` time
+in this resolution order (first non-None wins):
+
+1. `FORGEUE_COMFY_OUTPUT_ROOT` env var (explicit override; recommended
+   for production deployments where ComfyUI install layout differs from
+   the default `D:/AI/ComfyUI/scripts` + `D:/AI/ComfyUI/outputs/main` layout)
+2. Heuristic fallback: `scripts_dir.parent` (covers the typical install
+   layout where outputs live in a sibling directory of scripts; also
+   covers test fixtures where `scripts_dir = tmp_path / "scripts"`
+   making `tmp_path` the resolved root for fake outputs)
+
+This check is defense-in-depth on top of the existing `is_file()` +
+`is_symlink()` + extension whitelist + magic bytes checks; it MUST be
+applied symmetrically across all three capabilities (image, mesh, audio)
+so audit invariants do not differ between them.
+
+#### Scenario: image output path outside comfy_output_root is rejected
+
+- **GIVEN** a `ComfyAgentWorker` with `comfy_output_root` resolved to
+  `<root>` and a subprocess returning `outputs.images: ["<outside>/leak.png"]`
+  where `<outside>` is not under `<root>`
+- **WHEN** `worker.generate(spec=..., num_candidates=1)` runs and
+  `_run_once` reaches the per-path loop
+- **THEN** the worker SHALL raise `WorkerUnsupportedResponse` with a
+  message containing `"outside comfy_output_root"` and a hint about
+  `FORGEUE_COMFY_OUTPUT_ROOT`
+- **AND** SHALL NOT call `shutil.copy2` or `read_bytes()` on the
+  out-of-root path
+
+#### Scenario: mesh output path outside comfy_output_root is rejected
+
+- **GIVEN** a mesh-mode `ComfyAgentWorker` and a subprocess returning
+  `outputs.glb: ["<outside>/leak.glb"]`
+- **WHEN** `worker.generate_mesh(...)` reaches the per-path loop
+- **THEN** the worker SHALL raise `WorkerUnsupportedResponse`
+  matching `"outside comfy_output_root"`
+
+#### Scenario: audio output path outside comfy_output_root is rejected
+
+- **GIVEN** an audio-mode `ComfyAgentWorker` and a subprocess returning
+  `outputs.audio: ["<outside>/leak.flac"]`
+- **WHEN** `worker.generate_audio(...)` reaches the per-path loop
+- **THEN** the worker SHALL raise `WorkerUnsupportedResponse`
+  matching `"outside comfy_output_root"`
+
+#### Scenario: real ComfyUI install layout passes containment
+
+- **GIVEN** a production install where `scripts_dir =
+  D:/AI/ComfyUI/scripts` (heuristic root resolves to `D:/AI/ComfyUI`)
+  and ComfyUI writes outputs to `D:/AI/ComfyUI/outputs/main/<date>/<project>/<file>`
+- **WHEN** the worker reads any `outputs.images / .glb / .audio` path
+- **THEN** the containment check SHALL PASS (the path is under the
+  resolved root) without requiring `FORGEUE_COMFY_OUTPUT_ROOT` env var
+- **AND** L2 live smoke is verified (FLAC artifact 1.17 MB persisted
+  end-to-end at `artifacts/2026-05-04/audio_smoke_path_containment_l2/...`)
+
 ## Invariants
 
 - `FakeAdapter` is the offline test provider; it never performs network I/O.
