@@ -22,7 +22,7 @@ triggered_by: "/forgeue:change-apply (round-7 plan-stage convergence verificatio
 codex_plugin_available: true
 created_at: 2026-05-03T22:55:00+08:00
 resolved_at: 2026-05-03T23:10:00+08:00
-disputed_open: 1
+disputed_open: 0
 aligned_with_contract: false
 drift_decision: written-back-to-provider-routing+tasks+probe (R7-A + R7-B accepted-codex 修;R7-C disputed-permanent-drift / accepted-claude — symmetry argument + threat model + scope discipline + follow-on commitment per design.md `## Reasoning Notes`)
 writeback_commit: d30378e
@@ -59,11 +59,9 @@ note: |
 
 ## C. Disputed Items Pending Resolution
 
-`disputed_open: 1`(R7-C 标 `disputed-permanent-drift / accepted-claude`)。
+`disputed_open: 0`(per Phase 1 archive plan_cross_check 协议:`disputed_open` 仅计 `disputed-pending` 项;R7-C 是 `disputed-permanent-drift / accepted-claude`,closed-with-reasoning,有 ≥ 50 字 drift_reason + design.md `## Reasoning Notes` F-Plan-R7-C section anchor,符合 ForgeUE Integrated Workflow §B.4 disputed-permanent-drift 协议要求)。
 
-**R7-C 不阻断 S4 implementation**:disputed-permanent-drift 的策略含义是「本 change 接受已知 gap;follow-on change 解决」— 不像 disputed-pending(等待解决)。本 change 在 design Risks + Reasoning Notes anchor 完整记录决策 reasoning,审 reviewer 可看 anchor 验证逻辑 chain。
-
-R7-A + R7-B accepted-codex 已 writeback 完成。
+**R7-A + R7-B accepted-codex** 已 writeback。**R7-C disputed-permanent-drift / accepted-claude** 已记 design Risks 表 + Reasoning Notes anchor — 不阻断 S4。
 
 ## D. Independent Verification (file:line audit)
 
