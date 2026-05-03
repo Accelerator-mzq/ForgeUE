@@ -36,6 +36,10 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 - `test_generate_audio_missing_path_raises_unsupported_response` (`outputs.audio` returns a path that does not exist on filesystem → `WorkerUnsupportedResponse` with message naming the missing path; NO `read_bytes()` is attempted)
 - `test_generate_audio_symlink_path_raises_unsupported_response` (`outputs.audio` returns a symlink path → `WorkerUnsupportedResponse` with message naming the symlink; NO `read_bytes()` is attempted; this protects against `../../etc/secrets`-style symlink attacks from a buggy / compromised agent CLI)
 
+**UE bridge integration (F-Plan-R6-A round-6 plan, test_generate_audio_comfy.py extension; mirrors image / mesh artifact-to-manifest_builder fences):**
+- `test_audio_artifact_shape_waveform_routes_to_sound_wave_in_manifest_builder` (given `Artifact(artifact_type=ArtifactType(modality="audio", shape="waveform"), payload_ref=PayloadRef(kind=file, file_path=...))` produced by `GenerateAudioExecutor.execute`, run through `manifest_builder.build_manifest(...)`; assert resulting `UEAssetEntry.asset_kind == "sound_wave"` per the existing `_KIND_MAP[("audio", "waveform")] = "sound_wave"` lookup at `src/framework/ue_bridge/manifest_builder.py:45`; NOT skipped by the `_KIND_MAP.get(...) is None` silent-skip branch at `manifest_builder.py:87-89`)
+- `test_audio_artifact_with_format_shape_does_not_route_to_sound_wave` (negative regression: given `Artifact(artifact_type=ArtifactType(modality="audio", shape="flac"))` — which would happen if implementer mistakenly used `shape=cand.format` — assert `manifest_builder.build_manifest(...)` skips this artifact entirely, producing zero `UEAssetEntry` for it; this fence guards against the F-Plan-R6-A regression class where audio file is produced but UE silently drops the import)
+
 **Audio executor dispatch (test_generate_audio_comfy.py, NEW file):**
 - `test_should_use_comfy_worker_path_returns_true_for_comfy_local_audio_route`
 - `test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch`

@@ -126,16 +126,21 @@ class AudioCandidate:
 }
 ```
 
-**`GenerateAudioExecutor.execute` 持久化合同**:
+**`GenerateAudioExecutor.execute` 持久化合同**(F-Plan-R6-A round-6 plan 修订:加 `artifact_type` 字段,`shape="waveform"` 与 UE bridge `manifest_builder._KIND_MAP` 唯一映射对齐):
 
 ```python
 ctx.repository.put(
     value=cand.data,
     payload_kind=PayloadKind.file,
     file_suffix=f".{cand.format}",
+    artifact_type=ArtifactType(
+        modality="audio",
+        shape="waveform",            # F-Plan-R6-A: REQUIRED for UE bridge dispatch
+        display_name="audio_asset",  # 或 "sound_wave"(语义对齐)
+    ),
     metadata={
         # SRS FR-STORE-004 audio metadata 三件套(顶层 Artifact.metadata key,从 candidate 顶层字段读)
-        "format": cand.format,
+        "format": cand.format,           # "flac" / "mp3" / "wav" — 实际格式信息保留在 metadata
         "duration_seconds": cand.duration_seconds,    # None when ComfyUI doesn't expose
         "sample_rate": cand.sample_rate,              # None
         # provenance 子树(从 candidate.metadata 读)
@@ -144,6 +149,8 @@ ctx.repository.put(
     },
 )
 ```
+
+**F-Plan-R6-A round-6 plan 关键说明**:`Artifact.artifact_type.shape` **必须**是 `"waveform"`(NOT `cand.format`)— `src/framework/ue_bridge/manifest_builder.py:41-49` `_KIND_MAP` 唯一 audio 映射是 `("audio", "waveform"): "sound_wave"`;`manifest_builder.py:87-89` 把 `_KIND_MAP.get(...) is None` 的 (modality, shape) 静默 skip。若用 `shape=cand.format`(`flac`/`mp3`/`wav`),`manifest_builder` 找不到映射 → 静默 skip → UE 不生成 sound_wave entry → `import_audio` 不触发 → L2 evidence 失败。实际音频编码格式(flac/mp3/wav)保留在 `Artifact.metadata.format` 字段,UE `unreal.SoundFactory` import 时自己根据文件扩展名 dispatch。
 
 **理由**(F3 codex finding round-2 修订):
 - Round-1 `Rejected 顶层字段` 是矛盾自洽:同一 design doc D10 段构造 `AudioCandidate(..., duration_seconds=..., sample_rate=...)` 用顶层字段,各 spec 也用顶层访问 — Rejected 论据不成立
