@@ -379,29 +379,33 @@
   - `AGENTS.md`:视情况;若文件存在且有 ComfyUI section,同步加 audio capability 一段;若不存在则跳过
   - `README.md`:本 change 不强制更新(audio 不直接出现在 §4.3 提示词;沿 Phase 1 mesh 模式)
 
-## 11. L2 evidence — 本机跑 audio live smoke(commit 13)— **DEFERRED** post-archive
+## 11. L2 evidence — 本机跑 audio live smoke(commit 13)— **FULL PASS**
 
-**Status (2026-05-03):L2 evidence DEFERRED**(沿 Phase 1 mesh archive precedent)。
-ComfyUI 0.9.2 user-authored workflow JSON 上游 bug:`SaveAudioMP3` 节点缺
-`quality` required input,导致 ComfyUI 拒收 prompt(HTTP 400)。Framework adoption
-9 步已 verified 走通(routing → ExecutorRegistry → ComfyAgentWorker.generate_audio
-→ subprocess → wrap → FailureModeMap → Decision.abort_or_fallback)。Blocker 在
-ComfyUI workflow JSON 配置侧,与 ForgeUE adoption 正交。
+**Status (2026-05-03):L2 evidence FULL PASS**。第一次跑被 ComfyUI 0.9.2 user-
+authored workflow JSON 上游 bug 阻断(`SaveAudioMP3` 缺 `quality` required input,
+HTTP 400);用户授权 Claude 改 ComfyUI workflow JSON 一行(`SaveAudioMP3` →
+`SaveAudio`,匹配 manifest `outputs.primary: audio/flac` 原本声明),重跑拿真实
+FLAC 1.17 MB(magic bytes `fLaC` + STREAMINFO 头 PASS)。
 
-完整 deferred reasoning + reproduction 步骤见
-`notes/live_smoke_audio_blocked_20260503.md`。
+L2 PASS evidence:`notes/live_smoke_audio_20260503_full.md`(supersedes earlier
+deferred note `notes/live_smoke_audio_blocked_20260503.md`)。
 
-- [x] 11.1 用户准备:在装 ComfyUI 的机器上,确认 Stable Audio Open 1.0 模型权重已下载(若未下载,首次跑会从 HuggingFace 拉 ~2GB,~5-10 分钟)。可手动跑一次 ComfyUI Stable Audio workflow 让模型缓存好,再走 ForgeUE smoke
-- [x] 11.2 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached;~30-90s 冷启动;沿 Phase 1)— **完成(task b7wnqpo1e,~76s 冷启动后 online)**
-- [x] 11.3 终端 2 跑 framework.run smoke — **完成(run_id=audio_smoke_224008;framework 路径完整 verified;ComfyUI HTTP 400 阻断 step 但 FailureModeMap 正确归类为 audio_worker_unsupported)**:
+- [x] 11.1 用户准备:Stable Audio Open 1.0 模型权重已缓存(无 HuggingFace 拉延迟)
+- [x] 11.2 终端 1:`python -m factory_v3 serve` 启 ComfyUI(task `bygdeokhf`,17.7s 冷启动)
+- [x] 11.3 终端 2 跑 `framework.run` smoke — **完成 (run_id=audio_smoke_l2_pass; status=succeeded)**:
   ```bash
   PYTHONPATH=src \
   FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts \
-  python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id audio_smoke_224008
+  python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm \
+    --run-id audio_smoke_l2_pass --artifact-root artifacts/2026-05-03
   ```
-- [DEFER] 11.4 验证 L2 evidence 客观判定 — DEFERRED post-archive(ComfyUI workflow JSON 修复后用户自行 re-run;验证条件不变,见 notes file)
-- [x] 11.5 evidence 文件 `notes/live_smoke_audio_blocked_20260503.md` 记录:framework verification 9 步 + ComfyUI 上游 bug root cause + reproduction 步骤
-- [x] 11.6 commit 13:`docs(notes): defer L2 evidence — ComfyUI workflow JSON upstream blocker`(commit notes file + tasks.md status update)
+- [x] 11.4 验证 L2 evidence 客观判定 — **PASS**:
+  - (a) `artifacts/2026-05-03/audio_smoke_l2_pass/audio_smoke_l2_pass_step_audio_cand_audio_0.flac` 存在
+  - (b) 文件大小 1,227,925 bytes(1199.1 KB)远超 100 KB 阈值
+  - (c) magic bytes 前 4 字节 `b'fLaC'` + STREAMINFO header(`0x00 0x00 0x00 0x22`)PASS
+  - (d) duration 校验留 follow-on `audio-metadata-parser` change(本 change scope 不变)
+- [x] 11.5 evidence 文件 `notes/live_smoke_audio_20260503_full.md` 记录:命令行 / run_id / artifact_id / 文件大小 / magic bytes / producer attribution(`comfy_agent_cli` / `comfy/local-audio` 正确)/ metadata 三键 single-source 验证
+- [x] 11.6 commit 13:`docs(openspec): G6+G11 codex review verbatim + cross-checks + L2 actual PASS evidence`(212208f)— L2 evidence note + G6/G11 cross-check + design.md G11-F2 反驳 + follow-on change scaffold
 
 ## 12. Codex review hooks(沿 Phase 1 round 1-5 节奏)
 
