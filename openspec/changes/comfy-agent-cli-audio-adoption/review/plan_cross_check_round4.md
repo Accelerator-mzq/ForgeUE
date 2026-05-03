@@ -30,8 +30,8 @@ created_at: 2026-05-03T21:25:00+08:00
 resolved_at: 2026-05-03T21:45:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: written-back-to-design+specs+tasks+micro_tasks (3 round-4 findings accepted-codex; pending writeback commit)
-writeback_commit: pending
+drift_decision: written-back-to-design+specs+tasks+micro_tasks (3 round-4 findings accepted-codex;writeback commit 2a28de2 含全部 round-4 边缘残留修订)
+writeback_commit: 2a28de2
 drift_reason: null
 reasoning_notes_anchor: null
 round: 4
