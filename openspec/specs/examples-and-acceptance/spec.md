@@ -322,6 +322,41 @@ The offline loader-contract test SHALL still pass without any of those precondit
 - **WHEN** the user runs `python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id audio_smoke_<timestamp>`
 - **THEN** the resulting `artifacts/<today>/audio_smoke_<timestamp>/<artifact_id>.flac` (or `.mp3` / `.wav` depending on manifest output) file: (1) exists, (2) has size > 100 KB (avoids 0-byte false positives), (3) header bytes match the format-specific magic table (`flac → b"fLaC"`; `mp3 → b"ID3"` or MPEG frame sync `b"\xFF\xFB" / b"\xFF\xFA" / b"\xFF\xF3" / b"\xFF\xF2"`; `wav → b"RIFF"` at offset 0 AND `b"WAVE"` at offset 8). The L2 evidence note `notes/live_smoke_audio_<date>.md` SHALL record these three objective checks; subjective audio quality is left to human spot-check. (F-Plan-5 round-2 plan 修订:duration ±10% check is OUT OF SCOPE for this change — design D10 + this spec lock `AudioCandidate.duration_seconds=None always` because ComfyUI agent CLI does not expose audio metadata; ForgeUE does not introduce mutagen / `wave` / `aifc` parsing in this change scope; a follow-on `audio-metadata-parser` change MAY add the duration check after introducing a parser dependency)
 
+### Requirement: .env.example MUST list the env var names that are actually read at runtime
+
+The system SHALL keep `.env.example` template in sync with the env var names that
+runtime code (`config/models.yaml` + `src/framework/run.py` + provider workers)
+actually reads at startup. Specifically, for any provider listed in the template,
+the variable names commented in `.env.example` MUST match the names appearing in
+`config/models.yaml::providers.<provider>.api_key_env` and any direct `os.environ.
+get("...")` lookup in `src/framework/run.py`. Cross-references SHOULD be added as
+inline comments next to the placeholder so future env-var renames are easy to audit.
+
+#### Scenario: Hunyuan 3D mesh provider env var alignment
+
+- **GIVEN** a fresh user copies `.env.example` to `.env` and fills in the Hunyuan
+  3D mesh provider section
+- **WHEN** they run `python -m framework.run --task <bundle> --live-llm`
+- **THEN** the env var name they configured MUST be `HUNYUAN_3D_KEY` (matching
+  `config/models.yaml:95 api_key_env: HUNYUAN_3D_KEY` and `src/framework/run.py:100
+  os.environ.get("HUNYUAN_3D_KEY")`)
+- **AND** template MUST NOT show TC3-HMAC-SHA256-style three-segment placeholders
+  (`HUNYUAN_3D_SECRET_ID` / `HUNYUAN_3D_SECRET_KEY` / `HUNYUAN_3D_REGION`) which
+  no longer correspond to any runtime read path
+- **AND** template SHOULD inline a comment cross-referencing the runtime read
+  location so future renames are surfaced
+
+#### Scenario: Existing .env files configured with old TC3 fields are not broken
+
+- **GIVEN** a `.env` file already configured with the old TC3-HMAC-SHA256 fields
+  (`HUNYUAN_3D_SECRET_ID/SECRET_KEY/REGION`)
+- **WHEN** runtime starts
+- **THEN** those env vars are NOT read by any current code path
+- **AND** they SHALL NOT cause any error (they are simply ignored as unrecognized
+  env vars)
+- **AND** Hunyuan 3D mesh provider falls back to FakeMeshWorker / Tripo3D /
+  provider auth failure (existing behavior; outside this change's scope)
+
 ## Invariants
 
 - Bundle Artifact flow is end-to-end real objects — no mocks across Step boundaries (NFR-MAINT-005).
