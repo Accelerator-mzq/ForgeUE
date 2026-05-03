@@ -25,8 +25,8 @@ created_at: 2026-05-03T20:35:00+08:00
 resolved_at: 2026-05-03T20:50:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: written-back-to-design+specs+micro_tasks (3 round-2 findings accepted-codex; pending writeback commit)
-writeback_commit: pending
+drift_decision: written-back-to-design+specs+micro_tasks (3 round-2 findings accepted-codex;writeback commit d3f859f 含全部 round-2 plan-stage 残留修订)
+writeback_commit: d3f859f
 drift_reason: null
 reasoning_notes_anchor: null
 round: 2
