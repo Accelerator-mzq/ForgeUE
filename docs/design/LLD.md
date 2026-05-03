@@ -184,6 +184,19 @@
   peak_db?, lufs? }
 ```
 
+注:`comfy-agent-cli-audio-adoption` v1.7 起 actual `Artifact.metadata` 顶层 audio 三键(source-of-truth):
+
+```
+{ format: "flac|mp3|wav",
+  duration_seconds: float | None,    # 本 change 永远 None,留 follow-on `audio-metadata-parser`
+  sample_rate: int | None,           # 本 change 永远 None,同上
+  worker_metadata: { comfy_workflow, comfy_run_root, comfy_filename_prefix,
+                     comfy_original_filename, comfy_run_id }
+}
+```
+
+`format`/`duration_seconds`/`sample_rate` 三键 **不**重复进 `worker_metadata`(F-Plan-R7-A single-source 决策)。manifest_builder dispatch 走 `(modality="audio", shape="waveform") → "sound_wave"`(LLD §X.Y UE bridge),`shape` 字段值 `"waveform"` 是 UE bridge 唯一识别值,不用 `cand.format`。
+
 **mesh**
 
 ```
@@ -222,6 +235,16 @@
 | `selection_goal` | str | 人类可读 |
 | `selection_policy` | `single_best/multi_keep/threshold_pass` | — |
 | `selection_constraints` | dict | — |
+
+**AudioCandidate**(`comfy-agent-cli-audio-adoption` v1.7,`providers/workers/audio_worker.py`)
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | bytes | audio bytes payload |
+| `format` | `Literal["flac","mp3","wav"]` | three-format whitelist;magic bytes 二次校验(`fLaC` / `ID3` 或 MPEG sync `0xFF 0xFB / 0xFA / 0xF3 / 0xF2` / `RIFF`+offset8`WAVE`)|
+| `metadata` | `dict[str, Any]` | worker-side raw metadata(进 `Artifact.metadata.worker_metadata` 嵌套字段);**不**含 `format`/`duration_seconds`/`sample_rate` 重复键(F-Plan-R7-A single-source) |
+| `duration_seconds` | `float \| None` | 本 change 永远 `None`(F-Plan-R5 留 follow-on `audio-metadata-parser`)|
+| `sample_rate` | `int \| None` | 本 change 永远 `None`(同上)|
 
 ### 2.9 Review 对象族
 
@@ -652,12 +675,15 @@ def classify(exc: Exception) -> FailureMode
 | **`MeshWorkerTimeout`** (TBD-007) | **`mesh_worker_timeout`** | **abort_or_fallback** |
 | `MeshWorkerUnsupportedResponse` / `WorkerUnsupportedResponse` / `ProviderUnsupportedResponse` | `unsupported_response` | abort_or_fallback |
 | **`MeshWorkerError`** (TBD-007) | **`mesh_worker_error`** | **abort_or_fallback** |
+| **`AudioWorkerTimeout`** (`comfy-agent-cli-audio-adoption` v1.7) | **`audio_worker_timeout`** | **abort_or_fallback** |
+| **`AudioWorkerUnsupportedResponse`** | **`audio_worker_unsupported`** | **abort_or_fallback** |
+| **`AudioWorkerError`**(generic;归类同 `audio_worker_unsupported` 因 internal retry 已 exhausted) | **`audio_worker_unsupported`** | **abort_or_fallback** |
 | `WorkerError` (image / comfy 等) | `worker_error` | fallback_model |
 | `BudgetExceededError`(合成) | `budget_exceeded` | escalate_human → stop |
 | `ue_path_conflict`(manifest 校验) | `ue_path_conflict` | human_review_required |
 | `OSError(ENOSPC)` | `disk_full` | rollback → stop |
 
-**分类顺序**:unsupported 子类在通用 Error 分支**之前**捕捉,避免被 `worker_error` 吞。同样,**mesh 子类**(`MeshWorkerTimeout` / `MeshWorkerError`)在通用 `WorkerTimeout` / `WorkerError` 之前 isinstance 检查 — 否则 mesh 会命中 generic mode 进 retry 链(TBD-007 root cause,见下方 §5.7.2)。
+**分类顺序**:unsupported 子类在通用 Error 分支**之前**捕捉,避免被 `worker_error` 吞。同样,**mesh 子类**(`MeshWorkerTimeout` / `MeshWorkerError`)在通用 `WorkerTimeout` / `WorkerError` 之前 isinstance 检查 — 否则 mesh 会命中 generic mode 进 retry 链(TBD-007 root cause,见下方 §5.7.2)。**audio 子类**(`AudioWorkerUnsupportedResponse` / `AudioWorkerTimeout` / `AudioWorkerError`)同样在通用 worker_* 之前 + 在 mesh 之前 isinstance(F-Plan-R7-B + R4-F1 priority 修订模式;ABCs 不互为子类,显式顺序保险)— 经 `_generate_via_comfy_worker` 内部 retry exhausted 后 wrap,到 FailureModeMap 时已无重试预算,故 `audio_worker_*` 直接 `abort_or_fallback`,与 mesh_worker_* 同终态语义。
 
 #### 5.7.2 TBD-007 mesh 重试塌缩(2026-04-22)
 
