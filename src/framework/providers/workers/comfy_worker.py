@@ -908,8 +908,13 @@ class ComfyAgentWorker(ComfyWorker):
         for i in range(max(1, num_candidates)):
             call_seed = (seed or 0) + i
             params_for_call = dict(comfy_params)
-            # Inject seed if not already in params(对照 image-mode setdefault 习惯)
-            params_for_call.setdefault("seed", call_seed)
+            # G11-F3 round-8 codex finding fix:per-candidate seed 直接覆盖,
+            # 不用 `setdefault`(否则 caller 在 `comfy_params` 内填 seed 时,
+            # `num_candidates>1` 所有 candidate 拿同一个 seed → 重复 candidate
+            # + provenance metadata 反映递增 seed 但实际不递增)。
+            # image (:442) / mesh (:703) 同模式 bug,留 follow-on
+            # `comfy-worker-seed-setdefault-bug-fix` change 三处一起修。
+            params_for_call["seed"] = call_seed
             results.extend(self._run_once_audio(
                 comfy_workflow=comfy_workflow,
                 params=params_for_call,

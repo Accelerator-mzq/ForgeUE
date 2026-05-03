@@ -347,6 +347,36 @@ def test_generate_audio_runs_subprocess_num_candidates_times_when_num_gt_one(tmp
     assert len(cands) == 3
 
 
+def test_generate_audio_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
+    """G11-F3 round-8 codex finding fix:`comfy_params` 已含 `seed: 42` 时,
+    per-candidate seed 偏移仍生效(每个 candidate 拿 100 / 101 / 102 不是同 42)。
+    fence 守门 `setdefault → 直接覆盖` 修复(防 num_candidates>1 时 candidate 重复)。"""
+    worker = _make_audio_worker(tmp_path)
+    fakes = [tmp_path / f"out_{i}.flac" for i in range(3)]
+    for f in fakes:
+        _make_flac_file(f, payload=f.name.encode())
+    with patch("subprocess.run") as run_mock:
+        run_mock.side_effect = [
+            _make_completed(_ok_audio_stdout([str(f)])) for f in fakes
+        ]
+        worker.generate_audio(
+            spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
+            num_candidates=3,
+            seed=100,  # base seed
+        )
+    # 提取每个 subprocess.run 调用的 --params JSON 里的 seed 字段
+    seeds_seen: list[int] = []
+    for call in run_mock.call_args_list:
+        argv = call.args[0]
+        idx = argv.index("--params")
+        params = json.loads(argv[idx + 1])
+        seeds_seen.append(params["seed"])
+    assert seeds_seen == [100, 101, 102], (
+        f"Expected per-candidate seed override 100/101/102, got {seeds_seen}; "
+        f"setdefault bug would return [42, 42, 42]"
+    )
+
+
 # ---- AudioCandidate.metadata(F-Plan-R7-A round-7 single-source + provenance)
 
 
