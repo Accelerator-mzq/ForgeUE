@@ -116,3 +116,44 @@ note: |
 
 无。
 
+
+## Commit 3 — ComfyAgentWorker audio capability + 18 fence (2026-05-03 22:10)
+
+### Anchors
+- `tasks.md#4.1` - `#4.5` (§4 ComfyAgentWorker capability-aware 扩 audio 全部 sub-tasks)
+- `execution/micro_tasks.md` Commit 3 (3.1-3.8)
+- F-Plan-3 round-2 + F-Plan-R5-A round-5: per-candidate loop in worker
+- F-Plan-4 round-2: is_file + is_symlink path trust-boundary
+- F-Plan-R3-A round-3: __init__ error message audio supported list
+- F5 round-1: magic bytes mandatory 二次校验
+- F-Plan-R7-A round-7: metadata single-source(no duration/sample_rate/format keys in metadata dict)
+
+### Implementation files
+
+| File | Action | Details |
+|---|---|---|
+| `src/framework/providers/workers/comfy_worker.py` | Modify | (1) 4-dict 扩 audio entry(`_CAPABILITY_BY_MODEL_ID`/`_REQUIRED_OUTPUT_KEY`/`_AUXILIARY_OUTPUT_KEYS_BY_CAP`/`_REJECTED_OUTPUT_KEYS_BY_CAP`);(2) 加新常量 `_AUDIO_FORMAT_WHITELIST = {"flac","mp3","wav"}`;(3) `__init__` 错误消息更新(audio 已加,只剩 video follow-on);(4) 新方法 `generate_audio(*, spec, num_candidates, seed, timeout_s) -> list[AudioCandidate]` 含 capability 守门 + spec validate + per-candidate loop in worker;(5) 新 helper `_run_once_audio(*, comfy_workflow, params, params_snapshot, seed, timeout_s)` 含 subprocess.run + JSON parse + outputs.audio loop + path trust-boundary 防护(is_file + is_symlink)+ 扩展名 whitelist + magic bytes 二次校验(flac/mp3/wav)+ AudioCandidate 构造(metadata 5 个 comfy_* keys + duration/sample_rate=None always);(6) 顶层 `from .audio_worker import AudioCandidate` import |
+| `tests/unit/test_comfy_subprocess_audio.py` | Create | 18 fence(独立 file 因 audio helpers `_make_audio_worker` / `_ok_audio_stdout` / `_make_flac_file` / `_make_mp3_file` / `_make_wav_file` 与 mesh helpers 区分清晰);覆盖 capability dispatch(2)+ 三段表(5)+ format/magic detection(6)+ path trust-boundary(2)+ per-candidate loop(1)+ metadata provenance(2) |
+
+### TDD cycle
+
+1. **GREEN-first**(因为依赖 commit 1 AudioCandidate + commit 2 model registry):先写 production code;然后 18 fence;**18/18 PASS first run**
+2. 若 RED 出现:`xfail` mark 后写 production code 修
+
+### Pytest baseline delta
+
+- Pre-commit:1250
+- Post-commit:**1268 passed**(+18)
+- 零回归
+
+### Boundary check
+
+- `git diff --name-only`:
+  - `src/framework/providers/workers/comfy_worker.py` ✅(execution_plan.md File Structure 表显式列;扩 audio 4-dict + generate_audio + _run_once_audio + _AUDIO_FORMAT_WHITELIST 都在 audio capability 范围内)
+  - `tests/unit/test_comfy_subprocess_audio.py` ✅(execution_plan.md Test files 表;new file 与 test_comfy_subprocess.py 平行,模式与 mesh 同款)
+- 0 越界 ✅
+
+### Drift events
+
+无。F5 + F-Plan-3 + F-Plan-4 + F-Plan-R3-A + F-Plan-R5-A + F-Plan-R7-A 全部修订都在本 commit 落实;F-Plan-R7-C disputed-permanent-drift(path containment)按设计**不**加 — 保留与 image / mesh G11 R2 fix 对称;follow-on `comfy-agent-cli-path-containment-hardening` 三 capability 统一处理。
+

@@ -57,6 +57,7 @@ from typing import Any
 # Mesh capability(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1):
 # generate_mesh 返回 MeshCandidate(从 mesh_worker module 复用 dataclass,
 # 不扩字段 — provenance 走 metadata dict per design D5)。
+from framework.providers.workers.audio_worker import AudioCandidate
 from framework.providers.workers.mesh_worker import MeshCandidate
 
 # 模块级 logger(R2-F4 fix:auxiliary outputs.images SHALL emit INFO via 此 logger,
@@ -289,32 +290,40 @@ class ComfyAgentWorker(ComfyWorker):
     name = "comfy_agent_cli"
 
     # Capability dispatch(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption
-    # design D1):capability 由 model_id 推断,bundle 不引入 outputs_kind 字段。
-    # 未知 model_id → __init__ raise(不静默 fallback)。
-    # Audio / video capability 留 follow-on change(comfy-agent-cli-audio-adoption /
-    # comfy-agent-cli-video-adoption);本 change Phase 1 mesh-only。
+    # design D1 + comfy-agent-cli-audio-adoption Phase 2 D1):capability 由 model_id 推断,
+    # bundle 不引入 outputs_kind 字段。未知 model_id → __init__ raise(不静默 fallback)。
+    # Video capability 留 follow-on change(comfy-agent-cli-video-adoption)。
     _CAPABILITY_BY_MODEL_ID: dict[str, str] = {
         "comfy/local": "image",
         "comfy/local-mesh": "mesh",
+        "comfy/local-audio": "audio",  # Phase 2 audio (F1 round-1 修订)
     }
 
     # Output validation 三段表(design D2 + B4 修订:mesh-mode auxiliary outputs.images
-    # 容忍,不构造 candidate 但 SHALL emit INFO log per R2-F4)。
+    # 容忍,不构造 candidate 但 SHALL emit INFO log per R2-F4;Phase 2 D2 audio 行
+    # 加 — audio capability 无 auxiliary tolerance,REJECTED 含 images/glb/video)。
     # REQUIRED:capability 必须产出此 key non-empty
-    # AUXILIARY:允许 non-empty 但不消费(emit INFO log)
+    # AUXILIARY:允许 non-empty 但不消费(emit INFO log;audio 无 auxiliary)
     # REJECTED:non-empty 即 raise WorkerUnsupportedResponse
     _REQUIRED_OUTPUT_KEY: dict[str, str] = {
         "image": "images",
         "mesh": "glb",
+        "audio": "audio",  # Phase 2 audio
     }
     _AUXILIARY_OUTPUT_KEYS_BY_CAP: dict[str, set[str]] = {
         "image": set(),                # image-mode 无 auxiliary
         "mesh": {"images"},            # mesh-mode 容忍 PNG preview(B4)
+        "audio": set(),                # audio-mode 无 auxiliary tolerance(Phase 2 D2)
     }
     _REJECTED_OUTPUT_KEYS_BY_CAP: dict[str, set[str]] = {
         "image": {"glb", "audio", "video"},
         "mesh": {"audio", "video"},
+        "audio": {"images", "glb", "video"},  # Phase 2 audio
     }
+
+    # Audio capability whitelist(Phase 2 D10:format ∈ {flac, mp3, wav};
+    # F5 round-1 magic bytes 二次校验 + F-Plan-4 round-2 path trust-boundary 防护)
+    _AUDIO_FORMAT_WHITELIST: set[str] = {"flac", "mp3", "wav"}
 
     def __init__(
         self,
@@ -360,12 +369,14 @@ class ComfyAgentWorker(ComfyWorker):
                 f"see SRS TBD-010 for the future executor-async-rewrite change."
             )
         # D1: capability dispatch via model_id 推断;unknown id raise(不静默 fallback)。
+        # F-Plan-R3-A round-3 修订:audio capability 已加(comfy/local-audio);
+        # 仅 video 留 follow-on(comfy-agent-cli-video-adoption)。
         capability = self._CAPABILITY_BY_MODEL_ID.get(model_id)
         if capability is None:
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.__init__: unsupported model_id={model_id!r}, "
                 f"expected one of {sorted(self._CAPABILITY_BY_MODEL_ID)} "
-                f"(audio / video are follow-on changes; see SRS TBD-009)"
+                f"(video is the only remaining follow-on; see SRS TBD-009)"
             )
         self.scripts_dir = Path(scripts_dir)
         self.python_exe = Path(python_exe) if python_exe else Path(sys.executable)
@@ -836,6 +847,233 @@ class ComfyAgentWorker(ComfyWorker):
                     "source": "comfy_agent_cli",
                     "seed": seed,
                 },
+            ))
+        return candidates
+
+    def generate_audio(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[AudioCandidate]:
+        """Audio capability path(OpenSpec change comfy-agent-cli-audio-adoption Phase 2)。
+
+        - 仅在 `_capability == "audio"` 时可调(否则 raise)
+        - 不在 `ComfyWorker` ABC 上(返 list[AudioCandidate],与 image-mode list[ImageCandidate] / mesh-mode list[MeshCandidate] 类型不兼容)
+        - audio capability 是 text-to-audio(per design D7),**无** source bytes 输入 — prompt 已在 `spec["comfy_params"]` 内
+        - 调用模式同 image / mesh:per-candidate loop in worker(F-Plan-3 + F-Plan-R5-A round-5);N 次 subprocess.run + outputs.audio path → AudioCandidate
+        - F-Plan-4 + F-Plan-R7-C symmetry argument:`is_file` + `is_symlink` 防护(沿用 image / mesh G11 R2 fix);path containment 留 follow-on `comfy-agent-cli-path-containment-hardening`
+        - F5 round-1 magic bytes mandatory:扩展名 + magic bytes 二次校验(flac=fLaC / mp3=ID3|MPEG sync / wav=RIFF+WAVE)
+        - F4 + F-Plan-R7-A round-7:metadata 仅含 5 个 comfy_* provenance keys;duration_seconds / sample_rate 顶层 None always
+        """
+        # Capability 守门
+        if self._capability != "audio":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-audio' 的 worker 可调 generate_audio(audio-mode);"
+                f"image-mode worker 应调 generate(),mesh-mode worker 应调 generate_mesh()"
+            )
+        # Reject legacy v1 spec shape(对齐 image / mesh)
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate_audio: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate_audio: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like "
+                "'Audio_Workflows/audio_stable_audio_example')"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: spec.comfy_params must be dict "
+                f"(got {type(comfy_params).__name__})"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+        per_call_timeout = float(timeout_s) if timeout_s else 300.0
+
+        # F-Plan-3 + F-Plan-R5-A round-5 per-candidate loop in worker(对照 image
+        # `:427` / mesh `:689` 模式;executor 调一次即可,不需要外层 loop)
+        results: list[AudioCandidate] = []
+        for i in range(max(1, num_candidates)):
+            call_seed = (seed or 0) + i
+            params_for_call = dict(comfy_params)
+            # Inject seed if not already in params(对照 image-mode setdefault 习惯)
+            params_for_call.setdefault("seed", call_seed)
+            results.extend(self._run_once_audio(
+                comfy_workflow=comfy_workflow,
+                params=params_for_call,
+                params_snapshot=dict(params_for_call),  # snapshot 隔离 caller spec mutation
+                seed=call_seed,
+                timeout_s=per_call_timeout,
+            ))
+        return results
+
+    def _run_once_audio(
+        self,
+        *,
+        comfy_workflow: str,
+        params: dict[str, Any],
+        params_snapshot: dict[str, Any],
+        seed: int,
+        timeout_s: float,
+    ) -> list[AudioCandidate]:
+        """One subprocess.run for audio capability → 1+ AudioCandidate(per outputs.audio)。
+
+        Sub-process 调用 / JSON 解析 / outputs 守门复用 image / mesh 同样的逻辑骨架,
+        产物构造走 audio path:
+        - 从 outputs.audio 路径(absolute paths per F4 round-1 probe runner.py::extract_outputs)读 audio bytes
+        - F-Plan-4 round-2 path trust-boundary 防护:`is_file` + `is_symlink`(沿 image / mesh G11 R2 fix)
+        - 扩展名 whitelist `{flac, mp3, wav}`(D10);不在 raise WorkerUnsupportedResponse
+        - F5 round-1 magic bytes mandatory 二次校验(扩展名 + magic 一致才接受)
+        - **不**做 worker 内部 in-tree copy(audio 沿 mesh 模式;由 ArtifactRepository.put 自动落 in-tree)
+        - F-Plan-R7-A metadata 仅 5 个 comfy_* provenance keys
+        """
+        cmd = [
+            str(self.python_exe), "-m", "comfyui_api", "run",
+            "--workflow", comfy_workflow,
+            "--params", json.dumps(params, ensure_ascii=False),
+            "--project", self.project_id,
+            "--lifecycle", "none",
+            "--timeout", str(int(timeout_s)),
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.scripts_dir),
+                timeout=timeout_s + 30.0,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WorkerTimeout(
+                f"ComfyAgentWorker.generate_audio subprocess wall-clock exceeded "
+                f"{timeout_s + 30.0}s (CLI internal timeout was {timeout_s}s)"
+            ) from exc
+        except FileNotFoundError as exc:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: failed to spawn subprocess "
+                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+            ) from exc
+
+        stdout = (result.stdout or "").strip()
+        if not stdout:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: empty stdout (exit code {result.returncode}; "
+                f"stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+            )
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: stdout is not valid JSON "
+                f"(exit code {result.returncode}; first 500 chars: {stdout[:500]!r})"
+            ) from exc
+        if not isinstance(data, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: stdout JSON is not a dict (got {type(data).__name__})"
+            )
+        if not data.get("ok"):
+            error_msg = str(data.get("error", ""))
+            if "TimeoutError" in error_msg:
+                raise WorkerTimeout(
+                    f"ComfyAgentWorker.generate_audio: ComfyUI reported TimeoutError: {error_msg}"
+                )
+            for marker in _UNSUPPORTED_ERROR_MARKERS:
+                if marker in error_msg:
+                    raise WorkerUnsupportedResponse(
+                        f"ComfyAgentWorker.generate_audio: deterministic param error: {error_msg}"
+                    )
+            raise WorkerError(
+                f"ComfyAgentWorker.generate_audio: comfyui_api returned ok=false "
+                f"(exit {result.returncode}, error: {error_msg})"
+            )
+        if "outputs" not in data or not isinstance(data["outputs"], dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_audio: stdout JSON missing 'outputs' field or "
+                f"not a dict (got {data.get('outputs')!r})"
+            )
+        outputs = data["outputs"]
+        # 三段表守门(audio-mode:REQUIRED outputs.audio non-empty;无 auxiliary;
+        # rejected outputs.images / glb / video raise)
+        self._validate_outputs(outputs, comfy_workflow=comfy_workflow)
+
+        audio_paths = outputs.get("audio") or []
+        candidates: list[AudioCandidate] = []
+        for src_str in audio_paths:
+            src = Path(src_str)
+            # F-Plan-4 round-2 path trust-boundary 防护(沿 image / mesh G11 R2 fix
+            # `comfy_worker.py:541-554` / `:805-814`;F-Plan-R7-C symmetry argument
+            # accepted-claude — 不加 path containment,留 follow-on
+            # `comfy-agent-cli-path-containment-hardening`)
+            if not src.is_file():
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_audio: outputs.audio path does not exist: {src}"
+                )
+            if src.is_symlink():
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_audio: outputs.audio path is a symlink, "
+                    f"refusing to follow: {src}"
+                )
+            # D10:扩展名 whitelist + magic bytes 二次校验(F5 round-1 mandatory)
+            ext = src.suffix.lower().lstrip(".")
+            if ext not in self._AUDIO_FORMAT_WHITELIST:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_audio: unsupported audio format {ext!r}, "
+                    f"expected one of {sorted(self._AUDIO_FORMAT_WHITELIST)} "
+                    f"(file: {src.name})"
+                )
+            audio_bytes = src.read_bytes()
+            # F5 round-1 mandatory magic bytes 二次校验
+            magic_ok = (
+                (ext == "flac" and audio_bytes[:4] == b"fLaC")
+                or (ext == "mp3" and (
+                    audio_bytes[:3] == b"ID3"
+                    or audio_bytes[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2")
+                ))
+                or (ext == "wav" and audio_bytes[:4] == b"RIFF" and audio_bytes[8:12] == b"WAVE")
+            )
+            if not magic_ok:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_audio: audio format mismatch "
+                    f"(file: {src.name}; extension={ext!r}; magic bytes={audio_bytes[:12].hex()}) — "
+                    f"扩展名与 payload bytes 不一致;F5 round-1 二次校验拒绝"
+                )
+            # F-Plan-R6-A:Artifact `shape="waveform"` 与 UE bridge `_KIND_MAP` 唯一映射
+            # 对齐(executor 在 repo.put 时设置);本 candidate 仅持 audio bytes + format。
+            # F-Plan-R7-A:metadata 仅 5 个 comfy_* provenance keys;duration/sample_rate
+            # 顶层 None always(本 change scope ComfyUI agent CLI extract_outputs 不暴露)
+            candidates.append(AudioCandidate(
+                data=audio_bytes,
+                format=ext,  # type: ignore[arg-type]
+                metadata={
+                    "comfy_manifest": comfy_workflow,
+                    "comfy_params_snapshot": params_snapshot,
+                    "comfy_capability": "audio",
+                    "comfy_original_filename": src.name,
+                    "comfy_subprocess_run_metadata": {
+                        "exit_code": result.returncode,
+                        "project_id": self.project_id,
+                        "seed": seed,
+                        "model_id": self.model_id,
+                    },
+                },
+                duration_seconds=None,  # 本 change scope always None
+                sample_rate=None,  # 本 change scope always None
             ))
         return candidates
 
