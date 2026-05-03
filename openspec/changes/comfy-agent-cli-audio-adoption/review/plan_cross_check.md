@@ -22,8 +22,8 @@ created_at: 2026-05-03T19:53:16+08:00
 resolved_at: 2026-05-03T20:25:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: pending-user-authorization-then-writeback (6 findings accepted-codex; writeback action items in ## B Resolution)
-writeback_commit: null
+drift_decision: written-back-to-execution_plan+micro_tasks+tasks+design+specs (6 findings accepted-codex; writeback commit 320bca7 含全部 round-1 plan-stage 修订)
+writeback_commit: 320bca7
 drift_reason: null
 reasoning_notes_anchor: null
 note: |
