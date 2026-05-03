@@ -22,7 +22,7 @@ resolved_at: 2026-05-03T14:10:00+08:00
 disputed_open: 0
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks (4 round-2 findings accepted-codex; round-3 writeback in progress)
-writeback_commit: pending
+writeback_commit: 95af4c1
 drift_reason: null
 reasoning_notes_anchor: null
 note: |
@@ -93,7 +93,7 @@ Claude 对 codex round-2 提的 4 项 finding 逐条独立验证 file:line evide
 
 ### D.3 Resolution 的 contract-bound 性
 
-按 forgeue-integrated-ai-workflow 协议「evidence 不能取代 contract」:4 项 accepted-codex 全部需要回写到 design / specs / tasks(已在 ## B Resolution 列详细列出修复操作);**writeback 完成前不允许进入 S3**。当前 `drift_decision: written-back-to-design+specs+tasks`,`writeback_commit: pending` — 真实 commit hash 在 round-3 系统回写完后填入。
+按 forgeue-integrated-ai-workflow 协议「evidence 不能取代 contract」:4 项 accepted-codex 全部需要回写到 design / specs / tasks(已在 ## B Resolution 列详细列出修复操作);**writeback 完成前不允许进入 S3**。当前 `drift_decision: written-back-to-design+specs+tasks`,`writeback_commit: 95af4c1` — 真实 commit hash 在 round-3 系统回写完后填入。
 
 ### D.4 Round 1 vs Round 2 review pattern 观察(自反思)
 

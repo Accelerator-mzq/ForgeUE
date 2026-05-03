@@ -21,7 +21,7 @@ resolved_at: 2026-05-03T13:35:00+08:00
 disputed_open: 0
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks (4 findings accepted-codex; pending writeback commits — see ## B Resolution column)
-writeback_commit: pending
+writeback_commit: 95af4c1
 drift_reason: null
 reasoning_notes_anchor: null
 note: |
@@ -105,4 +105,4 @@ Claude 对 codex 提的 4 项 finding 逐条独立验证 file:line evidence(2026
 
 ### D.3 Resolution 的 contract-bound 性
 
-按 forgeue-integrated-ai-workflow 协议「evidence 不能取代 contract」:4 项 accepted-codex 全部需要回写到 design / specs / tasks(已在 ## B Resolution 列详细列出修复操作);**writeback 完成前不允许进入 S3**。当前 `drift_decision: written-back-to-design+specs+tasks`,`writeback_commit: pending` — 真实 commit hash 在系统回写后填入。
+按 forgeue-integrated-ai-workflow 协议「evidence 不能取代 contract」:4 项 accepted-codex 全部需要回写到 design / specs / tasks(已在 ## B Resolution 列详细列出修复操作);**writeback 完成前不允许进入 S3**。当前 `drift_decision: written-back-to-design+specs+tasks`,`writeback_commit: 95af4c1` — 真实 commit hash 在系统回写后填入。

@@ -19,7 +19,7 @@ resolved_at: 2026-05-03T15:20:00+08:00
 disputed_open: 0
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks (R4-F1 accepted-codex; sweep complete)
-writeback_commit: pending
+writeback_commit: 95af4c1
 drift_reason: null
 reasoning_notes_anchor: null
 note: |

@@ -19,7 +19,7 @@ created_at: 2026-05-03T13:05:55+08:00
 resolved_at: 2026-05-03T13:30:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks (4 findings accepted-codex; pending writeback commits)
-writeback_commit: pending
+writeback_commit: 95af4c1
 drift_reason: null
 reasoning_notes_anchor: null
 note: |

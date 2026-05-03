@@ -17,7 +17,7 @@ created_at: 2026-05-03T15:05:00+08:00
 resolved_at: 2026-05-03T15:15:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks (R4-F1 accepted-codex; sweep retry_same_step → abort_or_fallback in 5 places)
-writeback_commit: pending
+writeback_commit: 95af4c1
 drift_reason: null
 reasoning_notes_anchor: null
 note: |

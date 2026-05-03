@@ -20,7 +20,7 @@ created_at: 2026-05-03T13:55:00+08:00
 resolved_at: 2026-05-03T14:05:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks (4 round-2 findings accepted-codex; pending writeback commits — see design_cross_check_round2.md ## B Resolution)
-writeback_commit: pending
+writeback_commit: 95af4c1
 drift_reason: null
 reasoning_notes_anchor: null
 note: |

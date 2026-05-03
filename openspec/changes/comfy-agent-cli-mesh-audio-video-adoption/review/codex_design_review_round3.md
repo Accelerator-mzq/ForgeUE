@@ -20,7 +20,7 @@ created_at: 2026-05-03T14:35:00+08:00
 resolved_at: 2026-05-03T14:50:00+08:00
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks (R3-F1 + R3-F3 accepted-codex; R3-F2 out-of-scope, user-notified)
-writeback_commit: pending
+writeback_commit: 95af4c1
 drift_reason: null
 reasoning_notes_anchor: null
 note: |
