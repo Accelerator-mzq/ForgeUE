@@ -287,3 +287,27 @@ note: |
 
 - 没显式新加 fence file:loader smoke test 已通过 `_bundle_files()` glob `examples/*.json` 自动 collect 所有 bundle(包含新 audio bundle);3 个 parametrized fence(`test_bundle_loads` / `test_bundle_dry_run_passes` / `test_bundle_modality_dependency_closure`)全自动覆盖。这种「无新 fence file but +3 parametrized cases」是 examples bundle 标准模式,沿 image / mesh bundle 模式。
 
+
+## Commit 8 — probes/provider/probe_comfy_audio.py + 2 fence (2026-05-03 23:05)
+
+### Anchors
+- `tasks.md#9.1` - `#9.4` (§9 probe_comfy_audio.py opt-in)
+- `execution/micro_tasks.md` Commit 8 (8.1-8.5)
+
+### Implementation files
+
+| File | Action | Details |
+|---|---|---|
+| `probes/provider/probe_comfy_audio.py` | Create | opt-in via `FORGEUE_PROBE_COMFY_AUDIO=1`(沿 mesh probe / image probe convention)+ 模块顶层零副作用(L3 fence 守门)+ `_hydrate_env` / `_out_dir` lazy helpers + main() 跑 minimal Stable Audio Open params(`steps=20` 节省 GPU 时间)+ 落 `demo_artifacts/<date>/probes/provider/probe_comfy_audio/<HHMMSS>/probe_audio.{format}` + magic bytes sanity check |
+| `tests/unit/test_probe_framework.py` | Modify | +2 fence:`test_probe_comfy_audio_default_skip_without_optin`(没 env var → rc=0 + `[SKIP]` print)+ `test_probe_comfy_audio_no_import_side_effects`(沿 P3 regression 模式 + L3 fence 模式) |
+
+### Pytest baseline delta
+
+- Pre-commit:1292
+- Post-commit:**1294 passed**(+2)
+- 零回归
+
+### Boundary check
+
+- `git diff --name-only`:`probes/provider/probe_comfy_audio.py` + `tests/unit/test_probe_framework.py`(execution_plan §9 显式列)— 0 越界
+
