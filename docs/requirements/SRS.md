@@ -506,6 +506,6 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | TBD-003 | WS 鉴权 / 多租户 session | 接入 UI 时再设计 |
 | TBD-004 | FBX self-containment 校验 | 有 PyFBX / ufbx 绑定后 |
 | TBD-005 | DashScope / Tripo3D 下辖 parser 实装 | 有人工作流真实使用时 |
-| TBD-009 | ComfyUI agent CLI mesh / audio / video workflow 接入(本 change `comfy-agent-cli-adoption` 只接 image;mesh/audio/video 因 metadata parsing + capability split 留作后续 change) | 本 change 归档后再评估 |
+| TBD-009 | ComfyUI agent CLI mesh / audio / video workflow 接入。**Phase 1 mesh 已落地**(OpenSpec change `comfy-agent-cli-mesh-audio-video-adoption` 2026-05-03,5 轮 codex review + Round 5 D10 source bytes 写到 ComfyUI input/ via `FORGEUE_COMFY_INPUT_DIR` env;mini-LoadImage 变体 manifest user-authored 解决模型权重问题;L2 evidence GLB 真实生成 3.5 MB)。Phase 2 audio / Phase 3 video 仍 follow-on(blocked-on TBD-002 audio worker 通用契约 + video 输出策略决策)| Phase 1 已归档;Phase 2/3 各自开新 change |
 | TBD-010 | GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主 spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED | 用户实际使用本 change 后反馈双终端 UX 痛苦阈值或框架其它 long-task cancel use case 推动 |
 | TBD-011 | ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env | 第二个 subprocess provider 出现时(本地 SDXL / 第三方 CLI 工具 / 本地 mesh worker)|
