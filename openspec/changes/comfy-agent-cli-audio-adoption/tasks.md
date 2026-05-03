@@ -200,7 +200,7 @@
     - 不调 `_resolve_source_image(ctx)`(audio 是 text-to-audio,无 source bytes;design D7)
     - 不读 `FORGEUE_COMFY_INPUT_DIR` env var(audio 不需要;design D7)
     - 构造 `worker = ComfyAgentWorker(scripts_dir=Path(os.environ["FORGEUE_COMFY_SCRIPTS_DIR"]), model_id="comfy/local-audio", run_id=ctx.run.run_id, project_id=ctx.task.project_id, artifacts_dir=ctx.run_dir, default_lifecycle="none")`
-    - 取 retry policy:`policy = ctx.step.retry_policy` (顶层字段 per task.py:37,**不**是 `ctx.step.config.policy`);`attempts = policy.max_attempts if policy else 2`
+    - 取 retry policy:`policy = ctx.step.retry_policy or RetryPolicy()`(顶层字段 per task.py:37,**不**是 `ctx.step.config.policy`;F-Plan-R7-B round-7 plan 修订:用 `or RetryPolicy()` default 与 [generate_mesh.py:146](src/framework/runtime/executors/generate_mesh.py#L146) 实装一致);`attempts = max(1, policy.max_attempts)`
     - 取 timeout:`timeout_s = cfg.get("worker_timeout_s")`(F-Plan-6 round-2 plan 修订:对照 [generate_image.py:83](src/framework/runtime/executors/generate_image.py#L83) / [generate_mesh.py:190](src/framework/runtime/executors/generate_mesh.py#L190) 实读法,**不**走 `policy.timeout_seconds`(RetryPolicy schema 没此字段))
     - **F2 round-2 修订三 except 块**(对照 `generate_mesh.py:160-172`,**不**单 except 全 retry,**不**裸 raise):
       ```python
@@ -209,11 +209,11 @@
           try:
               return worker.generate_audio(spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s)
           except ComfyWorkerTimeout as exc:
-              # timeout: wrap + 条件 retry(本地非 premium)
+              # timeout: wrap + 条件 retry(本地非 premium;F-Plan-R7-B round-7 plan 修订:加 _should_retry 判定 honor RetryPolicy.retry_on)
               wrapped: AudioWorkerError = AudioWorkerTimeout(str(exc))
               last_exc = wrapped
-              if attempt + 1 >= attempts:
-                  raise wrapped from exc  # 用尽 attempts:抛 wrapped(NOT 裸 raise)
+              if attempt + 1 >= attempts or not _should_retry(policy, wrapped):
+                  raise wrapped from exc  # 用尽 attempts 或 retry_on 不许 retry timeout:抛 wrapped(NOT 裸 raise);沿 generate_mesh.py:164 实装
               # else continue retry(_backoff if needed)
           except ComfyWorkerUnsupportedResponse as exc:
               # deterministic error: 不 retry(参数错 / outputs 校验错 重试也错)
@@ -243,6 +243,7 @@
   - 持久化:`test_executor_persists_audio_via_repo_put_with_format_aware_file_suffix` + `test_executor_artifact_in_tree_path_is_artifact_id_with_format_extension` + `test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate_per_fr_store_004`
   - ADR-007 边界:`test_local_comfy_audio_pricing_none_treated_as_non_premium`
   - **F-Plan-R6-A round-6 UE bridge integration**(new fence):`test_audio_artifact_shape_waveform_routes_to_sound_wave_in_manifest_builder`(给 `Artifact(modality="audio", shape="waveform")` 跑 `manifest_builder.build_manifest`,断言 entry `asset_kind == "sound_wave"`,**不**被 `_KIND_MAP.get(...) is None` skip;沿 image / mesh artifact 同款 fence 模式)+ `test_audio_artifact_shape_format_does_not_route_to_sound_wave`(给 `shape="flac"` / `shape="mp3"` 跑同 helper,断言 entry 被 skip 或 raise — 反向证明 shape 字段语义)
+  - **F-Plan-R7-B round-7 RetryPolicy.retry_on honor**(new fence):`test_local_comfy_audio_executor_retry_on_excludes_timeout_short_circuits_first_attempt`(给 `RetryPolicy(max_attempts=3, retry_on=["provider_error"])`(不含 "timeout"),mock `worker.generate_audio` raise `ComfyWorkerTimeout`;断言 worker.generate_audio 仅调一次 + 抛 `AudioWorkerTimeout` from cause;沿 mesh `_should_retry` 实装 + generate_mesh.py:164 模式) 
   - 共 +14 fence(F2 round-2 修订:13 → 14,加 1 个 deterministic short-circuit fence;实际 fence 数随实施细化)
 - [ ] 5.6 `tests/unit/test_workflow_loader.py` 加 2 fence(F1 round-2 修订:fence 名 step_kind → capability_ref):`test_audio_t2a_capability_ref_dispatches_to_generate_audio_executor` + `test_audio_t2a_capability_ref_rejects_hardcoded_model_id_without_alias`
 - [ ] 5.7 commit 4:`feat(executor): introduce GenerateAudioExecutor + audio.t2a capability_ref registration in ExecutorRegistry`(F-Plan-R4-C round-4 修订:commit title 不写 "step type registration",真实是 `(StepType.generate, "audio.t2a")` entry 在 `framework.run` 注册)

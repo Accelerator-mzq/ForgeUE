@@ -305,8 +305,8 @@ def _generate_via_comfy_worker(
     seed: int | None,
     timeout_s: float,  # F-Plan-6: from cfg.get("worker_timeout_s") in execute()
 ) -> list[AudioCandidate]:
-    policy = ctx.step.retry_policy  # 顶层字段 per task.py:37(NOT ctx.step.config.policy);RetryPolicy 仅含 max_attempts/backoff/retry_on
-    attempts = policy.max_attempts if policy else 2  # 本地非 premium per ADR-007 边界
+    policy = ctx.step.retry_policy or RetryPolicy()  # 顶层字段 per task.py:37(NOT ctx.step.config.policy);RetryPolicy 仅含 max_attempts/backoff/retry_on;F-Plan-R7-B round-7 修订:用 `or RetryPolicy()` default 与 generate_mesh.py:146 实装一致
+    attempts = max(1, policy.max_attempts)  # 本地非 premium per ADR-007 边界
     last_exc: AudioWorkerError | None = None
     worker = ComfyAgentWorker(model_id="comfy/local-audio", ...)
     for attempt in range(attempts):
@@ -316,8 +316,8 @@ def _generate_via_comfy_worker(
             # timeout: wrap + 条件 retry(本地非 premium)
             wrapped: AudioWorkerError = AudioWorkerTimeout(str(exc))
             last_exc = wrapped
-            if attempt + 1 >= attempts:
-                raise wrapped from exc  # 用尽 attempts:抛 wrapped(NOT 裸 raise — bare raise 会重抛原始 ComfyWorkerTimeout,FailureModeMap 看不到 audio mode)
+            if attempt + 1 >= attempts or not _should_retry(policy, wrapped):
+                raise wrapped from exc  # 用尽 attempts 或 RetryPolicy.retry_on 不许 retry timeout:抛 wrapped(NOT 裸 raise — bare raise 会重抛原始 ComfyWorkerTimeout,FailureModeMap 看不到 audio mode);F-Plan-R7-B round-7 修订:加 _should_retry 判定 honor retry_on,沿 generate_mesh.py:164 实装
             # else continue(若 retry policy 有 backoff,_backoff(policy, attempt))
         except ComfyWorkerUnsupportedResponse as exc:
             # deterministic error: 不 retry(参数错 / outputs 校验错 重试也错;违 R2-F2 retry budget critical fence)
@@ -421,6 +421,7 @@ def _generate_via_comfy_worker(
 | 失败模式 mode 名 `audio_worker_timeout` / `audio_worker_unsupported` 与 mesh 镜像但 audio 应该有自己的语义边界(audio 内容质量校验 vs mesh 几何校验 vs image 视觉校验) | 本 change 仅接 wrapper 层 mode(timeout / unsupported);content quality / format integrity 留 follow-on `audio-quality-validation` change 接(类比 Phase 1 mesh 的 magic bytes 校验是 follow-on 才加的) |
 | examples/comfy_local_smoke_audio.json 落盘 FLAC 真实音频内容不可控(随机 prompt + seed 出来不一定好听) — L2 evidence 主观判断难 | L2 evidence 客观判定:(1) FLAC / MP3 / WAV 文件存在 (2) 文件大小 > 100KB(避免 0-byte 假成功)(3) magic bytes 对照 format-specific table(`fLaC` / `ID3`+MPEG sync / `RIFF`+`WAVE`,与 worker 强制校验一致)。**不**主观判断音频质量(留人工 spot-check)。F-Plan-R2-B round-2 plan 修订:duration ±10% 校验**删除**(与 design D10 + artifact-contract spec `duration_seconds=None always` 决策一致;本 change scope 不引入 mutagen / wave / aifc parser;留 follow-on `audio-metadata-parser` change 加 duration 校验) |
 | **Stable Audio Open 1.0 license 商业边界**(F6 round-2 修订)— D11 默认选择的 manifest 用 Stable Audio Open 1.0 模型,license 是 [Stability AI Community License](https://stability.ai/license);[官方 research paper](https://stability.ai/news-updates/stable-audio-open-research-paper) 明确 commercial use up to $1M annual revenue;超过此门槛的企业需要 Stability Enterprise License。UE 生产链项目可预见交付 / 企业使用风险 | (1) `examples/comfy_local_smoke_audio.json` 文档段(README / sibling note)显式标注 license 限制 + 链接 Stability 官方 license 页;(2) `CLAUDE.md` ComfyUI section 加 license note,提示企业用户切 ACE-Step v1(更宽松 license)或自审 Stability 当前 license 边界;(3) 用户**可替换** manifest(bundle `comfy_workflow` 字段是 string,运行时切 `Audio_Workflows/audio_ace_step_1_t2a_instrumentals` 或自家 manifest 都可) — 不锁死 Stable Audio Open;(4) ForgeUE 框架本身不分发模型权重,license 边界由用户与上游模型作者直接对齐 |
+| **outputs.audio path containment gap**(F-Plan-R7-C round-7 plan codex finding,**accepted-claude / disputed-permanent-drift**;见 `## Reasoning Notes`)— ComfyAgentWorker.generate_audio 当前 trust-boundary 只挡 `is_symlink`,不挡 buggy / compromised agent CLI 直接返回 ComfyUI output root 之外的绝对路径(如 `/home/user/secret.flac`);只要文件 magic bytes 合法,ForgeUE 会读入并落 audio Artifact | (1) 本 change scope=**audio path containment gap 不修**(symmetry argument:image / mesh `comfy_worker.py:541-554` / `:805-814` 也只 `is_file`+`is_symlink`,无 path containment 校验;audio 单独加会破坏对称性 + 扩 scope 超出「audio capability adoption」边界);(2) 标 follow-on change `comfy-agent-cli-path-containment-hardening` 三 capability(image / mesh / audio)统一加 `Path.resolve()` + `is_relative_to(comfyui_output_root)` 校验;(3) 当前威胁模型:ComfyUI 是用户本地控制的 subprocess(NOT 网络对手),`is_symlink` 防护已挡 G11 R2 fix 提到的 「`../symlink` redirecting」攻击;path containment 是更严格的 hardening 但不属于本 change 紧急范围;(4) `## Reasoning Notes` 详述决策 reasoning;cross-check 标 `disputed-permanent-drift` |
 
 ## Migration Plan
 
@@ -468,3 +469,27 @@ def _generate_via_comfy_worker(
 **OQ-6**:Phase 1 round 5 实测 ComfyUI subprocess CLI 走 `python -m comfyui_api run <manifest>` 命令,manifest 路径是相对 `FORGEUE_COMFY_SCRIPTS_DIR/scripts/comfyui_api/manifests/` 的 dotted path 还是绝对 / 相对路径?
 - **决策影响**:bundle `comfy_workflow` 字段值的写法(`"Audio_Workflows/audio_stable_audio_example"` 还是 `"audio_workflows.audio_stable_audio_example"` 还是 `"D:/AI/ComfyUI/scripts/comfyui_api/manifests/Audio_Workflows/audio_stable_audio_example.json"`)
 - **resolve**:对照 Phase 1 mesh bundle [examples/comfy_local_smoke_mesh.json](examples/comfy_local_smoke_mesh.json) 实测格式;Phase 1 用 `"GameAssets/03_mini_image_to_3d_hunyuan_loadimage"`(无 `.json` 后缀,POSIX path with `/`)— audio 沿用同格式
+
+## Reasoning Notes
+
+> 本段记录 cross-check Resolution = `accepted-claude` / `disputed-permanent-drift` 的 finding 详细 reasoning,作为 Claude 反向 codex finding 时的 anchor 引用(per ForgeUE Integrated Workflow §B.4 disputed-permanent-drift 协议)。
+
+### F-Plan-R7-C: outputs.audio path containment gap — accepted-claude / disputed-permanent-drift
+
+**Codex finding**(round-7 plan-stage,plugin_task_id=b6gbxtxe3):"outputs.audio trust boundary 只挡 symlink,未约束返回路径必须在 ComfyUI output root 内"。Codex 推荐:加 `Path.resolve()` containment check(路径必须在预期 ComfyUI output root/project 子目录下)。
+
+**Claude position**:**accepted-claude** with **disputed-permanent-drift**(本 change scope 不修;follow-on change 解决)。
+
+**Reasoning(≥ 50 字)**:
+
+1. **Symmetry argument**:Image worker `comfy_worker.py:541-554` 和 mesh worker `comfy_worker.py:805-814` 都只做 `is_file()` + `is_symlink()` 防护(对应 G11 R2 fix),**没有** path containment(`is_relative_to(comfyui_output_root)`)校验。本 change 的 audio path trust-boundary 防护(F-Plan-4 round-2 plan)显式 mirror image / mesh G11 R2 fix。若仅在 audio 路径加 path containment 而 image / mesh 不加,会破坏 ComfyAgentWorker 三 capability 的内部一致性,新加的 audio fence 与 image / mesh 同款 fence 行为分叉。
+
+2. **Threat model 边界**:ComfyUI 是用户本地控制的 subprocess(由 `python -m factory_v3 serve` 启动,not 网络远端 service),threat model 是「buggy CLI implementation」(典型场景:ComfyUI 节点 bug 写错 path)而非「malicious network adversary 主动构造路径」。`is_symlink` 防护已挡住 G11 R2 fix 提到的 「`../symlink` redirecting reads to arbitrary host files」的主要利用面。Path containment 是更严格的 hardening 但属于 defense-in-depth 不是 critical security gate。
+
+3. **Scope discipline**:本 change name `comfy-agent-cli-audio-adoption` scope = audio capability adoption(沿 Phase 1 mesh split 模式)。Path containment 是跨 image / mesh / audio 三 capability 的一致性 hardening(影响 image worker 的 `outputs.images` + mesh worker 的 `outputs.glb` + audio worker 的 `outputs.audio`),scope 越界会让本 change diff 跨 3 个 capability,review 难度倍增。
+
+4. **Follow-on commitment**:本 change design Risks 表已加 follow-on `comfy-agent-cli-path-containment-hardening` 引用,3 capability 统一加 `Path.resolve()` + `is_relative_to(comfyui_output_root)` 校验;实施时需要同时:(a) 引入 `FORGEUE_COMFY_OUTPUT_ROOT` env var(or derive from agent CLI metadata)、(b) image / mesh / audio worker 各加 containment check、(c) 配套 fence 三 capability 各 1。预计 follow-on change 量级 ~10 fence + 5 file modify,与本 change scope 相当。
+
+5. **Risk acceptance**:在 follow-on 落地之前,ComfyUI buggy CLI 返回站外路径的可能性低(用户本地 subprocess + ComfyUI 节点稳定性历史良好),且 magic bytes 校验提供了第二层 defense-in-depth(任意 host 文件需要同时是 valid FLAC/MP3/WAV magic 才会被读 — 显著降低误用面)。Risk 接受度高于 R7-C 推荐的 「立即修」级别。
+
+**结论**:F-Plan-R7-C `disputed-permanent-drift / accepted-claude`;本 change 不加 path containment;follow-on change `comfy-agent-cli-path-containment-hardening` 三 capability 统一处理。Cross-check `## C` 标 `disputed-permanent-drift`,`drift_reason` 引用本 anchor。

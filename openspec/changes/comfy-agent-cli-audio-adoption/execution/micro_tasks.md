@@ -159,8 +159,8 @@ note: |
         except ComfyWorkerTimeout as exc:
             wrapped: AudioWorkerError = AudioWorkerTimeout(str(exc))
             last_exc = wrapped
-            if attempt + 1 >= attempts:
-                raise wrapped from exc  # F2: NOT bare raise
+            if attempt + 1 >= attempts or not _should_retry(policy, wrapped):
+                raise wrapped from exc  # F2: NOT bare raise;F-Plan-R7-B round-7: honor RetryPolicy.retry_on(沿 generate_mesh.py:164)
         except ComfyWorkerUnsupportedResponse as exc:
             raise AudioWorkerUnsupportedResponse(str(exc)) from exc  # NO retry
         except ComfyWorkerError as exc:
