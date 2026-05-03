@@ -120,12 +120,14 @@ class DryRunPass:
         *,
         steps: list[Step],
     ) -> None:
-        """OpenSpec change comfy-agent-cli-adoption (round 2 G1 + round 3 P2):
-        SYNC probe gated by `model == "comfy/local"` in any step's
-        prepared_routes (model id-based gate because ResolvedRoute lacks
-        provider field). Bundles that don't use comfy/local skip the
-        probe entirely (qwen / glm image steps unaffected on hosts
-        without ComfyUI installed).
+        """OpenSpec change comfy-agent-cli-adoption (round 2 G1 + round 3 P2);
+        extended by comfy-agent-cli-mesh-audio-video-adoption (P-F4 round-2
+        plan writeback): gate set 从 {comfy/local} 扩为 {comfy/local, comfy/local-mesh}。
+        SYNC probe gated by `model in {"comfy/local", "comfy/local-mesh"}` in
+        any step's prepared_routes (model id-based gate because ResolvedRoute
+        lacks provider field). Bundles that don't use either skip the probe
+        entirely (qwen / glm image steps + remote hunyuan mesh steps unaffected
+        on hosts without ComfyUI installed).
         """
         import os
 
@@ -133,19 +135,21 @@ class DryRunPass:
             ComfyAgentWorker, WorkerUnsupportedResponse,
         )
 
+        # P-F4: gate 从单值 == 改为 set membership(支持 mesh capability)
+        _COMFY_LOCAL_MODEL_IDS = {"comfy/local", "comfy/local-mesh"}
         has_comfy_local = False
         for s in steps:
             pp = getattr(s, "provider_policy", None)
             if pp is None or not getattr(pp, "prepared_routes", None):
                 continue
             if any(
-                getattr(r, "model", None) == "comfy/local"
+                getattr(r, "model", None) in _COMFY_LOCAL_MODEL_IDS
                 for r in pp.prepared_routes
             ):
                 has_comfy_local = True
                 break
         if not has_comfy_local:
-            # No comfy/local route — skip probe entirely.
+            # No comfy/local* route — skip probe entirely.
             return
 
         # ComfyUI reachability is reported as WARNING (not ERROR) — bundle

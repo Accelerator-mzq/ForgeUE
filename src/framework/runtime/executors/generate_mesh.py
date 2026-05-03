@@ -37,6 +37,17 @@ from framework.providers.workers.mesh_worker import (
     MeshWorkerTimeout,
     MeshWorkerUnsupportedResponse,
 )
+# OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1 mesh:
+# 本地 ComfyUI mesh 走 executor-side branch + ComfyAgentWorker.generate_mesh,
+# ComfyWorker 异常 hierarchy 与 MeshWorker 不交叉(failure_mode_map 优先匹配 MeshWorker*),
+# 必须 wrap 才能让 FailureModeMap 路由正确(D9 + R2-F2)。
+import os
+from framework.providers.workers.comfy_worker import (
+    ComfyAgentWorker,
+    WorkerError as _ComfyWorkerError,
+    WorkerTimeout as _ComfyWorkerTimeout,
+    WorkerUnsupportedResponse as _ComfyWorkerUnsupportedResponse,
+)
 from framework.runtime.budget_tracker import estimate_mesh_call_cost_usd
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
 
@@ -56,6 +67,95 @@ class GenerateMeshExecutor(StepExecutor):
 
     def __init__(self, *, worker: MeshWorker) -> None:
         self._worker = worker
+
+    def _should_use_comfy_worker_path(self, ctx: StepContext) -> bool:
+        """OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1:
+        检测 prepared_routes 是否含 `comfy/local-mesh` model,决定是否走本地
+        ComfyAgentWorker dispatch(R2-F1 修订:provider_policy 在 Step 顶层,
+        不在 step.config 嵌套,沿用现有 generate_mesh.py:202 同模式)。"""
+        pp = ctx.step.provider_policy
+        if pp is None or not pp.prepared_routes:
+            return False
+        return any(r.model == "comfy/local-mesh" for r in pp.prepared_routes)
+
+    def _generate_via_comfy_worker(
+        self,
+        *,
+        ctx: StepContext,
+        spec: dict,
+        source_image_bytes: bytes,
+        num: int,
+        seed: int | None,
+        timeout_s: float | None,
+    ) -> list[MeshCandidate]:
+        """OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1
+        本地 ComfyUI mesh dispatch(D7 + D9):
+
+        1. 写 source_image_bytes 到 in-tree input 文件(idempotent via sha1;B2)
+        2. 构造 ComfyAgentWorker(model_id='comfy/local-mesh') + 调 generate_mesh
+        3. 内部 retry loop 用 policy.max_attempts(本地非 premium,绕开 attempts=1
+           强制;D4 + R2-F2)
+        4. ComfyWorker 异常族 wrap 为 MeshWorker 异常族(D9 + R2-F2),让
+           FailureModeMap 路由正确(R4-F1:wrapped MeshWorkerTimeout →
+           mesh_worker_timeout → abort_or_fallback,与远端 mesh 终态一致)
+        """
+        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+        if not scripts_dir:
+            raise MeshWorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses "
+                "comfy/local-mesh route but ComfyUI agent CLI location "
+                "not configured (see CLAUDE.md double-terminal setup)"
+            )
+        # B2 + D7:source bytes 写入 in-tree input 文件(<run_dir>/comfy/input/<sha1>.png),
+        # idempotent via sha1(同样 source bytes → 同样 in-tree path,跨 retry 无重写)
+        input_dir = ctx.run_dir / "comfy" / "input"
+        input_dir.mkdir(parents=True, exist_ok=True)
+        sha1_hex = hashlib.sha1(source_image_bytes).hexdigest()[:16]
+        input_path = input_dir / f"{sha1_hex}.png"
+        if not input_path.exists():
+            input_path.write_bytes(source_image_bytes)
+
+        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
+        lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
+        worker = ComfyAgentWorker(
+            scripts_dir=Path(scripts_dir),
+            model_id="comfy/local-mesh",         # D1 capability dispatch
+            run_id=ctx.run.run_id,
+            project_id=ctx.task.project_id,
+            artifacts_dir=ctx.run_dir,
+            python_exe=Path(python_exe) if python_exe else None,
+            default_lifecycle=lifecycle,
+        )
+
+        # D9 + R2-F2:内部 retry loop(本地 mesh 走 standard retry,绕开
+        # executor 主流程 attempts=1 强制);RetryPolicy.max_attempts 默认 2(policies.py:26)
+        policy = ctx.step.retry_policy or RetryPolicy()
+        attempts = max(1, policy.max_attempts)
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                return worker.generate_mesh(
+                    spec=spec,
+                    source_image_path=input_path,
+                    num_candidates=num,
+                    seed=seed,
+                    timeout_s=timeout_s,
+                )
+            except _ComfyWorkerTimeout as exc:
+                # D9 wrap:ComfyWorker → MeshWorker
+                wrapped: MeshWorkerError = MeshWorkerTimeout(str(exc))
+                last_exc = wrapped
+                if attempt + 1 >= attempts or not _should_retry(policy, wrapped):
+                    raise wrapped from exc
+                _backoff(policy, attempt)
+            except _ComfyWorkerUnsupportedResponse as exc:
+                # 不 retry(deterministic);wrap 为 MeshWorkerUnsupportedResponse
+                raise MeshWorkerUnsupportedResponse(str(exc)) from exc
+            except _ComfyWorkerError as exc:
+                # 不 retry(generic worker error);wrap 为 MeshWorkerError
+                raise MeshWorkerError(str(exc)) from exc
+        assert last_exc is not None
+        raise last_exc
 
     def execute(self, ctx: StepContext) -> ExecutorResult:
         cfg = ctx.step.config or {}
@@ -83,20 +183,40 @@ class GenerateMeshExecutor(StepExecutor):
         last_exc: Exception | None = None
         candidates: list[MeshCandidate] | None = None
         attempt_count = 0
-        for attempt in range(attempts):
-            attempt_count = attempt + 1
+
+        # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1:
+        # comfy/local-mesh route → 走本地 ComfyAgentWorker 自有 retry loop;
+        # 远端 mesh route 走原 executor 主流程 attempts=1 强制(ADR-007 不变)。
+        if self._should_use_comfy_worker_path(ctx):
+            attempt_count = 1
             try:
-                candidates = self._worker.generate(
-                    source_image_bytes=source_bytes, spec=spec,
-                    num_candidates=num, timeout_s=timeout_s,
+                candidates = self._generate_via_comfy_worker(
+                    ctx=ctx,
+                    spec=spec,
+                    source_image_bytes=source_bytes,
+                    num=num,
+                    seed=cfg.get("seed"),
+                    timeout_s=timeout_s,
                 )
                 last_exc = None
-                break
             except (MeshWorkerTimeout, MeshWorkerError) as exc:
+                # _generate_via_comfy_worker 已 wrap;raise 让下游处理
                 last_exc = exc
-                if attempt + 1 >= attempts or not _should_retry(policy, exc):
+        else:
+            for attempt in range(attempts):
+                attempt_count = attempt + 1
+                try:
+                    candidates = self._worker.generate(
+                        source_image_bytes=source_bytes, spec=spec,
+                        num_candidates=num, timeout_s=timeout_s,
+                    )
+                    last_exc = None
                     break
-                _backoff(policy, attempt)
+                except (MeshWorkerTimeout, MeshWorkerError) as exc:
+                    last_exc = exc
+                    if attempt + 1 >= attempts or not _should_retry(policy, exc):
+                        break
+                    _backoff(policy, attempt)
         if candidates is None:
             assert last_exc is not None
             raise last_exc
