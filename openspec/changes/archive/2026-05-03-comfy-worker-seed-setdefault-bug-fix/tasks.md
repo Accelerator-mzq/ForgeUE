@@ -26,6 +26,6 @@
 
 ## 6. Archive
 
-- [ ] 6.1 `tools/forgeue_finish_gate.py --change comfy-worker-seed-setdefault-bug-fix` exit 0
-- [ ] 6.2 `openspec validate comfy-worker-seed-setdefault-bug-fix --strict` PASS
-- [ ] 6.3 `openspec archive comfy-worker-seed-setdefault-bug-fix --yes`
+- [x] 6.1 `tools/forgeue_finish_gate.py --change comfy-worker-seed-setdefault-bug-fix` exit 0
+- [x] 6.2 `openspec validate comfy-worker-seed-setdefault-bug-fix --strict` PASS
+- [x] 6.3 `openspec archive comfy-worker-seed-setdefault-bug-fix --yes`
