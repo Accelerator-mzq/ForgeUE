@@ -61,7 +61,7 @@ def extract_outputs(history_entry: dict, root: Path | None = None) -> dict:
 **对 spec 的影响**:
 - `provider-routing/spec.md` Step 5「Return list[AudioCandidate] of length matching len(outputs.audio)」✅ 正确
 - `generate_audio` 内部 `for path in outputs.audio` 循环正确处理任意 length(0 / 1 / N)
-- num_candidates > 1 实现:在 `_generate_via_comfy_worker` 内部 N 次调用 `worker.generate_audio(num_candidates=1, seed=base+i)`,聚合 candidates(沿 Phase 1 mesh 模式;具体在 §4.2 / §5.2 实施时按此实现 — 当前 spec 的 `num_candidates` 参数对单 manifest 实际等同于 batch=1,N>1 由 caller 多次调用)
+- num_candidates > 1 实现(F-Plan-R5-A round-5 plan 修订:loop 归属由 executor-side 改为 worker-side,与 F-Plan-3 round-2 plan + spec/provider-routing Step 6 收敛后的 contract 对齐):**`ComfyAgentWorker.generate_audio` 内部** per-candidate loop `for i in range(max(1, num_candidates)): call_seed = (seed or 0) + i; ... results.extend(self._run_once_audio(...))`(对照 image / mesh worker `comfy_worker.py:427` / `:689`);`GenerateAudioExecutor._generate_via_comfy_worker` 调一次 `worker.generate_audio(spec=spec, num_candidates=num, ...)` 即可,**不**需要外层 loop。事实保留:单 SaveAudioMP3 节点 1 file per subprocess run(per probe);worker 内部 N 次 subprocess 聚合 candidates。
 
 ## OQ-3 — `duration_seconds` / `sample_rate` 暴露形式
 
@@ -110,7 +110,7 @@ def extract_outputs(history_entry: dict, root: Path | None = None) -> dict:
    - `extract_outputs` 实测 `outputs.audio` 路径列表是绝对路径还是相对 `D:/AI/ComfyUI/outputs/main/<date>/<project>/`(看 line 31 `COMFYUI_OUTPUT_ROOT`)
    - 文件扩展名实际是 `.flac` / `.mp3` / `.wav` 哪一个
    - magic bytes 是 `b"fLaC"` / `b"ID3"` / `b"\xff\xfb"` / `b"RIFF"` 哪一个
-2. **OQ-2 multi-candidate 实测**:目前 spec 推 `_generate_via_comfy_worker` per-candidate 多次 subprocess;若 `num_candidates=1` 在 L2 evidence 期间足够,multi-candidate 验证可推迟到 follow-on
+2. **OQ-2 multi-candidate 实测**(F-Plan-R5-A round-5 plan 修订):目前 spec 推 **`ComfyAgentWorker.generate_audio` 内部** per-candidate loop(对照 image / mesh worker 模式);若 `num_candidates=1` 在 L2 evidence 期间足够,multi-candidate 验证可推迟到 follow-on
 3. **OQ-3 metadata parser**:本 change scope=不解析,留 follow-on `audio-metadata-parser`
 
 ## 影响 cross-check 的 round-2 修订

@@ -27,7 +27,7 @@ UE 侧 audio 链路已就绪([manifest_builder.py](src/framework/ue_bridge/manif
 - **GenerateAudioExecutor 新建**:
   - `src/framework/runtime/executors/generate_audio.py` 新建,类属性 `step_type = StepType.generate` + `capability_ref = "audio.t2a"`(F1 round-1 + R3-A round-3 修订:**沿用** `StepType.generate` 已有枚举值,**不**新增 step type;`audio.t2a` 是 `Step.capability_ref` 字符串;ExecutorRegistry 通过 `(StepType.generate, "audio.t2a")` 精确匹配查找 — 在 `framework.run` 注册,**不**改 `loader.py`(loader 仅做 `Step.model_validate`,无 step-kind 表))
   - 类比 `generate_image.py`(text-to-image)而非 `generate_mesh.py`(image-to-mesh):**无** `_resolve_source_image` 流程,direct text prompt → audio bytes
-  - 加 `_should_use_comfy_worker_path(ctx)` 检测 `prepared_routes` 含 `model == "comfy/local-audio"`;加 `_generate_via_comfy_worker(ctx, spec, prompt, num, seed, timeout_s) -> list[AudioCandidate]` 内部 retry loop 用 `policy.max_attempts`(本地非 premium,沿 Phase 1 D9 + ADR-007 边界)
+  - 加 `_should_use_comfy_worker_path(ctx)` 检测 `prepared_routes` 含 `model == "comfy/local-audio"`;加 `_generate_via_comfy_worker(ctx, spec, num, seed, timeout_s) -> list[AudioCandidate]`(F-Plan-R5-B round-5 plan 修订:**no `prompt: str` 参数** — prompt 在 `spec["comfy_params"]` 内,per design D7 / D8;executor SHALL NOT 解构 / 注入 prompt key)内部 retry loop 用 `(ctx.step.retry_policy or RetryPolicy()).max_attempts`(本地非 premium,沿 Phase 1 D9 + ADR-007 边界)
   - `AudioCandidate` 列表通过 `repo.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})` 持久化(沿 Phase 1 B1 修订:不引入 PayloadRef.metadata 字段)
   - 异常 wrap:`ComfyWorker*` 异常族 → `AudioWorker*` 异常族 with `from exc`(`FailureModeMap` 加 `audio_worker_timeout` / `audio_worker_unsupported` mode 路由,沿 mesh 镜像)
 
@@ -37,7 +37,7 @@ UE 侧 audio 链路已就绪([manifest_builder.py](src/framework/ue_bridge/manif
   - SRS FR-MODEL-007 alias 列表第 11 alias
 
 - **Bundle 协议 + example**:
-  - `step.config.spec` 沿用 Phase 1 三字段(`comfy_workflow` + `comfy_params` + `comfy_lifecycle: "none"`);**audio capability 不需要** `comfy_image_param_key`(无 source image)— 但需要 prompt 注入约定:design 阶段决策是 `comfy_params.tags`(ACE-Step)/`comfy_params.text`(Stable Audio)由 bundle 直接给,还是 GenerateAudioExecutor 从 `step.config.spec.prompt` 注入 manifest-aware key(类比 mesh_local 的 `comfy_image_param_key` 默认 `"input_image"` 模式)
+  - `step.config.spec` 沿用 Phase 1 三字段(`comfy_workflow` + `comfy_params` + `comfy_lifecycle: "none"`);**audio capability 不需要** `comfy_image_param_key`(无 source image);**prompt 注入约定已锁定**(F-Plan-R5-B round-5 plan 修订:design D7 / D8 已 reject `step.config.spec.prompt` + manifest-aware key 注入路径):**bundle 直接在 `step.config.spec.comfy_params` 内提供 manifest-期待的 prompt key**(`text` for Stable Audio / `tags` + `lyrics` for ACE-Step / 等),`GenerateAudioExecutor` SHALL NOT read `step.config.spec.prompt` or inject prompt keys into `comfy_params` — 与 mesh `comfy_image_param_key` 模式不同(mesh 注入 source image filename,audio 不注入任何字段)
   - 新建 `examples/comfy_local_smoke_audio.json`(`provider_policy.{capability_required: audio.t2a, models_ref: audio_local}` + `spec.{comfy_workflow: Audio_Workflows/audio_stable_audio_example, comfy_params: {text: "...", duration_seconds: 10.0, ...}, comfy_lifecycle: "none"}`)
 
 - **DryRunPass 扩 audio**:

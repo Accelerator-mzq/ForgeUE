@@ -444,7 +444,7 @@ def _generate_via_comfy_worker(
 
 **OQ-2**(F4 round-2 RESOLVED):`outputs.audio` list 长度通常 == 1(单 SaveAudioMP3 节点)还是 N(num_candidates 由 KSampler batch 控制)?
 - **决策影响**:`generate_audio` 的 `num_candidates` 参数与 ComfyUI 实际产出 candidate 数的关系
-- **Resolution**(2026-05-03 cross-check round 1 probe):两个 audio manifest(ACE-Step + Stable Audio)均为单 SaveAudioMP3 节点;单 subprocess run 通常产 1 file;`num_candidates > 1` 由 caller(`GenerateAudioExecutor._generate_via_comfy_worker`)多次 subprocess 实现,沿 Phase 1 mesh `_run_mesh_subprocess` per-candidate loop 模式。详见 `notes/audio_subprocess_probe_20260503.md`。
+- **Resolution**(2026-05-03 cross-check round 1 probe;F-Plan-R5-A round-5 plan 修订:loop 归属):两个 audio manifest(ACE-Step + Stable Audio)均为单 SaveAudioMP3 节点;单 subprocess run 通常产 1 file;`num_candidates > 1` 由 **`ComfyAgentWorker.generate_audio` 内部** per-candidate loop 实现(`for i in range(max(1, num_candidates))` + `call_seed = (seed or 0) + i` + `results.extend(self._run_once_audio(...))`,对照 image / mesh worker `comfy_worker.py:427` / `:689`);`GenerateAudioExecutor._generate_via_comfy_worker` 调一次 `worker.generate_audio(num_candidates=num)` 即可,**不**需要外层 loop。详见 `notes/audio_subprocess_probe_20260503.md`。
 
 **OQ-3**(F4 round-2 RESOLVED with constraint):AudioCandidate.duration_seconds / sample_rate 的 source 是 ComfyUI agent CLI stdout JSON metadata 字段,还是需要 ForgeUE 自己解析 FLAC header?
 - **决策影响**:tasks.md 是否新增 `audio_metadata_parser` helper
