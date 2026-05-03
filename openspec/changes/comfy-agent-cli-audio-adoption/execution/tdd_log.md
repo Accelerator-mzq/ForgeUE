@@ -233,3 +233,27 @@ note: |
 
 无。F-Plan-R7-B priority sweep + R4-F1 wrapped 异常路由模式全部落实。
 
+
+## Commit 6 — DryRunPass audio gate + 1 fence (2026-05-03 22:55)
+
+### Anchors
+- `tasks.md#7.1` - `#7.4` (§7 DryRunPass extension)
+- `execution/micro_tasks.md` Commit 6 (6.1-6.5)
+
+### Implementation files
+
+| File | Action | Details |
+|---|---|---|
+| `src/framework/runtime/dry_run_pass.py` | Modify | `_check_comfy_reachability` `_COMFY_LOCAL_MODEL_IDS` 从 `{comfy/local, comfy/local-mesh}` 扩为 `{comfy/local, comfy/local-mesh, comfy/local-audio}`(沿 P-F4 round-2 模式)+ docstring 更新 |
+| `tests/unit/test_comfy_subprocess_audio.py` | Modify | +1 fence:`test_dry_run_probe_runs_when_comfy_local_audio_in_routes`(沿 mesh test_dry_run_probe_runs_when_comfy_local_mesh_in_routes 模式) |
+
+### Pytest baseline delta
+
+- Pre-commit:1288
+- Post-commit:**1289 passed**(+1)
+- 零回归
+
+### Boundary check
+
+- `git diff --name-only`:`dry_run_pass.py` + `test_comfy_subprocess_audio.py`(execution_plan §7 显式列)— 0 越界
+

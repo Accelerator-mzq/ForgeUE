@@ -398,3 +398,37 @@ def test_generate_audio_metadata_snapshot_is_independent_copy(tmp_path):
     snapshot = cands[0].metadata["comfy_params_snapshot"]
     assert snapshot["text"] == "before", "snapshot must isolate from caller mutation"
     assert "new_key" not in snapshot
+
+
+# ---- DryRunPass(commit 6:gate set 扩 audio)----------------------------------
+
+
+def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypatch):
+    """commit 6: dry-run probe gate set 扩 `comfy/local-audio`;route 含 audio 触发 probe。
+    沿 mesh test_dry_run_probe_runs_when_comfy_local_mesh_in_routes 模式。"""
+    from unittest.mock import MagicMock
+    from framework.providers.model_registry import ResolvedRoute
+    from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
+
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "comfyui_api").mkdir()
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(scripts_dir))
+
+    dry_run = DryRunPass()
+    report = DryRunReport(passed=True)
+
+    step = MagicMock()
+    step.provider_policy.prepared_routes = [
+        ResolvedRoute(model="comfy/local-audio", api_key_env=None, api_base=None,
+                      kind="audio", pricing=None),
+    ]
+
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed("ok", returncode=0)
+        dry_run._check_comfy_reachability(report, steps=[step])
+        # comfy/local-audio 也触发 probe(commit 6 audio gate 扩)
+        assert run_mock.call_count == 1
+        cmd = run_mock.call_args[0][0]
+        assert "-m" in cmd
+        assert "comfyui_api" in cmd
