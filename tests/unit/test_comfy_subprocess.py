@@ -45,7 +45,13 @@ from framework.providers.workers.comfy_worker import (
 def _make_worker(tmp_path: Path) -> ComfyAgentWorker:
     """Construct a ComfyAgentWorker with valid REQUIRED args + a stub
     scripts_dir / artifacts_dir under tmp_path. Tests replace
-    subprocess.run via patch to mock the actual CLI invocation."""
+    subprocess.run via patch to mock the actual CLI invocation.
+
+    OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04):
+    `comfy_output_root` heuristic falls back to `scripts_dir.parent`
+    (= `tmp_path`)so fake outputs written directly to tmp_path/out_*.png
+    pass the containment check `_assert_path_within_comfy_output_root`.
+    """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "comfyui_api").mkdir()
@@ -571,7 +577,11 @@ from framework.providers.workers.mesh_worker import MeshCandidate
 
 
 def _make_mesh_worker(tmp_path: Path) -> ComfyAgentWorker:
-    """Mesh-mode worker fixture(model_id='comfy/local-mesh' → _capability='mesh')。"""
+    """Mesh-mode worker fixture(model_id='comfy/local-mesh' → _capability='mesh')。
+
+    Path containment heuristic uses `scripts_dir.parent` = `tmp_path`,
+    so fake outputs in tmp_path pass the containment check.
+    """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir(exist_ok=True)
     (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
@@ -1194,3 +1204,51 @@ def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp
     assert result.metrics["worker"] == "comfy_agent_cli", (
         f"metrics.worker should be 'comfy_agent_cli', got {result.metrics['worker']!r}"
     )
+
+
+# ---- G11-F2 follow-on: path containment for outputs.images / .glb / .audio --
+# OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04):
+# fence 守门 ComfyUI subprocess 返回 `comfy_output_root` 之外的路径时,
+# `_run_once*` raise WorkerUnsupportedResponse(NOT 静默读 bytes)。
+
+
+def test_image_outputs_path_outside_comfy_output_root_raises_unsupported_response(tmp_path):
+    """G11-F2 follow-on:image worker outputs.images path 在 comfy_output_root 之外
+    (即 scripts_dir.parent 之外)→ raise WorkerUnsupportedResponse。"""
+    worker = _make_worker(tmp_path)
+    # 创建一个 BAD path 在 worker.comfy_output_root 之外(系统 temp 一级以上)
+    bad_dir = Path(tmp_path).parent / "bad_outside_root"
+    bad_dir.mkdir(exist_ok=True)
+    bad_png = bad_dir / "leak.png"
+    _make_png_file(bad_png)
+    # confirm bad_png 真的 outside output_root
+    assert not bad_png.resolve().is_relative_to(worker.comfy_output_root), (
+        f"Test setup error: bad_png {bad_png.resolve()} is unexpectedly under "
+        f"comfy_output_root {worker.comfy_output_root}"
+    )
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_stdout([str(bad_png)]))
+        with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
+            worker.generate(
+                spec={"comfy_workflow": "x", "comfy_params": {}},
+                num_candidates=1,
+            )
+
+
+def test_mesh_outputs_path_outside_comfy_output_root_raises_unsupported_response(tmp_path):
+    """G11-F2 follow-on:mesh worker outputs.glb path 在 comfy_output_root 之外
+    → raise WorkerUnsupportedResponse。"""
+    worker = _make_mesh_worker(tmp_path)
+    bad_dir = Path(tmp_path).parent / "bad_outside_root_mesh"
+    bad_dir.mkdir(exist_ok=True)
+    bad_glb = bad_dir / "leak.glb"
+    _make_glb_file(bad_glb)
+    assert not bad_glb.resolve().is_relative_to(worker.comfy_output_root)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(bad_glb)]))
+        with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
+            worker.generate_mesh(
+                spec={"comfy_workflow": "x", "comfy_params": {}},
+                source_image_filename="forgeue_test.png",
+                num_candidates=1,
+            )

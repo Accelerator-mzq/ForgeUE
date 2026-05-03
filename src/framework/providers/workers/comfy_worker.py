@@ -386,6 +386,32 @@ class ComfyAgentWorker(ComfyWorker):
         self.artifacts_dir = artifacts_dir
         self.model_id = model_id
         self._capability = capability
+        # OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04
+        # follow-on for G11-F2):the ComfyUI subprocess outputs files anywhere
+        # the CLI's `extract_outputs` resolved them — by default under
+        # `D:/AI/ComfyUI/outputs/main/...`. To prevent a buggy / compromised
+        # ComfyUI from returning paths *outside* the ComfyUI install tree
+        # (e.g. `/etc/secrets`), each `_run_once*` resolves output paths and
+        # asserts they live under `comfy_output_root` before reading bytes.
+        # Resolution order(first non-None wins):
+        #   1. `FORGEUE_COMFY_OUTPUT_ROOT` env var(explicit override for
+        #      ComfyUI installs that write outputs to a non-default location)
+        #   2. `scripts_dir.parent`(heuristic — matches the typical layout
+        #      `D:/AI/ComfyUI/scripts` + `D:/AI/ComfyUI/outputs/main/...`,
+        #      both under `D:/AI/ComfyUI`. Also works for unit tests where
+        #      `scripts_dir = tmp_path / "scripts"` → `scripts_dir.parent
+        #      = tmp_path` covers fake outputs under tmp_path.)
+        # The check uses `Path.resolve()` to normalise symlinks / relative
+        # segments before `is_relative_to()`. This is defense-in-depth on top
+        # of the existing `is_file()` + `is_symlink()` + extension whitelist
+        # + magic-bytes checks.
+        env_output_root = os.environ.get("FORGEUE_COMFY_OUTPUT_ROOT")
+        if env_output_root:
+            self.comfy_output_root = Path(env_output_root).resolve()
+        else:
+            # Heuristic fallback: scripts_dir parent (covers ComfyUI install
+            # tree including outputs/ + tests' tmp_path layout)
+            self.comfy_output_root = self.scripts_dir.parent.resolve()
 
     def generate(
         self,
@@ -567,6 +593,10 @@ class ComfyAgentWorker(ComfyWorker):
                     f"ComfyAgentWorker: outputs.images path is a symlink, "
                     f"refusing to follow: {src}"
                 )
+            # OpenSpec change `comfy-agent-cli-path-containment-hardening`
+            # (2026-05-04 follow-on for G11-F2):assert path under
+            # `comfy_output_root` before read_bytes — defense-in-depth
+            self._assert_path_within_comfy_output_root(src, output_kind="images")
             dst = comfy_subdir / src.name
             shutil.copy2(src, dst)
             data = dst.read_bytes()
@@ -640,6 +670,36 @@ class ComfyAgentWorker(ComfyWorker):
                     f"{cap}-mode auxiliary outputs.{aux_key}: "
                     f"count={len(aux_val)} paths={list(aux_val)!r} capability={cap!r}"
                 )
+
+    def _assert_path_within_comfy_output_root(self, src: Path, *, output_kind: str) -> None:
+        """OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04
+        follow-on for G11-F2):assert that a subprocess-returned output path
+        resolves to a location *under* `self.comfy_output_root`. Raises
+        `WorkerUnsupportedResponse` otherwise — defense-in-depth on top of
+        existing `is_file()` + `is_symlink()` + extension whitelist + magic
+        bytes checks. Threat model = buggy / compromised ComfyUI subprocess
+        returning paths outside the ComfyUI install tree(typical example:
+        path traversal via `..` segments resolved to a host root path);
+        threat model is NOT a fully-compromised subprocess(in which case
+        the entire user account is already breached and framework-level
+        containment cannot recover)."""
+        try:
+            resolved = src.resolve()
+        except (OSError, RuntimeError) as exc:
+            # OSError on Windows for invalid UNC; RuntimeError for symlink loop
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker: outputs.{output_kind} path could not be "
+                f"resolved: {src} ({type(exc).__name__}: {exc})"
+            ) from exc
+        # Path.is_relative_to was added in Python 3.9; use it directly.
+        if not resolved.is_relative_to(self.comfy_output_root):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker: outputs.{output_kind} path {resolved!r} "
+                f"is outside comfy_output_root {self.comfy_output_root!r}; "
+                f"refusing to read bytes from unverified location. Configure "
+                f"FORGEUE_COMFY_OUTPUT_ROOT env var if your ComfyUI install "
+                f"writes outputs to a non-default directory."
+            )
 
     def generate_mesh(
         self,
@@ -828,6 +888,10 @@ class ComfyAgentWorker(ComfyWorker):
                     f"ComfyAgentWorker.generate_mesh: outputs.glb path is a symlink, "
                     f"refusing to follow: {src}"
                 )
+            # OpenSpec change `comfy-agent-cli-path-containment-hardening`
+            # (2026-05-04 follow-on for G11-F2):assert path under
+            # `comfy_output_root` before read_bytes
+            self._assert_path_within_comfy_output_root(src, output_kind="glb")
             glb_bytes = src.read_bytes()
             # GLB magic bytes 校验:`b"glTF"`(4-byte signature for binary glTF)
             if glb_bytes[:4] != b"glTF":
@@ -1028,9 +1092,7 @@ class ComfyAgentWorker(ComfyWorker):
         for src_str in audio_paths:
             src = Path(src_str)
             # F-Plan-4 round-2 path trust-boundary 防护(沿 image / mesh G11 R2 fix
-            # `comfy_worker.py:541-554` / `:805-814`;F-Plan-R7-C symmetry argument
-            # accepted-claude — 不加 path containment,留 follow-on
-            # `comfy-agent-cli-path-containment-hardening`)
+            # `comfy_worker.py:541-554` / `:805-814`)
             if not src.is_file():
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.generate_audio: outputs.audio path does not exist: {src}"
@@ -1040,6 +1102,11 @@ class ComfyAgentWorker(ComfyWorker):
                     f"ComfyAgentWorker.generate_audio: outputs.audio path is a symlink, "
                     f"refusing to follow: {src}"
                 )
+            # OpenSpec change `comfy-agent-cli-path-containment-hardening`
+            # (2026-05-04 follow-on for G11-F2):assert path under
+            # `comfy_output_root` before read_bytes(R7-C `disputed-permanent-drift`
+            # 之 follow-on commitment 兑现)
+            self._assert_path_within_comfy_output_root(src, output_kind="audio")
             # D10:扩展名 whitelist + magic bytes 二次校验(F5 round-1 mandatory)
             ext = src.suffix.lower().lstrip(".")
             if ext not in self._AUDIO_FORMAT_WHITELIST:
