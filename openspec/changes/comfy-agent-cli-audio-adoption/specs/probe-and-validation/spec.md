@@ -25,9 +25,16 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 - `test_generate_audio_unsupported_extension_ogg_raises_unsupported_response`
 - `test_generate_audio_metadata_records_comfy_provenance` (worker side: `AudioCandidate.metadata` contains `comfy_manifest`, `comfy_params_snapshot`, `comfy_capability="audio"`, `comfy_original_filename`, `comfy_subprocess_run_metadata`)
 - `test_generate_audio_metadata_snapshot_is_independent_copy` (snapshot via `dict(spec.get("comfy_params") or {})`; mutating caller's dict after call does NOT change snapshot)
-- `test_generate_audio_metadata_best_effort_when_comfy_does_not_emit` (duration_seconds / sample_rate fall back to None when ComfyUI agent CLI stdout JSON does not expose them)
+- `test_generate_audio_metadata_best_effort_when_comfy_does_not_emit` (duration_seconds / sample_rate fall back to None when ComfyUI agent CLI stdout JSON does not expose them — in this change scope, always None)
 - `test_generate_audio_does_not_mutate_caller_spec_comfy_params` (audio path injects nothing into spec; in contrast to mesh which injects `input_image` filename)
 - `test_generate_audio_does_not_read_forgeue_comfy_input_dir_env_var` (env var is mesh-specific; audio path SHALL NOT raise when env var is unset)
+
+**Per-candidate loop (F-Plan-3 round-2 plan, test_comfy_subprocess.py extension; mirrors image / mesh worker `for i in range(max(1, num_candidates))` patterns at `comfy_worker.py:427` and `:689`):**
+- `test_generate_audio_runs_subprocess_num_candidates_times_when_num_gt_one` (num=3 triggers 3 `_run_once_audio` invocations; each iteration uses `seed = (caller_seed or 0) + i`; aggregated `list[AudioCandidate]` has length 3 when each `outputs.audio` returns 1 file; mock subprocess to assert call_count == 3)
+
+**Path trust-boundary protection (F-Plan-4 round-2 plan, test_comfy_subprocess.py extension; mirrors image / mesh G11 R2 fix at `comfy_worker.py:541-554` and `:805-814` "reject symlinks ... to prevent a buggy / compromised agent CLI from redirecting reads to arbitrary host files"):**
+- `test_generate_audio_missing_path_raises_unsupported_response` (`outputs.audio` returns a path that does not exist on filesystem → `WorkerUnsupportedResponse` with message naming the missing path; NO `read_bytes()` is attempted)
+- `test_generate_audio_symlink_path_raises_unsupported_response` (`outputs.audio` returns a symlink path → `WorkerUnsupportedResponse` with message naming the symlink; NO `read_bytes()` is attempted; this protects against `../../etc/secrets`-style symlink attacks from a buggy / compromised agent CLI)
 
 **Audio executor dispatch (test_generate_audio_comfy.py, NEW file):**
 - `test_should_use_comfy_worker_path_returns_true_for_comfy_local_audio_route`

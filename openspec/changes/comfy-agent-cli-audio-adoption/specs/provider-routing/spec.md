@@ -109,9 +109,13 @@ The system SHALL implement `ComfyAgentWorker.generate_audio(spec: dict, num_cand
 
 2. Validate outputs via the capability-aware `_validate_outputs(outputs)` table-driven method per the existing Requirement "ComfyAgentWorker output validation is capability-aware (REQUIRED + auxiliary + rejected)" (which this change MODIFIES to fill in the audio row)
 
-3. For each path in `outputs.audio` (string list of **absolute paths** per `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` — the agent CLI returns absolute paths under `D:/AI/ComfyUI/outputs/main/<date>/<project>/...`, NOT relative paths; F4 round-2 修订基于 probe 实测结果):
-   - Detect the format by `Path(abs_path).suffix.lower()[1:]` (strip leading dot); the bare format string MUST be in the whitelist `{"flac", "mp3", "wav"}`; if the extension is not in the whitelist, raise `WorkerUnsupportedResponse` listing the unsupported extension and the supported whitelist (the wrapper layer at `_generate_via_comfy_worker` will translate this to `AudioWorkerUnsupportedResponse`)
-   - Read the file bytes via `data = Path(abs_path).read_bytes()`
+3. For each path in `outputs.audio` (string list of **absolute paths** per `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` — the agent CLI returns absolute paths under `D:/AI/ComfyUI/outputs/main/<date>/<project>/...`, NOT relative paths; F4 round-1 修订基于 probe 实测结果):
+   - `src = Path(abs_path)`
+   - **Path trust-boundary 防护**(F-Plan-4 round-2 plan 修订:mirror image / mesh G11 R2 fix at `src/framework/providers/workers/comfy_worker.py:541-554` and `:805-814`, which reject symlinks "to prevent a buggy / compromised agent CLI from redirecting reads to arbitrary host files (e.g. /etc/secrets via ../symlink)"):
+     - If `not src.is_file()`: raise `WorkerUnsupportedResponse(f"ComfyAgentWorker: outputs.audio path does not exist: {src}")`
+     - If `src.is_symlink()`: raise `WorkerUnsupportedResponse(f"ComfyAgentWorker: outputs.audio path is a symlink, refusing to follow: {src}")`
+   - Detect the format by `src.suffix.lower()[1:]` (strip leading dot); the bare format string MUST be in the whitelist `{"flac", "mp3", "wav"}`; if the extension is not in the whitelist, raise `WorkerUnsupportedResponse` listing the unsupported extension and the supported whitelist (the wrapper layer at `_generate_via_comfy_worker` will translate this to `AudioWorkerUnsupportedResponse`)
+   - Read the file bytes via `data = src.read_bytes()`
 
 4. **Magic bytes second-pass validation** (F5 round-2 修订:mandatory, mirrors Phase 1 mesh FR-WORKER-006 GLB magic gate):
    - `flac` → `data[:4] == b"fLaC"` (FLAC magic per RFC 9639)
@@ -121,7 +125,7 @@ The system SHALL implement `ComfyAgentWorker.generate_audio(spec: dict, num_cand
 
 5. Construct `AudioCandidate(data=data, format=ext, metadata={"comfy_manifest": spec["comfy_workflow"], "comfy_params_snapshot": dict(spec.get("comfy_params") or {}), "comfy_capability": "audio", "comfy_original_filename": Path(abs_path).name, "comfy_subprocess_run_metadata": {...exit_code, total_seconds, ...}}, duration_seconds=None, sample_rate=None)` (F3 round-2:duration_seconds / sample_rate are top-level fields; F4 round-2:both are `None` in this change scope because ComfyUI agent CLI `extract_outputs` does NOT expose audio metadata — the `outputs.metadata.audio` JSON path does NOT exist in the agent CLI envelope per probe in `notes/audio_subprocess_probe_20260503.md`; follow-on change `audio-metadata-parser` may introduce mutagen / stdlib `wave` parsing)
 
-6. Return `list[AudioCandidate]` of length matching `len(outputs.audio)` (which MAY differ from `num_candidates` depending on whether ComfyUI's batch mode is used by the manifest; per probe, the registered audio manifests have a single SaveAudioMP3 node and produce 1 file per subprocess run, so `num_candidates > 1` is implemented by the executor running multiple subprocess invocations — mirroring Phase 1 mesh's `_run_mesh_subprocess` per-candidate loop)
+6. Return `list[AudioCandidate]` aggregated across all `num_candidates` per-candidate subprocess invocations (F-Plan-3 round-2 plan 修订:`generate_audio` SHALL implement an internal `for i in range(max(1, num_candidates)): call_seed = (seed or 0) + i; ...` loop calling a private `_run_once_audio` helper per candidate — mirroring image / mesh worker patterns at `src/framework/providers/workers/comfy_worker.py:427` and `:689`. Per F4 round-1 probe, the registered audio manifests have a single SaveAudioMP3 node producing 1 file per subprocess run, so `num_candidates > 1` requires multiple subprocess invocations; the wrapper layer at `_generate_via_comfy_worker` SHALL NOT need a second outer loop — `generate_audio` aggregates internally)
 
 #### Scenario: generate_audio detects FLAC format from file extension and reads bytes
 

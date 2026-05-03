@@ -255,7 +255,7 @@ class AudioWorkerTimeout(AudioWorkerError): ...
 class AudioWorkerUnsupportedResponse(AudioWorkerError): ...
 ```
 
-**`GenerateAudioExecutor._generate_via_comfy_worker` 内部 retry loop**(F2 round-2 修订:三 except 块拆分,timeout 才 retry,deterministic 不 retry,wrap 必须用 `from exc`,**不**裸 `raise`;对照 `generate_mesh.py:160-172` Phase 1 实装):
+**`GenerateAudioExecutor._generate_via_comfy_worker` 内部 retry loop**(F2 round-1 修订:三 except 块拆分,timeout 才 retry,deterministic 不 retry,wrap 必须用 `from exc`,**不**裸 `raise`;对照 `generate_mesh.py:160-172` Phase 1 实装。F-Plan-6 round-2 plan 修订:`timeout_s` 来自 caller `cfg.get("worker_timeout_s")`,NOT `policy.timeout_seconds`(`RetryPolicy` schema 没此字段)):
 
 ```python
 def _generate_via_comfy_worker(
@@ -264,9 +264,9 @@ def _generate_via_comfy_worker(
     spec: dict,
     num: int,
     seed: int | None,
-    timeout_s: float,
+    timeout_s: float,  # F-Plan-6: from cfg.get("worker_timeout_s") in execute()
 ) -> list[AudioCandidate]:
-    policy = ctx.step.retry_policy  # 顶层字段 per task.py:37(NOT ctx.step.config.policy)
+    policy = ctx.step.retry_policy  # 顶层字段 per task.py:37(NOT ctx.step.config.policy);RetryPolicy 仅含 max_attempts/backoff/retry_on
     attempts = policy.max_attempts if policy else 2  # 本地非 premium per ADR-007 边界
     last_exc: AudioWorkerError | None = None
     worker = ComfyAgentWorker(model_id="comfy/local-audio", ...)
@@ -309,19 +309,31 @@ def _generate_via_comfy_worker(
 
 **决策**(F5 round-2 修订:magic bytes 二次校验从「不强制」反转为「强制」,沿 Phase 1 mesh FR-WORKER-006 GLB magic 二次校验模式;F4 round-2 修订:`outputs.metadata.audio` 路径不存在,duration / sample_rate 顶层字段固定 None):
 
-`ComfyAgentWorker.generate_audio` 实装步骤:
+`ComfyAgentWorker.generate_audio` 实装步骤(F-Plan-3 + F-Plan-4 round-2 plan 修订:per-candidate loop + path trust-boundary 防护):
 
-1. 调 `_run_subprocess_and_validate(spec, timeout_s) -> dict`(Phase 1 已存在的 private helper),subprocess 跑 `python -m comfyui_api run <manifest>` 拿 stdout JSON envelope
-2. `_validate_outputs(outputs)`(Phase 1 三段表)校验 `outputs.audio` non-empty + 无 rejected key(`outputs.images / glb / video` 非空 raise)
-3. 遍历 `outputs.audio`(string list of absolute paths,per F4 probe `runner.py::extract_outputs` 真源 — 不是相对路径,**不**需要 `_resolve_output_path` 拼接)
-4. 检测扩展名:`Path(abs_path).suffix.lower()[1:]` ∈ `{"flac", "mp3", "wav"}`;不在 raise `WorkerUnsupportedResponse`;为 `AudioCandidate.format` 字段
-5. 读 bytes:`data = Path(abs_path).read_bytes()`
-6. **Magic bytes 二次校验**(F5 round-2 修订:**强制**,与扩展名一致才接受,否则 raise):
+1. **Per-candidate loop**(F-Plan-3 round-2:对照 image / mesh worker `comfy_worker.py:427` / `:689` `for i in range(max(1, num_candidates)): call_seed = (seed or 0) + i; ...` 模式;`num_candidates > 1` 由 worker 内部 multi-subprocess 实现,**不**依赖 caller 多次调用)。每次 iteration:
+   - 计算 `call_seed = (seed or 0) + i`
+   - 拷贝 `params_for_call = dict(comfy_params)` + `params_for_call.setdefault("seed", call_seed)`
+   - 调 helper `_run_once_audio(comfy_workflow, params_for_call, params_snapshot=dict(params_for_call), call_seed, per_call_timeout)`
+   - extend results
+
+`_run_once_audio` 内部:
+
+2. 调 `_run_subprocess_and_validate(spec_for_call, timeout_s) -> dict`(Phase 1 已存在的 private helper),subprocess 跑 `python -m comfyui_api run <manifest>` 拿 stdout JSON envelope
+3. `_validate_outputs(outputs)`(Phase 1 三段表)校验 `outputs.audio` non-empty + 无 rejected key(`outputs.images / glb / video` 非空 raise)
+4. 遍历 `outputs.audio`(string list of absolute paths,per F4 round-1 probe `runner.py::extract_outputs` 真源 — 不是相对路径,**不**需要 `_resolve_output_path` 拼接):
+   - `src = Path(abs_path)`
+   - **Path trust-boundary 防护**(F-Plan-4 round-2 plan 修订:对照 image / mesh G11 R2 fix `comfy_worker.py:541-554` / `:805-814`「reject symlinks ... to prevent a buggy/compromised agent CLI from redirecting reads to arbitrary host files」):
+     - `if not src.is_file(): raise WorkerUnsupportedResponse(f"outputs.audio path does not exist: {src}")`
+     - `if src.is_symlink(): raise WorkerUnsupportedResponse(f"outputs.audio path is a symlink, refusing to follow: {src}")`
+   - 检测扩展名:`ext = src.suffix.lower()[1:]` ∈ `{"flac", "mp3", "wav"}`;不在 raise `WorkerUnsupportedResponse`;为 `AudioCandidate.format` 字段
+5. 读 bytes:`data = src.read_bytes()`
+6. **Magic bytes 二次校验**(F5 round-1 修订:**强制**,与扩展名一致才接受,否则 raise):
    - `flac` → `data[:4] == b"fLaC"`(FLAC magic per RFC 9639)
    - `mp3` → `data[:3] == b"ID3"` OR `data[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2")`(ID3v2 tag 或 MPEG frame sync)
    - `wav` → `data[:4] == b"RIFF"` AND `data[8:12] == b"WAVE"`(RIFF chunk + WAVE format)
    - 不匹配:raise `WorkerUnsupportedResponse(f"audio format mismatch: extension={ext} but magic bytes={data[:12].hex()}")`
-7. 构造 `AudioCandidate(data=data, format=ext, metadata={"comfy_manifest": ..., "comfy_params_snapshot": dict(spec.get("comfy_params") or {}), "comfy_capability": "audio", "comfy_original_filename": Path(abs_path).name, "comfy_subprocess_run_metadata": {...}}, duration_seconds=None, sample_rate=None)` ×N(per F4:duration / sample_rate 在本 change scope 始终 None,因 ComfyUI agent CLI `extract_outputs` 不暴露 — 见 `notes/audio_subprocess_probe_20260503.md` OQ-3)
+7. 构造 `AudioCandidate(data=data, format=ext, metadata={"comfy_manifest": ..., "comfy_params_snapshot": params_snapshot, "comfy_capability": "audio", "comfy_original_filename": src.name, "comfy_subprocess_run_metadata": {...}}, duration_seconds=None, sample_rate=None)` per `outputs.audio` 路径(per F4 round-1:duration / sample_rate 在本 change scope 始终 None,因 ComfyUI agent CLI `extract_outputs` 不暴露 — 见 `notes/audio_subprocess_probe_20260503.md` OQ-3)
 
 **理由**:
 - **扩展名**优先于 manifest 声明(`outputs.primary: audio/flac` 是 hint,SaveAudioMP3 节点实际写出格式 hash 节点参数;真相在文件本身)
@@ -374,6 +386,8 @@ def _generate_via_comfy_worker(
 ## Migration Plan
 
 **Backward compatibility**:本 change 是纯 additive — 不删除 / 不修改现有 image / mesh capability 行为,所有 audio 相关 entry 都是新建。Phase 1 锁定的 bundle 协议 `comfy_workflow` + `comfy_params` + `comfy_lifecycle` 三字段不动。
+
+**L2 evidence archive gate**(F-Plan-2 round-2 plan 修订):L2 live smoke evidence 是 **HARD BLOCKER for archive**(沿 Phase 1 mesh archive gate 模式 [archive/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/execution/execution_plan.md:162-191](openspec/changes/archive/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/execution/execution_plan.md#L162));若 user 当前无 ComfyUI host 或 Stable Audio Open 模型权重未就绪,**S5 标 blocked**(`verification/verify_report.md` 显式记录 blocker reason);`/forgeue:change-finish` archive gate 阻断;`docs/acceptance/acceptance_report.md` Phase 2 audio 行**不**标通过直到 L2 full pass 后 backfill。**禁止 post-archive defer L2 evidence**(沿 Phase 1 image change 已建立的先例)。
 
 **Apply 顺序(对照 Phase 1 8-commit chain,见 tasks.md)**:
 

@@ -145,8 +145,8 @@ Single change scope(`framework.providers.workers.audio_worker` 新建 + `comfy_w
 2. **§3 ModelRegistry config 扩展**(commit 2)可与 §4 / §5 并行(无依赖)
 3. **§7 DryRunPass + §8 examples bundle + §9 probe**(commit 6 / 7 / 8)是 §4-§6 的下游 — fence 守门 examples bundle loader,所以 §8.2 fence 必须在 §8.1 bundle commit 同 commit 或 head commit 之前 head pass
 4. **§10 Documentation Sync Gate**(commit 9-12)在所有 production code commit 之后
-5. **§11 L2 evidence**(commit 13)需要用户启 ComfyUI server + Stable Audio Open 模型权重缓存(首次 ~2GB)— **non-blocking** for archive(沿 Phase 1 mesh 模式;若 user 不能跑 L2,留 evidence pending marker,archive 时不阻断)
-6. **§12 codex G6/G11 hooks** 在 §10 完成后跑;G11 mixed scope blocker resolved 后 → archive
+5. **§11 L2 evidence**(commit 13)— **HARD BLOCKER for archive**(F-Plan-2 round-2 plan 修订:沿 Phase 1 mesh archive gate 模式 [archive/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/execution/execution_plan.md:162-191](openspec/changes/archive/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/execution/execution_plan.md#L162) 显式锁定「HARD BLOCKER + 禁止 post-archive defer L2 evidence + 无 ComfyUI host 时 S5 标 blocked,不允许 archive」)。需要用户启 ComfyUI server + Stable Audio Open 模型权重缓存(首次 ~2GB);若 user 当前无 ComfyUI host,**S5 标 blocked**,在 `verification/verify_report.md` 显式记录 blocker reason(`l2_evidence_pending: comfyui_host_unavailable`),`/forgeue:change-finish` archive gate 阻断;`docs/acceptance/acceptance_report.md` Phase 2 audio 行**不**标通过,直到 L2 full pass 后 backfill。**禁止 post-archive defer L2 evidence**(沿 Phase 1 image change 已建立的先例)。
+6. **§12 codex G6/G11 hooks** 在 §10 完成后跑;G11 mixed scope blocker resolved 后 → S5 阻断 release(若 L2 evidence 未到位)→ L2 full pass 后 archive
 
 **关键依赖锁**(以下顺序不能改):
 - §2.6(test_audio_worker.py 5 fence)必须在 §2.1-§2.5 production AudioWorker baseline 之后(否则 fence 引用不存在的 class)
@@ -183,7 +183,7 @@ Single change scope(`framework.providers.workers.audio_worker` 新建 + `comfy_w
 | F2 retry/wrap 三 except 块 implementation 时漏掉某个 inner exception 类型 | §5.5 fence 显式覆盖 timeout / unsupported / generic 三路 + deterministic short-circuit fence(不 retry)+ wrap with `from exc` chain fence 守门 |
 | F5 magic bytes 校验对 mp3 frame sync 误判(MPEG layer 1/2/3 sync bytes 多变体) | §4.2 伪代码列出 `0xFF 0xFB / 0xFA / 0xF3 / 0xF2` 4 种常见 MPEG-1 / MPEG-2 layer III sync;若 implementation 期间发现遗漏(如 layer II `0xFD`),round-2 修订 design D10 + spec |
 | ExecutorRegistry 注册 order 影响:`framework.run` 注册 audio executor 必须在 ExecutorRegistry init 之后 + Orchestrator 启动之前 | §5.4 显式说明,与 generate_image / generate_mesh 注册同位置 |
-| Live smoke L2 evidence 跑不通(用户 ComfyUI server / 模型权重未就绪) | §11 evidence non-blocking;留 `notes/live_smoke_audio_pending.md` marker;archive 不阻断;follow-up:用户跑后补 evidence |
+| Live smoke L2 evidence 跑不通(用户 ComfyUI server / 模型权重未就绪) | F-Plan-2 round-2 plan 修订:**L2 evidence HARD BLOCKER for archive**(沿 Phase 1 mesh 模式)— S5 标 blocked,`verification/verify_report.md` 显式记录 blocker reason,`/forgeue:change-finish` archive gate 阻断;`docs/acceptance/acceptance_report.md` Phase 2 audio 行**不**标通过直到 L2 full pass。**禁止 post-archive defer**(无 ComfyUI host 操作者不可推进 archive)|
 | Stable Audio Open license 限制对企业用户 | F6 round-2 已加 design Risks + CLAUDE.md note;用户可切 manifest 绕过 |
 
 ---

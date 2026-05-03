@@ -128,32 +128,63 @@
       "audio": {"images", "glb", "video"},  # NEW
   }
   ```
-- [ ] 4.2 在 `ComfyAgentWorker` 加新方法 `generate_audio(spec, num_candidates, seed, timeout_s) -> list[AudioCandidate]`(NOT part of `ComfyWorker` ABC;F4 + F5 round-2 修订:扩展名 + **强制** magic bytes 二次校验;duration / sample_rate 顶层 None):
+- [ ] 4.2 在 `ComfyAgentWorker` 加新方法 `generate_audio(spec, num_candidates, seed, timeout_s) -> list[AudioCandidate]`(NOT part of `ComfyWorker` ABC;F4+F5 round-1 design + F-Plan-3+F-Plan-4 round-2 plan 修订:扩展名 + **强制** magic bytes 二次校验 + **per-candidate loop** + **path trust-boundary 防护**(`is_file` + `is_symlink`);duration / sample_rate 顶层 None):
   - 守门:`if self._capability != "audio": raise WorkerUnsupportedResponse(f"generate_audio called on _capability={self._capability!r}")`
-  - 调既存 helper `_run_subprocess_and_validate(spec, timeout_s)` 拿 outputs dict
-  - `outputs.audio` 是 **absolute paths string list**(per F4 probe `runner.py::extract_outputs` 真源,**不**需要拼根目录;见 `notes/audio_subprocess_probe_20260503.md` OQ-1)
-  - 遍历 `outputs.audio`:
-    - `ext = Path(abs_path).suffix.lower()[1:]` 检测 format(去掉 leading dot)
-    - 不在 `{"flac","mp3","wav"}` whitelist → raise `WorkerUnsupportedResponse(f"unsupported audio format {ext!r}, expected one of {{flac,mp3,wav}}")`
-    - `data = Path(abs_path).read_bytes()`
-    - **F5 round-2 强制 magic bytes 二次校验**:
-      ```python
-      magic_ok = (
-          (ext == "flac" and data[:4] == b"fLaC") or
-          (ext == "mp3" and (data[:3] == b"ID3" or data[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2"))) or
-          (ext == "wav" and data[:4] == b"RIFF" and data[8:12] == b"WAVE")
-      )
-      if not magic_ok:
-          raise WorkerUnsupportedResponse(f"audio format mismatch: extension={ext!r} but magic bytes={data[:12].hex()}")
-      ```
-    - 构造 `AudioCandidate(data=data, format=ext, metadata={"comfy_manifest": spec["comfy_workflow"], "comfy_params_snapshot": dict(spec.get("comfy_params") or {}), "comfy_capability": "audio", "comfy_original_filename": Path(abs_path).name, "comfy_subprocess_run_metadata": {...}}, duration_seconds=None, sample_rate=None)`(F3 round-2:顶层字段;F4 round-2:duration / sample_rate 本 change scope 始终 None,因 ComfyUI agent CLI `extract_outputs` 不暴露 audio metadata)
-  - 返回 list 长度 = `len(outputs.audio)`(单 SaveAudioMP3 节点通常 1 file per run,per F4 probe;`num_candidates > 1` 由 caller 多次 subprocess 实现)
+  - 解析 spec:`comfy_workflow = spec["comfy_workflow"]`;`comfy_params = spec.get("comfy_params") or {}`;`per_call_timeout = float(timeout_s) if timeout_s else 300.0`
+  - **F-Plan-3 round-2 per-candidate loop**(对照 image / mesh 实装 [comfy_worker.py:427](src/framework/providers/workers/comfy_worker.py#L427) / [:689](src/framework/providers/workers/comfy_worker.py#L689) `for i in range(max(1, num_candidates))`):
+    ```python
+    results: list[AudioCandidate] = []
+    for i in range(max(1, num_candidates)):
+        call_seed = (seed or 0) + i
+        params_for_call = dict(comfy_params)
+        params_for_call.setdefault("seed", call_seed)
+        # 调 _run_once_audio(comfy_workflow, params_for_call, call_seed, per_call_timeout)
+        # 内部:_run_subprocess_and_validate -> outputs dict -> 遍历 outputs.audio 生成 candidates
+        results.extend(self._run_once_audio(
+            comfy_workflow=comfy_workflow,
+            params=params_for_call,
+            params_snapshot=dict(params_for_call),  # snapshot 隔离 caller spec mutation
+            seed=call_seed,
+            timeout_s=per_call_timeout,
+        ))
+    return results
+    ```
+  - `_run_once_audio(comfy_workflow, params, params_snapshot, seed, timeout_s) -> list[AudioCandidate]` 内部:
+    - 构造 spec_for_call = `{"comfy_workflow": comfy_workflow, "comfy_params": params, "comfy_lifecycle": "none"}`
+    - 调既存 helper `_run_subprocess_and_validate(spec_for_call, timeout_s)` 拿 outputs dict(三段表 `_validate_outputs` 守门已生效)
+    - `outputs.audio` 是 **absolute paths string list**(per F4 probe `runner.py::extract_outputs` 真源;见 `notes/audio_subprocess_probe_20260503.md` OQ-1)
+    - 遍历 `outputs.audio`:
+      - `src = Path(abs_path)`
+      - **F-Plan-4 round-2 path trust-boundary 防护**(对照 image / mesh 实装 [comfy_worker.py:541-554](src/framework/providers/workers/comfy_worker.py#L541-L554):G11 R2 fix「reject symlinks ... to prevent a buggy/compromised agent CLI from redirecting reads to arbitrary host files」):
+        ```python
+        if not src.is_file():
+            raise WorkerUnsupportedResponse(f"ComfyAgentWorker: outputs.audio path does not exist: {src}")
+        if src.is_symlink():
+            raise WorkerUnsupportedResponse(f"ComfyAgentWorker: outputs.audio path is a symlink, refusing to follow: {src}")
+        ```
+      - `ext = src.suffix.lower()[1:]` 检测 format(去掉 leading dot)
+      - 不在 `{"flac","mp3","wav"}` whitelist → raise `WorkerUnsupportedResponse(f"unsupported audio format {ext!r}, expected one of {{flac,mp3,wav}}")`
+      - `data = src.read_bytes()`
+      - **F5 round-1 强制 magic bytes 二次校验**:
+        ```python
+        magic_ok = (
+            (ext == "flac" and data[:4] == b"fLaC") or
+            (ext == "mp3" and (data[:3] == b"ID3" or data[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2"))) or
+            (ext == "wav" and data[:4] == b"RIFF" and data[8:12] == b"WAVE")
+        )
+        if not magic_ok:
+            raise WorkerUnsupportedResponse(f"audio format mismatch: extension={ext!r} but magic bytes={data[:12].hex()}")
+        ```
+      - 构造 `AudioCandidate(data=data, format=ext, metadata={"comfy_manifest": comfy_workflow, "comfy_params_snapshot": params_snapshot, "comfy_capability": "audio", "comfy_original_filename": src.name, "comfy_subprocess_run_metadata": {...}}, duration_seconds=None, sample_rate=None)`(F3 round-1:顶层字段;F4 round-1:duration / sample_rate 本 change scope 始终 None,因 ComfyUI agent CLI `extract_outputs` 不暴露 audio metadata)
+    - 返回 list 长度 = `len(outputs.audio)`(单 SaveAudioMP3 节点通常 1 file per run,per F4 probe;`num_candidates > 1` 由 outer per-candidate loop 多次 subprocess 实现 — F-Plan-3 round-2 修订)
   - 完整实装参考 design.md D10 + spec/provider-routing/spec.md "ComfyAgentWorker.generate_audio reads audio bytes and detects format from file extension"
 - [ ] 4.3 `__init__` 守门错误消息列表自动包含 `comfy/local-audio`(因 4.1 字典扩展;无需手动改 error string,但检查 message 现在列出 3 个 supported ids)
 - [ ] 4.4 `tests/unit/test_comfy_subprocess.py` 加 audio fence(具体名见 specs/probe-and-validation/spec.md "ComfyUI audio capability dispatch has dedicated regression fences" Requirement 列表):
   - capability dispatch:`test_capability_inferred_audio_for_comfy_local_audio` + `test_unknown_model_id_raises_at_init_lists_audio_in_supported`
   - 三段表 audio 行:`test_audio_mode_raises_on_missing_outputs_audio` + `test_audio_mode_raises_on_empty_outputs_audio` + `test_audio_mode_rejects_outputs_images` + `test_audio_mode_rejects_outputs_glb` + `test_audio_mode_rejects_outputs_video` + `test_audio_mode_no_auxiliary_log_emission`
-  - **F5 round-2 magic bytes 二次校验**:`test_generate_audio_flac_magic_bytes_match_accepts` + `test_generate_audio_flac_magic_bytes_mismatch_raises_unsupported_response` + `test_generate_audio_mp3_id3_tag_magic_match_accepts` + `test_generate_audio_mp3_mpeg_frame_sync_magic_match_accepts` + `test_generate_audio_mp3_magic_bytes_mismatch_raises_unsupported_response` + `test_generate_audio_wav_riff_wave_magic_match_accepts` + `test_generate_audio_wav_magic_bytes_mismatch_raises_unsupported_response`(7 fence)
+  - **F5 round-1 design magic bytes 二次校验**:`test_generate_audio_flac_magic_bytes_match_accepts` + `test_generate_audio_flac_magic_bytes_mismatch_raises_unsupported_response` + `test_generate_audio_mp3_id3_tag_magic_match_accepts` + `test_generate_audio_mp3_mpeg_frame_sync_magic_match_accepts` + `test_generate_audio_mp3_magic_bytes_mismatch_raises_unsupported_response` + `test_generate_audio_wav_riff_wave_magic_match_accepts` + `test_generate_audio_wav_magic_bytes_mismatch_raises_unsupported_response`(7 fence)
+  - **F-Plan-3 round-2 plan per-candidate loop**(对照 image / mesh 模式;new):`test_generate_audio_runs_subprocess_num_candidates_times_when_num_gt_one`(num=3 触发 3 次 `_run_once_audio` + 3 个 candidate;每次 seed 递增 +1)
+  - **F-Plan-4 round-2 plan path trust-boundary 防护**(对照 image / mesh G11 R2 fix;new):`test_generate_audio_missing_path_raises_unsupported_response`(`outputs.audio` 路径不存在 raise)+ `test_generate_audio_symlink_path_raises_unsupported_response`(symlink raise)(2 fence)
   - regression:`test_image_mode_still_rejects_outputs_audio_after_change` + `test_mesh_mode_still_rejects_outputs_audio_after_change`
   - generate_audio 实装:`test_generate_audio_flac_extension_detection_reads_bytes` + `test_generate_audio_mp3_extension_detection_reads_bytes` + `test_generate_audio_wav_extension_detection_reads_bytes` + `test_generate_audio_unsupported_extension_ogg_raises_unsupported_response` + `test_generate_audio_metadata_records_comfy_provenance` + `test_generate_audio_metadata_snapshot_is_independent_copy` + `test_generate_audio_metadata_best_effort_when_comfy_does_not_emit` + `test_generate_audio_does_not_mutate_caller_spec_comfy_params` + `test_generate_audio_does_not_read_forgeue_comfy_input_dir_env_var`
   - 共 +14 fence;参考 mesh 模式 mock subprocess.run 边界,真实 FLAC bytes(`b"fLaC" + ...` minimal valid)走 `tmp_path`
@@ -170,6 +201,7 @@
     - 不读 `FORGEUE_COMFY_INPUT_DIR` env var(audio 不需要;design D7)
     - 构造 `worker = ComfyAgentWorker(scripts_dir=Path(os.environ["FORGEUE_COMFY_SCRIPTS_DIR"]), model_id="comfy/local-audio", run_id=ctx.run.run_id, project_id=ctx.task.project_id, artifacts_dir=ctx.run_dir, default_lifecycle="none")`
     - 取 retry policy:`policy = ctx.step.retry_policy` (顶层字段 per task.py:37,**不**是 `ctx.step.config.policy`);`attempts = policy.max_attempts if policy else 2`
+    - 取 timeout:`timeout_s = cfg.get("worker_timeout_s")`(F-Plan-6 round-2 plan 修订:对照 [generate_image.py:83](src/framework/runtime/executors/generate_image.py#L83) / [generate_mesh.py:190](src/framework/runtime/executors/generate_mesh.py#L190) 实读法,**不**走 `policy.timeout_seconds`(RetryPolicy schema 没此字段))
     - **F2 round-2 修订三 except 块**(对照 `generate_mesh.py:160-172`,**不**单 except 全 retry,**不**裸 raise):
       ```python
       last_exc: AudioWorkerError | None = None
@@ -197,7 +229,7 @@
     - `spec = cfg.get("spec", {})`(含 comfy_workflow / comfy_params / comfy_lifecycle)
     - `num = int(cfg.get("num_candidates", 1))`(对照 generate_mesh.py:178 习惯)
     - `seed = cfg.get("seed")`(可空)
-    - `timeout_s = float(cfg.get("policy", {}).get("timeout_seconds", 300))`(或顶层 retry_policy 字段;具体对齐 image / mesh executor 当前 cfg 读法)
+    - `timeout_s = cfg.get("worker_timeout_s")`(F-Plan-6 round-2 plan 修订:对照 [generate_image.py:83](src/framework/runtime/executors/generate_image.py#L83) / [generate_mesh.py:190](src/framework/runtime/executors/generate_mesh.py#L190) 实读法;`worker_timeout_s` 在 `step.config` 内,**不**在 `step.retry_policy.timeout_seconds`(RetryPolicy schema 没此字段))
     - `if self._should_use_comfy_worker_path(ctx): candidates = self._generate_via_comfy_worker(ctx, spec, num, seed, timeout_s)`
     - `else: raise AudioWorkerUnsupportedResponse("no audio worker path resolved")`(预留 follow-on remote audio worker 分支)
     - 遍历 candidates,通过 `ctx.repository.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"format": cand.format, "duration_seconds": cand.duration_seconds, "sample_rate": cand.sample_rate, "worker_metadata": dict(cand.metadata), ...})` 持久化
@@ -248,53 +280,66 @@
 
 ## 8. examples/comfy_local_smoke_audio.json bundle(commit 7)
 
-- [ ] 8.1 新建 `examples/comfy_local_smoke_audio.json`(F1 round-2 修订:bundle 顶层字段对齐 [task.py:30-43](src/framework/core/task.py#L30-L43) 真实 `Step` 模型;**不**用 `step.kind`,**不**把 `provider_policy` / `depends_on` 放 `config` 内):
+- [ ] 8.1 新建 `examples/comfy_local_smoke_audio.json`(F-Plan-1 + F-Plan-6 round-2 plan-stage 修订:bundle 真实顶层三段 `task` / `workflow`(无嵌 steps)/ `steps` 并列,对照 [examples/comfy_local_smoke.json](examples/comfy_local_smoke.json) + [examples/comfy_local_smoke_mesh.json](examples/comfy_local_smoke_mesh.json) 实测 schema;`worker_timeout_s` 在 `step.config` 内,**不**在 `retry_policy`(`RetryPolicy` schema 仅含 `max_attempts/backoff/retry_on`,无 `timeout_seconds`)):
   ```json
   {
-    "task_id": "comfy_local_smoke_audio",
-    "project_id": "proj_comfy_audio_smoke",
+    "task": {
+      "task_id": "task_comfy_audio_smoke",
+      "task_type": "asset_generation",
+      "run_mode": "basic_llm",
+      "title": "Local ComfyUI audio smoke (ComfyAgentWorker, text-to-audio single step)",
+      "input_payload": {
+        "prompt": "uplifting electronic dance music, ethereal pads, 130bpm"
+      },
+      "expected_output": {
+        "artifact_types": ["audio_asset"]
+      },
+      "project_id": "proj_comfy_audio_smoke"
+    },
     "workflow": {
-      "workflow_id": "audio_t2a_smoke",
-      "name": "ComfyUI text-to-audio smoke",
+      "workflow_id": "wf_comfy_audio_smoke",
+      "name": "comfy_audio_smoke",
       "version": "1.0.0",
-      "entry_step_id": "audio_t2a",
-      "step_ids": ["audio_t2a"],
-      "steps": [
-        {
-          "step_id": "audio_t2a",
-          "type": "generate",
-          "name": "ComfyUI Stable Audio Open T2A",
-          "capability_ref": "audio.t2a",
-          "provider_policy": {
-            "capability_required": "audio.t2a",
-            "models_ref": "audio_local"
-          },
-          "retry_policy": {
-            "max_attempts": 2,
-            "timeout_seconds": 300
-          },
-          "depends_on": [],
-          "config": {
-            "spec": {
-              "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
-              "comfy_params": {
-                "text": "uplifting electronic dance music, ethereal pads, 130bpm",
-                "negative_prompt": "",
-                "duration_seconds": 10.0,
-                "seed": 42,
-                "steps": 50
-              },
-              "comfy_lifecycle": "none"
+      "entry_step_id": "step_audio",
+      "step_ids": ["step_audio"]
+    },
+    "steps": [
+      {
+        "step_id": "step_audio",
+        "type": "generate",
+        "name": "comfy-local-text-to-audio",
+        "risk_level": "medium",
+        "capability_ref": "audio.t2a",
+        "provider_policy": {
+          "capability_required": "audio.t2a",
+          "models_ref": "audio_local"
+        },
+        "retry_policy": {
+          "max_attempts": 2,
+          "backoff": "fixed",
+          "retry_on": ["timeout", "provider_error"]
+        },
+        "config": {
+          "num_candidates": 1,
+          "seed": 42,
+          "worker_timeout_s": 300,
+          "spec": {
+            "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
+            "comfy_params": {
+              "text": "uplifting electronic dance music, ethereal pads, 130bpm",
+              "negative_prompt": "",
+              "duration_seconds": 10.0,
+              "seed": 42,
+              "steps": 50
             },
-            "num_candidates": 1,
-            "seed": 42
+            "comfy_lifecycle": "none"
           }
         }
-      ]
-    }
+      }
+    ]
   }
   ```
-  注:JSON 字段 / 命名对照 `examples/comfy_local_smoke.json`(image)+ `examples/comfy_local_smoke_mesh.json`(mesh)实际 bundle 模板;`step.type / capability_ref / provider_policy / retry_policy / depends_on / config` 全部顶层(per [task.py:30-43](src/framework/core/task.py#L30-L43))。`retry_policy` 字段名是 Step 顶层(NOT `step.config.policy`,F2 round-2 修订)。
+  注:JSON 顶层三段 `task` / `workflow` / `steps` **并列**(per [workflows/loader.py:34-36](src/framework/workflows/loader.py#L34-L36) 实读 `raw["task"]` + `raw["workflow"]` + `[s for s in raw["steps"]]`);workflow **不**嵌 steps。`worker_timeout_s` 在 `step.config` 内(对照 [generate_image.py:83](src/framework/runtime/executors/generate_image.py#L83) / [generate_mesh.py:190](src/framework/runtime/executors/generate_mesh.py#L190) 实读法 `cfg.get("worker_timeout_s")`)。`retry_policy` 仅含 `RetryPolicy` schema 字段([policies.py:25-30](src/framework/core/policies.py#L25-L30):`max_attempts/backoff/retry_on`),无 `timeout_seconds`。
 - [ ] 8.2 `tests/integration/test_example_bundles_smoke.py` 加 1 fence:`test_comfy_local_smoke_audio_loads_with_audio_local_alias_and_no_workflow_graph`(沿 image / mesh 模式 — 仅 loader-level invariants,不跑 worker)
 - [ ] 8.3 commit 7:`feat(examples): add comfy_local_smoke_audio.json bundle (text-to-audio single step)`
 
@@ -342,12 +387,12 @@
   # FORGEUE_COMFY_INPUT_DIR 不需要(audio 路径无 source bytes)
   python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id audio_smoke_<timestamp>
   ```
-- [ ] 11.4 验证 L2 evidence 客观判定(per spec/examples-and-acceptance/spec.md "Live audio smoke L2 evidence file is real audio bytes" Scenario):
-  - (a) `artifacts/<today>/audio_smoke_<timestamp>/<artifact_id>.flac` 存在
+- [ ] 11.4 验证 L2 evidence 客观判定(per spec/examples-and-acceptance/spec.md "Live audio smoke L2 evidence file is real audio bytes" Scenario;F-Plan-5 round-2 plan 修订:duration 校验删除 — 与 design D10 / artifact-contract spec `duration_seconds=None always` 决策矛盾,本 change scope 不引入 audio metadata parser,留 follow-on `audio-metadata-parser` change):
+  - (a) `artifacts/<today>/audio_smoke_<timestamp>/<artifact_id>.flac`(或 `.mp3` / `.wav` 取决于 manifest 实际输出)存在
   - (b) 文件大小 > 100 KB(避免 0-byte 假成功)
-  - (c) header bytes:`open(..., "rb").read(4) == b"fLaC"`(FLAC magic per RFC 9639)— 若实际是 MP3 / WAV,对应 magic 也接受
-  - (d) duration ≈ `comfy_params.duration_seconds`(±10%)— 用 `mutagen` 或 `wave`/`aifc` 标准库读 header,不用 ffprobe
-- [ ] 11.5 evidence 文件 `notes/live_smoke_audio_<date>.md` 记录:命令行参数 / run_id / artifact_id / 文件大小 / magic bytes / duration / 主观音频质量(用户人工 spot-check 后写)
+  - (c) header bytes 对照 magic table:`flac → b"fLaC"` / `mp3 → b"ID3"` 或 MPEG frame sync(`0xFF 0xFB / 0xFA / 0xF3 / 0xF2`)/ `wav → b"RIFF"` 且 offset 8 `b"WAVE"`(沿 D10 round-1 design magic bytes whitelist;实际 worker 已强制校验,evidence 只做事后 sanity check)
+  - (d) **duration 校验留 follow-on**(F-Plan-5 round-2 plan 修订:本 change scope=不引入 mutagen / wave / aifc,且 wave/aifc 不能解 FLAC/MP3,与 `duration_seconds=None always` 决策一致;follow-on `audio-metadata-parser` change 引入解析后再加 duration±10% 校验)
+- [ ] 11.5 evidence 文件 `notes/live_smoke_audio_<date>.md` 记录:命令行参数 / run_id / artifact_id / 文件大小 / magic bytes / 主观音频质量(用户人工 spot-check 后写;F-Plan-5 round-2 plan 修订:不记 duration,留 follow-on)
 - [ ] 11.6 commit 13:`docs(notes): record live smoke audio L2 evidence (FLAC <size>KB)`(只 commit notes 文件,production code 在 §1-§10 已 commit)
 
 ## 12. Codex review hooks(沿 Phase 1 round 1-5 节奏)
