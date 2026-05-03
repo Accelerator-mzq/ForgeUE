@@ -131,7 +131,7 @@ Single change scope(`framework.providers.workers.audio_worker` 新建 + `comfy_w
 | File | Operation | Responsibility |
 |---|---|---|
 | `notes/audio_subprocess_probe_20260503.md` | ✅ Created | F4 round-1 probe(static read of `runner.py::extract_outputs` + agent CLI list/params 实测;OQ-1/2/3 全部 RESOLVED;ComfyUI server offline 因此真跑 `comfyui_api run` 推到 §11 L2 evidence) |
-| `notes/live_smoke_audio_<date>.md` | Create at §11.5 | L2 evidence 真实 FLAC 落盘:command line / run_id / artifact_id / 文件大小 / magic bytes / duration / 主观音频质量 spot-check |
+| `notes/live_smoke_audio_<date>.md` | Create at §11.5 | L2 evidence 真实 FLAC / MP3 / WAV 落盘:command line / run_id / artifact_id / 文件大小 / magic bytes / 主观音频质量 spot-check(F-Plan-R3-D round-3 修订:duration 校验删除 — 与 design D10 + artifact-contract spec `duration_seconds=None always` 决策一致;留 follow-on `audio-metadata-parser` change 加) |
 | `review/codex_design_review.md` | ✅ Created | codex /codex:adversarial-review verbatim 输出(plugin_task_id=bktgw8l62);6 finding(2 high + 4 medium)|
 | `review/design_cross_check.md` | ✅ Created | Claude `## A`(冻结)+ `## B`(6 row Cross-check Matrix)+ `## C`(disputed_open: 0)+ `## D`(file:line independent verification);所有 6 finding accepted-codex |
 | `verification/verify_report.md` | Create at S5(`/forgeue:change-verify`)| Level 0/1/2 verify_report;12-key audit frontmatter |
