@@ -7,7 +7,7 @@ Phase 2 audio capability 接入的核心阻塞**不是** ComfyUI 协议层(已�
 - 没有 `AudioCandidate` dataclass(`MeshCandidate` 在 [mesh_worker.py:65](src/framework/providers/workers/mesh_worker.py#L65) 已建)
 - 没有 `AudioWorker` ABC(`MeshWorker` 在 [mesh_worker.py:77](src/framework/providers/workers/mesh_worker.py#L77) 已建)
 - 没有 `GenerateAudioExecutor`(`GenerateMeshExecutor` 在 [generate_mesh.py](src/framework/runtime/executors/generate_mesh.py) 已建)
-- 没有 `audio.t2a` step type 注册到 workflow loader
+- 没有 `audio.t2a` capability_ref 在 ExecutorRegistry 注册(F-Plan-R4-C round-4 修订:`audio.t2a` 是 `Step.capability_ref` 字符串,**不**是新 step type 枚举值;ExecutorRegistry 通过 `(StepType.generate, "audio.t2a")` 精确匹配查找,在 `framework.run` 注册;loader.py 不改)
 - 没有 `audio_local` alias(将作为 SRS FR-MODEL-007 第 11 alias)
 
 SRS §7.3 TBD-002「Audio worker(AudioCraft 接入),待音频资产需求明确」—— ComfyUI 本地 audio capability 是 Phase 2 的真实驱动力,本 change 用「第一真实客户」立 audio worker 通用契约,避免先空建 ABC 再反复改(YAGNI)。Phase 1 mesh 复用既有 mesh ABC 是因为 Hunyuan3D / Tripo3D 时代已建好,audio 没有这个 free baseline,所以本 change 比 Phase 1 略大。
@@ -30,7 +30,7 @@ ComfyUI 共享目录暴露 2 个 audio manifest:
 **Goals:**
 
 - 建立 `AudioWorker` ABC 通用契约(类比 `MeshWorker`),`AudioCandidate` dataclass(类比 `MeshCandidate`),异常树 `AudioWorkerError` / `AudioWorkerTimeout` / `AudioWorkerUnsupportedResponse`(类比 mesh 三层)
-- 建立 `GenerateAudioExecutor` 执行器(类比 `GenerateMeshExecutor` 但走 text-to-audio 路径,**不接** source bytes),`audio.t2a` step type 注册
+- 建立 `GenerateAudioExecutor` 执行器(类比 `GenerateMeshExecutor` 但走 text-to-audio 路径,**不接** source bytes),`audio.t2a` capability_ref 注册到 ExecutorRegistry(F-Plan-R4-C round-4 修订:沿用 `StepType.generate` 已有枚举,不新增 step type 表)
 - 在 `ComfyAgentWorker` 4-dict 扩 audio capability 落子,加新方法 `generate_audio(spec, num_candidates, seed, timeout_s) -> list[AudioCandidate]`
 - 注册 `comfy/local-audio` virtual model + `audio_local` alias 到 `ModelRegistry`(SRS FR-MODEL-007 第 11 alias)
 - 提供 `examples/comfy_local_smoke_audio.json` 端到端 bundle + L2 evidence 真实 FLAC 落 `artifacts/`(双终端模式,沿 Phase 1)
@@ -80,7 +80,7 @@ ComfyUI 共享目录暴露 2 个 audio manifest:
 
 ### D3 — Scope split:本 change 仅接 ComfyUI audio + audio worker baseline
 
-**决策**:本 change scope = audio-only ComfyUI capability + AudioWorker ABC + AudioCandidate + GenerateAudioExecutor + audio.t2a step type;远端 AudioCraft 协议接入 + ComfyUI video capability 各自开独立 follow-on change。
+**决策**:本 change scope = audio-only ComfyUI capability + AudioWorker ABC + AudioCandidate + GenerateAudioExecutor + `audio.t2a` capability_ref(F-Plan-R4-C round-4 修订:capability_ref 字符串,**不**是新 step type;沿用 `StepType.generate` 已有枚举);远端 AudioCraft 协议接入 + ComfyUI video capability 各自开独立 follow-on change。
 
 **理由**:沿 Phase 1 D3 split 模式 — 单 change 跨多 provider / 多 capability 风险大,review 难拉齐。Phase 1 mesh 拆分得到的好处:design / spec / tasks 焦点收敛,5 轮 codex review 都对单 capability 充分覆盖。Phase 2 audio 同模式。
 

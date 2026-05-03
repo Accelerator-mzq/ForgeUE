@@ -69,7 +69,7 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 - `test_audio_local_alias_kind_is_audio`
 
 **Workflow loader registration (test_workflow_loader.py extension):**
-- `test_audio_t2a_step_kind_dispatches_to_generate_audio_executor`
+- `test_audio_t2a_capability_ref_dispatches_to_generate_audio_executor`(F-Plan-R4-C round-4 修订:fence 名 step_kind → capability_ref,对照 ExecutorRegistry `(StepType.generate, "audio.t2a")` 真实 dispatch)
 - `test_audio_t2a_step_rejects_hardcoded_model_id_without_alias` (mirror of image / mesh equivalent fence)
 
 **Audio bundle loader contract (test_example_bundles_smoke.py extension):**
@@ -81,7 +81,7 @@ The pre-change image-mode + mesh-mode fences from `comfy-agent-cli-adoption` and
 
 - **GIVEN** the post-change repository
 - **WHEN** `python -m pytest tests/unit/test_comfy_subprocess.py tests/unit/test_generate_audio_comfy.py tests/unit/test_audio_worker.py tests/unit/test_model_registry.py tests/unit/test_workflow_loader.py tests/integration/test_example_bundles_smoke.py -v` runs
-- **THEN** every fence listed above is collected by pytest, runs without skips that aren't documented, and passes; the pre-existing image-mode + mesh-mode fences are still collected and passing; total fence count increases by approximately 30-35 (capability dispatch + three-tier validation audio row + format detection + executor dispatch + exception wrapping + ABC contract + alias registration + workflow loader registration + bundle loader smoke)
+- **THEN** every fence listed above is collected by pytest, runs without skips that aren't documented, and passes; the pre-existing image-mode + mesh-mode fences are still collected and passing; total fence count increases by approximately 30-45 (capability dispatch + three-tier validation audio row + format detection + magic bytes 二次校验 + per-candidate loop + path trust-boundary 防护 + executor dispatch + exception wrapping + ABC contract + alias registration + ExecutorRegistry `(StepType.generate, "audio.t2a")` registration + bundle loader smoke;F-Plan-R4-C round-4 修订:删除 "workflow loader registration" 表述 — 真实是 ExecutorRegistry,**不**改 loader.py)
 
 ### Requirement: ComfyUI audio probe is opt-in and does not run in default test sweep
 

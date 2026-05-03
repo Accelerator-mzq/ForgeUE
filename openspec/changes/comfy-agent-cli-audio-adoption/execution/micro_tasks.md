@@ -237,7 +237,7 @@ note: |
 
 ## Commit 13 — L2 evidence(`tasks.md` §11)
 
-> Non-blocking;依赖用户启 ComfyUI server + Stable Audio Open 模型权重就绪。
+> **HARD BLOCKER for archive**(F-Plan-R4-A round-4 plan 修订:对齐 design.md Migration Plan + execution_plan.md Critical Path §5;沿 Phase 1 mesh archive gate 模式)。L2 live smoke evidence 必须满足 (1) 文件存在 / (2) > 100KB / (3) magic bytes 三项才允许 archive;否则 S5 标 blocked,`/forgeue:change-finish` 阻断。依赖用户启 ComfyUI server + Stable Audio Open 模型权重就绪。**禁止 post-archive defer L2 evidence**。
 
 - [ ] 10.1 用户准备:终端 1 起 `python -m factory_v3 serve`;首次拉 Stable Audio Open ~2GB 模型权重(从 HuggingFace)— 锚点 tasks §11.1 / §11.2
 - [ ] 10.2 终端 2:`export FORGEUE_COMFY_SCRIPTS_DIR=...; python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id audio_smoke_<timestamp>` — 锚点 tasks §11.3
@@ -293,3 +293,4 @@ implementation 期间触发 4 类 DRIFT(per CLAUDE.md ForgeUE Integrated Workflo
 - **F-Plan-3 per-candidate loop**(round-2 plan):若 `generate_audio` 单次 subprocess 处理多 candidate → num_candidates>1 静默失败(只产 1 candidate);严格沿 image / mesh worker `for i in range(max(1, num_candidates))` 模式
 - **F-Plan-4 path trust-boundary**(round-2 plan):若 `read_bytes` 前 skip `is_file` / `is_symlink` 防护 → buggy/compromised agent CLI 可读任意主机文件;严格沿 image / mesh G11 R2 fix
 - **F-Plan-6 timeout 字段位置**(round-2 plan):若把 `timeout_seconds` 放进 `retry_policy` → Pydantic strict raise unknown field;严格用 `step.config.worker_timeout_s`
+- **F-Plan-R4-A L2 archive HARD BLOCKER**(round-4 plan):若推进 S5 / archive 时无 `notes/live_smoke_audio_<date>.md` 满足文件存在 / > 100KB / magic bytes 三项 → S5 标 blocked,`/forgeue:change-finish` 阻断;禁止 post-archive defer L2 evidence(沿 Phase 1 image change 已建立的先例)

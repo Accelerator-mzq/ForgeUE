@@ -22,7 +22,7 @@ The system SHALL register a new `(StepType.generate, "audio.t2a")` entry in the 
 - **WHEN** `loader.load_task_bundle(path)` parses the file (`src/framework/workflows/loader.py:36`)
 - **THEN** `Step.model_validate` accepts the dict (top-level `type`, `capability_ref`, `provider_policy`, `depends_on`, `config` keys per [task.py:30-43](src/framework/core/task.py#L30-L43)); the resulting `Step` instance has `step.type == StepType.generate` and `step.capability_ref == "audio.t2a"`; downstream `ExecutorRegistry.resolve(step)` returns `GenerateAudioExecutor`; `tests/integration/test_example_bundles_smoke.py::test_comfy_local_smoke_audio_loads_with_audio_local_alias` fences the loader-contract path (no worker invocation)
 
-#### Scenario: workflow loader rejects audio.t2a bundle that hardcodes provider model id
+#### Scenario: bundle loader rejects audio.t2a step that hardcodes provider model id (F-Plan-R4-C round-4 修订:Scenario 标题 "workflow loader rejects" → "bundle loader rejects" — 拒绝由 alias-resolution 链路实现,不是 step-kind 表)
 
 - **GIVEN** a bundle JSON with `step.type = "generate"`, `step.capability_ref = "audio.t2a"`, and `step.provider_policy.preferred_models = ["comfy/local-audio"]` (direct id reference, no alias)
 - **WHEN** `loader.load_task_bundle(path)` parses the bundle in strict mode

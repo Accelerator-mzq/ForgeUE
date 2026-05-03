@@ -9,7 +9,7 @@
 > - **D7 audio 是 text-to-audio,无 source bytes**:audio executor SHALL NOT 调 `_resolve_source_image`,SHALL NOT 写 source bytes 到 ComfyUI input/,SHALL NOT 读 `FORGEUE_COMFY_INPUT_DIR`(audio 路径不依赖此 env var)
 > - **D8 prompt 直接进 spec.comfy_params**:bundle 作者写 manifest-aware 字段(`text` / `tags` / `lyrics` / `negative_prompt`),executor 不解构 / 不验证 / 不注入(与 mesh 的 `comfy_image_param_key` 模式相反)
 > - **D10 AudioCandidate.format 多元**:格式 ∈ {flac, mp3, wav} whitelist;由文件扩展名检测(NOT manifest 声明);`repo.put` 用 `file_suffix=f".{cand.format}"`(format-aware,与 mesh 单一 `.glb` 不同)
-> - **AudioWorker baseline 新建**:Phase 1 mesh 复用既有 `MeshWorker` ABC(Hunyuan3D / Tripo3D 时代已建好);audio 没有 free baseline,本 change scope 包含建 ABC + Candidate + 异常树 + GenerateAudioExecutor + audio.t2a step type
+> - **AudioWorker baseline 新建**:Phase 1 mesh 复用既有 `MeshWorker` ABC(Hunyuan3D / Tripo3D 时代已建好);audio 没有 free baseline,本 change scope 包含建 ABC + Candidate + 异常树 + GenerateAudioExecutor + `audio.t2a` capability_ref(F-Plan-R4-C round-4 plan 修订:沿用 `StepType.generate` 已有枚举,**不**新增 step type;ExecutorRegistry `(StepType.generate, "audio.t2a")` 注册在 `framework.run`)
 > - **AUXILIARY 集合为空**:audio capability 不容忍 `outputs.images` 等其它 key non-empty(与 mesh-mode 容忍 PNG preview 不同);`_validate_outputs` 三段表 audio 行无 INFO log emission
 
 ## 1. 准备工作与前置确认
@@ -190,7 +190,7 @@
   - 共 +14 fence;参考 mesh 模式 mock subprocess.run 边界,真实 FLAC bytes(`b"fLaC" + ...` minimal valid)走 `tmp_path`
 - [ ] 4.5 commit 3:`feat(comfy): extend ComfyAgentWorker with audio capability dispatch + generate_audio method`
 
-## 5. GenerateAudioExecutor + workflow loader 注册(commit 4)
+## 5. GenerateAudioExecutor + ExecutorRegistry 注册(commit 4)(F-Plan-R4-C round-4 修订:section 标题 "workflow loader 注册" → "ExecutorRegistry 注册";在 `framework.run` 注册 `(StepType.generate, "audio.t2a")` entry,**不**改 `loader.py`)
 
 - [ ] 5.1 新建 `src/framework/runtime/executors/generate_audio.py`,框架参考 `generate_image.py`(text-to-something 模式;**NOT** `generate_mesh.py` 的 image-to-something 模式因没 source bytes)
 - [ ] 5.2 实现 `GenerateAudioExecutor` 类(F1 round-2 修订:沿用现有 `Step.type=StepType.generate` + `capability_ref` 路由,不新增 step type;F2 round-2 修订:retry/wrap 三 except 块拆分,沿用 mesh `generate_mesh.py:160-172` 模式):
@@ -244,7 +244,7 @@
   - ADR-007 边界:`test_local_comfy_audio_pricing_none_treated_as_non_premium`
   - 共 +14 fence(F2 round-2 修订:13 → 14,加 1 个 deterministic short-circuit fence;实际 fence 数随实施细化)
 - [ ] 5.6 `tests/unit/test_workflow_loader.py` 加 2 fence(F1 round-2 修订:fence 名 step_kind → capability_ref):`test_audio_t2a_capability_ref_dispatches_to_generate_audio_executor` + `test_audio_t2a_capability_ref_rejects_hardcoded_model_id_without_alias`
-- [ ] 5.7 commit 4:`feat(executor): introduce GenerateAudioExecutor + audio.t2a step type registration`
+- [ ] 5.7 commit 4:`feat(executor): introduce GenerateAudioExecutor + audio.t2a capability_ref registration in ExecutorRegistry`(F-Plan-R4-C round-4 修订:commit title 不写 "step type registration",真实是 `(StepType.generate, "audio.t2a")` entry 在 `framework.run` 注册)
 
 ## 6. FailureModeMap audio_worker_* mode(commit 5)
 
@@ -362,7 +362,7 @@
     - §3.6 FR-STORE-004:audio metadata 字段补齐(`format` / `duration_seconds` / `sample_rate` whitelist 三字段)
     - §3.8 FR-WORKER:加 FR-WORKER-011 `audio worker baseline + capability dispatch`(描述 ABC 通用契约 + ComfyUI 第一客户)
     - §3.7 FR-MODEL-007 alias 列表第 11 项加 `audio_local`
-    - §7.3 TBD-002 lift 标记:从「Audio worker(AudioCraft 接入),待音频资产需求明确」改为「Audio worker baseline 已落地(`comfy-agent-cli-audio-adoption` 2026-05-XX)— ABC + AudioCandidate + GenerateAudioExecutor + audio.t2a step type;远端 AudioCraft 协议落地待独立 follow-on change」
+    - §7.3 TBD-002 lift 标记:从「Audio worker(AudioCraft 接入),待音频资产需求明确」改为「Audio worker baseline 已落地(`comfy-agent-cli-audio-adoption` 2026-05-XX)— ABC + AudioCandidate + GenerateAudioExecutor + `audio.t2a` capability_ref(`StepType.generate` 已有枚举 + ExecutorRegistry registration in `framework.run`);远端 AudioCraft 协议落地待独立 follow-on change」(F-Plan-R4-C round-4 修订)
     - §7.3 TBD-009:Phase 2 audio 完成,Phase 3 video 仍 follow-on
     - 版本号 v1.6 → v1.7,changelog row 加本 change 描述
   - `docs/design/LLD.md`:加 `AudioCandidate` 字段表 + `AudioWorker` ABC 描述 + `GenerateAudioExecutor` 算法 + 失败模式映射 audio_worker_*(沿 mesh §X.Y 章节模式)

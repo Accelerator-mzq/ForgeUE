@@ -30,6 +30,6 @@ The `repo.put` call site SHALL use `file_suffix=f".{cand.format}"` (NOT a hardco
 
 #### Scenario: Audio Artifact persists with duration_seconds=None when ComfyUI does not emit metadata
 
-- **GIVEN** `AudioCandidate.duration_seconds is None` and `sample_rate is None` (ComfyUI agent CLI did not emit metadata in stdout JSON; best-effort parsing fell back to None per provider-routing design D10)
+- **GIVEN** `AudioCandidate.duration_seconds is None` and `sample_rate is None` (F-Plan-R4-B round-4 修订:本 change scope 中始终 None — ComfyUI agent CLI `extract_outputs` does NOT emit per-file audio metadata in stdout JSON;ForgeUE does NOT introduce mutagen / wave / aifc parsing in this change scope;follow-on `audio-metadata-parser` change adds parsing per design D10 alternative-4 rejection rationale)
 - **WHEN** `GenerateAudioExecutor.execute` calls `repo.put(metadata={"format": "flac", "duration_seconds": None, "sample_rate": None, ...})`
 - **THEN** `ArtifactRepository.put` accepts the metadata dict as-is (per the existing "Per-modality metadata is populated by the producing executor, not enforced by ArtifactRepository.put" Scenario); the resulting `Artifact.metadata.format == "flac"`, `duration_seconds is None`, `sample_rate is None`; downstream UE bridge `import_audio` does NOT depend on these fields being non-None (UE `unreal.SoundFactory` parses audio file headers itself); `tests/unit/test_artifact_repository.py::test_audio_artifact_with_none_duration_persists` fences this
