@@ -22,7 +22,7 @@ resolved_at: 2026-05-03T14:50:00+08:00
 disputed_open: 0
 aligned_with_contract: false
 drift_decision: written-back-to-plan (4 findings accepted-codex; plan-only revision — execution_plan + micro_tasks updated, contract unchanged)
-writeback_commit: pending
+writeback_commit: 0a31d20
 drift_reason: null
 reasoning_notes_anchor: null
 note: |
