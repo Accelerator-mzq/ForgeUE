@@ -204,3 +204,32 @@ note: |
 
 无。F1/F2/F-Plan-R4-C/F-Plan-R5-A/F-Plan-R6-A/F-Plan-R7-A/F-Plan-R7-B round-X 修订全部落实。F-Plan-R7-C disputed-permanent-drift(path containment)按设计**不**加(本 commit 不读 outputs.audio bytes,bytes-reading 在 commit 3 ComfyAgentWorker.generate_audio 内,沿 image/mesh symmetry)。
 
+
+## Commit 5 — FailureModeMap audio mode + 6 fence (2026-05-03 22:50)
+
+### Anchors
+- `tasks.md#6.1` - `#6.4` (§6 FailureModeMap audio_worker_* mode)
+- `execution/micro_tasks.md` Commit 5 (5.1-5.5)
+- F-Plan-R7-B round-7 priority sweep:audio subclasses match BEFORE generic worker_*
+
+### Implementation files
+
+| File | Action | Details |
+|---|---|---|
+| `src/framework/runtime/failure_mode_map.py` | Modify | (1) `FailureMode` enum 加 `audio_worker_timeout` / `audio_worker_unsupported`(沿 mesh_worker_timeout/error 模式);(2) `DEFAULT_MAP` 加 2 entry,Decision.abort_or_fallback + reason_template;(3) `classify()` 加 import `from framework.providers.workers.audio_worker import AudioWorkerError, AudioWorkerTimeout, AudioWorkerUnsupportedResponse`;(4) `classify()` 加 isinstance branches:`AudioWorkerUnsupportedResponse` → audio_worker_unsupported(在 mesh/worker generic unsupported 之前);`AudioWorkerTimeout` → audio_worker_timeout(在 mesh / generic worker_* 之前);`AudioWorkerError` (generic) → audio_worker_unsupported 归类(对照 mesh generic AudioError 同模式;F-Plan-R7-B priority 修订) |
+| `tests/unit/test_failure_mode_map.py` | Modify | +6 fence:default_map covers audio modes(2)+ classify Audio* exception(3)+ priority sweep audio_takes_priority_over_generic_worker(1)|
+
+### Pytest baseline delta
+
+- Pre-commit:1282
+- Post-commit:**1288 passed**(+6)
+- 零回归
+
+### Boundary check
+
+- `git diff --name-only`:`failure_mode_map.py` + `test_failure_mode_map.py`(execution_plan File Structure 表 §6 显式列)— 0 越界
+
+### Drift events
+
+无。F-Plan-R7-B priority sweep + R4-F1 wrapped 异常路由模式全部落实。
+

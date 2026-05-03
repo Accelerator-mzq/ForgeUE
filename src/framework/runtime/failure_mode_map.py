@@ -42,6 +42,13 @@ class FailureMode(str, Enum):
     # CLI 端 surface job_id + worker + model 给用户,让他们决策"先 query / 再 retry / 终止"。
     mesh_worker_timeout = "mesh_worker_timeout"
     mesh_worker_error = "mesh_worker_error"
+    # OpenSpec change comfy-agent-cli-audio-adoption Phase 2:audio-specific failure modes
+    # (沿 mesh_worker_* 镜像 + F-Plan-R6-A round-6:audio Artifact 已落 in-tree,但
+    # ComfyUI subprocess 失败时 audio_worker_* mode → abort_or_fallback,与 mesh 一致;
+    # 本地 ComfyUI audio non-premium per ADR-007 边界,internal retry happens in
+    # _generate_via_comfy_worker before exception reaches FailureModeMap)
+    audio_worker_timeout = "audio_worker_timeout"
+    audio_worker_unsupported = "audio_worker_unsupported"
     budget_exceeded = "budget_exceeded"
     disk_full = "disk_full"
 
@@ -92,6 +99,19 @@ DEFAULT_MAP: dict[FailureMode, FailureMapEntry] = {
         "re-bill of paid mesh job; user must check job state via "
         "probe_hunyuan_3d_query before --resume)",
     ),
+    FailureMode.audio_worker_timeout: FailureMapEntry(
+        FailureMode.audio_worker_timeout, Decision.abort_or_fallback,
+        "audio worker timeout — abort_or_fallback (沿 mesh_worker_timeout 模式;"
+        "本地 ComfyUI audio non-premium 但 internal retry 已在 _generate_via_comfy_worker "
+        "完成,wrapped AudioWorkerTimeout 到此处时已 retry exhausted;Decision 走 "
+        "abort_or_fallback honor `on_fallback`)",
+    ),
+    FailureMode.audio_worker_unsupported: FailureMapEntry(
+        FailureMode.audio_worker_unsupported, Decision.abort_or_fallback,
+        "audio worker unsupported response — abort_or_fallback (deterministic — "
+        "outputs.audio missing / 扩展名 whitelist 拒 / magic bytes mismatch / "
+        "path trust-boundary 拒;retry 也错,直接 abort_or_fallback)",
+    ),
     FailureMode.budget_exceeded: FailureMapEntry(
         FailureMode.budget_exceeded, Decision.human_review_required,
         "budget cap exceeded — escalating",
@@ -117,6 +137,11 @@ def classify(exc: BaseException) -> FailureMode | None:
         WorkerTimeout,
         WorkerUnsupportedResponse,
     )
+    from framework.providers.workers.audio_worker import (
+        AudioWorkerError,
+        AudioWorkerTimeout,
+        AudioWorkerUnsupportedResponse,
+    )
     from framework.providers.workers.mesh_worker import (
         MeshWorkerError,
         MeshWorkerTimeout,
@@ -130,12 +155,25 @@ def classify(exc: BaseException) -> FailureMode | None:
     # rebills paid providers (Hunyuan/Qwen/Tripo3D/DashScope) for the same
     # bad output. 2026-04 共性平移 extended the mesh-only
     # `MeshWorkerUnsupportedResponse` pattern to every image/worker surface.
+    # F-Plan-R7-B + commit 5: AudioWorkerUnsupportedResponse 走 audio-specific
+    # mode (audio_worker_unsupported),NOT generic unsupported_response,因为
+    # audio 内部已 retry exhausted 时 wrapped 才到此处,语义与 mesh_worker_* 一致。
+    if isinstance(exc, AudioWorkerUnsupportedResponse):
+        return FailureMode.audio_worker_unsupported
     if isinstance(exc, (
         MeshWorkerUnsupportedResponse,
         WorkerUnsupportedResponse,
         ProviderUnsupportedResponse,
     )):
         return FailureMode.unsupported_response
+    # OpenSpec change comfy-agent-cli-audio-adoption Phase 2:audio subclasses
+    # MUST be checked BEFORE generic worker_* AND BEFORE mesh subclasses
+    # (AudioWorkerTimeout 不是 MeshWorkerTimeout 子类,但都是 RuntimeError 子类,
+    # 显式 isinstance 顺序保险,沿 R4-F1 priority 修订模式)。
+    if isinstance(exc, AudioWorkerTimeout):
+        return FailureMode.audio_worker_timeout
+    if isinstance(exc, AudioWorkerError):
+        return FailureMode.audio_worker_unsupported  # generic AudioWorkerError归类 audio_worker_unsupported
     # TBD-007: mesh subclasses must match BEFORE generic worker_* so they get
     # their own abort_or_fallback mode (not retry_same_step / fallback_model
     # which would double-bill paid mesh jobs).
