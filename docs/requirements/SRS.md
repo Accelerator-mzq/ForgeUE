@@ -185,7 +185,7 @@ ForgeUE **不做**:
 | FR-MODEL-004 | 新增 OpenAI 兼容端口 provider 应仅需在 registry 填 `api_base` + `api_key_env`,bundle 写 `openai/<id>`,**零新代码** |
 | FR-MODEL-005 | 非 OpenAI 协议 provider 应通过在 `src/framework/providers/` 加 adapter 接入,路由按 `model.startswith(...)` 前缀匹配 |
 | FR-MODEL-006 | `CapabilityRouter` 应按注册顺序调用 `ProviderAdapter.supports(model)`,`LiteLLMAdapter`(wildcard)**必须最后**注册 |
-| FR-MODEL-007 | 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image / image_local`(`image_local` 自 v1.6 起,本地 ComfyUI agent CLI;OpenSpec change `comfy-agent-cli-adoption`)|
+| FR-MODEL-007 | 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image / image_local / audio_local`(`image_local` 自 v1.6 起,本地 ComfyUI agent CLI image manifest;`audio_local` 自 v1.7 起,本地 ComfyUI agent CLI audio manifest,OpenSpec change `comfy-agent-cli-audio-adoption`)|
 | FR-MODEL-008 | ProviderPolicy 应支持 `fallback_models` 列表,首选失败时按序降级 |
 
 ### 3.4 结构化生成(FR-STRUCT)
@@ -218,7 +218,7 @@ ForgeUE **不做**:
 | FR-STORE-001 | `Artifact` 应为一等公民,通过 `artifact_type` 两段式(`<modality>.<shape>`)+ 扁平显示名双向映射 |
 | FR-STORE-002 | `PayloadRef` 应支持 `inline` / `file` / `blob` 三态,MVP 实装 `inline` + `file`,`blob` 预留接口 |
 | FR-STORE-003 | `inline` 载体上限 64 KB,`file` 载体上限 500 MB |
-| FR-STORE-004 | 各 modality 应有专属 metadata:image(width/height/color_space/...)、audio(duration/sample_rate/...)、mesh(format/poly_count/scale_unit/...)、text.structured(schema_name/version/language) |
+| FR-STORE-004 | 各 modality 应有专属 metadata:image(width/height/color_space/...)、audio(`format` ∈ {`flac`,`mp3`,`wav`} + `duration_seconds` + `sample_rate`,自 v1.7 起,three-key whitelist;source-of-truth=`Artifact.metadata` 顶层,**不**在 `worker_metadata` 嵌套内重复)、mesh(format/poly_count/scale_unit/...)、text.structured(schema_name/version/language) |
 | FR-STORE-005 | 系统应维护 Lineage 血缘:`source_artifact_ids` / `source_step_ids` / `transformation_kind` / `selected_by_verdict_id` / `variant_group_id` |
 | FR-STORE-006 | Artifact 入 Store 前应通过四层校验:文件层(路径/格式签名/大小)、元数据层(必填齐全)、业务层(Step 约束)、UE 层(命名/路径/格式,在 export step 做) |
 
@@ -249,6 +249,7 @@ ForgeUE **不做**:
 | FR-WORKER-008 | `data:` URI scheme 识别应大小写不敏感(RFC 2397) |
 | FR-WORKER-009 | 所有 tokenhub poll 循环(`hunyuan_tokenhub_adapter._th_poll` / `mesh_worker._atokenhub_poll`)的单次 `/query` HTTP timeout 必须 clamp 到 `min(<per_poll_cap>, max(1.0, budget_s - elapsed))`,避免剩余 1s 时单次 poll 仍阻塞 20-30s 突破 step timeout |
 | FR-WORKER-010 | adapter 的 200 + 非 JSON body(代理/WAF 返回 HTML)必须显式捕 `ValueError`/`JSONDecodeError`,wrap 为 `ProviderUnsupportedResponse` / `MeshWorkerUnsupportedResponse`;原始 `JSONDecodeError` 不得逃出 try block 让 run 直接崩 |
+| FR-WORKER-011 | 系统应支持 audio worker baseline:`AudioWorker` ABC + `AudioCandidate(data, format, duration_seconds, sample_rate, metadata)` + 异常树(`AudioWorkerError` / `AudioWorkerTimeout` / `AudioWorkerUnsupportedResponse`);`GenerateAudioExecutor` via `(StepType.generate, capability_ref="audio.t2a")` 注册到 `ExecutorRegistry`(自 v1.7 起,OpenSpec change `comfy-agent-cli-audio-adoption`;ComfyUI 第一客户走 `comfy/local-audio` model id + `audio_local` alias;远端 AudioCraft worker 协议落地待独立 follow-on change)|
 
 ### 3.9 运行时工程化(FR-RUNTIME)
 
@@ -496,16 +497,17 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | v1.0 | 2026-04-22 | 初始基线,从 `claude_unified_architecture_plan_v1.md` 拆分重组 | ForgeUE Team |
 | v1.1 | 2026-04-22 | Codex 5 轮 audit(21 条)修复后 strengthen:新增 FR-LC-006~008、FR-WORKER-009~010、FR-COST-008~009、FR-RUNTIME-008~012、FR-REVIEW-009、NFR-REL-009、ADR-006;`NFR-MAINT-003` 基线 491 → 520;实装一致性见 LLD v1.1 与 acceptance v1.1 | ForgeUE Team |
 | v1.6 | 2026-05-02 | OpenSpec change `comfy-agent-cli-adoption`:ComfyUI worker 协议层从 HTTP 重写为 subprocess CLI 调用 `python -m comfyui_api`,bundle 协议从 inline `workflow_graph` 简化为 `comfy_workflow` + `comfy_params` + `comfy_lifecycle`(only `"none"` 此 change 范围);新虚拟 model id `comfy/local` + alias `image_local`;ComfyUI worker 配置走 env vars `FORGEUE_COMFY_*`(F-A schema 扩展登记 TBD-011 后续 change);`StepContext.run_dir` 字段 + Orchestrator `_compute_run_dir` helper(round 2 OQ-7 G3 fix)。BREAKING:`step.config.spec.workflow_graph` 字段废止;HTTPComfyWorker 删除;`--comfy-url` CLI flag deprecated。FR-WORKER-001 / FR-MODEL-003 / FR-MODEL-007 / §5.3 全 update;§7.3 加 TBD-009 / TBD-010 / TBD-011 follow-on。Plan-stage 3 轮 codex review + Apply-stage 8-commit chain + Lean Apply Mode。 | ForgeUE Team |
+| v1.7 | 2026-05-03 | OpenSpec change `comfy-agent-cli-audio-adoption`(TBD-009 Phase 2 + TBD-002 lift):新增 audio worker baseline(`AudioWorker` ABC + `AudioCandidate(data, format, duration_seconds, sample_rate, metadata)` + 异常树 `AudioWorkerError` / `AudioWorkerTimeout` / `AudioWorkerUnsupportedResponse`);新增 `GenerateAudioExecutor`(`(StepType.generate, "audio.t2a")` + ExecutorRegistry registration);新虚拟 model id `comfy/local-audio` + alias `audio_local`;ComfyUI agent CLI 4-dict capability dispatch 扩 `audio` capability(REQUIRED=`audio` key,REJECTED=`{images,glb,video}`,AUXILIARY=空);bundle 协议接受 audio manifest(`Audio_Workflows/audio_stable_audio_example` / `audio_ace_step_1_t2a_instrumentals`);FailureModeMap 新增 `audio_worker_timeout` / `audio_worker_unsupported`,均 `Decision.abort_or_fallback`(沿 mesh_worker_* 同模式)。FR-WORKER-001 / FR-WORKER-011 / FR-MODEL-007 / FR-STORE-004 update;§7.3 TBD-002 lift / TBD-009 Phase 2 标完成。Plan-stage 1 轮 codex design review + 7 轮 codex plan review;Apply-stage 13-commit chain。L2 evidence DEFERRED post-archive(ComfyUI 0.9.2 user-authored workflow JSON `SaveAudioMP3` 缺 `quality` required input 上游 bug;沿 Phase 1 mesh L2 partial precedent)。 | ForgeUE Team |
 
 ### 7.3 未决事项
 
 | 编号 | 事项 | 目标决议日期 |
 | --- | --- | --- |
 | TBD-001 | `bridge_execute` 模式启用条件 | manifest_only 稳定运行 3 个月后评估 |
-| TBD-002 | Audio worker(AudioCraft 接入) | 待音频资产需求明确 |
+| TBD-002 | Audio worker(远端 AudioCraft / ElevenLabs 接入) | Audio worker baseline 已落地(`comfy-agent-cli-audio-adoption` 2026-05-03)— `AudioWorker` ABC + `AudioCandidate` + `GenerateAudioExecutor` + `audio.t2a` capability_ref + ExecutorRegistry registration in `framework.run`;ComfyUI 第一客户(`comfy/local-audio` model id);远端 AudioCraft 协议落地待独立 follow-on change |
 | TBD-003 | WS 鉴权 / 多租户 session | 接入 UI 时再设计 |
 | TBD-004 | FBX self-containment 校验 | 有 PyFBX / ufbx 绑定后 |
 | TBD-005 | DashScope / Tripo3D 下辖 parser 实装 | 有人工作流真实使用时 |
-| TBD-009 | ComfyUI agent CLI mesh / audio / video workflow 接入。**Phase 1 mesh 已落地**(OpenSpec change `comfy-agent-cli-mesh-audio-video-adoption` 2026-05-03,5 轮 codex review + Round 5 D10 source bytes 写到 ComfyUI input/ via `FORGEUE_COMFY_INPUT_DIR` env;mini-LoadImage 变体 manifest user-authored 解决模型权重问题;L2 evidence GLB 真实生成 3.5 MB)。Phase 2 audio / Phase 3 video 仍 follow-on(blocked-on TBD-002 audio worker 通用契约 + video 输出策略决策)| Phase 1 已归档;Phase 2/3 各自开新 change |
+| TBD-009 | ComfyUI agent CLI mesh / audio / video workflow 接入。**Phase 1 mesh 已落地**(OpenSpec change `comfy-agent-cli-mesh-audio-video-adoption` 2026-05-03,5 轮 codex review + Round 5 D10 source bytes 写到 ComfyUI input/ via `FORGEUE_COMFY_INPUT_DIR` env;mini-LoadImage 变体 manifest user-authored 解决模型权重问题;L2 evidence GLB 真实生成 3.5 MB)。**Phase 2 audio 已落地**(OpenSpec change `comfy-agent-cli-audio-adoption` 2026-05-03,8 轮 codex review,`comfy/local-audio` virtual model id + `audio_local` alias + Stable Audio Open / ACE-Step manifest 接入;L2 evidence 因 ComfyUI 0.9.2 user-authored workflow JSON `SaveAudioMP3` 缺 `quality` required input 上游 bug DEFERRED post-archive,沿 Phase 1 mesh L2 partial precedent)。Phase 3 video 仍 follow-on(blocked-on video 输出策略决策)| Phase 1 + Phase 2 已归档;Phase 3 待开新 change |
 | TBD-010 | GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主 spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED | 用户实际使用本 change 后反馈双终端 UX 痛苦阈值或框架其它 long-task cancel use case 推动 |
 | TBD-011 | ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env | 第二个 subprocess provider 出现时(本地 SDXL / 第三方 CLI 工具 / 本地 mesh worker)|

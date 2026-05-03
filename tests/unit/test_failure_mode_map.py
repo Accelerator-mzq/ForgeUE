@@ -237,3 +237,68 @@ def test_synthesise_verdict_accepts_explicit_mode_override():
         step_id="step_x", exc=ValueError("unknown"), mode=FailureMode.budget_exceeded,
     )
     assert verdict.decision is Decision.human_review_required
+
+
+# ============================================================================
+# Audio worker failure modes (OpenSpec change comfy-agent-cli-audio-adoption Phase 2)
+# Per spec/probe-and-validation/spec.md + F-Plan-R7-B round-7 priority sweep:
+# AudioWorkerTimeout / AudioWorkerUnsupportedResponse → audio_worker_*  →
+# Decision.abort_or_fallback (沿 mesh_worker_* 镜像)。
+# ============================================================================
+
+
+from framework.providers.workers.audio_worker import (
+    AudioWorkerError,
+    AudioWorkerTimeout,
+    AudioWorkerUnsupportedResponse,
+)
+
+
+def test_failure_mode_map_audio_worker_timeout_maps_to_abort_or_fallback():
+    """`audio_worker_timeout` mode → `Decision.abort_or_fallback`(沿 mesh_worker_timeout)。"""
+    entry = DEFAULT_MAP[FailureMode.audio_worker_timeout]
+    assert entry.decision is Decision.abort_or_fallback
+
+
+def test_failure_mode_map_audio_worker_unsupported_maps_to_abort_or_fallback():
+    """`audio_worker_unsupported` mode → `Decision.abort_or_fallback`(deterministic 不 retry)。"""
+    entry = DEFAULT_MAP[FailureMode.audio_worker_unsupported]
+    assert entry.decision is Decision.abort_or_fallback
+
+
+def test_classify_audio_worker_timeout_to_audio_mode():
+    """`AudioWorkerTimeout` → `FailureMode.audio_worker_timeout`。
+    F-Plan-R7-B priority:audio subclasses MUST match before generic worker_*
+    (audio.t2a internal retry already exhausted by _generate_via_comfy_worker
+    before exception reaches FailureModeMap)。"""
+    assert classify(AudioWorkerTimeout("subprocess hit 300s")) is FailureMode.audio_worker_timeout
+
+
+def test_classify_audio_worker_unsupported_to_audio_mode():
+    """`AudioWorkerUnsupportedResponse` → `FailureMode.audio_worker_unsupported`(deterministic)。
+    NOT generic `unsupported_response` — audio-specific so orchestrator can
+    surface job_id / model / worker context via abort_or_fallback。"""
+    assert classify(AudioWorkerUnsupportedResponse("outputs.audio missing")) is FailureMode.audio_worker_unsupported
+
+
+def test_classify_audio_worker_error_generic_maps_to_audio_unsupported():
+    """Generic `AudioWorkerError` (NOT Timeout / NOT UnsupportedResponse) maps to
+    `audio_worker_unsupported` (沿 generic-error → unsupported 归类模式)。"""
+    assert classify(AudioWorkerError("generic audio worker error")) is FailureMode.audio_worker_unsupported
+
+
+def test_audio_takes_priority_over_generic_worker_exception_via_isinstance_order():
+    """F-Plan-R7-B round-7 priority sweep:`AudioWorkerTimeout` is RuntimeError
+    subclass but NOT WorkerTimeout subclass(it's AudioWorkerError → RuntimeError)。
+    classify() isinstance branches MUST check audio subclasses BEFORE generic
+    worker_* — fence 守门 audio 路径不被 fallback 到 worker_* mode。"""
+    # Even if hypothetically audio exception inherits from RuntimeError,
+    # classify() must dispatch to audio_worker_timeout NOT worker_timeout/error
+    audio_exc = AudioWorkerTimeout("audio subprocess timeout")
+    mode = classify(audio_exc)
+    assert mode is FailureMode.audio_worker_timeout
+    assert mode is not FailureMode.worker_timeout
+    assert mode is not FailureMode.mesh_worker_timeout
+    # And the entry decision is abort_or_fallback (not retry_same_step)
+    entry = DEFAULT_MAP[mode]
+    assert entry.decision is Decision.abort_or_fallback

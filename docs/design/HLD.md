@@ -70,7 +70,9 @@
 │      └── FakeAdapter               (测试)                           │
 │  └── workers/                                                       │
 │      ├── ComfyAgentWorker  (subprocess CLI 自 v1.6;v1.5 及之前 HTTP)│
-│      └── MeshWorker   (Hunyuan 3D / Tripo3D)                        │
+│      │   capability dispatch: image / mesh / audio (audio 自 v1.7)  │
+│      ├── MeshWorker   (Hunyuan 3D / Tripo3D ABC)                    │
+│      └── AudioWorker  (audio_worker.py ABC 自 v1.7;ComfyUI 第一客户)│
 ├────────────────────────────────────────────────────────────────────┤
 │  评审引擎 (src/framework/review_engine/)                                 │
 │  LLMJudge / ChiefJudge (asyncio.gather panel)                       │
@@ -334,6 +336,8 @@ ue_scripts/: 完全独立,不 import framework.*;仅依赖 import unreal
 | unsupported_response | abort_or_fallback |
 | **mesh_worker_timeout** | **abort_or_fallback**(ADR-007:premium mesh API 不允许 framework 静默重试) |
 | **mesh_worker_error** | **abort_or_fallback**(同上) |
+| **audio_worker_timeout** | **abort_or_fallback**(沿 mesh 同模式;wrapped `AudioWorkerTimeout` 经 `_generate_via_comfy_worker` 内部 retry exhausted 后 wrap,到 FailureModeMap 时已无重试预算) |
+| **audio_worker_unsupported** | **abort_or_fallback**(deterministic — `outputs.audio` missing / 扩展名 whitelist 拒 / magic bytes mismatch / path trust-boundary 拒;retry 也错) |
 | disk_full | rollback → stop |
 
 详见 LLD §5 `failure_mode_map.py`。
@@ -344,6 +348,7 @@ mesh worker 是否属于「premium」(适用 ADR-007 strict no-silent-retry)由�
 
 - **远端 Hunyuan3D mesh**(`hunyuan/hy-3d-3.1`,`pricing.per_task_usd: 0.25`)→ premium → executor 主流程 `attempts=1` 强制 + `mesh_worker_timeout/error` 走 `abort_or_fallback`
 - **本地 ComfyUI mesh**(`comfy/local-mesh`,`pricing: null` → `per_task_usd is None`)→ 非 premium → `_generate_via_comfy_worker` 内部自带 retry loop 用 `policy.max_attempts`(默认 2);ComfyWorker 异常族(`WorkerTimeout/Error/UnsupportedResponse`)在内部 wrap 为 `MeshWorker*` 异常族(D9);**all retries exhausted 后**,wrapped `MeshWorkerTimeout` 经 `FailureModeMap` 仍走 `mesh_worker_timeout` → `abort_or_fallback`(终态与远端 mesh 一致;「standard local retry」语义由内部 loop 隐式实现,不暴露给 FailureModeMap)
+- **本地 ComfyUI audio**(`comfy/local-audio`,`pricing: null` → `per_task_usd is None`,`comfy-agent-cli-audio-adoption` v1.7)→ 非 premium → `_generate_via_comfy_worker` 内部 retry 沿 mesh 同模式;wrapped `AudioWorkerTimeout/Error/UnsupportedResponse` 经 FailureModeMap 走 `audio_worker_*` mode → `abort_or_fallback`(终态语义与 mesh 一致)
 
 ---
 

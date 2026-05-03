@@ -1,0 +1,56 @@
+{
+  "task": {
+    "task_id": "task_comfy_audio_smoke",
+    "task_type": "asset_generation",
+    "run_mode": "basic_llm",
+    "title": "Local ComfyUI audio smoke (ComfyAgentWorker, text-to-audio single step)",
+    "input_payload": {
+      "prompt": "uplifting electronic dance music, ethereal pads, 130bpm"
+    },
+    "expected_output": {
+      "artifact_types": ["audio_asset"]
+    },
+    "project_id": "proj_comfy_audio_smoke"
+  },
+  "workflow": {
+    "workflow_id": "wf_comfy_audio_smoke",
+    "name": "comfy_audio_smoke",
+    "version": "1.0.0",
+    "entry_step_id": "step_audio",
+    "step_ids": ["step_audio"]
+  },
+  "steps": [
+    {
+      "step_id": "step_audio",
+      "type": "generate",
+      "name": "comfy-local-text-to-audio",
+      "risk_level": "medium",
+      "capability_ref": "audio.t2a",
+      "provider_policy": {
+        "capability_required": "audio.t2a",
+        "models_ref": "audio_local"
+      },
+      "retry_policy": {
+        "max_attempts": 2,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "provider_error"]
+      },
+      "config": {
+        "num_candidates": 1,
+        "seed": 42,
+        "worker_timeout_s": 300,
+        "spec": {
+          "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
+          "comfy_params": {
+            "text": "uplifting electronic dance music, ethereal pads, 130bpm",
+            "negative_prompt": "",
+            "duration_seconds": 10.0,
+            "seed": 42,
+            "steps": 50
+          },
+          "comfy_lifecycle": "none"
+        }
+      }
+    }
+  ]
+}
