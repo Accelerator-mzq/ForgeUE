@@ -24,8 +24,8 @@ created_at: 2026-05-03T22:25:00+08:00
 resolved_at: 2026-05-03T22:40:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: written-back-to-tasks+design+specs+micro_tasks (1 round-6 finding accepted-codex; pending writeback commit)
-writeback_commit: pending
+drift_decision: written-back-to-tasks+design+specs+micro_tasks (1 round-6 finding accepted-codex;writeback commit 99257fa 含 UE bridge integration 修订)
+writeback_commit: 99257fa
 drift_reason: null
 reasoning_notes_anchor: null
 round: 6
