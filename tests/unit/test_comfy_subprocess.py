@@ -53,6 +53,7 @@ def _make_worker(tmp_path: Path) -> ComfyAgentWorker:
     artifacts_dir.mkdir()
     return ComfyAgentWorker(
         scripts_dir=scripts_dir,
+        model_id="comfy/local",                  # P-F1 修订:capability dispatch 必填(image)
         run_id="run_test",
         project_id="proj_test",
         artifacts_dir=artifacts_dir,
@@ -95,6 +96,7 @@ def test_project_id_none_raises_unsupported_response_at_init(tmp_path):
     with pytest.raises(WorkerUnsupportedResponse, match="project_id"):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
+            model_id="comfy/local",                  # P-F1 修订
             run_id="run_x",
             project_id="",
             artifacts_dir=artifacts_dir,
@@ -109,6 +111,7 @@ def test_artifacts_dir_none_raises_unsupported_response_at_init(tmp_path):
     with pytest.raises(WorkerUnsupportedResponse, match="artifacts_dir"):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
+            model_id="comfy/local",                  # P-F1 修订
             run_id="run_x",
             project_id="proj_x",
             artifacts_dir=None,  # type: ignore[arg-type]
@@ -126,6 +129,7 @@ def test_lifecycle_other_than_none_raises_unsupported_response(tmp_path):
     with pytest.raises(WorkerUnsupportedResponse, match="default_lifecycle"):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
+            model_id="comfy/local",                  # P-F1 修订
             run_id="run_x",
             project_id="proj_x",
             artifacts_dir=artifacts_dir,
