@@ -20,6 +20,7 @@ stage: S3
 evidence_type: plan_cross_check
 triggered_by: forgeue:change-apply (Lean Apply Mode for trivial bug fix)
 created_at: 2026-05-04T00:00:00+08:00
+disputed_open: 0
 ---
 
 ---
