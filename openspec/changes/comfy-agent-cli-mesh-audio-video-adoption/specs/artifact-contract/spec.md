@@ -1,0 +1,39 @@
+## ADDED Requirements
+
+### Requirement: Mesh Artifact metadata records ComfyUI manifest provenance
+
+The system SHALL record ComfyUI mesh provenance in `Artifact.metadata["worker_metadata"]` (the `dict[str, Any]` slot already present on `Artifact` and populated by `GenerateMeshExecutor.execute` at `generate_mesh.py:139-151` via `metadata={..., "worker_metadata": dict(cand.metadata), ...}`). The provenance SHALL be carried through the existing data flow:
+
+1. `ComfyAgentWorker.generate_mesh(...)` returns `MeshCandidate(data=<glb bytes>, format="glb", mime_type="model/gltf-binary", metadata={"comfy_manifest": <name>, "comfy_params_snapshot": <dict copy>, "comfy_capability": "mesh", "comfy_original_filename": <name>, "comfy_source_image_path": <path>})` — populating the existing `MeshCandidate.metadata: dict[str, Any]` field at `mesh_worker.py:74`. The `MeshCandidate` dataclass itself SHALL NOT be extended (B1 codex finding accepted-codex 2026-05-03: `MeshCandidate.payload` does not exist; `data/format/mime_type/poly_count/has_uv/has_rig/metadata` are the only fields).
+2. `GenerateMeshExecutor` calls the existing `repo.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=".glb", metadata={..., "worker_metadata": dict(cand.metadata)})` at `generate_mesh.py:117-158`. No `PayloadRef.metadata` or `PayloadRef.file` field is introduced (B1 codex finding accepted-codex: `PayloadRef` actual fields are `kind/inline_value/file_path/blob_key/size_bytes`; `file` and `metadata` do not exist on `PayloadRef`).
+3. `ArtifactRepository.put(...)` writes `cand.data` to `<artifact_root>/<run_id>/<artifact_id>.glb` per the existing `FileBackend` (`payload_backends/file_backend.py`) — the in-tree path guarantee (NFR-PORT-004) is provided by `repo.put` itself, NOT by the worker copying files.
+
+This information SHALL be sufficient for a reviewer or downstream `--resume` consumer to reconstruct which manifest + params + source image produced the GLB by reading `Artifact.metadata["worker_metadata"]` (no consultation of orchestrator state needed). The original ComfyUI output filename (e.g. `asset_textured_00001_.glb` from `D:/AI/ComfyUI/outputs/main/<date>/<project>/`) is recorded in `worker_metadata["comfy_original_filename"]` for diagnostic traceability — but the actual in-tree filename uses `<artifact_id>.glb` (consistent with existing Hunyuan / Tripo3D mesh worker naming convention via `repo.put` + `file_suffix`).
+
+#### Scenario: ComfyAgentWorker (mesh) records manifest + params snapshot in MeshCandidate.metadata
+
+- **GIVEN** a `step.config.spec` with `comfy_workflow="Mesh/02_mini_textured_3d_hunyuan"`, `comfy_params={"seed": 42}`, `comfy_image_param_key="image_path"`, `comfy_lifecycle="none"`; the upstream image step has produced a source image artifact whose bytes are read into `source_bytes` by `_resolve_source_image(ctx)` and written to `<ctx.run_dir>/comfy/input/<sha1>.png` by `_generate_via_comfy_worker` before invocation
+- **WHEN** `ComfyAgentWorker(_capability="mesh").generate_mesh(spec=spec, source_image_path=Path("<ctx.run_dir>/comfy/input/<sha1>.png"), num_candidates=1, seed=42, timeout_s=600)` succeeds
+- **THEN** the returned `MeshCandidate.metadata` contains `comfy_manifest="Mesh/02_mini_textured_3d_hunyuan"`, `comfy_params_snapshot={"seed": 42, "image_path": "<ctx.run_dir>/comfy/input/<sha1>.png"}` (snapshot taken AFTER executor injects `image_path`; mutating the original `spec["comfy_params"]` after the call does NOT change `metadata["comfy_params_snapshot"]`), `comfy_capability="mesh"`, `comfy_original_filename=<ComfyUI 输出文件名>`, `comfy_source_image_path="<ctx.run_dir>/comfy/input/<sha1>.png"`; the `MeshCandidate` dataclass type is `mesh_worker.MeshCandidate` unchanged
+
+#### Scenario: GenerateMeshExecutor persists ComfyAgentWorker mesh candidates via repo.put with worker_metadata
+
+- **GIVEN** `_generate_via_comfy_worker` returns `[MeshCandidate(data=<glb_bytes>, format="glb", mime_type="model/gltf-binary", metadata={"comfy_manifest": "Mesh/02_mini_textured_3d_hunyuan", "comfy_params_snapshot": {...}, "comfy_capability": "mesh", "comfy_original_filename": "asset_00001_.glb", "comfy_source_image_path": "..."})]` from a step whose `ctx.repository` is a real `ArtifactRepository` rooted at `<artifact_root>/<run_id>/`
+- **WHEN** `GenerateMeshExecutor.execute` reaches the existing `repo.put` loop (`generate_mesh.py:114-160`) and processes the comfy-produced candidate
+- **THEN** the call `repo.put(artifact_id=..., value=cand.data, payload_kind=PayloadKind.file, file_suffix=".glb", metadata={..., "worker_metadata": dict(cand.metadata), ...})` writes the GLB bytes to `<artifact_root>/<run_id>/<artifact_id>.glb` (in-tree per NFR-PORT-004); the resulting `Artifact.metadata["worker_metadata"]` equals the `MeshCandidate.metadata` dict; the `Artifact.payload_ref.file_path` is the relative in-tree path `<run_id>/<artifact_id>.glb` (R2-F3 修订:实际字段名是 `payload_ref` per `artifact.py:81`,not `payload`) (NOT a path under `D:/AI/ComfyUI/outputs/`); `tar`-ing `<artifact_root>/<run_id>/` and unpacking on another host SHALL produce a self-contained Run reproducible without any reference to `D:/AI/ComfyUI/outputs/`
+
+### Requirement: Mesh worker source image bytes are written to in-tree input file before subprocess invocation
+
+The system SHALL guarantee that when `GenerateMeshExecutor` dispatches to the comfy-worker branch (`_should_use_comfy_worker_path(ctx)` returns True), the upstream source image bytes resolved by `_resolve_source_image(ctx)` are written to an in-tree input file under `<ctx.run_dir>/comfy/input/<sha1_hex>.png` (where `<sha1_hex>` is `hashlib.sha1(source_bytes).hexdigest()[:16]`, providing idempotency: same source bytes → same in-tree path → no duplicate writes across retries) before the worker subprocess is invoked. The path SHALL be passed to `ComfyAgentWorker.generate_mesh(source_image_path=...)`, which injects it into `spec["comfy_params"][<image_param_key>]` (with `<image_param_key>` resolved from `spec["comfy_image_param_key"]` or default `"image_path"`, see provider-routing spec D8). The in-tree input file SHALL persist for the duration of the run (do NOT delete after subprocess; it is referenced by `Artifact.metadata["worker_metadata"]["comfy_source_image_path"]` for diagnostic / `--resume` traceability).
+
+#### Scenario: Source image bytes are written to in-tree path with sha1-derived filename
+
+- **GIVEN** an upstream `_resolve_source_image(ctx)` call returns `(source_bytes=b"<png bytes>", source_image_artifact_id="run_X_step_image_1")` where `hashlib.sha1(b"<png bytes>").hexdigest()[:16] == "abc123def456"`
+- **WHEN** `_generate_via_comfy_worker(ctx, spec, source_image_bytes=source_bytes, source_image_artifact_id=..., ...)` is invoked
+- **THEN** the executor writes the bytes to `<ctx.run_dir>/comfy/input/abc123def456.png` (creating the `comfy/input/` directory if missing); the file content equals `source_bytes` exactly; subsequent calls in the same run with identical bytes do NOT re-write (idempotent via hash); the `comfy_params` passed to the subprocess contains `image_path: "<ctx.run_dir>/comfy/input/abc123def456.png"` (or whatever key `spec["comfy_image_param_key"]` selected)
+
+#### Scenario: In-tree input file is preserved after the run for traceability
+
+- **GIVEN** a successful comfy-mesh run that produced a `MeshCandidate` referencing `comfy_source_image_path="<ctx.run_dir>/comfy/input/abc123def456.png"`
+- **WHEN** the run completes and the user inspects `<ctx.run_dir>/comfy/input/`
+- **THEN** the input PNG file is still present (NOT deleted by the executor or worker); the file is part of the in-tree run artifacts and is included in any `tar` / `--resume` / archive operation; the path matches `Artifact.metadata["worker_metadata"]["comfy_source_image_path"]` exactly
