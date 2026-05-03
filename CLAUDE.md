@@ -172,6 +172,8 @@ ForgeUE 已采用 OpenSpec 作为 AI 主工作流。完整规则见 [`docs/ai_wo
 
 ### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
 
+> **用户上手参考**:[`docs/ai_workflow/forgeue_quickstart.md`](docs/ai_workflow/forgeue_quickstart.md)(按 S0-S9 dev stage 组织;5 分钟上手)。本节是 Claude 视角速查清单。
+
 中心化融合 OpenSpec(契约锚点)× Superpowers(evidence 生成器)× codex-plugin-cc(stage cross-review hook)。OpenSpec change artifact 是唯一规范源,evidence 服务于契约,实施暴露的契约漏洞必须回写到 design / proposal / tasks。
 
 **8 个 Claude slash 命令**(对应 S0-S9 状态机各 stage,通过 `/forgeue:change-*` 触发):

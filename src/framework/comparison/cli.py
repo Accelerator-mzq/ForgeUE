@@ -20,19 +20,12 @@ diff engine, and reporter modules. It MUST NOT:
 Allowed framework imports: `framework.comparison.{models, loader,
 diff_engine, reporter}`. The loader transitively pulls in
 `framework.artifact_store.hashing` + `framework.core.{artifact, enums,
-runtime}`, which is permitted.
-
-Known transitive-import carve-out: `framework.artifact_store.repository`
-and `framework.artifact_store.payload_backends` will appear in
-`sys.modules` after this module loads, because the current
-`framework/artifact_store/__init__.py` eager-imports them as part of
-its public-API surface; the loader's import of
-`framework.artifact_store.hashing` therefore unavoidably triggers that
-package init. This carve-out is aligned with the Task 2 loader fence
-and is NOT a license for the CLI source to invoke any write-side API.
-A follow-up OpenSpec change (`lazy-artifact-store-package-exports`)
-tracks converting the artifact_store package init to PEP 562 lazy
-exports so this carve-out can eventually be retired.
+runtime}`, which is permitted. The artifact_store lazy-import contract
+is codified at openspec/specs/artifact-contract/spec.md "Package import
+surface is lazy-load by default" — importing
+`framework.artifact_store.hashing` no longer transitively materializes
+write-side submodules (`repository` / `payload_backends` / `lineage` /
+`variant_tracker`). The previous transitive-import carve-out is retired.
 """
 
 from __future__ import annotations

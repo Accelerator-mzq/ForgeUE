@@ -370,6 +370,8 @@ python -m pytest -v -k p3           # 关键字过滤
 
 ### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
 
+> **新用户 5 分钟上手**:[`docs/ai_workflow/forgeue_quickstart.md`](docs/ai_workflow/forgeue_quickstart.md)(按 S0-S9 dev stage 组织;每条命令做什么 / 产出什么 / 关键检查)。
+
 OpenSpec change `fuse-openspec-superpowers-workflow` 引入中心化融合工作流:OpenSpec(契约锚点)× Superpowers(evidence 生成器)× codex-plugin-cc(stage cross-review hook)。OpenSpec change artifact 是唯一规范源,evidence 服务于契约,实施暴露的契约漏洞必须回写到 design / proposal / tasks。
 
 8 个 Claude slash 命令(对应 S0-S9 状态机各 stage):

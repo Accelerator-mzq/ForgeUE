@@ -667,6 +667,15 @@ _FORBIDDEN_FRAMEWORK_MODULES_LOADER = (
     "framework.server",
     "framework.schemas",
     "framework.pricing_probe",
+    # Tightened by lazy-artifact-store-package-exports: the artifact_store
+    # package is now PEP 562 lazy-export, so importing
+    # framework.artifact_store.hashing no longer transitively pulls these
+    # write-side submodules. See openspec/specs/artifact-contract/spec.md
+    # "Package import surface is lazy-load by default".
+    "framework.artifact_store.repository",
+    "framework.artifact_store.payload_backends",
+    "framework.artifact_store.lineage",
+    "framework.artifact_store.variant_tracker",
 )
 
 
