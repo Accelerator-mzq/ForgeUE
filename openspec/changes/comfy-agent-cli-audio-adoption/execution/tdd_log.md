@@ -257,3 +257,33 @@ note: |
 
 - `git diff --name-only`:`dry_run_pass.py` + `test_comfy_subprocess_audio.py`(execution_plan §7 显式列)— 0 越界
 
+
+## Commit 7 — examples/comfy_local_smoke_audio.json bundle (2026-05-03 22:58)
+
+### Anchors
+- `tasks.md#8.1` - `#8.3` (§8 examples bundle)
+- `execution/micro_tasks.md` Commit 7 (7.1-7.4)
+- F-Plan-1 round-1: canonical 三段顶层 schema (`task` / `workflow`(无嵌 steps)/ `steps`)
+- F-Plan-6 round-1: `worker_timeout_s` 在 `step.config` 内,`retry_policy` 仅含 max_attempts/backoff/retry_on
+- F1 round-1 + F-Plan-R4-C round-4: `step.type="generate"` + `capability_ref="audio.t2a"`
+
+### Implementation files
+
+| File | Action | Details |
+|---|---|---|
+| `examples/comfy_local_smoke_audio.json` | Create | 单 audio.t2a step bundle:`step.type="generate"` + `capability_ref="audio.t2a"` + `provider_policy.{capability_required:"audio.t2a", models_ref:"audio_local"}` + `retry_policy={max_attempts:2, backoff:"fixed", retry_on:["timeout","provider_error"]}` 顶层 + `config.{num_candidates:1, seed:42, worker_timeout_s:300, spec.{comfy_workflow:"Audio_Workflows/audio_stable_audio_example", comfy_params:{text:..., negative_prompt:"", duration_seconds:10.0, seed:42, steps:50}, comfy_lifecycle:"none"}}`;沿 image / mesh smoke bundle 顶层三段并列 schema |
+
+### Pytest baseline delta
+
+- Pre-commit:1289
+- Post-commit:**1292 passed**(+3 — `tests/integration/test_example_bundles_smoke.py` 3 个 parametrized fence 自动 collect 新 bundle:`test_bundle_loads[comfy_local_smoke_audio.json]` + `test_bundle_dry_run_passes[comfy_local_smoke_audio.json]` + `test_bundle_modality_dependency_closure[comfy_local_smoke_audio.json]`)
+- 零回归
+
+### Boundary check
+
+- `git diff --name-only`:`examples/comfy_local_smoke_audio.json`(execution_plan §8.1 显式列)— 0 越界
+
+### TDD note
+
+- 没显式新加 fence file:loader smoke test 已通过 `_bundle_files()` glob `examples/*.json` 自动 collect 所有 bundle(包含新 audio bundle);3 个 parametrized fence(`test_bundle_loads` / `test_bundle_dry_run_passes` / `test_bundle_modality_dependency_closure`)全自动覆盖。这种「无新 fence file but +3 parametrized cases」是 examples bundle 标准模式,沿 image / mesh bundle 模式。
+
