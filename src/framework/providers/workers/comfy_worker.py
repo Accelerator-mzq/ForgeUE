@@ -438,8 +438,12 @@ class ComfyAgentWorker(ComfyWorker):
         for i in range(max(1, num_candidates)):
             call_seed = (seed or 0) + i
             params_for_call = dict(comfy_params)
-            # Inject seed if not already in params
-            params_for_call.setdefault("seed", call_seed)
+            # OpenSpec change `comfy-worker-seed-setdefault-bug-fix`(2026-05-04):
+            # per-candidate seed 直接覆盖,不用 `setdefault`。caller 在 comfy_params
+            # 内填了 seed 时,setdefault 会让所有 candidate 拿同 seed → 重复
+            # candidate + 误导 provenance metadata。audio 已先修(comfy_worker.py:912
+            # `comfy-agent-cli-audio-adoption` G11-F3),本 change 同步 image / mesh。
+            params_for_call["seed"] = call_seed
             results.extend(self._run_once(
                 comfy_workflow=comfy_workflow,
                 params=params_for_call,
@@ -700,7 +704,9 @@ class ComfyAgentWorker(ComfyWorker):
         for i in range(max(1, num_candidates)):
             call_seed = (seed or 0) + i
             params_for_call = dict(comfy_params)
-            params_for_call.setdefault("seed", call_seed)
+            # OpenSpec change `comfy-worker-seed-setdefault-bug-fix`(2026-05-04):
+            # per-candidate seed 直接覆盖(NOT setdefault),与 image / audio 同步。
+            params_for_call["seed"] = call_seed
             # round 5 D10:filename only(LoadImage 节点自动 prefix ComfyUI input/);
             # source_image_filename 已由 executor 写到 FORGEUE_COMFY_INPUT_DIR
             params_for_call[image_param_key] = source_image_filename

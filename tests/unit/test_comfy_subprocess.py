@@ -1030,3 +1030,70 @@ def test_dry_run_skips_probe_when_no_comfy_local_or_local_mesh_in_routes(tmp_pat
     with patch("subprocess.run") as run_mock:
         dry_run._check_comfy_reachability(report, steps=[step])
         assert run_mock.call_count == 0  # 完全跳过 probe
+
+
+# ---- G11-F3 follow-on: per-candidate seed override (image + mesh) ------------
+# OpenSpec change `comfy-worker-seed-setdefault-bug-fix`(2026-05-04):
+# 镜像 audio fence
+# `tests/unit/test_comfy_subprocess_audio.py::test_generate_audio_per_candidate_seed_overrides_comfy_params_seed`
+# 模式;验证 image / mesh per-candidate seed 直接覆盖 `comfy_params.seed`。
+
+
+def test_generate_image_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
+    """G11-F3 follow-on:`comfy_params` 已含 `seed: 42` 时,per-candidate seed 偏移
+    仍生效(每个 candidate 拿 100 / 101 / 102 不是同 42)。fence 守门
+    `setdefault → 直接覆盖` 修复(防 num_candidates>1 时 candidate 重复)。"""
+    worker = _make_worker(tmp_path)
+    fakes = [tmp_path / f"out_{i}.png" for i in range(3)]
+    for f in fakes:
+        _make_png_file(f)
+    with patch("subprocess.run") as run_mock:
+        run_mock.side_effect = [
+            _make_completed(_ok_stdout([str(f)])) for f in fakes
+        ]
+        worker.generate(
+            spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
+            num_candidates=3,
+            seed=100,  # base seed
+        )
+    # 提取每个 subprocess.run 调用的 --params JSON 里的 seed 字段
+    seeds_seen: list[int] = []
+    for call in run_mock.call_args_list:
+        argv = call.args[0]
+        idx = argv.index("--params")
+        params = json.loads(argv[idx + 1])
+        seeds_seen.append(params["seed"])
+    assert seeds_seen == [100, 101, 102], (
+        f"Expected per-candidate seed override 100/101/102, got {seeds_seen}; "
+        f"setdefault bug would return [42, 42, 42]"
+    )
+
+
+def test_generate_mesh_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
+    """G11-F3 follow-on (mesh):`comfy_params` 已含 `seed: 42` 时,per-candidate
+    seed 偏移仍生效。Mirror image fence 模式;mesh path 走 image-to-mesh DAG,
+    需要 source_image_filename 参数,但 seed 注入 logic 与 image / audio 一致。"""
+    worker = _make_mesh_worker(tmp_path)
+    fakes = [tmp_path / f"out_{i}.glb" for i in range(3)]
+    for f in fakes:
+        _make_glb_file(f)
+    with patch("subprocess.run") as run_mock:
+        run_mock.side_effect = [
+            _make_completed(_ok_mesh_stdout([str(f)])) for f in fakes
+        ]
+        worker.generate_mesh(
+            spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
+            source_image_filename="forgeue_test.png",
+            num_candidates=3,
+            seed=100,  # base seed
+        )
+    seeds_seen: list[int] = []
+    for call in run_mock.call_args_list:
+        argv = call.args[0]
+        idx = argv.index("--params")
+        params = json.loads(argv[idx + 1])
+        seeds_seen.append(params["seed"])
+    assert seeds_seen == [100, 101, 102], (
+        f"Expected per-candidate mesh seed override 100/101/102, got {seeds_seen}; "
+        f"setdefault bug would return [42, 42, 42]"
+    )
