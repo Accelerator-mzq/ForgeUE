@@ -15,14 +15,14 @@ codex_plugin_available: true
 created_at: 2026-05-03T15:55:00+08:00
 aligned_with_contract: true
 drift_decision: written-back-to-design+specs+tasks+proposal (round 5 contract writeback per user-authorized 方案 A;DRIFT type 4 resolved)
-writeback_commit: pending
+writeback_commit: ebeb953
 drift_reason: |
   Phase A 实施 commit 3 完成后,Phase B Task 1.3 实地 probe `comfyui_api params --workflow 3D_Hunyuan/3d_hunyuan3d-v2.1`
   暴露 design D7 的 implementability gap(round 1-4 codex review 全部未抓到此问题,因为
   无人跑过真实 manifest probe;design D7 + spec/artifact-contract Requirement
   「Mesh worker source image bytes are written to in-tree input file」假设
   ComfyUI LoadImage 接受任意绝对路径,实际只接受 ComfyUI 自己的 input/ 目录的 filename)。
-writeback_commit: pending
+writeback_commit: ebeb953
 reasoning_notes_anchor: null
 note: |
   本 debug_log 记录 Phase B Task 1.2-1.3 实地 probe 发现 + DRIFT type 4 的回写决策待定。
