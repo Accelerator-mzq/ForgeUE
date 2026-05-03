@@ -223,6 +223,50 @@ The system SHALL guarantee every Artifact's `PayloadRef.file` resolves to a path
 - **WHEN** it attempts to construct a `PayloadRef(kind="file", path=external_absolute_path)` whose `path` is not under `<artifact_root>/<run_id>/`
 - **THEN** the construction raises a path-violation error before reaching `ArtifactRepository.put(...)`; the contract under NFR-PORT-004 + assumption A4 (artifact files MUST live in the project tree) holds; cross-process `--resume` therefore never depends on external directory state
 
+### Requirement: Mesh Artifact metadata records ComfyUI manifest provenance
+
+The system SHALL record ComfyUI mesh provenance in `Artifact.metadata["worker_metadata"]` (the `dict[str, Any]` slot already present on `Artifact` and populated by `GenerateMeshExecutor.execute` at `generate_mesh.py:139-151` via `metadata={..., "worker_metadata": dict(cand.metadata), ...}`). The provenance SHALL be carried through the existing data flow:
+
+1. `ComfyAgentWorker.generate_mesh(...)` returns `MeshCandidate(data=<glb bytes>, format="glb", mime_type="model/gltf-binary", metadata={"comfy_manifest": <name>, "comfy_params_snapshot": <dict copy>, "comfy_capability": "mesh", "comfy_original_filename": <name>, "comfy_input_filename": <forgeue_<sha1>.png>, "comfy_input_dir": <FORGEUE_COMFY_INPUT_DIR value>})` — populating the existing `MeshCandidate.metadata: dict[str, Any]` field at `mesh_worker.py:74`. (Round 5 修订:`comfy_source_image_path` 字段拆分为 `comfy_input_filename` + `comfy_input_dir`,反映 input 实际位置在 ComfyUI 域而非 ForgeUE 项目树内;真源 source image artifact id 仍可通过 `Artifact.lineage.source_artifact_ids` 追溯。) The `MeshCandidate` dataclass itself SHALL NOT be extended (B1 codex finding accepted-codex 2026-05-03: `MeshCandidate.payload` does not exist; `data/format/mime_type/poly_count/has_uv/has_rig/metadata` are the only fields).
+2. `GenerateMeshExecutor` calls the existing `repo.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=".glb", metadata={..., "worker_metadata": dict(cand.metadata)})` at `generate_mesh.py:117-158`. No `PayloadRef.metadata` or `PayloadRef.file` field is introduced (B1 codex finding accepted-codex: `PayloadRef` actual fields are `kind/inline_value/file_path/blob_key/size_bytes`; `file` and `metadata` do not exist on `PayloadRef`).
+3. `ArtifactRepository.put(...)` writes `cand.data` to `<artifact_root>/<run_id>/<artifact_id>.glb` per the existing `FileBackend` (`payload_backends/file_backend.py`) — the in-tree path guarantee (NFR-PORT-004) is provided by `repo.put` itself, NOT by the worker copying files.
+
+This information SHALL be sufficient for a reviewer or downstream `--resume` consumer to reconstruct which manifest + params + source image produced the GLB by reading `Artifact.metadata["worker_metadata"]` (no consultation of orchestrator state needed). The original ComfyUI output filename (e.g. `asset_textured_00001_.glb` from `D:/AI/ComfyUI/outputs/main/<date>/<project>/`) is recorded in `worker_metadata["comfy_original_filename"]` for diagnostic traceability — but the actual in-tree filename uses `<artifact_id>.glb` (consistent with existing Hunyuan / Tripo3D mesh worker naming convention via `repo.put` + `file_suffix`).
+
+#### Scenario: ComfyAgentWorker (mesh) records manifest + params snapshot in MeshCandidate.metadata
+
+- **GIVEN** a `step.config.spec` with `comfy_workflow="Mesh/02_mini_textured_3d_hunyuan"`, `comfy_params={"seed": 42}`, `comfy_image_param_key="image_path"`, `comfy_lifecycle="none"`; the upstream image step has produced a source image artifact whose bytes are read into `source_bytes` by `_resolve_source_image(ctx)` and written to `<ctx.run_dir>/comfy/input/<sha1>.png` by `_generate_via_comfy_worker` before invocation
+- **WHEN** `ComfyAgentWorker(_capability="mesh").generate_mesh(spec=spec, source_image_path=Path("<ctx.run_dir>/comfy/input/<sha1>.png"), num_candidates=1, seed=42, timeout_s=600)` succeeds
+- **THEN** the returned `MeshCandidate.metadata` contains `comfy_manifest="3D_Hunyuan/3d_hunyuan3d-v2.1"`(round 5 修订:用实际可用 manifest), `comfy_params_snapshot={"seed": 42, "input_image": "forgeue_<sha1>.png"}` (round 5 修订:image input key 是 `input_image`,值是 filename only;snapshot taken AFTER executor injects;mutating the original `spec["comfy_params"]` after the call does NOT change `metadata["comfy_params_snapshot"]`), `comfy_capability="mesh"`, `comfy_original_filename=<ComfyUI 输出 GLB 文件名>`, `comfy_input_filename="forgeue_<sha1>.png"`, `comfy_input_dir="<FORGEUE_COMFY_INPUT_DIR value>"`; the `MeshCandidate` dataclass type is `mesh_worker.MeshCandidate` unchanged
+
+#### Scenario: GenerateMeshExecutor persists ComfyAgentWorker mesh candidates via repo.put with worker_metadata
+
+- **GIVEN** `_generate_via_comfy_worker` returns `[MeshCandidate(data=<glb_bytes>, format="glb", mime_type="model/gltf-binary", metadata={"comfy_manifest": "3D_Hunyuan/3d_hunyuan3d-v2.1", "comfy_params_snapshot": {...}, "comfy_capability": "mesh", "comfy_original_filename": "asset_00001_.glb", "comfy_input_filename": "forgeue_<sha1>.png", "comfy_input_dir": "<FORGEUE_COMFY_INPUT_DIR>"})]` from a step whose `ctx.repository` is a real `ArtifactRepository` rooted at `<artifact_root>/<run_id>/`
+- **WHEN** `GenerateMeshExecutor.execute` reaches the existing `repo.put` loop (`generate_mesh.py:114-160`) and processes the comfy-produced candidate
+- **THEN** the call `repo.put(artifact_id=..., value=cand.data, payload_kind=PayloadKind.file, file_suffix=".glb", metadata={..., "worker_metadata": dict(cand.metadata), ...})` writes the GLB bytes to `<artifact_root>/<run_id>/<artifact_id>.glb` (in-tree per NFR-PORT-004); the resulting `Artifact.metadata["worker_metadata"]` equals the `MeshCandidate.metadata` dict; the `Artifact.payload_ref.file_path` is the relative in-tree path `<run_id>/<artifact_id>.glb` (R2-F3 修订:实际字段名是 `payload_ref` per `artifact.py:81`,not `payload`) (NOT a path under `D:/AI/ComfyUI/outputs/`); `tar`-ing `<artifact_root>/<run_id>/` and unpacking on another host SHALL produce a self-contained Run reproducible without any reference to `D:/AI/ComfyUI/outputs/`
+
+### Requirement: Mesh worker source image bytes are written to ComfyUI input/ directory before subprocess invocation
+
+The system SHALL guarantee that when `GenerateMeshExecutor` dispatches to the comfy-worker branch (`_should_use_comfy_worker_path(ctx)` returns True), the upstream source image bytes resolved by `_resolve_source_image(ctx)` are written to **the ComfyUI installation's own `input/` directory** (path resolved via REQUIRED env var `FORGEUE_COMFY_INPUT_DIR`, e.g. `D:/AI/ComfyUI/apps/official-main-git-v092/input`) under filename `forgeue_<sha1_hex>.png` (where `<sha1_hex>` is `hashlib.sha1(source_bytes).hexdigest()[:16]`, providing idempotency + the `forgeue_` prefix avoids name collisions with ComfyUI's own input files) before the worker subprocess is invoked. The **filename only** (NOT the absolute path) SHALL be passed to `ComfyAgentWorker.generate_mesh(source_image_filename=...)`, which injects it into `spec["comfy_params"][<image_param_key>]` (with `<image_param_key>` resolved from `spec["comfy_image_param_key"]` or default **`"input_image"`** — round 5 修订:default value changed from round-1's `"image_path"` to `"input_image"` after Phase B Task 1.3 实地 probe 确认 `LoadImage` 节点 image input parameter 名为 `input_image`).
+
+If `FORGEUE_COMFY_INPUT_DIR` env var is unset, `_generate_via_comfy_worker` SHALL raise `MeshWorkerUnsupportedResponse` with a message naming the missing env var and a hint pointing at the typical ComfyUI input/ path. The input file SHALL persist after the subprocess returns (NOT deleted by ForgeUE); cleanup is the user's responsibility (CLAUDE.md mesh adoption section provides `find <input_dir> -name "forgeue_*.png" -mtime +7 -delete` periodic cleanup pattern).
+
+**NFR-PORT-004 适用范围(round 5 重新解读)**:
+- 「产物落项目树」**仍适用** for Artifact: GLB output 走 `repo.put` 落 `<artifact_root>/<run_id>/<artifact_id>.glb`(in-tree,与 Hunyuan / Tripo3D mesh worker 命名一致)
+- 「输入副本」**不属于** NFR-PORT-004 适用范围: source image 副本写到 ComfyUI input/ 是为 LoadImage 节点访问;真源 source image artifact(`<run_id>_img`)仍在 ForgeUE artifact tree 内;`tar artifacts/<run_id>/` 仍能 self-contained 重现 GLB output(input 副本作为 ComfyUI 域 ephemeral 文件)
+
+#### Scenario: Source image bytes are written to ComfyUI input/ directory with sha1-derived filename and forgeue_ prefix
+
+- **GIVEN** env var `FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input`; an upstream `_resolve_source_image(ctx)` call returns `(source_bytes=b"<png bytes>", source_image_artifact_id="run_X_step_image_1")` where `hashlib.sha1(b"<png bytes>").hexdigest()[:16] == "abc123def456"`
+- **WHEN** `_generate_via_comfy_worker(ctx, spec, source_image_bytes=source_bytes, source_image_artifact_id=..., ...)` is invoked
+- **THEN** the executor writes the bytes to `D:/AI/ComfyUI/apps/official-main-git-v092/input/forgeue_abc123def456.png` (creating the directory if missing); the file content equals `source_bytes` exactly; subsequent calls in the same run with identical bytes do NOT re-write (idempotent via hash); `worker.generate_mesh` is invoked with `source_image_filename="forgeue_abc123def456.png"` (filename only, NOT absolute path); the `comfy_params` passed to the subprocess contains `input_image: "forgeue_abc123def456.png"` (or whatever key `spec["comfy_image_param_key"]` selected;default `"input_image"` matches the `LoadImage` node parameter)
+
+#### Scenario: Missing FORGEUE_COMFY_INPUT_DIR env var raises MeshWorkerUnsupportedResponse
+
+- **GIVEN** env var `FORGEUE_COMFY_INPUT_DIR` unset (other `FORGEUE_COMFY_*` vars correctly set)
+- **WHEN** `_generate_via_comfy_worker(...)` is invoked
+- **THEN** the executor raises `MeshWorkerUnsupportedResponse` with a message naming the missing env var; no subprocess is spawned; no source image bytes are written; `FailureModeMap` resolves the failure to `mesh_worker_*` mode → `Decision.abort_or_fallback`
+
 ## Invariants
 
 - The `blob` backend is reserved; interface exists but MVP only ships `inline` + `file`.
