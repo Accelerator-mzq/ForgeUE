@@ -13,7 +13,7 @@ codex_plugin_available: true
 created_at: 2026-05-03T17:05:00+08:00
 aligned_with_contract: true
 drift_decision: null
-writeback_commit: pending
+writeback_commit: 18743a7
 drift_reason: null
 reasoning_notes_anchor: null
 note: |
