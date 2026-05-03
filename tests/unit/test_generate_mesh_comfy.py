@@ -122,9 +122,12 @@ def _make_comfy_mesh_ctx(
         started_at=datetime.now(timezone.utc),
         workflow_id="w", trace_id="tr",
     )
+    # 显式设 run_dir = tmp_path,避免 _generate_via_comfy_worker 把 source bytes
+    # 写到项目根(ctx.run_dir 默认 Path(".") 会污染 working tree)
     ctx = StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[spec_aid, img_aid],
+        run_dir=tmp_path,
     )
     return ctx, repo, src_bytes
 

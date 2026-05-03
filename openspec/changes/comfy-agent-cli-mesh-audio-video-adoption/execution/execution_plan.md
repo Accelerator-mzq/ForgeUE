@@ -85,10 +85,11 @@ Single subsystem(`framework.providers.workers.comfy_worker` + `framework.runtime
 
 | File | Operation | Responsibility |
 |---|---|---|
-| `src/framework/providers/workers/comfy_worker.py` | Modify | `ComfyAgentWorker`:加 `model_id` 参数 + `_CAPABILITY_BY_MODEL_ID` 表 + 三段表 `_validate_outputs` + private `_run_subprocess_and_validate` + public 新方法 `generate_mesh(spec, source_image_path, num_candidates, seed, timeout_s)` + auxiliary outputs INFO log + image-mode 行为不变(向后兼容) |
+| `src/framework/providers/workers/comfy_worker.py` | Modify | `ComfyAgentWorker`:加 `model_id` 参数 + `_CAPABILITY_BY_MODEL_ID` 表 + 三段表 `_validate_outputs` + private `_run_subprocess_and_validate` + public 新方法 `generate_mesh(spec, source_image_path, num_candidates, seed, timeout_s)` + auxiliary outputs INFO log + image-mode 行为不变(向后兼容)。**P-F1 修订(round 2 plan writeback,2026-05-03)**:**Same commit** 同步更新 `src/framework/runtime/executors/generate_image.py:278`(image-mode 现有 `ComfyAgentWorker(...)` call site 加 `model_id="comfy/local"` 参数)+ `tests/unit/test_comfy_subprocess.py` 现有 4 处 fixture call(line 54/96/110/127)同样加 `model_id="comfy/local"`,保证 commit 2 head 跑 baseline pass 不 TypeError |
+| `src/framework/runtime/executors/generate_image.py` | Modify(随 commit 2)| line 278 `ComfyAgentWorker(...)` call site 加 `model_id="comfy/local"` 参数(P-F1 修订:image-mode call site 同步更新避免 commit 2 head TypeError) |
 | `src/framework/runtime/executors/generate_mesh.py` | Modify | 加 `_should_use_comfy_worker_path(ctx)` helper + `_generate_via_comfy_worker(ctx, spec, source_image_bytes, ..., num, seed, timeout_s)` 方法(自带 retry loop + ComfyWorker→MeshWorker 异常 wrap);`execute()` 加分支(comfy 优先,远端不变) |
 | `config/models.yaml` | Modify | 加 `models.comfy/local-mesh` entry + `aliases.mesh_local` entry;`providers.comfy_api` 不动 |
-| `src/framework/run.py` 或 `DryRunPass` | Modify | probe gate list 从 `{"comfy/local"}` 扩为 `{"comfy/local", "comfy/local-mesh"}`;复用现有 `ComfyAgentWorker.probe_sync` |
+| `src/framework/runtime/dry_run_pass.py` | Modify | `_check_comfy_reachability` line 142 gate 从 `getattr(r, "model", None) == "comfy/local"` 扩为 set membership `getattr(r, "model", None) in {"comfy/local", "comfy/local-mesh"}`;复用现有 `ComfyAgentWorker.probe_sync`(P-F4 修订:文件归属 round 1 写错为 `run.py`,实际在 `dry_run_pass.py:117-148`)|
 | `examples/comfy_local_smoke_mesh.json` | Create | image-to-mesh bundle:Step 1 `image_step`(image_local alias,本地 ComfyUI image manifest)→ Step 2 `mesh_step`(mesh_local alias + DAG `depends_on` + `comfy_image_param_key`) |
 | `tests/unit/test_comfy_subprocess.py` | Modify | 加 ~16 mesh fence:capability dispatch / 三段表 / repo.put 流程 / source bytes 注入 / 异常 wrap / auxiliary INFO log |
 | `tests/unit/test_generate_mesh.py` | Modify | 加 ~9 executor fence:`_should_use_comfy_worker_path` / `_generate_via_comfy_worker` 行为 / source image preserved before comfy branch / wrapped MeshWorkerTimeout → abort_or_fallback |
@@ -153,6 +154,50 @@ Single subsystem(`framework.providers.workers.comfy_worker` + `framework.runtime
 5. **commit 5**(Task 5):examples bundle,fence 已守门
 6. **commit 6**(Task 7):live smoke evidence
 7. **commit 7**(Task 8):Documentation Sync Gate
+
+---
+
+## ComfyUI Host Dependency Gate(P-F3 修订,round 2 plan writeback,2026-05-03)
+
+Task 1.2 / 1.3 / 1.5 + Task 5(具体 manifest + params)+ Task 7(L2 evidence)是 **HARD BLOCKER** — 无 ComfyUI host 操作者不可推进。本 plan 提供 **Phase A / Phase B 两阶段交接**:
+
+### Phase A — No-host(Claude 可单独完成,无 ComfyUI 依赖)
+
+| Task | Commit | 内容 | 依赖 |
+|---|---|---|---|
+| Task 2 | commit 1 | `config/models.yaml` 加 `comfy/local-mesh` model + `mesh_local` alias + 2 fence | 无 |
+| Task 3 | commit 2 | `comfy_worker.py` capability dispatch + `generate_mesh` 方法 + image-mode call sites 同步(`generate_image.py:278` + `test_comfy_subprocess.py` 4 fixture)| commit 1 |
+| Task 4 | commit 3 | `generate_mesh.py` 加 `_should_use_comfy_worker_path` + `_generate_via_comfy_worker`(自带 retry + 异常 wrap)+ `dry_run_pass.py:142` gate 扩 set | commit 1+2 |
+| Task 6 | commit 4 | mocked subprocess fence(P-F2 修订:以 `specs/probe-and-validation/spec.md` 全集为准)| commit 1+2+3 |
+
+Phase A 完成后:`pytest -q` baseline 应升至 ~574+(549 + ~25-30 新 fence;实测,不硬编码);commit 1-4 head 全可 bisect。
+
+### Phase B — Host-required(必须 ComfyUI host 协同)
+
+| Task | Commit | 内容 | 阻断条件 |
+|---|---|---|---|
+| Task 1.2 | (no commit) | `comfyui_api list \| grep -iE "mesh\|glb\|3d"` 拿真实 manifest 名 | **HARD BLOCKER**:无 host = 不可继续 |
+| Task 1.3 | (no commit) | `comfyui_api params --workflow <manifest>` 拿 image input key 名 | **HARD BLOCKER** |
+| Task 1.5 | (no commit) | Q9 vertex/face count 是否暴露 | **HARD BLOCKER**(影响 `MeshCandidate.poly_count` 字段)|
+| Task 5 | commit 5 | `examples/comfy_local_smoke_mesh.json`(用 Phase B Task 1 真实值)| Phase B Task 1.2/1.3 完成 |
+| Task 7 | commit 6 | `python -m framework.run --task ...mesh.json --live-llm` L2 live smoke evidence | ComfyUI server running + Phase B Task 1 + commit 5 |
+| Task 8 | commit 7 | Documentation Sync Gate(可在 no-host 完成,但 acceptance_report fence 数需 Phase A 实测后填)| Phase A 完成 + commit 5/6 完成 |
+| Task 9-10 | (verify + archive) | finish gate 必须 L2 evidence | Phase B Task 7 完成 |
+
+### 禁止规则
+
+- **禁止用 placeholder bundle 或假 evidence 强行推进** — 任何「TBD」/「待真机确认」标记的 manifest 名进 example bundle 都视作假 evidence
+- **禁止 post-archive defer L2 evidence** — image change 已经为本规则建立先例(`live_smoke_20260503.md`);本 change 同等规则
+- 无 ComfyUI host 时,**S5 标 blocked**,在 `verification/verify_report.md` 显式记录 blocker reason;不允许 archive
+
+### 实施策略推荐
+
+1. **Claude 单独跑 Phase A**(commit 1-4):4 commit 落入,所有无 host 依赖项完成
+2. **用户在 ComfyUI host 协同 Phase B Task 1**:跑 3 条 `comfyui_api` 命令,把真实 manifest 名 / params / image_param_key 反馈给 Claude
+3. **Claude 用 Phase B Task 1 真实值写 commit 5 example bundle**(Task 5)
+4. **用户在 ComfyUI host 跑 L2 smoke**(Task 7),把 evidence 反馈;Claude 写 evidence 文件(commit 6)
+5. **Claude 跑 Documentation Sync**(commit 7)
+6. **联合跑 verify + finish gate + archive**(Task 9-10)
 
 ---
 

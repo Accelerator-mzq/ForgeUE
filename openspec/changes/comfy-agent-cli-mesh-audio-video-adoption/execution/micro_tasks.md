@@ -316,15 +316,35 @@ def generate_mesh(self, *, spec, source_image_path: Path,
     ]
 ```
 
-- [ ] **Step 3.7: Run pytest baseline + commit 2**
+- [ ] **Step 3.7: P-F1 修订:同步更新 image-mode call sites(避免 commit 2 head TypeError)**
+
+```python
+# src/framework/runtime/executors/generate_image.py:278 — 同步加 model_id
+worker = ComfyAgentWorker(
+    scripts_dir=Path(scripts_dir),
+    model_id="comfy/local",                            # P-F1 修订(round 2 plan writeback):必填参数同步加
+    run_id=ctx.run.run_id,
+    project_id=ctx.task.project_id,
+    artifacts_dir=ctx.run_dir,
+    python_exe=Path(python_exe) if python_exe else None,
+    default_lifecycle=lifecycle,
+)
+
+# tests/unit/test_comfy_subprocess.py 4 处 fixture call site(line 54/96/110/127):
+# 同步加 model_id="comfy/local" 参数
+return ComfyAgentWorker(scripts_dir=..., model_id="comfy/local", ...)
+```
+
+- [ ] **Step 3.8: Run pytest baseline + commit 2**
 
 ```bash
 python -m pytest tests/unit/test_comfy_subprocess.py -v
-# Expected: image-mode 旧 fence 全绿(行为不变)
+# Expected: image-mode 旧 fence 全绿(行为不变;model_id="comfy/local" → _capability="image" → 旧逻辑不变)
 python -m pytest -q | tail -3
 # Expected: 551(commit 1 baseline)不退化
-git add src/framework/providers/workers/comfy_worker.py
-git commit -m "feat(comfy): ComfyAgentWorker capability-aware dispatch + generate_mesh public method (image+mesh, three-tier _validate_outputs, source_image_path injection per design D7+D8)"
+git add src/framework/providers/workers/comfy_worker.py src/framework/runtime/executors/generate_image.py tests/unit/test_comfy_subprocess.py
+# P-F1 修订:commit 2 git add 含 generate_image.py + test_comfy_subprocess.py(同步 image-mode call sites)
+git commit -m "feat(comfy): ComfyAgentWorker capability-aware dispatch + generate_mesh public method (image+mesh, three-tier _validate_outputs, source_image_path injection per design D7+D8); image-mode call sites synced with model_id='comfy/local' (per P-F1 round-2 plan writeback)"
 ```
 
 ---
@@ -447,13 +467,16 @@ def execute(self, ctx: StepContext) -> ExecutorResult:
     # ...
 ```
 
-- [ ] **Step 4.4: dry-run probe gate 扩**
+- [ ] **Step 4.4: dry-run probe gate 扩(P-F4 修订:文件归属)**
 
 ```python
-# src/framework/runtime/dry_run_pass.py 或 framework/run.py
-# 现有「if any route.model == 'comfy/local'」检测扩为
-# 「if any route.model in {'comfy/local', 'comfy/local-mesh'}」
+# src/framework/runtime/dry_run_pass.py:_check_comfy_reachability(line 117-148)
+# Line 142 实际代码:
+#   getattr(r, "model", None) == "comfy/local"
+# 改为 set membership:
+#   getattr(r, "model", None) in {"comfy/local", "comfy/local-mesh"}
 # probe_sync 调用不变(probe 与 capability 无关)
+# warning message 同步加 mesh 提示(line 166 区域)
 ```
 
 - [ ] **Step 4.5: Run pytest baseline + commit 3**
@@ -463,8 +486,9 @@ python -m pytest tests/unit/test_generate_mesh.py -v
 # Expected: 现有 mesh fence 全绿(远端路径行为不变)
 python -m pytest -q | tail -3
 # Expected: 551 不退化
-git add src/framework/runtime/executors/generate_mesh.py src/framework/run.py
-git commit -m "feat(executor): GenerateMeshExecutor dispatches comfy/local-mesh via image-to-mesh path with in-tree source bytes (per B2 + D7 + D9 wrap + R3-F3 dict access); preserves _resolve_source_image flow + repo.put loop; remote mesh attempts=1 enforcement unchanged"
+git add src/framework/runtime/executors/generate_mesh.py src/framework/runtime/dry_run_pass.py
+# P-F4 修订:commit 3 git add 含 dry_run_pass.py(probe gate 真实位置),去掉 run.py(无相关改动)
+git commit -m "feat(executor+dry-run): GenerateMeshExecutor dispatches comfy/local-mesh via image-to-mesh path with in-tree source bytes (per B2 + D7 + D9 wrap + R3-F3 dict access); preserves _resolve_source_image flow + repo.put loop; remote mesh attempts=1 enforcement unchanged; DryRunPass._check_comfy_reachability gate extended to {comfy/local, comfy/local-mesh} (per P-F4 round-2 plan writeback)"
 ```
 
 ---
@@ -551,10 +575,22 @@ git commit -m "feat(examples): add comfy_local_smoke_mesh.json image-to-mesh bun
 > Anchors: `tasks.md#6.1`, `tasks.md#6.2`, `tasks.md#6.3`, `tasks.md#6.4`, `tasks.md#6.5`, `tasks.md#6.6`, `tasks.md#6.7`, `tasks.md#6.8`, `tasks.md#6.9`
 
 **Files:**
-- Modify: `tests/unit/test_comfy_subprocess.py`(~16 fence)
-- Modify: `tests/unit/test_generate_mesh.py`(~9 fence)
+- Modify: `tests/unit/test_comfy_subprocess.py`(mesh fence)
+- Modify: `tests/unit/test_generate_mesh.py`(executor fence)
 - (Optional) Create: `tests/unit/test_mesh_retry_boundary.py`(ADR-007 边界)
 
+> **★ Fence 清单真源**(P-F2 修订,round 2 plan writeback,2026-05-03):本 task 各 step 列出的 fence 是**示例 / 高频 fence**,**不**是完整清单。**实施时必须以以下 spec 文档的 named tests 全集为准**,逐一对应落 fence:
+>
+> - `specs/probe-and-validation/spec.md` — 全部 named test(capability dispatch / 三段表 / repo.put 流程 / source bytes 注入 / 异常 wrap / dry-run gate / ADR-007 边界 / **wrap unsupported_response** / **wrap generic WorkerError** / **preserve __cause__ via from exc** / **unsupported 不 retry** 等)
+> - `specs/artifact-contract/spec.md` — Scenario 中提到的所有断言点(metadata snapshot 隔离 / source path preserved / in-tree path naming 等)
+> - `specs/provider-routing/spec.md` — Scenario 中提到的所有 capability behavior(image-mode 不变 / mesh-mode auxiliary tolerance / wrap chain 等)
+>
+> 实施步骤:
+> 1. 读 spec 文件全文,枚举所有 Scenario / Requirement
+> 2. 对每个 Scenario,生成对应的 fence 名 + 实施
+> 3. 比对 micro_tasks 列出的高频 fence,缺什么补什么
+> 4. Task 6.7 总 fence 数从「~25」改为「以 spec 全集为准,实测 N 落 acceptance_report」
+>
 > 本 commit 先于 §5 examples bundle commit(避免 commit 5 head 红灯)
 
 - [ ] **Step 6.1: capability dispatch fence**(test_comfy_subprocess.py)
