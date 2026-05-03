@@ -332,9 +332,18 @@ ue_scripts/: 完全独立,不 import framework.*;仅依赖 import unreal
 | worker_timeout | retry_same_step |
 | worker_error | fallback_model |
 | unsupported_response | abort_or_fallback |
+| **mesh_worker_timeout** | **abort_or_fallback**(ADR-007:premium mesh API 不允许 framework 静默重试) |
+| **mesh_worker_error** | **abort_or_fallback**(同上) |
 | disk_full | rollback → stop |
 
 详见 LLD §5 `failure_mode_map.py`。
+
+**ADR-007 边界形式化**(自 OpenSpec change `comfy-agent-cli-mesh-audio-video-adoption` Round 5 D4):
+
+mesh worker 是否属于「premium」(适用 ADR-007 strict no-silent-retry)由现有 pricing schema 字段 `pricing.per_task_usd > 0` 判定(由 `GenerateMeshExecutor` 内联 `(route_pricing or {}).get("per_task_usd", 0) > 0`,**不**新增 `BudgetTracker.is_premium` API):
+
+- **远端 Hunyuan3D mesh**(`hunyuan/hy-3d-3.1`,`pricing.per_task_usd: 0.25`)→ premium → executor 主流程 `attempts=1` 强制 + `mesh_worker_timeout/error` 走 `abort_or_fallback`
+- **本地 ComfyUI mesh**(`comfy/local-mesh`,`pricing: null` → `per_task_usd is None`)→ 非 premium → `_generate_via_comfy_worker` 内部自带 retry loop 用 `policy.max_attempts`(默认 2);ComfyWorker 异常族(`WorkerTimeout/Error/UnsupportedResponse`)在内部 wrap 为 `MeshWorker*` 异常族(D9);**all retries exhausted 后**,wrapped `MeshWorkerTimeout` 经 `FailureModeMap` 仍走 `mesh_worker_timeout` → `abort_or_fallback`(终态与远端 mesh 一致;「standard local retry」语义由内部 loop 隐式实现,不暴露给 FailureModeMap)
 
 ---
 

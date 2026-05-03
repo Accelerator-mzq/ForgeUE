@@ -3,27 +3,37 @@
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
 
-## ComfyUI 接入(自 SRS v1.6,OpenSpec change `comfy-agent-cli-adoption`)
+## ComfyUI 接入(自 SRS v1.6,OpenSpec change `comfy-agent-cli-adoption` + `comfy-agent-cli-mesh-audio-video-adoption` Phase 1 mesh)
 
 ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**。
-Bundle 用 `image_local` alias + `spec.comfy_workflow` manifest 名(NOT 整段 workflow_graph inline)。
+- **Image** capability:bundle 用 `image_local` alias + `spec.comfy_workflow` manifest 名(NOT 整段 workflow_graph inline)
+- **Mesh** capability(round 5 D10 起):bundle 用 `mesh_local` alias + image-to-mesh DAG(上游 image step + 下游 mesh step `depends_on`),mesh manifest 例 `GameAssets/03_mini_image_to_3d_hunyuan_loadimage`(round 5 partial → full L2 evidence 时 user 授权 + Claude 写的 mini-LoadImage 变体,使用 `hunyuan3d-dit-v2-mini.safetensors` 自动下载模型;原 `3D_Hunyuan/3d_hunyuan3d-v2.1` 也可用但需手工下 6GB 主模型),可选 `spec.comfy_image_param_key`(默认 `"input_image"`)
 
 **双终端工作流(本 change scope 唯一支持模式)**:
-- 终端 1:`python -m comfyui_api serve` 启 ComfyUI(用户自管)
-- 终端 2 export env + 跑 ForgeUE:
+- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(image L2 live smoke evidence:`openspec/changes/archive/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`;mesh L2 live smoke evidence:`openspec/changes/comfy-agent-cli-mesh-audio-video-adoption/notes/live_smoke_mesh_20260503_full.md`,GLB 真实生成 3.5MB)
+- **ComfyUI 共享目录新增 ForgeUE 依赖**(round 5 user-authored mini-LoadImage 变体,本 change 必须):
+  - `D:/AI/ComfyUI/workflows/official_main_validated_api/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(API workflow,LoadImage 变体)
+  - `D:/AI/ComfyUI/scripts/comfyui_api/manifests/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(manifest,暴露 input_image patches)
+  - 这两个文件是 user-authored ComfyUI 配置,ComfyUI 重装时**手工保留**(否则 ForgeUE mesh smoke 失败)
+- 终端 2 export env + 跑 ForgeUE(或 `.env` 文件持久化,`framework.run` 启动会 `hydrate_env` 自动加载):
   ```bash
   export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
   # FORGEUE_COMFY_PYTHON_EXE 留空 → sys.executable;FORGEUE_COMFY_LIFECYCLE 留空 → "none"(本 change 仅接受)
-  python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>
+  # round 5 D10:mesh capability REQUIRED — ComfyUI 自家 input/ 目录绝对路径
+  export FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input
+  python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>          # image-only
+  python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>    # image-to-mesh
   ```
-- 产物:`artifacts/<today>/<run_id>/comfy/<filename>.png`(ForgeUE in-tree copy);原 ComfyUI 输出 `D:/AI/ComfyUI/outputs/main/<today>/<task.project_id>/...` 留作人工对照
+- 产物:image 落 `artifacts/<today>/<run_id>/comfy/<filename>.png`;mesh 落 `artifacts/<today>/<run_id>/<artifact_id>.glb`(via `repo.put` + `file_suffix=".glb"`,与 Hunyuan/Tripo3D mesh worker 命名约定一致)。原 ComfyUI 输出 `D:/AI/ComfyUI/outputs/main/<today>/<task.project_id>/...` 留作人工对照
+- mesh source image 副本:executor 写到 `$FORGEUE_COMFY_INPUT_DIR/forgeue_<sha1>.png`(`forgeue_` prefix 防与 ComfyUI 自家 input 文件冲突;非 ForgeUE 产物,cleanup 由用户管:`find $FORGEUE_COMFY_INPUT_DIR -name "forgeue_*.png" -mtime +7 -delete`)
 
-**关键限制(round 2 OQ-6 + D6)**:
+**关键限制(round 2 OQ-6 + D6 + round 5 D10)**:
 - worker 配置走 env vars `FORGEUE_COMFY_*`,**不**进 `config/models.yaml`(F-A schema 扩展登记 SRS TBD-011 后续 change)
 - `comfy_lifecycle: "none"` only(`ensure_running` / `ensure_release` / `self_managed_session` 留 SRS TBD-010 `executor-async-rewrite` 后续 change 解锁)
-- Mesh / audio / video ComfyUI workflow **不**支持(image-generation path 遇到 non-empty `outputs.glb` / `outputs.audio` raise);留 SRS TBD-009 后续 change
+- Mesh capability:仅 image-to-mesh 路径(沿用 mesh worker ABC `source_image_bytes` 模式),不支持 standalone text-to-mesh manifest;ComfyUI LoadImage 节点要求 source bytes 在 `FORGEUE_COMFY_INPUT_DIR` 指向的 ComfyUI 自家 input/ 目录(round 5 D10);Audio / video ComfyUI workflow **不**支持(留 follow-on `comfy-agent-cli-audio-adoption` / `comfy-agent-cli-video-adoption`)
+- ADR-007 边界(round 5 D4):本地 ComfyUI mesh `pricing: null` → 非 premium → `_generate_via_comfy_worker` 内部 retry loop 用 `policy.max_attempts`(默认 2);wrapped MeshWorkerTimeout 经 FailureModeMap 走 `mesh_worker_timeout` mode → `Decision.abort_or_fallback`(与远端 Hunyuan3D 终态一致);远端 Hunyuan3D `per_task_usd > 0` → premium → 主流程 `attempts=1` 强制
 
-**Dry-run 探活**:bundle 含 `image_local` 时 DryRunPass 跑一次 `comfyui_api status`(timeout 30s);env unset / probe failure → warning(NOT block,G8 commit 7 drift writeback)。Hard fail-fast 在 step 时 `ComfyAgentWorker.__init__` 守门(REQUIRED 字段 None / env unset 都 raise `WorkerUnsupportedResponse`)。
+**Dry-run 探活**:bundle 含 `image_local` / `mesh_local` 时 DryRunPass 跑一次 `comfyui_api status`(timeout 30s);env unset / probe failure → warning(NOT block,G8 commit 7 drift writeback)。Hard fail-fast 在 step 时 `ComfyAgentWorker.__init__` 守门(REQUIRED 字段 None / env unset / unknown model_id 都 raise `WorkerUnsupportedResponse`)+ `_generate_via_comfy_worker` env unset → `MeshWorkerUnsupportedResponse`(round 5 D10)。
 
 ## 架构权威(2026-04-22 文档重构后)
 

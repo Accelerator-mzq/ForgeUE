@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import struct
@@ -52,6 +53,15 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+# Mesh capability(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1):
+# generate_mesh 返回 MeshCandidate(从 mesh_worker module 复用 dataclass,
+# 不扩字段 — provenance 走 metadata dict per design D5)。
+from framework.providers.workers.mesh_worker import MeshCandidate
+
+# 模块级 logger(R2-F4 fix:auxiliary outputs.images SHALL emit INFO via 此 logger,
+# fence 用 caplog.set_level(logging.INFO, logger="framework.providers.workers.comfy_worker") 抓)
+_COMFY_LOGGER = logging.getLogger("framework.providers.workers.comfy_worker")
 
 
 class WorkerError(RuntimeError):
@@ -278,10 +288,39 @@ class ComfyAgentWorker(ComfyWorker):
 
     name = "comfy_agent_cli"
 
+    # Capability dispatch(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption
+    # design D1):capability 由 model_id 推断,bundle 不引入 outputs_kind 字段。
+    # 未知 model_id → __init__ raise(不静默 fallback)。
+    # Audio / video capability 留 follow-on change(comfy-agent-cli-audio-adoption /
+    # comfy-agent-cli-video-adoption);本 change Phase 1 mesh-only。
+    _CAPABILITY_BY_MODEL_ID: dict[str, str] = {
+        "comfy/local": "image",
+        "comfy/local-mesh": "mesh",
+    }
+
+    # Output validation 三段表(design D2 + B4 修订:mesh-mode auxiliary outputs.images
+    # 容忍,不构造 candidate 但 SHALL emit INFO log per R2-F4)。
+    # REQUIRED:capability 必须产出此 key non-empty
+    # AUXILIARY:允许 non-empty 但不消费(emit INFO log)
+    # REJECTED:non-empty 即 raise WorkerUnsupportedResponse
+    _REQUIRED_OUTPUT_KEY: dict[str, str] = {
+        "image": "images",
+        "mesh": "glb",
+    }
+    _AUXILIARY_OUTPUT_KEYS_BY_CAP: dict[str, set[str]] = {
+        "image": set(),                # image-mode 无 auxiliary
+        "mesh": {"images"},            # mesh-mode 容忍 PNG preview(B4)
+    }
+    _REJECTED_OUTPUT_KEYS_BY_CAP: dict[str, set[str]] = {
+        "image": {"glb", "audio", "video"},
+        "mesh": {"audio", "video"},
+    }
+
     def __init__(
         self,
         *,                                       # H3: keyword-only
         scripts_dir: Path,                       # REQUIRED
+        model_id: str,                           # REQUIRED (capability dispatch per D1)
         run_id: str,                             # REQUIRED (F4 fix)
         project_id: str,                         # REQUIRED (F4 fix)
         artifacts_dir: Path,                     # REQUIRED (G3 fix; ctx.run_dir)
@@ -320,12 +359,22 @@ class ComfyAgentWorker(ComfyWorker):
                 f"in this change scope (got {default_lifecycle!r}); "
                 f"see SRS TBD-010 for the future executor-async-rewrite change."
             )
+        # D1: capability dispatch via model_id 推断;unknown id raise(不静默 fallback)。
+        capability = self._CAPABILITY_BY_MODEL_ID.get(model_id)
+        if capability is None:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.__init__: unsupported model_id={model_id!r}, "
+                f"expected one of {sorted(self._CAPABILITY_BY_MODEL_ID)} "
+                f"(audio / video are follow-on changes; see SRS TBD-009)"
+            )
         self.scripts_dir = Path(scripts_dir)
         self.python_exe = Path(python_exe) if python_exe else Path(sys.executable)
         self.default_lifecycle = default_lifecycle
         self.run_id = run_id
         self.project_id = project_id
         self.artifacts_dir = artifacts_dir
+        self.model_id = model_id
+        self._capability = capability
 
     def generate(
         self,
@@ -339,6 +388,14 @@ class ComfyAgentWorker(ComfyWorker):
         seed += i). Per-call timeout is `timeout_s` (default 300s if not
         given). Total wall-clock = num_candidates × per-call (no internal
         parallelism — keeps cancel/timeout semantics simple)."""
+        # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption:capability
+        # 守门 — mesh capability worker 调 generate() 应 raise(use generate_mesh)。
+        if self._capability != "image":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local' 的 worker 可调 generate(image-mode);"
+                f"mesh-mode worker 应调 generate_mesh"
+            )
         # Reject legacy v1 spec shape (round 2 spec).
         if "workflow_graph" in spec:
             raise WorkerUnsupportedResponse(
@@ -467,27 +524,12 @@ class ComfyAgentWorker(ComfyWorker):
                 f"not a dict (got {data.get('outputs')!r})"
             )
         outputs = data["outputs"]
-        # Reject non-image outputs (round 2 spec — image-generation path
-        # must not silently drop mesh / audio bytes).
-        if outputs.get("glb"):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: outputs.glb non-empty in image-generation path "
-                f"(got {outputs['glb']!r}); workflow {comfy_workflow!r} appears "
-                f"to be a mesh manifest — see SRS TBD-009 for ComfyUI mesh follow-on"
-            )
-        if outputs.get("audio"):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: outputs.audio non-empty in image-generation path "
-                f"(got {outputs['audio']!r}); workflow {comfy_workflow!r} appears "
-                f"to be an audio manifest — see SRS TBD-009 for ComfyUI audio follow-on"
-            )
+        # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption:capability-aware
+        # 三段表守门(design D2 + B4 修订)。原硬编码 image-only 守门替换为表驱动。
+        # mesh-mode auxiliary outputs.images 容忍 + INFO log,只 raise rejected key。
+        self._validate_outputs(outputs, comfy_workflow=comfy_workflow)
+        # image-mode 后续 candidate 构造(mesh-mode 不走 _run_once,见 generate_mesh)
         images = outputs.get("images") or []
-        if not images:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: outputs.images empty for workflow "
-                f"{comfy_workflow!r}; deterministic empty response cannot be "
-                f"recovered by same-step retry"
-            )
 
         # Copy each output PNG into <artifacts_dir>/comfy/ for in-tree
         # placement (round 2 G3 + artifact-contract spec).
@@ -542,6 +584,261 @@ class ComfyAgentWorker(ComfyWorker):
             ))
         return candidates
 
+    def _validate_outputs(self, outputs: dict, *, comfy_workflow: str) -> None:
+        """Capability-aware output validation 三段表(design D2 + B4 修订)。
+
+        顺序(沿用原 image-mode 行为模式):
+        1. REJECTED key non-empty → raise(优先报告 workflow type 错,例如
+           image-mode 跑了 mesh manifest 应该报「outputs.glb 不该有」而非「images empty」)
+        2. REQUIRED key missing → raise
+        3. AUXILIARY key non-empty → SHALL emit INFO log + 不消费(R2-F4)
+
+        Per OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1
+        mesh:image-mode 行为不变(rejected = {glb, audio, video});mesh-mode
+        新加(rejected = {audio, video},auxiliary = {images} 容忍 PNG preview)。
+        """
+        cap = self._capability
+        # 1. REJECTED 先(fail-fast 优先报告 workflow type 错)
+        rejected_present = self._REJECTED_OUTPUT_KEYS_BY_CAP[cap] & {
+            k for k, v in outputs.items() if v
+        }
+        if rejected_present:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker(capability={cap!r}): rejected non-empty "
+                f"outputs {sorted(rejected_present)!r} for workflow "
+                f"{comfy_workflow!r}; see SRS TBD-009 for follow-on "
+                f"capability changes (audio / video)"
+            )
+        # 2. REQUIRED 后
+        required_key = self._REQUIRED_OUTPUT_KEY[cap]
+        if not outputs.get(required_key):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker(capability={cap!r}): outputs.{required_key} "
+                f"empty for workflow {comfy_workflow!r}; deterministic empty "
+                f"response cannot be recovered by same-step retry"
+            )
+        # 3. AUXILIARY:R2-F4 SHALL emit INFO log,不消费,不 raise
+        for aux_key in self._AUXILIARY_OUTPUT_KEYS_BY_CAP[cap]:
+            aux_val = outputs.get(aux_key)
+            if aux_val:
+                _COMFY_LOGGER.info(
+                    f"{cap}-mode auxiliary outputs.{aux_key}: "
+                    f"count={len(aux_val)} paths={list(aux_val)!r} capability={cap!r}"
+                )
+
+    def generate_mesh(
+        self,
+        *,
+        spec: dict[str, Any],
+        source_image_filename: str,
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """Mesh capability path(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption
+        design D7 + D8 + round 5 D10 修订)。
+
+        与 image-mode `generate()` 平行,但:
+        - 仅在 `_capability == "mesh"` 时可调(否则 raise)
+        - 接 source_image_filename:**filename only**(round 5 D10 修订:从 round 1-4
+          的 `source_image_path: Path` 改为 `source_image_filename: str`)。
+          executor 已把 source bytes 写入 ComfyUI 自己的 input/ 目录
+          (via FORGEUE_COMFY_INPUT_DIR env);本方法把 filename 注入 spec.comfy_params
+          的 image input key(由 spec.comfy_image_param_key 决定,默认 "input_image";
+          round 5 D8 修订:对齐 LoadImage 节点参数名)
+        - 返 MeshCandidate(data=GLB bytes, metadata={comfy provenance};D5)
+        - 不走 ComfyWorker ABC `generate`(后者返 list[ImageCandidate],类型不兼容)
+
+        Caller(`GenerateMeshExecutor._generate_via_comfy_worker`)负责 retry loop +
+        ComfyWorker → MeshWorker 异常 wrap(D9)— 本方法不带内部 retry。
+        """
+        if self._capability != "mesh":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_mesh: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-mesh' 的 worker 可调 generate_mesh"
+            )
+        # bundle spec 校验(同 generate;但 mesh 还要 spec.comfy_image_param_key 处理)
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate_mesh: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate_mesh: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like 'Mesh/02_mini_textured_3d_hunyuan')"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate_mesh: spec.comfy_params must be a dict"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_mesh: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+        # D8 round 5 修订:image input param key 由 bundle 显式声明(默认 "input_image",
+        # 对齐 LoadImage 节点参数名);round 1-4 默认 "image_path" 是凭直觉错值。
+        # 不修改 caller 的 spec["comfy_params"](deep copy)。
+        image_param_key = spec.get("comfy_image_param_key") or "input_image"
+        per_call_timeout = float(timeout_s) if timeout_s else 600.0
+        results: list[MeshCandidate] = []
+        for i in range(max(1, num_candidates)):
+            call_seed = (seed or 0) + i
+            params_for_call = dict(comfy_params)
+            params_for_call.setdefault("seed", call_seed)
+            # round 5 D10:filename only(LoadImage 节点自动 prefix ComfyUI input/);
+            # source_image_filename 已由 executor 写到 FORGEUE_COMFY_INPUT_DIR
+            params_for_call[image_param_key] = source_image_filename
+            results.extend(self._run_once_mesh(
+                comfy_workflow=comfy_workflow,
+                params=params_for_call,
+                params_snapshot=dict(params_for_call),    # snapshot 隔离 caller spec mutation(D5)
+                seed=call_seed,
+                timeout_s=per_call_timeout,
+                source_image_filename=source_image_filename,
+            ))
+        return results
+
+    def _run_once_mesh(
+        self,
+        *,
+        comfy_workflow: str,
+        params: dict[str, Any],
+        params_snapshot: dict[str, Any],
+        seed: int,
+        timeout_s: float,
+        source_image_filename: str,
+    ) -> list[MeshCandidate]:
+        """One subprocess.run for mesh capability → 1+ MeshCandidate(per outputs.glb)。
+
+        Sub-process 调用 / JSON 解析 / outputs 守门复用 image-mode 同样的逻辑骨架,
+        但产物构造走 mesh path:
+        - 从 outputs.glb 路径读 GLB bytes 到 MeshCandidate.data
+        - **不**做 worker 内部 in-tree copy(image-mode 沿用 shutil.copy2;mesh 由
+          ArtifactRepository.put 自动写到 <artifact_root>/<run_id>/<artifact_id>.glb,
+          与 Hunyuan / Tripo3D mesh worker 命名约定一致;D5)
+        - GLB magic bytes 校验(b"glTF" prefix)
+        - metadata 含 comfy_manifest / comfy_params_snapshot / comfy_capability /
+          comfy_original_filename / comfy_source_image_path(D5)
+        """
+        cmd = [
+            str(self.python_exe), "-m", "comfyui_api", "run",
+            "--workflow", comfy_workflow,
+            "--params", json.dumps(params, ensure_ascii=False),
+            "--project", self.project_id,
+            "--lifecycle", "none",
+            "--timeout", str(int(timeout_s)),
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.scripts_dir),
+                timeout=timeout_s + 30.0,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WorkerTimeout(
+                f"ComfyAgentWorker.generate_mesh subprocess wall-clock exceeded "
+                f"{timeout_s + 30.0}s (CLI internal timeout was {timeout_s}s)"
+            ) from exc
+        except FileNotFoundError as exc:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_mesh: failed to spawn subprocess "
+                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+            ) from exc
+
+        stdout = (result.stdout or "").strip()
+        if not stdout:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_mesh: empty stdout (exit code {result.returncode}; "
+                f"stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+            )
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_mesh: stdout is not valid JSON "
+                f"(exit code {result.returncode}; first 500 chars: {stdout[:500]!r})"
+            ) from exc
+        if not isinstance(data, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_mesh: stdout JSON is not a dict (got {type(data).__name__})"
+            )
+        if not data.get("ok"):
+            error_msg = str(data.get("error", ""))
+            if "TimeoutError" in error_msg:
+                raise WorkerTimeout(
+                    f"ComfyAgentWorker.generate_mesh: ComfyUI reported TimeoutError: {error_msg}"
+                )
+            for marker in _UNSUPPORTED_ERROR_MARKERS:
+                if marker in error_msg:
+                    raise WorkerUnsupportedResponse(
+                        f"ComfyAgentWorker.generate_mesh: deterministic param error: {error_msg}"
+                    )
+            raise WorkerError(
+                f"ComfyAgentWorker.generate_mesh: comfyui_api returned ok=false "
+                f"(exit {result.returncode}, error: {error_msg})"
+            )
+        if "outputs" not in data or not isinstance(data["outputs"], dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_mesh: stdout JSON missing 'outputs' field or "
+                f"not a dict (got {data.get('outputs')!r})"
+            )
+        outputs = data["outputs"]
+        # 三段表守门(mesh-mode:REQUIRED outputs.glb;auxiliary outputs.images 容忍 + INFO log;
+        # rejected outputs.audio / video raise)。
+        self._validate_outputs(outputs, comfy_workflow=comfy_workflow)
+
+        glbs = outputs.get("glb") or []
+        candidates: list[MeshCandidate] = []
+        for src_str in glbs:
+            src = Path(src_str)
+            if not src.is_file():
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_mesh: outputs.glb path does not exist: {src}"
+                )
+            if src.is_symlink():
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_mesh: outputs.glb path is a symlink, "
+                    f"refusing to follow: {src}"
+                )
+            glb_bytes = src.read_bytes()
+            # GLB magic bytes 校验:`b"glTF"`(4-byte signature for binary glTF)
+            if glb_bytes[:4] != b"glTF":
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_mesh: outputs.glb file {src.name!r} is "
+                    f"not a valid GLB (first 4 bytes {glb_bytes[:4]!r}); "
+                    f"mesh-generation path requires glTF binary magic bytes"
+                )
+            candidates.append(MeshCandidate(
+                data=glb_bytes,
+                format="glb",
+                mime_type="model/gltf-binary",
+                metadata={
+                    "comfy_manifest": comfy_workflow,
+                    "comfy_params_snapshot": params_snapshot,
+                    "comfy_capability": "mesh",
+                    "comfy_original_filename": src.name,
+                    # round 5 D10:input 文件在 ComfyUI 自家 input/ 目录(by FORGEUE_COMFY_INPUT_DIR);
+                    # 本 worker 不知道 dir 绝对路径(由 executor 传 filename only),所以 metadata 里
+                    # 只记 filename;executor 会另外补 comfy_input_dir(round 5 D10 修订)。
+                    "comfy_input_filename": source_image_filename,
+                    "comfy_project_id": self.project_id,
+                    "source": "comfy_agent_cli",
+                    "seed": seed,
+                },
+            ))
+        return candidates
+
     @classmethod
     def probe_sync(
         cls,
@@ -588,7 +885,7 @@ class ComfyAgentWorker(ComfyWorker):
         except subprocess.TimeoutExpired as exc:
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
-                f"start ComfyUI via `python -m comfyui_api serve` then retry"
+                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir)"
             ) from exc
         except FileNotFoundError as exc:
             raise WorkerUnsupportedResponse(
@@ -598,6 +895,6 @@ class ComfyAgentWorker(ComfyWorker):
         if result.returncode != 0:
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status returned exit {result.returncode}; "
-                f"start ComfyUI via `python -m comfyui_api serve` then retry "
+                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir) "
                 f"(stderr first 500 chars: {(result.stderr or '')[:500]!r})"
             )

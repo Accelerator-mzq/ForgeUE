@@ -277,6 +277,7 @@ class GenerateImageExecutor(StepExecutor):
         lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
             scripts_dir=Path(scripts_dir),
+            model_id="comfy/local",                 # P-F1 修订:capability dispatch 必填(image)
             run_id=ctx.run.run_id,
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,

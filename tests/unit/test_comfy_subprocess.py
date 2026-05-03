@@ -53,6 +53,7 @@ def _make_worker(tmp_path: Path) -> ComfyAgentWorker:
     artifacts_dir.mkdir()
     return ComfyAgentWorker(
         scripts_dir=scripts_dir,
+        model_id="comfy/local",                  # P-F1 修订:capability dispatch 必填(image)
         run_id="run_test",
         project_id="proj_test",
         artifacts_dir=artifacts_dir,
@@ -95,6 +96,7 @@ def test_project_id_none_raises_unsupported_response_at_init(tmp_path):
     with pytest.raises(WorkerUnsupportedResponse, match="project_id"):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
+            model_id="comfy/local",                  # P-F1 修订
             run_id="run_x",
             project_id="",
             artifacts_dir=artifacts_dir,
@@ -109,6 +111,7 @@ def test_artifacts_dir_none_raises_unsupported_response_at_init(tmp_path):
     with pytest.raises(WorkerUnsupportedResponse, match="artifacts_dir"):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
+            model_id="comfy/local",                  # P-F1 修订
             run_id="run_x",
             project_id="proj_x",
             artifacts_dir=None,  # type: ignore[arg-type]
@@ -126,6 +129,7 @@ def test_lifecycle_other_than_none_raises_unsupported_response(tmp_path):
     with pytest.raises(WorkerUnsupportedResponse, match="default_lifecycle"):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
+            model_id="comfy/local",                  # P-F1 修订
             run_id="run_x",
             project_id="proj_x",
             artifacts_dir=artifacts_dir,
@@ -553,3 +557,476 @@ def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypatch):
         assert "comfyui_api" in " ".join(cmd)
         assert "status" in cmd
     assert report.checks.get("comfy.cli_reachable") is True
+
+
+# ===========================================================================
+# OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1 mesh
+# fences(per spec/probe-and-validation/spec.md + spec/provider-routing/spec.md
+# + spec/artifact-contract/spec.md named tests 全集)
+# ===========================================================================
+import logging
+import shutil
+
+from framework.providers.workers.mesh_worker import MeshCandidate
+
+
+def _make_mesh_worker(tmp_path: Path) -> ComfyAgentWorker:
+    """Mesh-mode worker fixture(model_id='comfy/local-mesh' → _capability='mesh')。"""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+    return ComfyAgentWorker(
+        scripts_dir=scripts_dir,
+        model_id="comfy/local-mesh",
+        run_id="run_test_mesh",
+        project_id="proj_test_mesh",
+        artifacts_dir=artifacts_dir,
+    )
+
+
+def _ok_mesh_stdout(glb_paths: list[str], extra_outputs: dict | None = None) -> str:
+    outputs = {"glb": glb_paths, "images": [], "audio": [], "video": []}
+    if extra_outputs:
+        outputs.update(extra_outputs)
+    return json.dumps({"ok": True, "outputs": outputs})
+
+
+def _make_glb_file(path: Path, *, extra_bytes: bytes = b"") -> None:
+    """写一个最小合法 GLB(magic bytes b'glTF' + version + length + JSON chunk header
+    占位)。fence 只需要 magic 通过校验,内容可不完整。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # GLB header: "glTF"(4) + version u32(4) + total length u32(4) + ...
+    path.write_bytes(b"glTF" + b"\x02\x00\x00\x00" + b"\x00" * 16 + extra_bytes)
+
+
+# ---- Capability dispatch (D1) -------------------------------------------------
+
+
+def test_capability_inferred_image_for_comfy_local(tmp_path):
+    """D1: model_id='comfy/local' → _capability='image'(image-mode dispatch)。"""
+    worker = _make_worker(tmp_path)  # _make_worker uses model_id='comfy/local'
+    assert worker._capability == "image"
+    assert worker.model_id == "comfy/local"
+
+
+def test_capability_inferred_mesh_for_comfy_local_mesh(tmp_path):
+    """D1: model_id='comfy/local-mesh' → _capability='mesh'(mesh-mode dispatch)。"""
+    worker = _make_mesh_worker(tmp_path)
+    assert worker._capability == "mesh"
+    assert worker.model_id == "comfy/local-mesh"
+
+
+def test_unknown_model_id_raises_at_init(tmp_path):
+    """D1: 未知 model_id 在 __init__ raise(不静默 fallback)。"""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "comfyui_api").mkdir()
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir()
+    with pytest.raises(WorkerUnsupportedResponse, match=r"unsupported model_id=.*comfy/local-bogus"):
+        ComfyAgentWorker(
+            scripts_dir=scripts_dir,
+            model_id="comfy/local-bogus",
+            run_id="run_x",
+            project_id="proj_x",
+            artifacts_dir=artifacts_dir,
+        )
+
+
+# ---- Capability guard on generate vs generate_mesh ----------------------------
+
+
+def test_generate_image_raises_on_mesh_mode_worker(tmp_path):
+    """generate (image ABC) 调用 mesh-mode worker → raise(应使用 generate_mesh)。"""
+    worker = _make_mesh_worker(tmp_path)
+    with pytest.raises(WorkerUnsupportedResponse, match="capability='mesh'"):
+        worker.generate(spec={"comfy_workflow": "x", "comfy_params": {}}, num_candidates=1)
+
+
+def test_generate_mesh_raises_on_image_mode_worker(tmp_path):
+    """generate_mesh 调用 image-mode worker → raise。"""
+    worker = _make_worker(tmp_path)  # image-mode
+    with pytest.raises(WorkerUnsupportedResponse, match="capability='image'"):
+        worker.generate_mesh(
+            spec={"comfy_workflow": "x", "comfy_params": {}},
+            source_image_filename="fake.png",     # round 5 D10:filename only
+            num_candidates=1,
+        )
+
+
+# ---- 三段表 _validate_outputs (D2 + B4 + R2-F4) ------------------------------
+
+
+def test_mesh_mode_raises_on_missing_outputs_glb(tmp_path):
+    """B4: mesh-mode REQUIRED outputs.glb empty → raise。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    with patch("subprocess.run") as run_mock:
+        # outputs.glb empty
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([]))
+        with pytest.raises(WorkerUnsupportedResponse, match=r"outputs\.glb empty"):
+            worker.generate_mesh(
+                spec={"comfy_workflow": "Mesh/01", "comfy_params": {}},
+                source_image_filename=fake_input.name,
+                num_candidates=1,
+            )
+
+
+def test_mesh_mode_accepts_non_empty_outputs_images_as_auxiliary(tmp_path):
+    """B4 critical:mesh-mode auxiliary outputs.images 容忍(不 raise),
+    只产 MeshCandidate(不构造 ImageCandidate 副产物)。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+            [str(fake_glb)],
+            extra_outputs={"images": [str(tmp_path / "preview.png")]},
+        ))
+        cands = worker.generate_mesh(
+            spec={"comfy_workflow": "Mesh/02_with_preview", "comfy_params": {}},
+            source_image_filename=fake_input.name,
+            num_candidates=1,
+        )
+        # 只 1 个 MeshCandidate;preview PNG 被忽略不构造任何 candidate
+        assert len(cands) == 1
+        assert isinstance(cands[0], MeshCandidate)
+        assert cands[0].format == "glb"
+
+
+def test_mesh_mode_emits_info_log_for_auxiliary_outputs_images_with_count_and_paths(tmp_path, caplog):
+    """R2-F4 critical:mesh-mode auxiliary outputs.images SHALL emit INFO log
+    via logger 'framework.providers.workers.comfy_worker',含 count / paths /
+    capability 三字段。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    preview_paths = [str(tmp_path / "preview.png")]
+    caplog.set_level(logging.INFO, logger="framework.providers.workers.comfy_worker")
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+            [str(fake_glb)], extra_outputs={"images": preview_paths},
+        ))
+        worker.generate_mesh(
+            spec={"comfy_workflow": "Mesh/02", "comfy_params": {}},
+            source_image_filename=fake_input.name,
+            num_candidates=1,
+        )
+    matched = [r for r in caplog.records
+               if "auxiliary outputs.images" in r.message
+               and "count=1" in r.message
+               and "capability='mesh'" in r.message]
+    assert matched, f"expected INFO log with count/paths/capability fields; got records: {[r.message for r in caplog.records]}"
+
+
+def test_mesh_mode_raises_on_rejected_outputs_audio(tmp_path):
+    """B4: mesh-mode REJECTED outputs.audio non-empty → raise。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+            [str(fake_glb)], extra_outputs={"audio": ["unexpected.wav"]},
+        ))
+        with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*audio"):
+            worker.generate_mesh(
+                spec={"comfy_workflow": "Mesh/03", "comfy_params": {}},
+                source_image_filename=fake_input.name,
+                num_candidates=1,
+            )
+
+
+def test_mesh_mode_raises_on_rejected_outputs_video(tmp_path):
+    """B4: mesh-mode REJECTED outputs.video non-empty → raise。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+            [str(fake_glb)], extra_outputs={"video": ["unexpected.mp4"]},
+        ))
+        with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*video"):
+            worker.generate_mesh(
+                spec={"comfy_workflow": "Mesh/04", "comfy_params": {}},
+                source_image_filename=fake_input.name,
+                num_candidates=1,
+            )
+
+
+def test_image_mode_still_rejects_outputs_video(tmp_path):
+    """image-mode regression(B4 修订三段表 image-mode REJECTED 集 = {glb, audio, video})。"""
+    worker = _make_worker(tmp_path)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(json.dumps({
+            "ok": True,
+            "outputs": {"images": ["x.png"], "video": ["x.mp4"]},
+        }))
+        with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*video"):
+            worker.generate(spec={
+                "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+                "comfy_params": {},
+            }, num_candidates=1)
+
+
+# ---- Mesh artifact (data + metadata + GLB magic) (D5 + R2-F3) ----------------
+
+
+def test_comfy_mesh_candidate_data_is_glb_bytes_read_from_outputs_glb_path(tmp_path):
+    """D5: MeshCandidate.data == Path(outputs.glb[0]).read_bytes()(无 worker 内部 copy,
+    bytes 直接进 candidate;ArtifactRepository.put 后续负责 in-tree copy)。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb, extra_bytes=b"some-payload-bytes")
+    expected_bytes = fake_glb.read_bytes()
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+        cands = worker.generate_mesh(
+            spec={"comfy_workflow": "M/01", "comfy_params": {}},
+            source_image_filename=fake_input.name,
+            num_candidates=1,
+        )
+    assert len(cands) == 1
+    assert cands[0].data == expected_bytes
+    assert cands[0].data.startswith(b"glTF")
+
+
+def test_comfy_mesh_candidate_metadata_records_comfy_provenance(tmp_path):
+    """D5: MeshCandidate.metadata 含 comfy_manifest / comfy_params_snapshot /
+    comfy_capability / comfy_original_filename / comfy_source_image_path。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "src.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset_textured_00001.glb"
+    _make_glb_file(fake_glb)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+        cands = worker.generate_mesh(
+            spec={
+                "comfy_workflow": "Mesh/02_mini_textured_3d_hunyuan",
+                "comfy_params": {"texture_quality": "high"},
+            },
+            source_image_filename=fake_input.name,
+            num_candidates=1,
+        )
+    md = cands[0].metadata
+    assert md["comfy_manifest"] == "Mesh/02_mini_textured_3d_hunyuan"
+    assert md["comfy_capability"] == "mesh"
+    assert md["comfy_original_filename"] == "asset_textured_00001.glb"
+    # round 5 D10:metadata 字段 comfy_input_filename(filename only,不是绝对路径);
+    # ComfyUI input dir 由 executor 知道,worker 不记 dir(executor 会另补)
+    assert md["comfy_input_filename"] == fake_input.name
+    # snapshot 含 user 显式 params + executor 注入的 input_image(round 5 D8 默认 key)+ seed
+    snap = md["comfy_params_snapshot"]
+    assert snap["texture_quality"] == "high"
+    assert snap["input_image"] == fake_input.name
+
+
+def test_comfy_mesh_candidate_metadata_snapshot_isolated_from_spec_mutation(tmp_path):
+    """D5: post-call mutate caller spec.comfy_params 不影响已落 metadata snapshot
+    (deep copy via dict(...) inside generate_mesh)。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "src.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    spec = {
+        "comfy_workflow": "M/01",
+        "comfy_params": {"steps": 20, "seed_init": 42},
+    }
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+        cands = worker.generate_mesh(
+            spec=spec, source_image_filename=fake_input.name, num_candidates=1,
+        )
+    # mutate caller spec.comfy_params
+    spec["comfy_params"]["steps"] = 999
+    spec["comfy_params"]["new_field"] = "polluted"
+    snap = cands[0].metadata["comfy_params_snapshot"]
+    assert snap["steps"] == 20  # snapshot 未污染
+    assert "new_field" not in snap
+
+
+def test_comfy_mesh_rejects_non_glb_magic_bytes(tmp_path):
+    """GLB magic bytes 校验:b"glTF" prefix REQUIRED。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "fake.glb"
+    fake_glb.parent.mkdir(parents=True, exist_ok=True)
+    fake_glb.write_bytes(b"NOT_A_GLB" + b"\x00" * 16)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+        with pytest.raises(WorkerUnsupportedResponse, match="glTF binary magic"):
+            worker.generate_mesh(
+                spec={"comfy_workflow": "M/01", "comfy_params": {}},
+                source_image_filename=fake_input.name,
+                num_candidates=1,
+            )
+
+
+def test_comfy_mesh_rejects_symlink_outputs_glb_path(tmp_path):
+    """安全检查:outputs.glb 路径是 symlink → raise(防止 compromised CLI 重定向)。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "input.png"
+    fake_input.write_bytes(b"<png>")
+    real_glb = tmp_path / "real.glb"
+    _make_glb_file(real_glb)
+    sym_glb = tmp_path / "link.glb"
+    try:
+        os.symlink(str(real_glb), str(sym_glb))
+    except (OSError, NotImplementedError, AttributeError):
+        pytest.skip("symlink unsupported on this OS / unprivileged user")
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(sym_glb)]))
+        with pytest.raises(WorkerUnsupportedResponse, match="symlink"):
+            worker.generate_mesh(
+                spec={"comfy_workflow": "M/01", "comfy_params": {}},
+                source_image_filename=fake_input.name,
+                num_candidates=1,
+            )
+
+
+# ---- Source image path injection (D7 + D8) ----------------------------------
+
+
+def test_generate_mesh_injects_source_image_filename_into_comfy_params_under_default_input_image_key(tmp_path):
+    """D8 round 5 修订:bundle 不声明 comfy_image_param_key 时,默认注入到 'input_image'
+    (对齐 LoadImage 节点参数名;round 1-4 默认 'image_path' 是凭直觉错值)。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "src.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    captured_argv: list[list[str]] = []
+    def _capture(*args, **kwargs):
+        captured_argv.append(list(args[0]))
+        return _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with patch("subprocess.run", side_effect=_capture):
+        worker.generate_mesh(
+            spec={"comfy_workflow": "M/01", "comfy_params": {"steps": 20}},
+            source_image_filename=fake_input.name,
+            num_candidates=1,
+        )
+    assert len(captured_argv) == 1
+    cmd = captured_argv[0]
+    # --params 后的 JSON 含 input_image = filename(round 5 D10:filename only,不是绝对路径)
+    params_idx = cmd.index("--params")
+    params_dict = json.loads(cmd[params_idx + 1])
+    assert params_dict["input_image"] == fake_input.name  # filename only
+    assert params_dict["steps"] == 20
+
+
+def test_generate_mesh_injects_under_custom_comfy_image_param_key_when_bundle_declares_it(tmp_path):
+    """D8: bundle 显式声明 comfy_image_param_key='image' 时,注入到该 key
+    (round 5 修订:用 'image' 测 override,因为新默认 'input_image' 与某些 fence 默认值重合)。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "src.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    captured_argv: list[list[str]] = []
+    def _capture(*args, **kwargs):
+        captured_argv.append(list(args[0]))
+        return _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with patch("subprocess.run", side_effect=_capture):
+        worker.generate_mesh(
+            spec={
+                "comfy_workflow": "M/01",
+                "comfy_params": {"steps": 20},
+                "comfy_image_param_key": "image",   # custom override
+            },
+            source_image_filename=fake_input.name,
+            num_candidates=1,
+        )
+    cmd = captured_argv[0]
+    params_idx = cmd.index("--params")
+    params_dict = json.loads(cmd[params_idx + 1])
+    assert params_dict["image"] == fake_input.name  # custom key
+    assert "input_image" not in params_dict  # 不污染默认 key(因 override)
+
+
+def test_generate_mesh_does_not_mutate_caller_spec_comfy_params(tmp_path):
+    """D8: worker 必须 deep-copy spec.comfy_params,不污染 caller dict。"""
+    worker = _make_mesh_worker(tmp_path)
+    fake_input = tmp_path / "src.png"
+    fake_input.write_bytes(b"<png>")
+    fake_glb = tmp_path / "asset.glb"
+    _make_glb_file(fake_glb)
+    caller_params = {"steps": 20, "guidance": 7.5}
+    caller_params_id = id(caller_params)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+        worker.generate_mesh(
+            spec={"comfy_workflow": "M/01", "comfy_params": caller_params},
+            source_image_filename=fake_input.name,
+            num_candidates=1,
+        )
+    # caller dict 未被注入 image_path / seed
+    assert "image_path" not in caller_params
+    assert id(caller_params) == caller_params_id  # same object identity
+    assert caller_params == {"steps": 20, "guidance": 7.5}  # unchanged content
+
+
+# ---- dry-run gate extension (P-F4) -------------------------------------------
+
+
+def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monkeypatch):
+    """P-F4: dry-run probe gate 扩为 set membership;comfy/local-mesh route 也触发 probe。"""
+    from framework.providers.model_registry import ResolvedRoute
+    from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
+
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "comfyui_api").mkdir()
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(scripts_dir))
+
+    dry_run = DryRunPass()
+    report = DryRunReport(passed=True)
+
+    step = MagicMock()
+    step.provider_policy.prepared_routes = [
+        ResolvedRoute(model="comfy/local-mesh", api_key_env=None, api_base=None,
+                      kind="mesh", pricing=None),
+    ]
+
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed("ok", returncode=0)
+        dry_run._check_comfy_reachability(report, steps=[step])
+        # comfy/local-mesh 也触发 probe(P-F4 set 扩展)
+        assert run_mock.call_count == 1
+        cmd = run_mock.call_args[0][0]
+        assert "comfyui_api" in " ".join(cmd)
+        assert "status" in cmd
+    assert report.checks.get("comfy.cli_reachable") is True
+
+
+def test_dry_run_skips_probe_when_no_comfy_local_or_local_mesh_in_routes(tmp_path):
+    """regression: 仅 qwen / glm / hunyuan 路径不触发 ComfyUI probe(性能 + 可用性)。"""
+    from framework.providers.model_registry import ResolvedRoute
+    from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
+
+    dry_run = DryRunPass()
+    report = DryRunReport(passed=True)
+
+    step = MagicMock()
+    step.provider_policy.prepared_routes = [
+        ResolvedRoute(model="hunyuan/hy-3d-3.1", api_key_env="HUNYUAN_3D_KEY",
+                      api_base=None, kind="mesh", pricing={"per_task_usd": 0.25}),
+    ]
+
+    with patch("subprocess.run") as run_mock:
+        dry_run._check_comfy_reachability(report, steps=[step])
+        assert run_mock.call_count == 0  # 完全跳过 probe
