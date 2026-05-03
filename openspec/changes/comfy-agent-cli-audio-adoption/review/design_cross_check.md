@@ -21,8 +21,8 @@ created_at: 2026-05-03T18:42:31+08:00
 resolved_at: 2026-05-03T19:10:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: written-back-to-design+specs+tasks (6 findings accepted-codex; pending writeback commits — see ## B Resolution column + post-cross-check action plan)
-writeback_commit: pending
+drift_decision: written-back-to-design+specs+tasks (6 findings accepted-codex; writeback commit a12e307 含全部 round-1 修订 — see ## B Resolution column + post-cross-check action plan)
+writeback_commit: a12e307
 drift_reason: null
 reasoning_notes_anchor: null
 note: |
