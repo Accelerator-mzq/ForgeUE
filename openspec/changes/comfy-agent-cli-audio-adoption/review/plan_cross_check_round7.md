@@ -25,7 +25,7 @@ resolved_at: 2026-05-03T23:10:00+08:00
 disputed_open: 1
 aligned_with_contract: false
 drift_decision: written-back-to-provider-routing+tasks+probe (R7-A + R7-B accepted-codex 修;R7-C disputed-permanent-drift / accepted-claude — symmetry argument + threat model + scope discipline + follow-on commitment per design.md `## Reasoning Notes`)
-writeback_commit: pending
+writeback_commit: d30378e
 drift_reason: "F-Plan-R7-C: outputs.audio path containment gap — accepted-claude / disputed-permanent-drift。本 change scope=audio capability adoption 不接 path containment hardening(symmetry argument:image / mesh `comfy_worker.py:541-554` / `:805-814` 也无 containment 校验,audio 单独加破坏对称性);threat model:ComfyUI 是用户本地 subprocess 不是网络对手,is_symlink 防护已挡 G11 R2 fix 主要利用面;scope discipline:path containment 是跨 image/mesh/audio 三 capability 的一致性 hardening 应单独 follow-on;follow-on commitment:design Risks 表已加 follow-on `comfy-agent-cli-path-containment-hardening` 引用 + 实施细节估算"
 reasoning_notes_anchor: design.md#reasoning-notes (F-Plan-R7-C section)
 round: 7
