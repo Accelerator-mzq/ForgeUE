@@ -8,7 +8,7 @@ detected_env: claude-code
 codex_plugin_available: true
 triggered_by: "/forgeue:change-apply"
 drift_decision: defer-l2-evidence-upstream-blocker
-writeback_commit: pending
+writeback_commit: 5ea75da
 created_at: 2026-05-03T22:50:00+08:00
 ---
 
