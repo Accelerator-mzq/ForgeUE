@@ -25,8 +25,8 @@ created_at: 2026-05-03T21:55:00+08:00
 resolved_at: 2026-05-03T22:10:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: written-back-to-notes+design+tasks+proposal (2 round-5 findings accepted-codex; pending writeback commit)
-writeback_commit: pending
+drift_decision: written-back-to-notes+design+tasks+proposal (2 round-5 findings accepted-codex;writeback commit 6118671 含全部 round-5 narrative 修订)
+writeback_commit: 6118671
 drift_reason: null
 reasoning_notes_anchor: null
 round: 5
