@@ -241,9 +241,9 @@ note: |
 
 - [ ] 10.1 用户准备:终端 1 起 `python -m factory_v3 serve`;首次拉 Stable Audio Open ~2GB 模型权重(从 HuggingFace)— 锚点 tasks §11.1 / §11.2
 - [ ] 10.2 终端 2:`export FORGEUE_COMFY_SCRIPTS_DIR=...; python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id audio_smoke_<timestamp>` — 锚点 tasks §11.3
-- [ ] 10.3 验证 L2 客观判定:文件存在 / 大小 > 100KB / magic bytes 正确 / duration ≈ comfy_params.duration_seconds(±10%)— 锚点 tasks §11.4
+- [ ] 10.3 验证 L2 客观判定:文件存在 / 大小 > 100KB / magic bytes 正确 — 锚点 tasks §11.4(F-Plan-R2-B round-2 修订:duration 校验删除,与 design D10 + artifact-contract spec `duration_seconds=None always` 决策一致;留 follow-on `audio-metadata-parser` change 加)
 - [ ] 10.4 写 `notes/live_smoke_audio_<date>.md` 记录 evidence — 锚点 tasks §11.5
-- [ ] 10.5 commit 13:`docs(notes): record live smoke audio L2 evidence (FLAC <size>KB, duration <seconds>s)` — 锚点 tasks §11.6
+- [ ] 10.5 commit 13:`docs(notes): record live smoke audio L2 evidence (FLAC <size>KB)` — 锚点 tasks §11.6(F-Plan-R2-B round-2 修订:commit title 不记 duration)
 
 ## Final — codex G6/G11 hooks + Finish Gate(`tasks.md` §12 + §13)
 

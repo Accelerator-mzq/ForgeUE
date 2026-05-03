@@ -81,7 +81,7 @@ The system SHALL extend the executor table with `GenerateAudioExecutor` (new fil
 
 - When the comfy-worker path is selected, call `_generate_via_comfy_worker(ctx, spec, num, seed, timeout_s) -> list[AudioCandidate]` which:
   1. Constructs `ComfyAgentWorker(scripts_dir=..., model_id="comfy/local-audio", run_id=ctx.run.run_id, project_id=ctx.task.project_id, artifacts_dir=ctx.run_dir, default_lifecycle="none")` inline (mirrors mesh path)
-  2. Runs an internal retry loop bounded by `ctx.step.config.policy.max_attempts` (default 2; local audio is NOT premium per the `pricing.per_task_usd > 0` boundary, so the executor MAY retry without ADR-007 single-attempt restrictions)
+  2. Runs an internal retry loop bounded by `(ctx.step.retry_policy or RetryPolicy()).max_attempts` (default 2; F-Plan-R2-A round-2 plan 修订:`retry_policy` is a top-level Step field per `src/framework/core/task.py:30-42` — NOT under `step.config`; mirrors mesh implementation `policy = ctx.step.retry_policy or RetryPolicy()` at `src/framework/runtime/executors/generate_mesh.py:146` and `:191`. Local audio is NOT premium per the `pricing.per_task_usd > 0` boundary, so the executor MAY retry without ADR-007 single-attempt restrictions)
   3. Calls `worker.generate_audio(spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s)` and returns the resulting `list[AudioCandidate]`
   4. Persists each candidate via `repo.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})` (mirrors mesh `repo.put` with `file_suffix=".glb"`; format-aware `file_suffix` keeps the artifact tree extensions consistent with payload bytes)
 
@@ -147,7 +147,7 @@ The system SHALL implement `ComfyAgentWorker.generate_audio(spec: dict, num_cand
 
 ### Requirement: Local ComfyUI audio worker is NOT a premium API per the per_task_usd boundary
 
-The system SHALL apply the ADR-007 premium-API boundary to local ComfyUI audio identically to local ComfyUI mesh: `comfy_local_audio.pricing` is null → `pricing.per_task_usd` resolves to None / 0 → the model is NOT premium → `GenerateAudioExecutor._generate_via_comfy_worker` SHALL run an internal retry loop bounded by `ctx.step.config.policy.max_attempts` (default 2) without ADR-007 strict-single-attempt restrictions.
+The system SHALL apply the ADR-007 premium-API boundary to local ComfyUI audio identically to local ComfyUI mesh: `comfy_local_audio.pricing` is null → `pricing.per_task_usd` resolves to None / 0 → the model is NOT premium → `GenerateAudioExecutor._generate_via_comfy_worker` SHALL run an internal retry loop bounded by `(ctx.step.retry_policy or RetryPolicy()).max_attempts` (default 2;F-Plan-R2-A round-2 plan 修订:`retry_policy` is top-level Step field per `task.py:30-42`,NOT under `step.config`;mirrors mesh impl `generate_mesh.py:146`+`:191`)without ADR-007 strict-single-attempt restrictions.
 
 In contrast, future remote audio workers (e.g. AudioCraft hosted endpoints registered with `pricing.per_task_usd > 0`) SHALL be premium and SHALL be subject to ADR-007's strict-single-attempt contract on the executor main path; this future behavior is NOT implemented by this change but the contract is preserved to avoid future drift.
 

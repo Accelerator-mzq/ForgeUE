@@ -90,7 +90,7 @@ ComfyUI 共享目录暴露 2 个 audio manifest:
 
 ### D4 — ADR-007 边界沿用 `pricing.per_task_usd > 0` 判定
 
-**决策**:本地 ComfyUI audio `comfy_local_audio` model 的 `pricing: null`(本地 GPU,无 per-task 费用),`pricing.per_task_usd` is None / 0 → 非 premium → `GenerateAudioExecutor._generate_via_comfy_worker` 内部 retry loop 用 `policy.max_attempts`(默认 2);wrapped `AudioWorkerTimeout` 经 FailureModeMap 走 `audio_worker_timeout` mode → `Decision.abort_or_fallback`(与远端 audio worker 终态一致,不是 retry_same_step)。
+**决策**:本地 ComfyUI audio `comfy_local_audio` model 的 `pricing: null`(本地 GPU,无 per-task 费用),`pricing.per_task_usd` is None / 0 → 非 premium → `GenerateAudioExecutor._generate_via_comfy_worker` 内部 retry loop 用 `(ctx.step.retry_policy or RetryPolicy()).max_attempts`(默认 2;F-Plan-R2-A round-2 plan 修订:`retry_policy` 是 Step 顶层字段 per [task.py:30-42](src/framework/core/task.py#L30-L42),**不**在 `step.config` 内;对照 mesh 实装 [generate_mesh.py:146](src/framework/runtime/executors/generate_mesh.py#L146) + [:191](src/framework/runtime/executors/generate_mesh.py#L191) `policy = ctx.step.retry_policy or RetryPolicy()`);wrapped `AudioWorkerTimeout` 经 FailureModeMap 走 `audio_worker_timeout` mode → `Decision.abort_or_fallback`(与远端 audio worker 终态一致,不是 retry_same_step)。
 
 未来远端 audio worker(AudioCraft 等)`pricing.per_task_usd > 0` → premium → 主流程 `attempts=1` 强制 + ADR-007 strict no-silent-retry。
 
@@ -193,36 +193,68 @@ def generate_audio(
 
 **理由**:见 D7 reasoning。
 
-**示例 bundle**(摘自 `examples/comfy_local_smoke_audio.json`):
+**示例 bundle**(摘自 `examples/comfy_local_smoke_audio.json`;F-Plan-R2-C round-2 plan 修订:用 canonical 三段顶层 schema 替换旧 `id/kind/config` 结构 — 真实 loader [`workflows/loader.py:34-36`](src/framework/workflows/loader.py#L34-L36) 读 `raw["task"]` + `raw["workflow"]` + `raw["steps"]`;对照 [tasks §8.1](tasks.md) 完整模板 + [examples/comfy_local_smoke_mesh.json](examples/comfy_local_smoke_mesh.json)):
 
 ```json
 {
-  "id": "audio_t2a",
-  "kind": "audio.t2a",
-  "config": {
-    "spec": {
-      "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
-      "comfy_params": {
-        "text": "heavenly choral electronic dance, uplifting, ethereal pads, 130bpm",
-        "negative_prompt": "",
-        "duration_seconds": 10.0,
-        "seed": 42,
-        "steps": 50
+  "task": {
+    "task_id": "task_comfy_audio_smoke",
+    "task_type": "asset_generation",
+    "run_mode": "basic_llm",
+    "title": "Local ComfyUI audio smoke (text-to-audio)",
+    "input_payload": {"prompt": "heavenly choral electronic dance, uplifting, ethereal pads, 130bpm"},
+    "expected_output": {"artifact_types": ["audio_asset"]},
+    "project_id": "proj_comfy_audio_smoke"
+  },
+  "workflow": {
+    "workflow_id": "wf_comfy_audio_smoke",
+    "name": "comfy_audio_smoke",
+    "version": "1.0.0",
+    "entry_step_id": "step_audio",
+    "step_ids": ["step_audio"]
+  },
+  "steps": [
+    {
+      "step_id": "step_audio",
+      "type": "generate",
+      "name": "comfy-local-text-to-audio",
+      "risk_level": "medium",
+      "capability_ref": "audio.t2a",
+      "provider_policy": {
+        "capability_required": "audio.t2a",
+        "models_ref": "audio_local"
       },
-      "comfy_lifecycle": "none"
-    },
-    "provider_policy": {
-      "capability_required": "audio.t2a",
-      "models_ref": "audio_local"
-    },
-    "policy": {
-      "max_attempts": 2,
-      "timeout_seconds": 300
-    },
-    "depends_on": []
-  }
+      "retry_policy": {
+        "max_attempts": 2,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "provider_error"]
+      },
+      "config": {
+        "num_candidates": 1,
+        "seed": 42,
+        "worker_timeout_s": 300,
+        "spec": {
+          "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
+          "comfy_params": {
+            "text": "heavenly choral electronic dance, uplifting, ethereal pads, 130bpm",
+            "negative_prompt": "",
+            "duration_seconds": 10.0,
+            "seed": 42,
+            "steps": 50
+          },
+          "comfy_lifecycle": "none"
+        }
+      }
+    }
+  ]
 }
 ```
+
+**关键 schema 锁定点**(F-Plan-R2-C round-2 锁;违反必导致 loader `KeyError` 或 Pydantic strict raise):
+- 顶层三段 `task` / `workflow`(无嵌 steps)/ `steps` 并列 — 对应 [`loader.py:34-36`](src/framework/workflows/loader.py#L34-L36) `Task.model_validate(raw["task"])` + `Workflow.model_validate(raw["workflow"])` + `[Step.model_validate(s) for s in raw["steps"]]`
+- `step.retry_policy` 在 Step 顶层 + 仅含 `max_attempts/backoff/retry_on`(`RetryPolicy` schema [`policies.py:25-30`](src/framework/core/policies.py#L25-L30) 限定字段;**不**含 `timeout_seconds`)
+- `worker_timeout_s` 在 `step.config` 内(对照 [`generate_image.py:83`](src/framework/runtime/executors/generate_image.py#L83) + [`generate_mesh.py:190`](src/framework/runtime/executors/generate_mesh.py#L190) 实读 `cfg.get("worker_timeout_s")`)
+- `provider_policy` / `depends_on` / `retry_policy` 都是 Step 顶层(per [`task.py:30-42`](src/framework/core/task.py#L30-L42)),**不**在 `step.config` 内
 
 **Implication**:用户切换 manifest(ACE-Step ↔ Stable Audio)时手工调整 `comfy_params` keys;executor 不感知 manifest schema。Phase 1 mesh 的 `comfy_image_param_key` 模式不引入到 audio。
 
@@ -380,7 +412,7 @@ def _generate_via_comfy_worker(
 | TBD-002 lift 论据是否被 codex review 接受(Phase 1 D3 用相同模式 split 出 audio + video follow-on,但本 change scope 同步 lift TBD-002 是新动作 — codex 可能要求 TBD-002 lift 单独走 ADR / proposal) | proposal.md 已显式说明 TBD-002 lift 论据(ComfyUI audio 是真实驱动力,ABC 不应被远端协议绑架);若 plan-stage codex review 要求拆分,可把「ABC + AudioCandidate + GenerateAudioExecutor」单独拆成 `audio-worker-baseline` change,本 change 等其归档后只接 ComfyUI capability。tasks.md 不预 commit split — 等 codex 实际 raise concern 再决策 |
 | audio.t2a step type 注册可能与现有 step type 命名空间冲突(`image.generation` / `image.edit` / `mesh.generation` / `text.structured` / `text.review` / `select` / `validate` / `export`) | grep `step_type` 在 [workflows/loader.py](src/framework/workflows/loader.py) 检查命名空间,确认 `audio.t2a` 唯一;follow-on `audio.audio2audio`(remix)不在本 change scope |
 | 失败模式 mode 名 `audio_worker_timeout` / `audio_worker_unsupported` 与 mesh 镜像但 audio 应该有自己的语义边界(audio 内容质量校验 vs mesh 几何校验 vs image 视觉校验) | 本 change 仅接 wrapper 层 mode(timeout / unsupported);content quality / format integrity 留 follow-on `audio-quality-validation` change 接(类比 Phase 1 mesh 的 magic bytes 校验是 follow-on 才加的) |
-| examples/comfy_local_smoke_audio.json 落盘 FLAC 真实音频内容不可控(随机 prompt + seed 出来不一定好听) — L2 evidence 主观判断难 | L2 evidence 客观判定:(1) FLAC 文件存在 (2) 文件大小 > 100KB(避免 0-byte 假成功)(3) 文件 header 是 `fLaC` magic(4) duration 接近 bundle 声明的 `duration_seconds`(±10%)。**不**主观判断音频质量(留人工 spot-check) |
+| examples/comfy_local_smoke_audio.json 落盘 FLAC 真实音频内容不可控(随机 prompt + seed 出来不一定好听) — L2 evidence 主观判断难 | L2 evidence 客观判定:(1) FLAC / MP3 / WAV 文件存在 (2) 文件大小 > 100KB(避免 0-byte 假成功)(3) magic bytes 对照 format-specific table(`fLaC` / `ID3`+MPEG sync / `RIFF`+`WAVE`,与 worker 强制校验一致)。**不**主观判断音频质量(留人工 spot-check)。F-Plan-R2-B round-2 plan 修订:duration ±10% 校验**删除**(与 design D10 + artifact-contract spec `duration_seconds=None always` 决策一致;本 change scope 不引入 mutagen / wave / aifc parser;留 follow-on `audio-metadata-parser` change 加 duration 校验) |
 | **Stable Audio Open 1.0 license 商业边界**(F6 round-2 修订)— D11 默认选择的 manifest 用 Stable Audio Open 1.0 模型,license 是 [Stability AI Community License](https://stability.ai/license);[官方 research paper](https://stability.ai/news-updates/stable-audio-open-research-paper) 明确 commercial use up to $1M annual revenue;超过此门槛的企业需要 Stability Enterprise License。UE 生产链项目可预见交付 / 企业使用风险 | (1) `examples/comfy_local_smoke_audio.json` 文档段(README / sibling note)显式标注 license 限制 + 链接 Stability 官方 license 页;(2) `CLAUDE.md` ComfyUI section 加 license note,提示企业用户切 ACE-Step v1(更宽松 license)或自审 Stability 当前 license 边界;(3) 用户**可替换** manifest(bundle `comfy_workflow` 字段是 string,运行时切 `Audio_Workflows/audio_ace_step_1_t2a_instrumentals` 或自家 manifest 都可) — 不锁死 Stable Audio Open;(4) ForgeUE 框架本身不分发模型权重,license 边界由用户与上游模型作者直接对齐 |
 
 ## Migration Plan
