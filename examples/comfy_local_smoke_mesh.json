@@ -1,0 +1,87 @@
+{
+  "task": {
+    "task_id": "task_comfy_mesh_smoke",
+    "task_type": "asset_generation",
+    "run_mode": "basic_llm",
+    "title": "Local ComfyUI mesh smoke (ComfyAgentWorker, image-to-mesh DAG)",
+    "input_payload": {
+      "prompt": "single oak barrel isolated white background"
+    },
+    "expected_output": {
+      "artifact_types": [
+        "concept_image",
+        "mesh_asset"
+      ]
+    },
+    "project_id": "proj_comfy_mesh_smoke"
+  },
+  "workflow": {
+    "workflow_id": "wf_comfy_mesh_smoke",
+    "name": "comfy_mesh_smoke",
+    "version": "1.0.0",
+    "entry_step_id": "step_image",
+    "step_ids": [
+      "step_image",
+      "step_mesh"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "step_image",
+      "type": "generate",
+      "name": "comfy-local-txt2img",
+      "risk_level": "medium",
+      "capability_ref": "image.generation",
+      "provider_policy": {
+        "capability_required": "image.generation",
+        "models_ref": "image_local"
+      },
+      "config": {
+        "num_candidates": 1,
+        "seed": 7777,
+        "worker_timeout_s": 300,
+        "spec": {
+          "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+          "comfy_params": {
+            "text": "single oak barrel isolated on plain white background, masterpiece, best quality, highly detailed, iron banding, weathered wood, isolated object, centered composition, product shot, studio lighting, simple background, sharp focus",
+            "seed": 7777,
+            "width": 1024,
+            "height": 1024
+          },
+          "comfy_lifecycle": "none"
+        }
+      }
+    },
+    {
+      "step_id": "step_mesh",
+      "type": "generate",
+      "name": "comfy-local-image-to-mesh",
+      "risk_level": "high",
+      "capability_ref": "mesh.generation",
+      "depends_on": ["step_image"],
+      "provider_policy": {
+        "capability_required": "mesh.generation",
+        "models_ref": "mesh_local"
+      },
+      "retry_policy": {
+        "max_attempts": 2, "backoff": "fixed",
+        "retry_on": ["timeout", "provider_error"]
+      },
+      "config": {
+        "num_candidates": 1,
+        "seed": 8888,
+        "worker_timeout_s": 600,
+        "spec": {
+          "comfy_workflow": "3D_Hunyuan/3d_hunyuan3d-v2.1",
+          "comfy_params": {
+            "seed": 8888,
+            "steps": 30,
+            "cfg": 5.0
+          },
+          "comfy_image_param_key": "input_image",
+          "comfy_lifecycle": "none"
+        }
+      }
+    }
+  ]
+}
