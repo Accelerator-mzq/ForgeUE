@@ -611,3 +611,64 @@ aliases:
     assert route.api_key_env is None
     assert route.api_base is None
     assert alias.fallback == []
+
+
+def test_comfy_local_audio_model_resolves_via_audio_local_alias(tmp_path):
+    """alias audio_local → comfy/local-audio 全链路解析:
+    bundle 写 provider_policy.models_ref: "audio_local"
+    → loader expand → ResolvedRoute(model="comfy/local-audio", kind="audio", pricing=None)
+    → GenerateAudioExecutor._should_use_comfy_worker_path 检测 → ComfyAgentWorker.generate_audio dispatch。
+    OpenSpec change comfy-agent-cli-audio-adoption Phase 2(F1 round-1 + F-Plan-R4-C round-4 修订:
+    `audio.t2a` 是 capability_ref,**不**是新 step type;ExecutorRegistry `(StepType.generate, "audio.t2a")`
+    精确匹配查找)。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local-audio:
+    id: "comfy/local-audio"
+    provider: comfy_api
+    kind: audio
+    pricing: null
+aliases:
+  audio_local:
+    preferred: ["comfy/local-audio"]
+    fallback: []
+""")
+    reg = ModelRegistry.from_yaml(path)
+    alias = reg.resolve("audio_local")
+    assert alias.name == "audio_local"
+    assert len(alias.preferred) == 1
+    route = alias.preferred[0]
+    assert route.model == "comfy/local-audio"
+    assert route.kind == "audio"
+    assert route.pricing is None
+    assert route.api_key_env is None
+    assert route.api_base is None
+    assert alias.fallback == []
+
+
+def test_audio_local_alias_kind_is_audio(tmp_path):
+    """守门 audio_local alias 解析后 ResolvedRoute.kind == "audio"。
+    F-Plan-R4-C round-4 修订:`audio.t2a` 是 Step.capability_ref,**不**是 step type 枚举;
+    ResolvedRoute.kind 是 modeling layer kind(per registry 三段式 schema),与
+    Step.type=StepType.generate 不冲突 — 两个不同维度(model kind vs step type)。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local-audio:
+    id: "comfy/local-audio"
+    provider: comfy_api
+    kind: audio
+    pricing: null
+aliases:
+  audio_local:
+    preferred: ["comfy/local-audio"]
+    fallback: []
+""")
+    reg = ModelRegistry.from_yaml(path)
+    alias = reg.resolve("audio_local")
+    # alias 顶层 kind 不在 alias 实例上(alias 是 model id list 容器);
+    # kind 在 preferred[0] route 上
+    assert alias.preferred[0].kind == "audio"

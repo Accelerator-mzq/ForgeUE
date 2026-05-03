@@ -125,6 +125,12 @@ models:
     provider: comfy_api
     kind: mesh
 
+  # OpenSpec change comfy-agent-cli-audio-adoption Phase 2 audio
+  comfy_local_audio:
+    id: "comfy/local-audio"
+    provider: comfy_api
+    kind: audio
+
 aliases:
   # capability-named aliases only —— swap models freely without renaming
 
@@ -162,4 +168,8 @@ aliases:
   # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1: local ComfyUI mesh
   mesh_local:
     preferred: [comfy_local_mesh]
+    fallback: []
+  # OpenSpec change comfy-agent-cli-audio-adoption Phase 2: local ComfyUI audio
+  audio_local:
+    preferred: [comfy_local_audio]
     fallback: []

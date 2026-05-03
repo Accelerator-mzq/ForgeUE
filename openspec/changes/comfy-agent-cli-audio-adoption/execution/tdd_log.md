@@ -86,3 +86,33 @@ note: |
 - F-Plan-R6-A `shape="waveform"` 决策不在本 commit(本 commit 只建 ABC + Candidate + Fake;Artifact `shape` 由 commit 4 GenerateAudioExecutor `repo.put` 时设置,本 commit 不涉及)。
 - F-Plan-R7-C disputed-permanent-drift(path containment)与本 commit 无关(本 commit 不读 outputs.audio bytes;commit 3 ComfyAgentWorker.generate_audio 才涉及)。
 
+
+## Commit 2 — ModelRegistry config + 2 fence (2026-05-03 21:55)
+
+### Anchors
+- `tasks.md#3.1` - `#3.6` (§3 ModelRegistry config 全部 sub-tasks)
+- `execution/micro_tasks.md` Commit 2 (2.1-2.7)
+
+### Implementation files
+
+| File | Action | Details |
+|---|---|---|
+| `config/models.yaml` | Modify | 加 `models.comfy_local_audio` entry(`id: "comfy/local-audio"` + `provider: comfy_api` + `kind: audio` + `pricing: null`)+ `aliases.audio_local`(preferred=[comfy_local_audio], fallback=[]);沿 image_local / mesh_local 模式 + ADR-007 边界判定 non-premium |
+| `tests/fixtures/test_models.yaml` | Modify | 同步加 `comfy_local_audio` model + `audio_local` alias(unit test fixture,不动 production yaml) |
+| `tests/unit/test_model_registry.py` | Modify | +2 fence:`test_comfy_local_audio_model_resolves_via_audio_local_alias`(全链路解析 alias→route)+ `test_audio_local_alias_kind_is_audio`(ResolvedRoute.kind="audio" 守门;沿 mesh test pattern) |
+
+### Pytest baseline delta
+
+- Pre-commit:1248
+- Post-commit:**1250 passed**(+2)
+- 零回归
+
+### Boundary check
+
+- `git diff --name-only`:`config/models.yaml` + `tests/fixtures/test_models.yaml` + `tests/unit/test_model_registry.py` 三个 file 全在 design.md File Structure scope 内 ✅
+- 0 越界
+
+### Drift events
+
+无。
+
