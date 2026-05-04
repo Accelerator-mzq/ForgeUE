@@ -5,6 +5,33 @@
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
 
+## ComfyUI 接入快查(详见 CLAUDE.md `## ComfyUI 接入` 完整版)
+
+**4 capability** all closed under TBD-009(SRS v1.8 起):
+- **Image** capability(自 v1.6):`comfy_local` model id + `image_local` alias + ComfyUI manifest 名(NOT inline workflow_graph)
+- **Mesh** capability(自 v1.7 D10):`comfy_local_mesh` + `mesh_local` alias + image-to-mesh DAG;需 `FORGEUE_COMFY_INPUT_DIR`
+- **Audio** capability(自 v1.7 Phase 2):`comfy_local_audio` + `audio_local` alias + text-to-audio 单 step;Stable Audio Open 1.0 / ACE-Step manifest;`Audio_Workflows/audio_stable_audio_example` 默认;format whitelist `{flac, mp3, wav}` + magic bytes 二次校验
+- **Video** capability(自 v1.8 Phase 3):`comfy_local_video` + `video_local` alias + text-to-video 单 step;**`Vedio/Wan2.1-T2V-1.3B_native_5sec`** 默认 manifest(D5 上游 `Vedio/` 拼写照实跟随,**不**做翻译;7 分钟 / 6GB VRAM);format **mp4-only**(round-2 F2 + round-3 PF3 sweep,webm follow-on `comfy-video-webm-adoption`)+ **BMFF strict 5-tuple header validation**(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject `box_size==1` largesize + major_brand non-empty);UE bridge `_KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + **D12 packaging path 分流**(mp4 落 `Content/Movies/<run_id>/` packaging 外挂,`.uasset` 落 `Content/Generated/<run_id>/`);5 个 video metadata 顶层字段始终 None(`duration_seconds` / `frame_count` / `width` / `height` / `fps`,留 follow-on `video-metadata-parser`)
+
+**ComfyUI 共享目录新增 ForgeUE 依赖(round-3 PF1 D-Runner-Extension)**:
+- `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 函数加 `video` collection block(收集 VHS_VideoCombine 节点 legacy `gifs` UI key 装的 video preview dict)— user-authored 修改,ComfyUI 重装时**手工保留**(否则 ForgeUE video L2 evidence 失败);沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式
+
+**双终端 smoke**(详见 CLAUDE.md):
+```bash
+python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>           # image-only
+python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>     # image-to-mesh (需 FORGEUE_COMFY_INPUT_DIR)
+python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id <id>    # text-to-audio (v1.7)
+python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>    # text-to-video (v1.8)
+```
+
+**probe opt-in**(per probes/ convention):
+- `FORGEUE_PROBE_COMFY=1` / `FORGEUE_PROBE_COMFY_MESH=1` / `FORGEUE_PROBE_COMFY_AUDIO=1` / `FORGEUE_PROBE_COMFY_VIDEO=1`
+- 默认 SKIP;每个 probe 都需要 ComfyUI server running + 模型权重缓存
+
+**ADR-007 边界**:本地 ComfyUI mesh / audio / video `pricing: null` → 非 premium → `_generate_via_comfy_worker` 内部 retry;wrapped `MeshWorker*` / `AudioWorker*` / `VideoWorker*` 经 FailureModeMap 走 `mesh_worker_*` / `audio_worker_*` / `video_worker_*` mode → `Decision.abort_or_fallback`(D14 priority:video 子类 isinstance 必须先于 audio / mesh / generic worker_*)
+
+**License 边界**:Stable Audio Open 1.0 = Stability AI Community License($1M annual revenue 限);Wan 2.1 / 2.2 = 阿里 Tongyi-Wanxiang 协议;ForgeUE 框架不分发模型权重,license 边界由用户与上游对齐。
+
 ## 架构权威(2026-04-22 文档重构后)
 
 五件套为当前唯一权威,plan_v1 降级为归档史料(ADR-005):

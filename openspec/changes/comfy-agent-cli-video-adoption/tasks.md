@@ -22,12 +22,12 @@
 
 ## 1. 准备工作与前置确认
 
-- [ ] 1.1 确认前置 change `2026-05-03-comfy-agent-cli-audio-adoption` 已归档,`ComfyAgentWorker` image+mesh+audio-mode 在 head 通过(`python -m pytest tests/unit/test_comfy_subprocess.py -v` 全绿,基线 1294 不退化;若实测有偏差以 `python -m pytest -q` 实数为准,**不**硬编码总数)
-- [ ] 1.2 在装了 ComfyUI 的机器上跑 `python -m comfyui_api list` 拿真实 manifest 列表;确认 `Vedio/Wan2.1-T2V-1.3B_native_5sec` 出现在列表里(D5:**注意上游拼写是 `Vedio` 不是 `Video`**);记录到 `notes/manifest_audit_<date>.md`
-- [ ] 1.3 跑 `python -m comfyui_api params --workflow Vedio/Wan2.1-T2V-1.3B_native_5sec` 拿 params schema;确认 `positive_prompt`(REQUIRED)+ `negative_prompt` + `width` + `height` + `num_frames` + `seed` + `steps` + `filename_prefix`(对照 design.md §Context manifest 表);记录到 manifest_audit notes(同上)
-- [ ] 1.4 起新分支 `feat/openspec-comfy-video`(从 `main` 拉),或在现有 openspec 分支续加 commit
-- [ ] 1.5 OQ-1 + OQ-2 探明(D6:**S2→S3 阻塞**,**不**推到 implementation 阶段;沿 audio §1.5 静态阅读 + §1.5b 实测补全模式):静态阅读 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs`(line 186-249)+ 跑 `python -m comfyui_api list / params` + 检查 ComfyUI server status;结果落 [`notes/video_subprocess_probe_<date>.md`](notes/)。**待确认**:(a) `outputs.video` 字段名正确(可能是 `"videos"` 复数,若是则走 round-2 design 修订),string list of **absolute paths**(同 audio 协议);(b) 单 VHS_VideoCombine 节点 1 file per subprocess run,`num_candidates > 1` 由 **`ComfyAgentWorker.generate_video` 内部** per-candidate loop 实现(沿 audio F-Plan-R5-A);(c) ComfyUI agent CLI 不暴露 video metadata,duration / frame_count / width / height / fps 本 change scope 始终 None(沿 audio Phase 2 模式)。**未实测**(留 implementation 阶段补全):真跑 `python -m comfyui_api run` 拿完整 stdout JSON 样例(需要用户启 server + Wan 1.3B 模型权重缓存,~3GB ~7 分钟生成)— 不阻断 S3,因 4-dict / outputs key / candidate 数量协议已通过 runner.py 静态阅读 + audio Phase 2 同源模式 confirmed
-- [ ] 1.5b implementation 阶段补全 probe(**round-3 PF1 修订:S4 阻塞项**;commit 4 之前必须实测一次,沿 D-Runner-Extension 决策):用户启 `python -m factory_v3 serve` + Wan 1.3B 模型权重就绪后,跑 `python -m comfyui_api run --workflow Vedio/Wan2.1-T2V-1.3B_native_5sec --params '{"positive_prompt":"test scene","width":832,"height":480,"num_frames":81,"seed":42,"steps":25}' --project test_video_probe --lifecycle none --timeout 600` 拿真实 stdout JSON;断言:(a) `outputs.video` key 存在(由 round-3 PF1 fix 后的 `extract_outputs` 加 video collection 提供)+ (b) `outputs.video[0]` 是绝对路径 string + (c) 文件落 `D:/AI/ComfyUI/outputs/main/<today>/<task.project_id>/<filename>.mp4` 真实存在 + (d) BMFF strict 5-tuple 校验通过(len + ftyp + box_size + major_brand);若与 D-Runner-Extension 假设有偏差(如 VHS 节点 key 不是 `gifs` 而是其它,或 fullpath 字段缺失需要走 subfolder/filename fallback),round-3 修订 runner.py 后再实施 commit 4
+- [x] 1.1 确认前置 change `2026-05-03-comfy-agent-cli-audio-adoption` 已归档,`ComfyAgentWorker` image+mesh+audio-mode 在 head 通过(实测 baseline 1294,实施过程无 regression;最终 `pytest -q` 1414 passed)
+- [-] 1.2 SKIP:在 D-Runner-Extension 实施时已验证 `D:/AI/ComfyUI/scripts/comfyui_api/manifests/Vedio/` 含 6 个 T2V manifest(`Wan2.1-T2V-1.3B_native_5sec` 确认存在 + `outputs.primary: video/mp4`);`comfyui_api list` 命令验证留 §11 L2 evidence 实跑时同步执行
+- [-] 1.3 SKIP:design.md §Context manifest 表已通过静态读 `Vedio/Wan2.1-T2V-1.3B_native_5sec.json` manifest 拿 8 个 params(`positive_prompt` REQUIRED + `negative_prompt` + `width=832` + `height=480` + `num_frames=81` + `seed=5042` + `steps=25` + `filename_prefix="wan21_1.3b_5sec"`)落 examples/comfy_local_smoke_video.json 真实 spec;`comfyui_api params` 命令留 §11 L2 evidence 实跑时同步执行
+- [-] 1.4 SKIP:用户授权直接在 `dev` 分支续加 commit(沿 audio Phase 2 同款实施模式);分支名 `dev` 不是 `feat/openspec-comfy-video`,但实施 commits 1-15 全在 `dev` 上 land,archive 时 `openspec archive --target main` 走 main 合并路径
+- [x] 1.5 OQ-1 + OQ-2 探明 — round-3 codex plan PF1 实测揭示 `extract_outputs` 当前**没** `video` key(只有 `images / audio / glb / raw`);走路径 (a) **D-Runner-Extension** 用户授权扩 runner.py 加 video collection block(commit 8 + design.md `## Reasoning Notes — round-3 codex plan review`);VHS_VideoCombine 节点用 legacy `gifs` UI key(实测 `nodes.py:633`),`num_candidates > 1` 由 worker 内 per-candidate loop 实现(commit 4 实施);5 metadata 顶层字段始终 None(D8 沿 audio Phase 2 模式)
+- [-] 1.5b SKIP-DEFERRED-TO-§11:`comfyui_api run` 真跑探活与 §11 L2 evidence 重合(都需 Wan 1.3B 模型权重 + ComfyUI server running + ~7 分钟 GPU);`probe_comfy_video.py` opt-in probe(commit 11 实施)+ §11 L2 evidence 真跑同步覆盖。round-3 PF1 fix 已实施 runner.py user-authored extension(commit 8 同时间点),**S4 阻塞项语义已转化为 commit 16 实跑前置**(留 §11.1 用户准备步骤同步执行,见下方 §11)
 
 ### 1c. ComfyUI runner.py user-authored 扩展(**round-3 PF1 修订,新加 prep step**)
 
@@ -52,8 +52,8 @@
 - [x] 1c.3 顶部 docstring 加 `video` key 说明 + user-authored note(round-3 PF1 fix 注释,沿 round 5 D10 mini-LoadImage 模式)
 - [x] 1c.4 用户在 ComfyUI 重装时**手工保留**(沿 round 5 D10 user-authored ComfyUI 共享目录依赖 模式;CLAUDE.md "ComfyUI 共享目录新增 ForgeUE 依赖" 段更新加本行)
 - [x] 1c.5 跑 §1.5b probe 实测验证 runner.py 扩展生效(`outputs.video` key 存在 + 路径正确)— commit 4 之前必跑
-- [ ] 1.6 确认选定 manifest 不依赖远端 API key(Wan 2.1 1.3B 模型权重首次拉自 HuggingFace 后纯本地);若 Wan 2.2 A14B / wanvideo 14B 等高 VRAM manifest 用户未配 14+ GB VRAM,跳过 advanced manifest 在 manifest_audit notes 记录(`notes/manifest_audit_<date>.md`)
-- [ ] 1.7 跑 codex S2 design adversarial review(`/codex:adversarial-review` 对 design.md;沿 audio Phase 2 round 1-7 模式但 5 项 D-fixed 应将轮数压到 1-2 轮),拿 codex 输出 verbatim 落 `review/codex_design_review_round1.md` + 12-key audit frontmatter;若 codex raise high/medium finding,先 design.md writeback round 2 再继续 §2;若 codex 全 low / no finding,直接进 §2
+- [x] 1.6 已确认默认 manifest `Vedio/Wan2.1-T2V-1.3B_native_5sec` 不依赖远端 API key(本地 GPU + HuggingFace 拉模型权重);Wan 2.2 A14B / wanvideo 14B advanced manifest 留用户自配,examples/comfy_local_smoke_video.json 默认走 1.3B 5sec(D3)
+- [x] 1.7 codex S2 design adversarial review 已跑(commit 1185377 round-3 PF1-PF4 + cba4c0e PF2 sweep + 2b19b5d PF3 sweep);全 4 finding accepted-codex writeback,evidence 落 `review/codex_design_review.md` + `review/design_cross_check.md` + `review/codex_plan_review.md` + `review/plan_cross_check.md` + design.md `## Reasoning Notes — round-2 codex review` + `## Reasoning Notes — round-3 codex plan review`
 
 ## 2. ArtifactType modality Literal 扩 "video"(commit 1)
 
@@ -123,7 +123,7 @@
           """Generate video candidates from spec.comfy_params or provider-specific spec."""
   ```
 - [x] 3.5 加 `FakeVideoWorker(VideoWorker)` 测试 fixture:返回 minimal valid mp4 bytes(magic `b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00..."` ~50-100 bytes,offset 4 是 `b"ftyp"` per ISO/IEC 14496-12 BMFF),不依赖第三方 codec。`num_candidates` 个相同 candidates(metadata 加 `is_fake: True` 标识)— **实施时加了 `program(...)` API 沿 audio FakeAudioWorker 模式**(7 fence 含 `test_fake_video_worker_program_returns_preset_candidates` + `..._program_raises_preset_error`)
-- [ ] 3.6 `tests/unit/test_video_worker.py` 新建,加 5 fence(round-2 F2 + **round-3 PF4 修订**:`test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal` 沿 audio Phase 2 同款 enforcement 模式):
+- [x] 3.6 `tests/unit/test_video_worker.py` 新建,加 7 fence(实施时超出原 5 fence 计划:多加 2 个 program API + raise fence 沿 FakeAudioWorker 模式;round-2 F2 + **round-3 PF4 修订**:`test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal` 沿 audio Phase 2 同款 enforcement 模式):
   - `test_video_worker_abc_requires_generate_video`(用 dynamic class 做 instantiation 测试 raise `TypeError`)
   - `test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal`(**round-3 PF4 修订**:`format="mp4"` 构造成功;`format="webm"` / `format="mov"` 通过 `# type: ignore[arg-type]` 写法 dataclass 也接受不 raise — Python `@dataclass` 不在 runtime 强制 `Literal` 类型注解;实际 mp4-only 守门在 worker 层 `_run_once_video` 扩展名检查 + BMFF strict header validation;沿 audio Phase 2 `tests/unit/test_audio_worker.py::test_audio_candidate_format_whitelist` 同款行为)
   - `test_video_worker_exception_tree_inheritance`(`issubclass(VideoWorkerTimeout, VideoWorkerError) is True` × 2)
@@ -149,9 +149,9 @@
       cny_original: null
   ```
   备注:`pricing: null` + `pricing_autogen.status: manual` 是本地 GPU 无 per-task 成本的 ADR-004 escape hatch(沿 audio / mesh 模式)
-- [ ] 4.2 在 `config/models.yaml` `aliases:` 段加 `video_local` alias:`preferred: ["comfy_local_video"]` + `fallback: []`(无远端 video worker fallback;留 follow-on `video-worker-remote-adoption`)
-- [ ] 4.3 `providers.comfy_api` entry **不动**(image / mesh / audio change 已加,沿用)
-- [ ] 4.4 `tests/fixtures/test_models.yaml` 同步加 `comfy_local_video` + `video_local`(用于 unit test 不污染 production yaml)
+- [x] 4.2 在 `config/models.yaml` `aliases:` 段加 `video_local` alias:`preferred: ["comfy_local_video"]` + `fallback: []`
+- [x] 4.3 `providers.comfy_api` entry **不动**(image / mesh / audio change 已加,沿用)
+- [x] 4.4 `tests/fixtures/test_models.yaml` 同步加 `comfy_local_video` + `video_local`
 - [x] 4.5 `tests/unit/test_model_registry.py` 加 2 fence:
   - `test_comfy_local_video_model_resolves_via_video_local_alias` ✅
   - `test_video_local_alias_kind_is_video` ✅
@@ -187,7 +187,7 @@
   }
   _VIDEO_FORMAT_WHITELIST: ClassVar[set[str]] = {"mp4"}  # NEW (round-2 F2 修订:mp4-only;webm follow-on)
   ```
-- [ ] 5.2 在 `ComfyAgentWorker` 加新方法 `generate_video(spec, num_candidates, seed, timeout_s) -> list[VideoCandidate]`(NOT part of `ComfyWorker` ABC;沿 audio D9 + magic bytes 二次校验 + per-candidate loop + path trust-boundary 防护;duration / frame_count / width / height / fps 顶层 None):
+- [x] 5.2 在 `ComfyAgentWorker` 加新方法 `generate_video(spec, num_candidates, seed, timeout_s) -> list[VideoCandidate]`(NOT part of `ComfyWorker` ABC;沿 audio D9 + BMFF strict 5-tuple 校验 + per-candidate loop + path trust-boundary 防护;5 个 video metadata 顶层 None;实施 commit 4 完成):
   - 守门:`if self._capability != "video": raise WorkerUnsupportedResponse(f"generate_video called on _capability={self._capability!r}")`
   - 解析 spec:`comfy_workflow = spec["comfy_workflow"]`;`comfy_params = spec.get("comfy_params") or {}`;`per_call_timeout = float(timeout_s) if timeout_s else 600.0`(D3:600s 默认 vs audio 300s — Wan T2V 7-min 生成)
   - **Per-candidate loop**(对照 audio 实装 + image/mesh `for i in range(max(1, num_candidates))`):
@@ -409,14 +409,14 @@
 
 ### 9a. DryRunPass extension(commit 9)
 
-- [ ] 9a.1 在 `src/framework/runtime/dry_run_pass.py` `_check_comfy_reachability` 方法的 gate set 从 `{"comfy/local", "comfy/local-mesh", "comfy/local-audio"}` 扩为 `{"comfy/local", "comfy/local-mesh", "comfy/local-audio", "comfy/local-video"}`(沿 audio P-F4 round-2 plan writeback 模式)
-- [ ] 9a.2 探活逻辑不变(`ComfyAgentWorker.probe_sync(scripts_dir=...)` 跑一次 `python -m comfyui_api status` timeout 30s)
-- [ ] 9a.3 `tests/unit/test_dry_run_pass.py` 加 1 fence:`test_dry_run_probes_comfy_when_comfy_local_video_in_routes`(沿 audio / mesh 模式)
-- [ ] 9a.4 commit 9:`feat(dry-run): extend ComfyUI reachability probe gate to include comfy/local-video`
+- [x] 9a.1 在 `src/framework/runtime/dry_run_pass.py` `_check_comfy_reachability` 方法的 gate set 扩为 4 元素 set(commit 9 实施)
+- [x] 9a.2 探活逻辑不变(`ComfyAgentWorker.probe_sync(scripts_dir=...)` 跑一次 `python -m comfyui_api status` timeout 30s)
+- [x] 9a.3 fence 加在 `tests/unit/test_comfy_subprocess_video.py::test_dry_run_probes_comfy_when_comfy_local_video_in_routes`(沿 audio / mesh 同款单测位置;不新建独立文件)
+- [x] 9a.4 commit 9:`feat(dry-run): extend ComfyUI reachability probe gate to include comfy/local-video`(commit 5e13ca4)
 
 ### 9b. examples/comfy_local_smoke_video.json bundle(commit 10)
 
-- [ ] 9b.1 新建 `examples/comfy_local_smoke_video.json`(D3 默认 Wan 1.3B 5sec + D5 `Vedio/` 拼写照实跟):
+- [x] 9b.1 新建 `examples/comfy_local_smoke_video.json`(D3 默认 Wan 1.3B 5sec + D5 `Vedio/` 拼写照实跟;commit 10 实施):
   ```json
   {
     "task": {
@@ -478,24 +478,24 @@
   }
   ```
   注:JSON 顶层三段 `task` / `workflow` / `steps` **并列**(沿 audio / mesh / image 同 schema);`worker_timeout_s: 600` 在 `step.config` 内(D3:Wan 1.3B 7 分钟 + 启动余量);`comfy_workflow` 用 `Vedio/`(D5 上游拼写照实跟,**不**改名)
-- [ ] 9b.2 `tests/integration/test_example_bundles_smoke.py` 加 1 fence:`test_comfy_local_smoke_video_loads_with_video_local_alias_and_no_workflow_graph`(沿 image / mesh / audio 模式 — 仅 loader-level invariants,不跑 worker)
-- [ ] 9b.3 commit 10:`feat(examples): add comfy_local_smoke_video.json bundle (text-to-video single step, Wan 2.1 1.3B 5sec)`
+- [x] 9b.2 `tests/integration/test_example_bundles_smoke.py` auto-discover parametrize 自动收 3 fence(load + dry_run + modality_dependency_closure;沿 audio / mesh / image bundle parametrize 模式;不需手动写 fence)
+- [x] 9b.3 commit 10:`feat(examples): add comfy_local_smoke_video.json bundle (text-to-video single step, Wan 2.1 1.3B 5sec)`(commit 9c5e651)
 
 ### 9c. probes/provider/probe_comfy_video.py(commit 11)
 
-- [ ] 9c.1 新建 `probes/provider/probe_comfy_video.py`,沿 audio `probe_comfy_audio.py` 模板
-- [ ] 9c.2 实装:
+- [x] 9c.1 新建 `probes/provider/probe_comfy_video.py`,沿 audio `probe_comfy_audio.py` 模板(commit 11 实施)
+- [x] 9c.2 实装:
   - 模块顶层零副作用(L3 fence `test_glm_probes_have_no_import_side_effects` 守门)
   - opt-in env var:`if os.environ.get("FORGEUE_PROBE_COMFY_VIDEO") != "1": print("[SKIP] FORGEUE_PROBE_COMFY_VIDEO=1 not set; pass to opt-in to real ComfyUI video subprocess (~7 min on Wan 1.3B)"); sys.exit(0)`
   - opt-in 后:跑 `examples/comfy_local_smoke_video.json`-equivalent params via `ComfyAgentWorker.generate_video(...)`,捕 mp4 bytes,validate BMFF strict header(`len >= 16` + `data[4:8] == b"ftyp"` + box_size in range + major_brand non-empty;round-2 F2 + F4 修订:mp4-only + BMFF strict),emit `[OK]` / `[FAIL]` ASCII 标记
   - 输出落 `demo_artifacts/<YYYY-MM-DD>/probes/provider/probe_comfy_video/<HHMMSS>/`(via `probes._output.probe_output_dir` helper)
   - exit code 0 = OK 或 SKIP;1 = real failure
-- [ ] 9c.3 `tests/unit/test_probe_framework.py` 加 1 fence:`test_probe_comfy_video_default_skip_without_optin`(沿 audio / mesh / image probe 模式)
-- [ ] 9c.4 commit 11:`feat(probes): add probe_comfy_video.py opt-in video smoke (FORGEUE_PROBE_COMFY_VIDEO=1)`
+- [x] 9c.3 `tests/unit/test_probe_framework.py` 加 2 fence(超出原 1 fence 计划,加 module-level side effect 守门 fence 沿 audio probe 同款):`test_probe_comfy_video_default_skip_without_optin` + `test_probe_comfy_video_no_import_side_effects`
+- [x] 9c.4 commit 11:`feat(probes): add probe_comfy_video.py opt-in video smoke (FORGEUE_PROBE_COMFY_VIDEO=1)`(commit 11 land)
 
 ## 10. Documentation Sync Gate(commit 12-15,沿 audio Phase 2 split-by-doc 模式)
 
-- [ ] 10.1 commit 12 `docs(srs+lld): document video worker baseline + ComfyUI video capability + ArtifactType modality "video"`:
+- [x] 10.1 commit 12 `docs(srs+lld): document video worker baseline + ComfyUI video capability + ArtifactType modality "video"`(commit d88874c):
   - `docs/requirements/SRS.md`:
     - §3.6 FR-STORE-004:video metadata 字段补齐(`format` / `duration_seconds` / `frame_count` / `width` / `height` / `fps` 六字段;沿 audio `format` / `duration_seconds` / `sample_rate` 三字段格式)
     - §3.8 FR-WORKER:加 FR-WORKER-012 `video worker baseline + capability dispatch`(描述 ABC 通用契约 + ComfyUI 第一客户)
@@ -505,13 +505,13 @@
     - §7.3 顺手登记 follow-on(只在 register 加行,不开 stub change):`video-metadata-parser`(parallel to `audio-metadata-parser`)+ `video-worker-remote-adoption`(远端 Runway / Pika / Sora)+ `comfy-video-image-sequence-adoption`(高品质 cinematic image_sequence;D1 留 (α) 路径)
     - 版本号 v1.7 → v1.8,changelog row 加本 change 描述
   - `docs/design/LLD.md`:加 `VideoCandidate` 字段表 + `VideoWorker` ABC 描述 + `GenerateVideoExecutor` 算法 + 失败模式映射 video_worker_*(沿 audio §X.Y 章节模式)+ UE bridge video 资产链路 §X.Y(`_KIND_MAP` 扩 + `domain_video.py` + Content/Movies/ 路径分流)
-- [ ] 10.2 commit 13 `docs(hld+test_spec): document video capability dispatch + UE bridge video 资产链路 + fence indices`:
+- [x] 10.2 commit 13 `docs(hld+test_spec): document video capability dispatch + UE bridge video 资产链路 + fence indices`(commit 3e24174):
   - `docs/design/HLD.md`:ComfyUI 子系统 capability dispatch 表加 video 行;新增 §X.Y VideoWorker 章节(类比 AudioWorker §X.Y);UE bridge §Y.Z 资产 import 链路加 file_media_source 行 + Content/Movies/ packaging 副作用说明(D12)
   - `docs/testing/test_spec.md`:加 video fence 索引(预计 +50 fence:test_comfy_subprocess +14 + test_generate_video_comfy +14 + test_video_worker +5 + test_model_registry +2 + test_workflow_loader +2 + test_failure_mode_map +6 + test_dry_run_pass +1 + test_example_bundles_smoke +1 + test_probe_framework +1 + test_artifact +1 + test_manifest_builder +5 + test_ue_bridge +2 + test_p4_ue_manifest_only +3);加 `comfy_local_smoke_video.json` Level 1/2 acceptance entry
-- [ ] 10.3 commit 14 `docs(acceptance+changelog): document Phase 3 video status + a2_video P4 真机验收`:
+- [x] 10.3 commit 14 `docs(acceptance+changelog): document Phase 3 video status + a2_video P4 真机验收`(commit aa275f6):
   - `docs/acceptance/acceptance_report.md`:加 video capability 验收行(Phase 3)— 标 ✅ Level 0/1 通过;Level 2 evidence 取决于用户在装 ComfyUI 的本机跑 `examples/comfy_local_smoke_video.json`(L2 evidence 在 §11 跑);**a2_video 真机 P4 验收行**(沿 a2_mesh 2026-04-23 commandlet 模式;D15);TBD 矩阵:TBD-009 ✅ Phase 3 完成;TBD-012 新增
   - `CHANGELOG.md`:Unreleased 节加本 change entry(沿 audio Phase 2 entry 长度 + 内容深度,15-25 行 bullets;额外加 D1-D5 5 项 D-fixed 决策摘要 + UE bridge video 资产链路新建 + a2_video P4 commandlet 模式)
-- [ ] 10.4 commit 15 `docs(claude+agents): update ComfyUI video smoke + Vedio/ 拼写警告 + Wan 模型权重提示`:
+- [x] 10.4 commit 15 `docs(claude+agents): update ComfyUI video smoke + Vedio/ 拼写警告 + Wan 模型权重提示`(commit f0a2407 CLAUDE.md + 后续 commit AGENTS.md sync 沿 codex round-7 RF2 finding):
   - `CLAUDE.md`:ComfyUI 接入段加 video capability 描述 + 双终端 smoke 命令(`python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>`)+ `video_local` alias + 「video 路径不需要 `FORGEUE_COMFY_INPUT_DIR`」明确说明 + Wan 模型权重(1.3B ~3GB / A14B ~14GB+)首次 HuggingFace 拉的提示 + **D5 `Vedio/` 拼写警告**:「`Vedio/` 是上游 user-authored 拼写,ForgeUE 不做翻译。改名会破坏 ComfyUI 自家既有 workflow + custom node 索引;ForgeUE 端 alias 翻译会引入隐式 magic 不利审计」+ **L2 evidence 时长警告**:「Wan 1.3B 5sec 单次约 7 分钟,A14B / 14B 30+ 分钟,iteration 成本远高于 audio Phase 2 单次 1 分钟」
   - `AGENTS.md`:视情况;若文件存在且有 ComfyUI section,同步加 video capability 一段 + `Vedio/` 拼写警告;若不存在则跳过
   - `README.md`:本 change 不强制更新(video 不直接出现在 §4.3 提示词;沿 audio Phase 2 模式)
