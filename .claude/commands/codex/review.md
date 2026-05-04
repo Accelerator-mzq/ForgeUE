@@ -124,8 +124,13 @@ When the review runs in background:
    - Use `/codex:status --wait <job>` to block until the job is done.
    - Use `/codex:result <job>` to retrieve the full output.
    - Only write `autonomy_decision: claude_codex_concurred` evidence AFTER the result is in hand.
-   - If result is not yet finalized (round counter not incremented / `disputed_open != 0` /
-     `verdict` field missing) → change `autonomy_decision` to `user_required` and escalate.
+   - **Result finalization check** (NOT based on round counter — counter increments AFTER
+     result consumption, so it is necessarily un-incremented at poll time and cannot serve
+     as a finalization signal). Treat the result as un-finalized if ANY of:
+     - codex result output is missing a top-level `verdict` field (or `### Verdict:` section absent)
+     - the persisted evidence frontmatter shows `disputed_open != 0`
+     - the persisted evidence frontmatter is missing the `resolved_at` field (round not finalized)
+   - On any of the above → change `autonomy_decision` to `user_required` and escalate to user.
 
 ## Argument Handling
 

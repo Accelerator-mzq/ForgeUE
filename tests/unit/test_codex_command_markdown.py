@@ -11,7 +11,6 @@ Codex round 1 F1 + F4 findings (accepted-codex) 的回归防线:
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
@@ -44,17 +43,20 @@ def _read(path: Path) -> str:
 
 
 def test_review_default_background():
-    """review.md 必须含 default background 相关文本，且不再含旧的 AskUserQuestion 二选一逻辑调用。
+    """review.md 必须含精确的 markdown bold 形式 default background 声明，
+    且不再含旧的 AskUserQuestion 二选一逻辑调用。
 
     P2.2 spec:OLD "use AskUserQuestion exactly once" 替换为 size-based 3-AND gate，
     仅当全部 3 条满足才前台 wait，其余默认 background 不弹问。
-    测试精确匹配旧的二选一调用字符串（非任何提及），旧文本：
-      "use `AskUserQuestion` exactly once with two options"
+
+    m1 精化（review F-CodeQuality）：正向断言改为精确匹配 markdown bold
+    `**Default: background.**` 而非宽松 substring 检查；负向断言精确匹配旧
+    upstream "use AskUserQuestion exactly once with two options" 字面量。
     """
     body = _read(REVIEW_MD)
-    # 新逻辑：默认走 background 路径
-    assert "default" in body.lower() and "background" in body.lower(), (
-        "review.md 缺少 default background 字样"
+    # 新逻辑：精确匹配 markdown bold 形式的 default background 声明
+    assert "**Default: background.**" in body, (
+        "review.md 缺少精确文本 '**Default: background.**'（markdown bold）"
     )
     # 旧的 AskUserQuestion 强制二选一调用文本必须移除（精确匹配旧 upstream 字符串）
     old_ask_text = "use `AskUserQuestion` exactly once with two options"
@@ -64,22 +66,20 @@ def test_review_default_background():
 
 
 def test_adversarial_always_background():
-    """adversarial-review.md 对 adversarial 走"永远 background"的约束。
+    """adversarial-review.md 对 adversarial 走"永远 background"的精确约束断言。
 
     P2.2 spec：adversarial 永远 background（涉及挑战式深度分析），
     不需要 size estimation 逻辑，也不含旧的 AskUserQuestion 二选一调用文本。
+
+    m2 精化（review F-CodeQuality）：旧版 4-way OR 中 "always run in background"
+    会通过 HTML comment 中的 ``always runs in background`` 字面量匹配（虽相近
+    但措辞不严）。改为对正文规范段直接精确匹配 "Adversarial always runs in background."
+    （首字母大写 + 句号 + 出现在 Execution Mode Rules 段）。
     """
     body = _read(ADVERSARIAL_MD)
-    # 必须含"永远 background"或等价语（always background / always run in background）
-    lower = body.lower()
-    has_always_bg = (
-        "always background" in lower
-        or "always run in background" in lower
-        or "永远 background" in body
-        or "always run in the background" in lower
-    )
-    assert has_always_bg, (
-        "adversarial-review.md 缺少 adversarial 永远 background 的约束说明"
+    # 精确匹配规范正文（adversarial 永远 background 的 normative claim）
+    assert "Adversarial always runs in background." in body, (
+        "adversarial-review.md 缺少精确文本 'Adversarial always runs in background.'"
     )
     # adversarial 同样不含旧的 AskUserQuestion 二选一调用文本（精确匹配旧 upstream 字符串）
     old_ask_text = "use `AskUserQuestion` exactly once with two options"
@@ -185,4 +185,52 @@ def test_polling_must_directive_present():
         body = _read(path)
         assert directive in body, (
             f"{path.name} 缺少 polling 指令文本：{directive!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# m4 (review F-CodeQuality):review.md 必须文档化 --stage <hint> strip 指令
+# ---------------------------------------------------------------------------
+
+
+def test_review_strips_stage_hint_documented():
+    """review.md 必须显式文档化 `--stage <hint>` 是 ForgeUE local extension，
+    并且在调用 codex-companion.mjs 前 strip 掉该 flag。
+
+    m4 fence：argument-hint frontmatter 已含 --stage，但 Argument Handling 段
+    必须显式说明该 flag 不传给 upstream broker（否则 broker 报 unknown flag）。
+    """
+    body = _read(REVIEW_MD)
+    # 必须含 `--stage` 字面量
+    assert "--stage" in body, (
+        "review.md 缺少 `--stage` flag 文档（用于 review_type 推导 hint）"
+    )
+    # 必须含 strip 指令（避免传给 codex-companion.mjs 上游 broker）
+    has_strip_directive = (
+        "strip it before" in body
+        or "strip it from" in body
+        or "not passed to codex-companion" in body
+    )
+    assert has_strip_directive, (
+        "review.md 缺少 `--stage <hint>` strip 指令文档（须明示不传给 upstream broker）"
+    )
+
+
+# ---------------------------------------------------------------------------
+# m7 (review F-CodeQuality):两模板必须文档化 _active_jobs.txt capture 指令
+# ---------------------------------------------------------------------------
+
+
+def test_active_jobs_capture_documented():
+    """两个模板都必须文档化 `_active_jobs.txt` 文件作为 background job id capture 落点。
+
+    m7 fence：Polling Convention 段第 1 步要求 capture job id 写入
+    `notes/<review_type>_active_jobs.txt`（review.md 用变量 review_type，
+    adversarial-review.md 写死为 codex_adversarial_review_active_jobs.txt）。
+    """
+    for path in (REVIEW_MD, ADVERSARIAL_MD):
+        body = _read(path)
+        assert "_active_jobs.txt" in body, (
+            f"{path.name} 缺少 `_active_jobs.txt` capture 指令"
+            f"（background job id 必须 sticky 落到该文件）"
         )
