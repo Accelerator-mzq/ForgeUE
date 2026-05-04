@@ -44,10 +44,11 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 
 **Dry-run 探活**:bundle 含 `image_local` / `mesh_local` / `audio_local` / `video_local` 时 DryRunPass 跑一次 `comfyui_api status`(timeout 30s);env unset / probe failure → warning(NOT block,G8 commit 7 drift writeback)。Hard fail-fast 在 step 时 `ComfyAgentWorker.__init__` 守门(REQUIRED 字段 None / env unset / unknown model_id 都 raise `WorkerUnsupportedResponse`)+ `_generate_via_comfy_worker` env unset → `MeshWorkerUnsupportedResponse` / `AudioWorkerUnsupportedResponse` / `VideoWorkerUnsupportedResponse`(round 5 D10 + Phase 2 + Phase 3)。
 
-**ComfyUI 共享目录新增 ForgeUE 依赖(round-3 PF1 D-Runner-Extension)**:
+**ComfyUI 共享目录新增 ForgeUE 依赖(round-3 PF1 D-Runner-Extension + round-7 R2)**:
 - `D:/AI/ComfyUI/scripts/comfyui_api/runner.py` `extract_outputs` 函数加 `video` collection block(收集 VHS_VideoCombine 节点 legacy `gifs` UI key 装的 video preview dict;沿 image / audio / glb 同款 4-dict 协议),返回 dict 增加 `"video"` key
-- 这个文件是 user-authored ComfyUI 共享目录修改,ComfyUI 重装时**手工保留**(否则 ForgeUE video L2 evidence 失败,因 ComfyAgentWorker.generate_video 走 `outputs.video` 路径)
-- 沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式 — user 2026-05-04 拍板路径 (a) 扩 runner.py 而非 ForgeUE-side fallback parsing outputs.raw
+- `D:/AI/ComfyUI/scripts/comfyui_api/manifests/Vedio/Wan2.1-T2V-1.3B_native_5sec.json` + `..._native.json`(round-7 R2 补漏):两份 manifest 必须暴露 5 个 VHS_VideoCombine widget default patches `frame_rate`(float,default 24.0)+ `loop_count`(int,default 0)+ `format`(string,default `"video/h264-mp4"`)+ `pingpong`(bool,default false)+ `save_output`(bool,default true);workflow JSON 里这些 widgets 全是占位符字符串,manifest 不暴露 → ComfyUI prompt validation HTTP 400(`Value not in list: format` + `invalid literal for int() loop_count`)。
+- 上述 3 份文件都是 user-authored ComfyUI 共享目录修改,ComfyUI 重装时**手工保留**(否则 ForgeUE video L2 evidence 失败:runner.py 漏 → outputs.video 不被收集;manifest 漏 → HTTP 400)
+- 沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式 — user 2026-05-04 拍板路径 (a) 扩 runner.py 而非 ForgeUE-side fallback parsing outputs.raw;round-7 R2 manifest 漏 patch 由 L2 实测暴露 + 同性质 SHARED_DIR scope 扩展
 
 ## 架构权威(2026-04-22 文档重构后)
 

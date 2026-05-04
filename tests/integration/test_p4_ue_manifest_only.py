@@ -742,6 +742,138 @@ def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_
     assert _FakeAssetTools.calls[0]["asset_name"] == "MS_OpeningScene"
 
 
+def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_path: Path, monkeypatch):
+    """codex round-7 verification review P2 round-1:run_import.py MUST honor
+    framework-side `PermissionPolicy(allow_import_file_media_source=False)` —
+    框架 ExportExecutor 已为被 deny 的 op 写 `status="skipped"` seed evidence,
+    run_import 必须读 evidence.json + skip 已被 deny 的 op,不再 dispatch handler
+    + 不再调 AssetTools.create_asset(NFR-PERMISSION-001 用户权限边界)。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    run_id = "run_p4_video_denied"
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    repo.put(
+        artifact_id=f"{run_id}_video_01",
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video", provider="comfy_agent_cli",
+                             model="comfy/local-video"),
+        metadata={"ue_asset_name": "DeniedScene"},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/Video", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="ue video denied", input_payload={}, expected_output={},
+        project_id="proj_video_denied", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    artifact = repo.get(f"{run_id}_video_01")
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id="proj_video_denied", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id="wf_video_denied", trace_id="tr",
+    )
+    # PermissionPolicy 关键:allow_import_file_media_source=False → ExportExecutor
+    # 把 import_file_media_source op 写 status="skipped" seed evidence
+    ExportExecutor(
+        permission_policy=PermissionPolicy(allow_import_file_media_source=False),
+    ).execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[artifact.artifact_id],
+    ))
+    run_folder = ue_project / "Content" / "Generated" / run_id
+
+    # Stub `unreal` 模块 — AssetTools.create_asset 必须 NEVER 被调
+    unreal_stub = types.ModuleType("unreal")
+    create_asset_calls: list[dict] = []
+
+    class _FakeFileMediaSource:
+        def __init__(self):
+            self._props: dict = {}
+
+        def set_editor_property(self, key, value):
+            self._props[key] = value
+
+        def get_outer(self):
+            return self
+
+    class _FakeFileMediaSourceFactoryNew:
+        pass
+
+    class _FakeAssetTools:
+        @classmethod
+        def create_asset(cls, asset_name, package_path, asset_class, factory):
+            create_asset_calls.append({"asset_name": asset_name})
+            return _FakeFileMediaSource()
+
+    class _FakeAssetToolsHelpers:
+        @staticmethod
+        def get_asset_tools():
+            return _FakeAssetTools
+
+    class _FakeEditorAssetLibrary:
+        folders: list[str] = []
+
+        @classmethod
+        def does_directory_exist(cls, p):
+            return p in cls.folders
+
+        @classmethod
+        def make_directory(cls, p):
+            cls.folders.append(p)
+
+        @staticmethod
+        def save_loaded_asset(asset):
+            return True
+
+    unreal_stub.FileMediaSource = _FakeFileMediaSource
+    unreal_stub.FileMediaSourceFactoryNew = _FakeFileMediaSourceFactoryNew
+    unreal_stub.AssetToolsHelpers = _FakeAssetToolsHelpers
+    unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
+    monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
+
+    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
+    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    for mod in [
+        "run_import", "manifest_reader", "evidence_writer",
+        "domain_texture", "domain_audio", "domain_mesh", "domain_video",
+    ]:
+        sys.modules.pop(mod, None)
+    import run_import  # noqa: E402
+
+    run_import.run(run_folder=run_folder)
+
+    # AssetTools.create_asset MUST NOT be called(被 framework PermissionPolicy
+    # deny 的 op,run_import 必须 honor 不调 UE API);evidence.json 仍保留
+    # framework seed 写的 status="skipped" record(NOT 重复写)
+    assert len(create_asset_calls) == 0, (
+        f"PermissionPolicy(allow_import_file_media_source=False) 被违反:"
+        f"AssetTools.create_asset 被调 {len(create_asset_calls)} 次, 期望 0 次"
+    )
+    evidence_after = load_evidence(run_folder / "evidence.json")
+    skipped_records = [e for e in evidence_after if e.status == "skipped"]
+    file_media_source_skipped = [
+        e for e in skipped_records if e.kind == "import_file_media_source"
+    ]
+    assert len(file_media_source_skipped) == 1, (
+        f"期望 1 条 import_file_media_source skipped record, "
+        f"got {len(file_media_source_skipped)}; 全部 skipped: {skipped_records}"
+    )
+
+
 def test_p4_domain_video_copies_mp4_to_content_movies_subdir(tmp_path: Path, monkeypatch):
     """D12:domain_video.import_video_entry copy mp4 source 到
     `<project_root>/Content/Movies/<run_id>/<MS_<base>>.mp4`,**NOT**
