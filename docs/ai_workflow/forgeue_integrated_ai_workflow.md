@@ -27,7 +27,7 @@
 
 OpenSpec contract artifact(`proposal.md` / `design.md` / `tasks.md` / `specs/<cap>/spec.md`)是项目唯一规范锚点。所有 evidence(Superpowers methodology 产物 / codex review 产物 / ForgeUE tool 产出)**服务于这个中心**,不是与之并立的层。
 
-**这是设计判断,不是修辞。**早期"三层并立"的写法把 Superpowers 与 codex 误判成与 OpenSpec 平级的另一个 layer,会导致 evidence 暗中变成新规范源:某条 review 决议没回写到 design.md,只留在 review 文件里,N 个 change 之后人就忘了。中心化的物理表达 = 回写不可绕过(详 §A.4 + §D)。
+**这是设计判断,不是修辞。**早期"三层并立"的写法把 Superpowers 与 codex 误判成与 OpenSpec 平级的另一个 layer,会导致 evidence 暗中变成新规范源:某条 review 决议没回写到 design.md,只留在 review 文件里,N 个 change 之后人就忘了。中心化的物理表达 = 回写不可绕过(详 §A.4 + §E State Machine,enhance-workflow-automation change 后原 §D 顺延为 §E)。
 
 ### A.2 三层服务关系
 
@@ -66,7 +66,7 @@ ForgeUE **不是**实施层,**也不是**另一个并立的层。它的全部职
 
 实施过程暴露的 contract 漏洞**必须回写到 OpenSpec contract**(proposal/design/tasks/spec.md);**禁止**在 evidence 文件里宣告"这是新决策"。
 
-回写不可绕过(详细机制见 §D):
+回写不可绕过(详细机制见 §E State Machine,enhance-workflow-automation change 后原 §D 顺延为 §E):
 - frontmatter 必含 `aligned_with_contract: <bool>`
 - `false` 必带 `drift_decision`,`written-back-to-<artifact>` 必有真实 commit 改对应文件
 - `disputed-permanent-drift` 必有 ≥ 50 字 `drift_reason` + design.md `## Reasoning Notes` 段对应 anchor
