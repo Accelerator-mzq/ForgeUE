@@ -15,8 +15,7 @@ detected_env: claude-code
 triggered_by: skill_invoke
 codex_plugin_available: true
 triggered_by_command: change-apply-subagent
-autonomy_decision: claude_codex_concurred
-codex_review_ref: openspec/changes/enhance-workflow-automation/notes/pre_p0/codex_review_round1.md
+autonomy_decision: claude_autonomous
 created_at: 2026-05-05T00:00:00Z
 ---
 
@@ -156,3 +155,7 @@ data_source: manual_estimate
 ```
 
 P3 task 纯文档同步,无 LLM provider 付费调用。
+
+---
+
+**Audit note (2026-05-05 simplified protocol)**: This evidence's frontmatter was migrated from `claude_codex_concurred` + Pre-P0 round 1 codex_review_ref to default `claude_autonomous` after user simplified D-AutonomyBoundary protocol. Routine implementation step does not require codex hop verification under simplified protocol; original Pre-P0 round 1 ref is for propose stage scope (S2), not implementation stage (S4). See `feedback_autonomy_boundary_simplified` saved memory + design.md D-AutonomyBoundary 2026-05-05 simplification.

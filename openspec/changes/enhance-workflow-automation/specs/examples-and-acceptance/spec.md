@@ -96,30 +96,38 @@ Codex 同 `change_id` + 同 `review_type` 的多轮 review 中,round N+1 (N≥1)
 
 ### Requirement: Workflow autonomy boundary fence
 
-ForgeUE Integrated AI Change Workflow controller(Claude main session) SHALL 默认走自主路径执行 routine workflow step,但 6 类 boundary 触发时 MUST 升级到用户拍板:
+ForgeUE Integrated AI Change Workflow controller(Claude main session) SHALL 默认走自主路径执行 routine workflow step。**仅 6 类 boundary 触发时** MUST 升级到用户拍板(2026-05-05 user feedback simplification — 原 fence #3 "Claude+Codex review 冲突" 已**删除**;Claude 独立 verify codex finding 后自主拍板,不再升级用户作中间裁判):
 
 1. **不可逆操作** — `git push` / `git push --force` / archive change(`mv openspec/changes/<id> archive/`)/ `git reset --hard` / `git branch -D` / 删除非 `/tmp/` 临时文件 / `git commit --amend` 已 push 的 commit
 2. **跨 change 决策** — 修改非本 change scope 的 D-decision / 修改其他 active change 的 contract artifact / 删除其他 change 的 evidence 文件
-3. **Claude+Codex review verdict 冲突** — verdict 不一致(blocker vs non-blocker)/ severity 评估不一致(critical vs minor)/ 推荐方向相反
-4. **用户先验显式约束** — `~/.claude/CLAUDE.md` / project `CLAUDE.md` / `MEMORY.md` 内 explicit fence rule 触发场景
+3. **框架修改(framework modification)** — 修改 D-decision content / fence taxonomy / autonomy 协议自身 / Superpowers 集成边界 / codex 集成边界 / S0-S9 状态机定义
+4. **design.md 不匹配(design.md mismatch)** — 实施暴露的 contract 漏洞与 design.md text 矛盾(原 4 类 DRIFT 中的 `evidence_contradicts_contract` / `evidence_introduces_decision_not_in_contract` / `evidence_exposes_contract_gap` 类)
 5. **钱** — 任何 vendor API paid call(ADR-007 边界:Hunyuan3D / Tripo3D / 远端付费 LLM live 调用 / `--live-llm` flag dispatch)
 6. **Secret / 安全** — `.env` 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作 / mock production credentials 写文件系统
 
-每条 implementation evidence frontmatter MUST 含 `autonomy_decision` 字段,枚举:
-- `claude_autonomous` — 完全自主(无 codex 验证的极小 step)
-- `claude_codex_concurred` — Claude + Codex 一致 → 自主执行
-- `user_required` — 边界 fence 触发 / Claude+Codex 冲突 → 用户拍板
+(原 fence "用户先验显式约束" 隐含到 memory read 行为 — Claude controller 每 step 主动 read `MEMORY.md` / `<feedback>` saved memory + 遵守;不作为独立 fence trigger,但效果等价)
+
+每条 implementation evidence frontmatter MUST 含 `autonomy_decision` 字段,枚举(2026-05-05 简化):
+- `claude_autonomous` — **default**(routine step / Claude 独立 verify codex finding 后拍板)
+- `claude_codex_concurred` — 显式 codex 二次验证 + 一致(可选 verify path,不强制;若用 MUST 配 `codex_review_ref`)
+- `user_required` — 6 类 fence 触发(不可逆 / 跨 change / framework / design mismatch / 钱 / 安全)
 - `user_overrode` — 用户主动否决 Claude 推荐
 
-`autonomy_decision: claude_codex_concurred` 字段值 MUST 配套 `codex_review_ref` 字段(指向具体 round N evidence 文件)。
+`autonomy_decision: claude_codex_concurred` 字段值 MUST 配套 `codex_review_ref` 字段(指向具体 round N evidence 文件)。`autonomy_decision: claude_autonomous`(default 路径)**不强制** `codex_review_ref` 字段。
 
-`forgeue_finish_gate.py` SHALL 含 `_check_autonomy_boundary` fence 守门 evidence frontmatter `autonomy_decision` 字段必填且值合法。
+`forgeue_finish_gate.py` SHALL 含 `_check_autonomy_boundary` fence 守门 implementation evidence frontmatter `autonomy_decision` 字段必填且值合法(scope 限定 implementation evidence 类型,不强制 verify_report / doc_sync_report / superpowers_review / codex review 类输出 evidence)。
 
-#### Scenario: routine step Claude 自主执行
+#### Scenario: routine step Claude 自主执行(default 路径)
 
-- **WHEN** Claude 提案修改 evidence file + invoke `/codex:review` background + Codex verdict 与 Claude 一致(都 accept 或都 reject)
-- **THEN** Claude 直接执行修改不弹 `AskUserQuestion`
-- **AND** evidence frontmatter 写入 `autonomy_decision: claude_codex_concurred` + `codex_review_ref: notes/codex_<type>_review_roundN.md`
+- **WHEN** Claude 提案修改 evidence file 是 routine step(无 framework 修改 / design.md mismatch / 不可逆 / 钱 / 安全 触发)
+- **THEN** Claude 直接执行修改不弹 `AskUserQuestion`,**不强制** invoke codex review
+- **AND** evidence frontmatter 写入 `autonomy_decision: claude_autonomous`(不强制 `codex_review_ref`)
+
+#### Scenario: 显式 codex 二次验证后自主执行(可选 path)
+
+- **WHEN** Claude 显式 invoke `/codex:review` background 作为 second opinion + 解析 codex output + Claude 独立 verify finding 后自主决策
+- **THEN** evidence frontmatter 写入 `autonomy_decision: claude_codex_concurred` + `codex_review_ref: notes/<review_type>_round_N.md`
+- **AND** **不**因 codex verdict 与 Claude 不同而升级用户(Claude 自主 verify + 自主拍板)
 
 #### Scenario: 不可逆操作必须用户授权
 
@@ -127,12 +135,17 @@ ForgeUE Integrated AI Change Workflow controller(Claude main session) SHALL 默�
 - **THEN** Claude MUST 先用 `AskUserQuestion` 请求授权
 - **AND** evidence frontmatter 标 `autonomy_decision: user_required`
 
-#### Scenario: Claude+Codex verdict 冲突升级用户
+#### Scenario: 框架修改必须用户授权(简化协议新 fence)
 
-- **WHEN** Claude 推荐 accept finding F1,Codex review 推荐 reject F1(verdict 不一致)
-- **THEN** Claude MUST 弹 `AskUserQuestion` 列出冲突的 verdict + 推荐 + Codex reasoning
-- **AND** 等用户拍板后再继续
-- **AND** evidence frontmatter 标 `autonomy_decision: user_required` + `conflict_summary: <one-line>`
+- **WHEN** Claude 计划修改 D-decision content / fence taxonomy / autonomy 协议 / Superpowers 集成边界 / codex 集成边界 / S0-S9 状态机定义
+- **THEN** Claude MUST 用 `AskUserQuestion` 列出修改 scope + 影响范围 + 推荐方案
+- **AND** evidence frontmatter 标 `autonomy_decision: user_required`
+
+#### Scenario: design.md mismatch 必须用户授权(简化协议新 fence)
+
+- **WHEN** Claude 实施暴露的 contract 漏洞与 design.md text 矛盾(原 4 类 DRIFT 子集:`contradicts_contract` / `introduces_decision_not_in_contract` / `exposes_contract_gap`)
+- **THEN** Claude MUST 用 `AskUserQuestion` 列出 mismatch 内容 + 推荐 reconcile path(改 design or 改 implementation)
+- **AND** evidence frontmatter 标 `autonomy_decision: user_required` + `drift_decision: <type>`
 
 #### Scenario: vendor API paid call 必须用户授权
 
@@ -146,10 +159,11 @@ ForgeUE Integrated AI Change Workflow controller(Claude main session) SHALL 默�
 - **THEN** Claude MUST 用 `AskUserQuestion` 请求授权(包括 read-and-update)
 - **AND** evidence frontmatter 标 `autonomy_decision: user_required`
 
-#### Scenario: finish_gate 守门 autonomy_decision 字段(W2 writeback 加深 ref 硬校验)
+#### Scenario: finish_gate 守门 autonomy_decision 字段(implementation evidence 限定)
 
 - **WHEN** `forgeue_finish_gate.py` 扫描 `execution/` / `review/` / `verification/` 内 evidence frontmatter
-- **THEN** 任意 evidence 缺 `autonomy_decision` 字段 → exit 非 0 + 错误指明缺字段的 evidence 文件
+- **THEN** **implementation evidence 类型**(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review` / `tdd_log` / `debug_log`)缺 `autonomy_decision` 字段 → exit 非 0 + 错误指明缺字段的 evidence 文件
+- **AND** non-implementation evidence(`verify_report` / `doc_sync_report` / `finish_gate_report` / `superpowers_review` / `codex_*_review` / `*_cross_check`)**不强制** `autonomy_decision` 字段(F7 spec/impl reconciliation;沿 design.md D-AutonomyBoundary "implementation evidence" 限定)
 - **AND** `autonomy_decision: claude_codex_concurred` 缺 `codex_review_ref` → exit 非 0
 - **AND** `autonomy_decision` 值不在合法枚举内 → exit 非 0
 - **AND** `claude_codex_concurred` 配套 `codex_review_ref` 路径不存在(`(change_root / codex_review_ref).is_file() == False`)→ exit 非 0

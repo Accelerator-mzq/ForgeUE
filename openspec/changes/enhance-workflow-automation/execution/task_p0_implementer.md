@@ -15,8 +15,7 @@ detected_env: claude-code
 triggered_by: skill_invoke
 codex_plugin_available: true
 triggered_by_command: change-apply-subagent
-autonomy_decision: claude_codex_concurred
-codex_review_ref: notes/pre_p0/codex_review_round1.md
+autonomy_decision: claude_autonomous
 created_at: 2026-05-05T00:00:00+00:00
 ---
 
@@ -125,3 +124,7 @@ This is aligned with the spec scope (Scenario: "finish_gate guards autonomy_deci
 ## Concerns
 
 None blocking. The scope decision (implementation_ev_types only) is conservative and correct per spec semantics.
+
+---
+
+**Audit note (2026-05-05 simplified protocol)**: This evidence's frontmatter was migrated from `claude_codex_concurred` + Pre-P0 round 1 codex_review_ref to default `claude_autonomous` after user simplified D-AutonomyBoundary protocol. Routine implementation step does not require codex hop verification under simplified protocol; original Pre-P0 round 1 ref is for propose stage scope (S2), not implementation stage (S4). See `feedback_autonomy_boundary_simplified` saved memory + design.md D-AutonomyBoundary 2026-05-05 simplification.

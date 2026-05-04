@@ -98,52 +98,56 @@ ForgeUE Integrated AI Change Workflow 自 2026-04-27 启用,经 `fuse-openspec-s
 - 在 codex round N+1 输出 verification 阶段(controller 收到 codex output 后),Claude 检查输出是否引用 `(承 round{N}-FN)` 格式 tag;若 round N+1 raise 与 round N 重叠 finding 但无 `承` tag → flag 为 "bridge violation",controller 决定是否 retry
 - Round 1 → Round 2 实测后(本 change 自身 dogfood 期间)若 violation 率 > 30%,降级到 (a) paste 路径
 
-### D-AutonomyBoundary:Claude 默认自主 + 6 类升级 fence
+### D-AutonomyBoundary:Claude 默认自主 + 简化 6 类升级 fence(2026-05-05 user feedback simplification)
 
-**Statement**:Claude 默认拍板执行 + 同步 invoke `/codex:review` 二次验证。
+**Statement**:Claude 默认按推荐自主执行;不再 ping-pong codex review verdict 作 fence 触发。仅以下 6 类必须升级用户。
 
-**自主路径**(default):
+**自主路径**(default,不弹 `AskUserQuestion`):
 1. Claude 提案 + 推荐方案
-2. 同步 invoke `/codex:review`(D-DefaultBackground 选 background;sleep + BashOutput 拉)
-3. 解析 codex output → 生成 verdict 矩阵
-4. **Claude verdict ≈ Codex verdict** → 直接执行,evidence frontmatter `autonomy_decision: claude_codex_concurred`
-5. **Claude verdict ≠ Codex verdict** → 升级到用户决策,evidence frontmatter `autonomy_decision: user_required`
+2. 可选 codex review(D-DefaultBackground 选 background)— 仅作 second opinion 参考,**不影响默认拍板**
+3. Claude **独立 verify** codex finding(不附和 / 不重提)→ 生成 verdict 矩阵
+4. 写 evidence,frontmatter `autonomy_decision: claude_autonomous`(routine)或 `claude_codex_concurred`(显式 codex 二次验证 + 一致)
 
-**6 类必须升级到用户的 boundary fence**(无条件,不走 codex 验证):
+**6 类必须升级用户的 boundary fence**(2026-05-05 user feedback simplification — 原 fence #3 "Claude+Codex review 冲突" 已删除,替换为 framework / design.md mismatch 边界):
 1. **不可逆操作** — `git push` / `git push --force` / `archive change`(`mv openspec/changes/<id> archive/`)/ `git reset --hard` / `git branch -D` / `rm <非临时文件>` / `git commit --amend`(已 push 的 commit)
 2. **跨 change 决策** — 修改非本 change scope 的 D-decision / 修改其他 active change 的 contract artifact / 删除其他 change 的 evidence
-3. **Claude+Codex review 冲突** — verdict 不一致(blocker vs non-blocker)/ severity 评估不一致(critical vs minor)/ 推荐方向相反
-4. **用户先验显式约束** — `~/.claude/CLAUDE.md` 内 explicit rule(如"每次宣称成功必须附证据文件连接")/ project-level `CLAUDE.md` 内 fence / `<feedback>` saved memory 内 explicit rule 触发场景
+3. **框架修改(framework modification)** — 修改 D-decision content / fence taxonomy / autonomy 协议自身 / Superpowers 集成边界 / codex 集成边界 / S0-S9 状态机定义
+4. **design.md 不匹配(design.md mismatch)** — 实施暴露的 contract 漏洞与 design.md text 矛盾(原 4 类 DRIFT 中的 `evidence_contradicts_contract` / `evidence_introduces_decision_not_in_contract` / `evidence_exposes_contract_gap` 类)
 5. **钱** — 任何 vendor API paid call(ADR-007 边界:Hunyuan3D / Tripo3D / 远端付费 LLM live 调用 / `--live-llm` flag 解锁的 dispatch)
 6. **Secret / 安全** — 涉及 `.env` / API key / `*credentials*` / `*secret*` 文件 / mock production credentials 写入文件系统
 
-`autonomy_decision` 枚举:
-- `claude_autonomous` — 完全自主(无需 codex 验证的极小 step,如 typo / 单 line edit)
-- `claude_codex_concurred` — Claude + Codex 一致 → 自主执行
-- `user_required` — 边界 fence 触发 / Claude+Codex 冲突 → 用户拍板
-- `user_overrode` — 用户主动否决 Claude 推荐(rare;Claude 不应主动写入,user 反馈后 controller 落)
+(原 fence "用户先验显式约束" 隐含到 memory 触发 — Claude controller 每 step 主动 read MEMORY.md / `<feedback>` saved memory + 遵守;不作为独立 fence list 项,但效果等价)
+
+`autonomy_decision` 枚举(2026-05-05 简化):
+- `claude_autonomous` — **default**(routine step / Claude 独立 verify codex finding 后拍板)
+- `claude_codex_concurred` — 显式 codex 二次验证 + 一致(可选 verify path,不强制)
+- `user_required` — 6 类 fence 触发(framework / design mismatch / 不可逆 / 跨 change / 钱 / 安全)
+- `user_overrode` — 用户主动否决 Claude 推荐(rare)
 
 **Alternatives considered:**
 - (i) 全自动 Claude(无 codex 验证 + 无 user fence)— 最快但错误归因责任完全在 Claude 一方;Layer 6 finding 揭示用户 deeper review 是必要的最深 layer,完全省略 user 不安全
 - (ii) 全人工(沿现状)— 进度噪声大,本 change 已实证 25+ 次 rubber-stamp
-- (iii) Claude 自主 + 6 类 fence — **选用**,平衡自主性与安全边界
+- (iii) **2026-05-05 user feedback** — Claude 自主 + 简化 6 fence(framework / design mismatch + 不可逆 / 跨 change / 钱 / 安全)— **选用**;原 (iii) "6 fence 含 codex 冲突" 在 user feedback 后 evolved
 
-**Why (iii):**
+**Why (iii v2):**
 - 本 change 实证 25+ 次问询,~88% rubber-stamp(22/25),自动化空间巨大
-- 6 类 fence 覆盖真正的 high-cost 错误源:不可逆 / 跨 scope / 钱 / 安全
-- Claude+Codex 一致仍可能共谋失败(本 change 自身 F8 round 2 同盲点),但 Claude+Codex+User 三层 review 在大部分 routine step 是 over-engineering
+- User feedback (2026-05-05) 强调 "大部分选择按你推荐的方案就行";Claude+Codex review 冲突作为升级 trigger 实践中触发率低,但 codex hop 本身慢,给 user 体感是 ping-pong
+- 6 fence 简化版覆盖真正的 high-cost 错误源(不可逆 / 跨 change / framework / 钱 / 安全)+ design.md 一致性边界
+- Codex review 退化为可选 second opinion;Claude 独立 verify 拍板默认路径
 
 **Tradeoff:**
-- (+)单 change 类似规模 user 问询从 25+ → 3-5 次(只剩 6 类 fence 触发)
-- (-)错误责任归因偏移 — 用户事后看 evidence 而不是参与中间决策;若 Claude+Codex 共谋失败(同 prompt bias),用户错过早期 catch 机会
-- (-)6 类 fence 列举式定义,边缘场景可能落不到任一类(`mv 临时文件` 算不算"删除文件"?— D-AutonomyBoundary fence 必须细化 edge case)
+- (+)user 问询从 25+ → 5-10 次(仅 6 类 fence 触发,且不再走 codex hop)
+- (+)main session token 节省(不必 sync 等 codex BashOutput)
+- (-)Claude 独立 verify 责任更重 — 共谋失败时 user 错过早期 catch 机会(Layer 6 finding 揭示);mitigation:framework / design.md 修改强制升级,这是最高 leverage 的 catch 点
+- (-)`claude_autonomous` 大量场景使用,需要 finish gate 不再强制 `codex_review_ref` 字段(已 reflect in spec.md scenario)
 
 **Mitigation:**
-- evidence frontmatter `autonomy_decision: claude_codex_concurred` 必须配 `codex_review_ref` 字段(指 round N evidence 文件)— finish gate fence 守门
+- evidence frontmatter `autonomy_decision: claude_autonomous` 不强制 `codex_review_ref`(默认路径不需要 codex hop)
+- evidence frontmatter `autonomy_decision: claude_codex_concurred` 仍必须配 `codex_review_ref` 字段(显式 codex verify path)
 - 每条 implementation evidence 必须填 `autonomy_decision`(self-host bootstrap exemption 同 D-SelfHost 模式)
-- 后续 change(若发现 F8 类 共谋失败)可补充 fence #7 / #8 — 本 change 不预设全部边缘 case,留迭代空间
+- 后续 change 若发现共谋失败 / framework 漂移可补充 fence — 本 change 不预设全部边缘 case,留迭代空间
 
-### D-FenceTaxonomy:6 类 fence 的具体 trigger 字符串(实装层)
+### D-FenceTaxonomy:6 类 fence 的具体 trigger 字符串(实装层 — 2026-05-05 简化)
 
 **Statement**:每个 forgeue / codex 命令模板的 `## Decision Delegation` section 显式列出 trigger keyword,供 Claude controller scan 自身意图时匹配。
 
@@ -151,14 +155,22 @@ ForgeUE Integrated AI Change Workflow 自 2026-04-27 启用,经 `fuse-openspec-s
 |---|---|---|
 | 1 不可逆 | `git push` / `archive` / `git reset --hard` / `git branch -D` / `rm <not /tmp/>` / `commit --amend` | "推到 origin" / "归档 change" / "强制重置" |
 | 2 跨 change | `修改 D-<id>` 且 `<id>` 不在当前 active change scope / `修改 archive/<other>/` | "改 ADR-007 协议" / "动 fuse-openspec contract" |
-| 3 review 冲突 | Codex top-level verdict + Claude resolution 经归一化 mapping 后判定 conflict(**非自由文本字符串 == 比较**;详见下方 Fence #3 Verdict Normalization 子段) | Codex `needs-attention` + Claude `accepted-claude` / Codex `approve` + Claude `disputed-open` / 同 finding ID Codex `severity: high` Claude `rejected` |
-| 4 用户约束 | `<feedback>` memory 内 explicit fence 触发 / CLAUDE.md `不要 X` 类 rule 命中 | "不要 mock production" / "不要在 main 分支跑 destructive" |
+| 3 framework modification | `修改 D-decision content` / `加新 fence` / `改 autonomy 协议` / `改 fence taxonomy` / `改 Superpowers 集成边界` / `改 codex 集成边界` / `改 S0-S9 状态机` | "改 D-AutonomyBoundary fence list" / "加新 D-decision" / "改 Superpowers SKILL.md 协议" |
+| 4 design.md mismatch | 实施暴露 contract 漏洞与 design.md text 矛盾(原 4 类 DRIFT 子集:`contradicts_contract` / `introduces_decision_not_in_contract` / `exposes_contract_gap`) | "实施添加了 design.md 没说的字段" / "实施行为与 design.md 表 row N 矛盾" |
 | 5 钱 | `--live-llm` / `paid call` / `mesh.generation` / `Hunyuan3D` / `Tripo3D` / vendor API key 实际拨号 | "开 live mesh smoke" / "拨 hunyuan API" |
 | 6 安全 | `.env` 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作 | "更新 .env" / "落 API key 配置" |
 
+(原 fence #3 "Claude+Codex review 冲突" 在 2026-05-05 user feedback 后 **删除**;Claude 独立 verify codex finding 后自主拍板,不再升级用户作中间裁判)
+
+(原 fence #4 "用户先验显式约束" 隐含到 memory read 行为 — Claude controller 每 step 主动 read MEMORY.md / `<feedback>` saved memory + 遵守;不作为独立 fence trigger,但效果等价)
+
 Claude controller 在每个 step 自检意图时 grep 自身计划描述,任意 hit → 升级用户。
 
-**Fence #3 Verdict Normalization(W3 writeback codex round 1 F3 finding)**:
+**可选 Verdict Normalization(原 fence #3 — 2026-05-05 user feedback 后 deprecated 作 fence trigger;helper 保留作 controller 可选工具)**:
+
+> **协议变更**(2026-05-05):原 fence #3 "Claude+Codex review verdict 冲突 → 升级用户" 已**删除**。Codex review 退化为可选 second opinion;Claude 独立 verify 后自主拍板。`_check_verdict_normalization` helper 仍保留(P0 已实装 + 测试覆盖),但**不再作为 finish_gate fence enforcement**;controller 可显式调用作 second opinion 工具,不影响默认 `claude_autonomous` 路径。
+>
+> 下表保留作历史参考(W3 writeback codex round 1 F3 finding 的实装映射):
 
 Codex round N 输出顶层 `verdict ∈ {approve, needs-attention}`,Claude cross-check `## B Matrix` 给每个 finding 一个 `resolution ∈ {accepted-codex, accepted-claude, rejected, disputed-open}`。两层 schema 不可直接字符串比较(原 F3 finding `accept != reject` 字面匹配会在 90% 正常流程误报)。冲突判定按下表归一化映射:
 
