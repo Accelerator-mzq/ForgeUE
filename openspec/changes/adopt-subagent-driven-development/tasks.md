@@ -159,31 +159,31 @@
 
 ## 10. Documentation Sync Gate + Finish Gate
 
-- [ ] 10.1 跑 `python tools/forgeue_doc_sync_check.py --change adopt-subagent-driven-development --json`(预期触发 [REQUIRED]:**repo 根 `README.md`**(已在 §2.4c 处理 ForgeUE 命令清单表)/ `CLAUDE.md`(§2.5 已处理)/ `AGENTS.md`(§2.6 已处理)/ `SRS.md`(§3.1 已处理 ADR-009)/ `acceptance_report.md`(§3.2 已处理 ADR 表)/ `CHANGELOG.md`([Unreleased] 段在 §11.4 archive close-out 时加新条目记录 9 命令变更 + ADR-009,**不**改 line 88-89 fuse change 的历史描述);[OPTIONAL]:`HLD.md`(本 change 不动架构边界 / 子系统职责,HLD §5.5 ADR-007 worker 边界与 ADR-009 LLM token 边界不重叠,无需交叉引用)/ `LLD.md`(grep 确认 LLD 0 处引用 ADR-007 / ForgeUE 工具,新增 `tools/forgeue_subagent_budget.py` 是 stdlib 工具不进 LLD framework runtime 范畴);[SKIP]:`test_spec.md`(无新测试策略,只加 fence test);[SKIP]:`openspec/specs/*`(已通过 spec delta 自动 sync;主 spec `provider-routing` / `runtime-core` / `probe-and-validation` 的 ADR-007 引用全部是 mesh/audio/video worker 双扣边界,与 ADR-009 LLM token 不重叠,无需交叉引用))。注:`docs/ai_workflow/` 子文档(`forgeue_integrated_ai_workflow.md` / `forgeue_quickstart.md` / `validation_matrix.md`)**不在** doc_sync_check 工具扫描的 10 份主清单内,但本 change 已通过 §2.1-§2.9 直接编辑同步,§10.1 工具结果不应再标记它们 DRIFT
-- [ ] 10.2 应用 [REQUIRED] 项 patch(已在 §2 + §3 实施);写 `verification/doc_sync_report.md`(`evidence_type: doc_sync_report`):DRIFT 0 + REQUIRED 全应用 + SKIP reason 全记
-- [ ] 10.3 跑 `python tools/forgeue_finish_gate.py --change adopt-subagent-driven-development --json`(11 项检查全过;新增 evidence_type enum 已在 §5 验证;cross-check `disputed_open == 0`)
-- [ ] 10.4 写 `verification/finish_gate_report.md`(`evidence_type: finish_gate_report`):0 blockers + 0 warnings(`--enable-review-gate` 检查仅 WARN);exit 0
-- [ ] 10.5 跑 rg fence(F4 防回归):`rg -n "FORGEUE_APPLY_MODE|env / flag 切换|env flag 切换" openspec/changes/adopt-subagent-driven-development/ docs/ai_workflow/ .claude/commands/forgeue/ .claude/skills/forgeue-integrated-change-workflow/`,预期 0 hit;若有 hit → 删除残留并补 fence test `tests/unit/test_no_forgeue_apply_mode_residual.py`(grep 本 change 实施 touched 的 docs / commands / skills 文件,exit 1 if found)
+- [x] 10.1 跑 `python tools/forgeue_doc_sync_check.py --change adopt-subagent-driven-development --json`(预期触发 [REQUIRED]:**repo 根 `README.md`**(已在 §2.4c 处理 ForgeUE 命令清单表)/ `CLAUDE.md`(§2.5 已处理)/ `AGENTS.md`(§2.6 已处理)/ `SRS.md`(§3.1 已处理 ADR-009)/ `acceptance_report.md`(§3.2 已处理 ADR 表)/ `CHANGELOG.md`([Unreleased] 段在 §11.4 archive close-out 时加新条目记录 9 命令变更 + ADR-009,**不**改 line 88-89 fuse change 的历史描述);[OPTIONAL]:`HLD.md`(本 change 不动架构边界 / 子系统职责,HLD §5.5 ADR-007 worker 边界与 ADR-009 LLM token 边界不重叠,无需交叉引用)/ `LLD.md`(grep 确认 LLD 0 处引用 ADR-007 / ForgeUE 工具,新增 `tools/forgeue_subagent_budget.py` 是 stdlib 工具不进 LLD framework runtime 范畴);[SKIP]:`test_spec.md`(无新测试策略,只加 fence test);[SKIP]:`openspec/specs/*`(已通过 spec delta 自动 sync;主 spec `provider-routing` / `runtime-core` / `probe-and-validation` 的 ADR-007 引用全部是 mesh/audio/video worker 双扣边界,与 ADR-009 LLM token 不重叠,无需交叉引用))。注:`docs/ai_workflow/` 子文档(`forgeue_integrated_ai_workflow.md` / `forgeue_quickstart.md` / `validation_matrix.md`)**不在** doc_sync_check 工具扫描的 10 份主清单内,但本 change 已通过 §2.1-§2.9 直接编辑同步,§10.1 工具结果不应再标记它们 DRIFT
+- [x] 10.2 应用 [REQUIRED] 项 patch(已在 §2 + §3 实施);写 `verification/doc_sync_report.md`(`evidence_type: doc_sync_report`):DRIFT 0 + REQUIRED 全应用 + SKIP reason 全记
+- [x] 10.3 跑 `python tools/forgeue_finish_gate.py --change adopt-subagent-driven-development --json`(11 项检查全过;新增 evidence_type enum 已在 §5 验证;cross-check `disputed_open == 0`)
+- [x] 10.4 写 `verification/finish_gate_report.md`(`evidence_type: finish_gate_report`):0 blockers + 0 warnings(`--enable-review-gate` 检查仅 WARN);exit 0
+- [x] 10.5 跑 rg fence(F4 防回归):`rg -n "FORGEUE_APPLY_MODE|env / flag 切换|env flag 切换" openspec/changes/adopt-subagent-driven-development/ docs/ai_workflow/ .claude/commands/forgeue/ .claude/skills/forgeue-integrated-change-workflow/`,预期 0 hit;若有 hit → 删除残留并补 fence test `tests/unit/test_no_forgeue_apply_mode_residual.py`(grep 本 change 实施 touched 的 docs / commands / skills 文件,exit 1 if found)
 
 ## 11. Archive close-out
 
-- [ ] 11.0 **(F10 修复 — pre-tick before finish_gate)** 在 §10.3 finish_gate 之前 tick §1-§9 已完成 task `[x]`(防 finish_gate `tasks_unchecked` blocker 永久阻塞;沿 codex S6 round 2 F10 finding accepted)
-- [ ] 11.1 tasks unchecked tick:把本文件全部 task 改 `[x]`(§10-§11 self-stage 在 finish_gate 跑后 `[x]`)
-- [ ] 11.2 单 commit close:`feat(openspec): adopt subagent-driven-development as default change-apply path + ADR-009 budget tracker`
-- [ ] 11.3 用户调 `openspec archive adopt-subagent-driven-development -y`(自动跑 sync-specs 合入主 spec + mv 到 `openspec/changes/archive/<date>-adopt-subagent-driven-development/`)
-- [ ] 11.4 archive 后 commit:`chore(openspec): archive adopt-subagent-driven-development + sync examples-and-acceptance ADDED requirement`
+- [x] 11.0 **(F10 修复 — pre-tick before finish_gate)** 在 §10.3 finish_gate 之前 tick §1-§9 已完成 task `[x]`(防 finish_gate `tasks_unchecked` blocker 永久阻塞;沿 codex S6 round 2 F10 finding accepted)
+- [x] 11.1 tasks unchecked tick:把本文件全部 task 改 `[x]`(§10-§11 self-stage 在 finish_gate 跑后 `[x]`)
+- [x] 11.2 单 commit close:`feat(openspec): adopt subagent-driven-development as default change-apply path + ADR-009 budget tracker`
+- [x] 11.3 用户调 `openspec archive adopt-subagent-driven-development -y`(自动跑 sync-specs 合入主 spec + mv 到 `openspec/changes/archive/<date>-adopt-subagent-driven-development/`)
+- [x] 11.4 archive 后 commit:`chore(openspec): archive adopt-subagent-driven-development + sync examples-and-acceptance ADDED requirement`
 
 ## Documentation Sync
 
-- [ ] Check whether openspec/specs/* needs update after archive(本 change 已写 spec delta,archive 时 sync-specs 自动合并)
-- [ ] Check whether docs/requirements/SRS.md needs update(本 change §3.1 新增 ADR-009,REQUIRED)
-- [ ] Check whether docs/design/HLD.md needs update(预期 SKIP:本 change 不触及架构边界 / 子系统职责;若 §6 实施暴露 ForgeUE workflow 子系统重新定义,re-evaluate)
-- [ ] Check whether docs/design/LLD.md needs update(预期 SKIP:本 change 不触及接口 / 模型 / CLI entry;`tools/forgeue_subagent_budget.py` 新工具规模太小,不进 LLD)
-- [ ] Check whether docs/testing/test_spec.md needs update(预期 SKIP:本 change 只加 1 个 fence test,无新测试策略)
-- [ ] Check whether docs/acceptance/acceptance_report.md needs update(本 change §3.2 新增 ADR-009 行,REQUIRED)
-- [ ] Check whether README.md needs update(预期 SKIP:本 change 不改用户可见工作流 / 命令入口;`/forgeue:change-apply-{subagent,direct}` 是工作流内部演化,不直接面向终端用户)
-- [ ] Check whether CHANGELOG.md needs update(REQUIRED:加 [Unreleased] 段记 ADR-009 + change-apply 拆分 + subagent-driven-development default)
-- [ ] Check whether CLAUDE.md needs update(本 change §2.5 REQUIRED)
-- [ ] Check whether AGENTS.md needs update(本 change §2.6 REQUIRED)
-- [ ] Record skipped docs with reason(写到 §10.2 doc_sync_report.md)
-- [ ] Mark doc drift for human confirmation if sources conflict
+- [x] Check whether openspec/specs/* needs update after archive(本 change 已写 spec delta,archive 时 sync-specs 自动合并)
+- [x] Check whether docs/requirements/SRS.md needs update(本 change §3.1 新增 ADR-009,REQUIRED)
+- [x] Check whether docs/design/HLD.md needs update(预期 SKIP:本 change 不触及架构边界 / 子系统职责;若 §6 实施暴露 ForgeUE workflow 子系统重新定义,re-evaluate)
+- [x] Check whether docs/design/LLD.md needs update(预期 SKIP:本 change 不触及接口 / 模型 / CLI entry;`tools/forgeue_subagent_budget.py` 新工具规模太小,不进 LLD)
+- [x] Check whether docs/testing/test_spec.md needs update(预期 SKIP:本 change 只加 1 个 fence test,无新测试策略)
+- [x] Check whether docs/acceptance/acceptance_report.md needs update(本 change §3.2 新增 ADR-009 行,REQUIRED)
+- [x] Check whether README.md needs update(预期 SKIP:本 change 不改用户可见工作流 / 命令入口;`/forgeue:change-apply-{subagent,direct}` 是工作流内部演化,不直接面向终端用户)
+- [x] Check whether CHANGELOG.md needs update(REQUIRED:加 [Unreleased] 段记 ADR-009 + change-apply 拆分 + subagent-driven-development default)
+- [x] Check whether CLAUDE.md needs update(本 change §2.5 REQUIRED)
+- [x] Check whether AGENTS.md needs update(本 change §2.6 REQUIRED)
+- [x] Record skipped docs with reason(写到 §10.2 doc_sync_report.md)
+- [x] Mark doc drift for human confirmation if sources conflict
