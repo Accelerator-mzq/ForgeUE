@@ -64,6 +64,10 @@ class UEImportOperation(BaseModel):
         "import_texture",
         "import_audio",
         "import_static_mesh",
+        # OpenSpec change comfy-agent-cli-video-adoption Phase 3 round-2 F1 修订:
+        # video import op kind(D1 + D12 video bridge 链路);沿 image / audio / mesh
+        # import_* 同款命名风格
+        "import_file_media_source",
         "create_material_from_template",
         "create_sound_cue_from_template",
     ]

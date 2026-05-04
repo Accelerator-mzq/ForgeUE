@@ -174,6 +174,62 @@ def test_permission_policy_denies_phase_c_ops_by_default():
     assert not is_op_allowed(p, "unknown_kind")
 
 
+def test_permission_policy_default_allows_import_file_media_source():
+    """Round-2 F1:PermissionPolicy.allow_import_file_media_source 默认 True
+    (D1 + D12 video bridge 链路必需,沿 image / audio / mesh import 同款 default-allow tier)。"""
+    p = PermissionPolicy()
+    assert p.allow_import_file_media_source is True
+
+
+def test_is_op_allowed_grants_import_file_media_source_under_default_policy():
+    """Round-2 F1 critical:_OP_ALLOW_ATTR["import_file_media_source"] mapping +
+    PermissionPolicy.allow_import_file_media_source=True 两者必须**同 commit** 改;
+    is_op_allowed(default_policy, "import_file_media_source") 必须 True 否则
+    ExportExecutor 走 status="skipped" Evidence 拒掉 video import op。"""
+    p = PermissionPolicy()
+    assert is_op_allowed(p, "import_file_media_source"), \
+        "F1 sweep:_OP_ALLOW_ATTR + PermissionPolicy.allow_import_file_media_source 必须同 commit 改"
+
+
+def test_is_importable_accepts_image_mesh_audio_material_video_after_phase3_extension():
+    """Round-2 F1:ExportExecutor._is_importable modality whitelist 加 "video" —
+    沿 image / mesh / audio / material 同款 default-allow tier。Forward-compatible
+    (既有 modality 仍 pass;只加 video)。"""
+    from framework.runtime.executors.export import ExportExecutor
+
+    # Mock minimal Artifact-like with file payload
+    class _MockArt:
+        class _PayloadRef:
+            kind = PayloadKind.file
+        payload_ref = _PayloadRef()
+
+        def __init__(self, modality, shape):
+            class _ArtifactType:
+                pass
+            self.artifact_type = _ArtifactType()
+            self.artifact_type.modality = modality
+            self.artifact_type.shape = shape
+
+    # 5 modalities all pass post-Phase 3
+    for modality in ("image", "mesh", "audio", "video", "material"):
+        art = _MockArt(modality=modality, shape="dummy")
+        assert ExportExecutor._is_importable(art), f"{modality} 应通过 _is_importable"
+
+    # blob payload 仍 fail(只允许 file payload)
+    class _BlobArt:
+        class _PayloadRef:
+            kind = PayloadKind.blob
+        payload_ref = _PayloadRef()
+
+        class _ArtifactType:
+            modality = "video"
+            shape = "mp4"
+        artifact_type = _ArtifactType()
+
+    assert not ExportExecutor._is_importable(_BlobArt()), \
+        "_is_importable 仍要求 file payload,blob payload 应 fail"
+
+
 def test_permission_mask_for_manifest(tmp_path):
     proj = _fake_ue_project(tmp_path)
     repo = _repo(tmp_path / "a")

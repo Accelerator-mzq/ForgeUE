@@ -602,7 +602,6 @@ def test_p4_manifest_and_plan_builders_pure(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason="本 fence 走完整 ExportExecutor → manifest_builder pipeline,被 _is_importable whitelist 过滤;commit 8c (round-2 F1 export gate sweep) 加 'video' 到 _is_importable 后启用 — 见 commit 8c task §8c.6 重新启用")
 def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video(
     tmp_path: Path, monkeypatch
 ):
@@ -611,11 +610,9 @@ def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_
     UE-side AssetTools.create_asset 调用 1 次。
 
     本 fence 走 stub `unreal` 模块(不需要真 UE 安装)— 验证 ue_scripts/ run_import
-    dispatch 协议 + domain_video 内部行为骨架(D12 路径分流由 8b.5 fence 验证)。
-
-    **commit 8 暂 skip**:本 fence 跑完整 ExportExecutor → manifest_builder pipeline,
-    依赖 F1 export gate sweep(commit 8c)把 'video' 加到 `_is_importable` whitelist;
-    commit 8c 完成后移除本 skip mark。
+    dispatch 协议 + domain_video 内部行为骨架 + commit 8c F1 export gate sweep
+    (`_is_importable` whitelist + `PermissionPolicy.allow_import_file_media_source` +
+    `_OP_ALLOW_ATTR["import_file_media_source"]`)端到端联通。
     """
     ue_project = _fake_ue_project(tmp_path)
     run_id = "run_p4_video_stub"
@@ -855,3 +852,145 @@ def test_p4_domain_video_does_not_import_framework_module():
     ]
     assert not forbidden_lines, \
         f"NFR-PORT-003 violation:domain_video.py imports framework: {forbidden_lines}"
+
+
+# ---------------------------------------------------------------------------
+# Round-2 F1 export gate sweep fences(2 fence;commit 8c)
+# ---------------------------------------------------------------------------
+
+
+def test_p4_export_executor_passes_video_artifact_through_is_importable_to_manifest_builder(
+    tmp_path: Path, monkeypatch
+):
+    """Round-2 F1 critical:`ExportExecutor._is_importable` whitelist 加 "video"
+    后,video Artifact 通过 filter 进 manifest_builder.build_manifest;
+    UEAssetEntry.asset_kind == "file_media_source"(D1 唯一映射)。
+
+    若 F1 sweep 未完成(commit 8c 前),video Artifact 在 _is_importable 被 silent
+    filter 不进 manifest — 本 fence 守门「commit 8c 三处同改完整」。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    run_id = "run_p4_video_is_importable"
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    vid = repo.put(
+        artifact_id=f"{run_id}_video_01",
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video", provider="comfy_agent_cli",
+                             model="comfy/local-video"),
+        metadata={"ue_asset_name": "F1Test"},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/F1", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="F1 video", input_payload={}, expected_output={},
+        project_id="proj_f1", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id="proj_f1", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id="wf_f1", trace_id="tr",
+    )
+    ExportExecutor().execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[vid.artifact_id],
+    ))
+
+    # 验证 manifest.json 含 file_media_source entry(F1 sweep 起作用证据)
+    run_folder = ue_project / "Content" / "Generated" / run_id
+    manifest_json = json.loads((run_folder / "manifest.json").read_text(encoding="utf-8"))
+    asset_kinds = [e["asset_kind"] for e in manifest_json["assets"]]
+    assert "file_media_source" in asset_kinds, \
+        f"F1 sweep failure:video Artifact 未通过 _is_importable filter,manifest.assets={asset_kinds}"
+
+
+def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest_plan_and_evidence(
+    tmp_path: Path, monkeypatch
+):
+    """Round-2 F1 critical 端到端:video Artifact 经 ExportExecutor pipeline →
+    manifest.json + import_plan.json + evidence.json 都含 import_file_media_source op,
+    permission mask 不会 skip(因 PermissionPolicy.allow_import_file_media_source=True
+    + _OP_ALLOW_ATTR mapping 已加,is_op_allowed 返 True)。
+
+    本 fence 是 round-2 F1 三处 sweep 的端到端 acceptance fence — 守门:
+    PermissionPolicy 字段 + _OP_ALLOW_ATTR mapping + _is_importable whitelist 三者
+    必须**同 commit** 改,缺任一处此 fence 都会失败。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    run_id = "run_p4_video_e2e"
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    vid = repo.put(
+        artifact_id=f"{run_id}_video_01",
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video"),
+        metadata={"ue_asset_name": "E2ETest"},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/E2E", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="E2E video", input_payload={}, expected_output={},
+        project_id="proj_e2e", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id="proj_e2e", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id="wf_e2e", trace_id="tr",
+    )
+    ExportExecutor().execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[vid.artifact_id],
+    ))
+
+    run_folder = ue_project / "Content" / "Generated" / run_id
+
+    # 1. manifest.json 含 file_media_source asset
+    manifest_json = json.loads((run_folder / "manifest.json").read_text(encoding="utf-8"))
+    asset_kinds = [e["asset_kind"] for e in manifest_json["assets"]]
+    assert "file_media_source" in asset_kinds
+
+    # 2. import_plan.json 含 import_file_media_source operation
+    plan_json = json.loads((run_folder / "import_plan.json").read_text(encoding="utf-8"))
+    op_kinds = [op["kind"] for op in plan_json["operations"]]
+    assert "import_file_media_source" in op_kinds, \
+        f"F1 sweep:_IMPORT_OP_KIND 未把 file_media_source → import_file_media_source 映射,plan.operations={op_kinds}"
+
+    # 3. evidence.json 不含 status="skipped" 且 error 提及 PermissionPolicy 的 record
+    #    (round-2 F1 关键:PermissionPolicy.allow_import_file_media_source=True +
+    #     _OP_ALLOW_ATTR mapping 已加 → is_op_allowed 返 True → 不 skip)
+    evidence_records = load_evidence(run_folder / "evidence.json")
+    permission_skipped = [
+        e for e in evidence_records
+        if e.kind == "import_file_media_source" and e.status == "skipped"
+        and (e.error or "").startswith("PermissionPolicy")
+    ]
+    assert not permission_skipped, \
+        f"F1 sweep failure:import_file_media_source op 被 PermissionPolicy skip,records={permission_skipped}"

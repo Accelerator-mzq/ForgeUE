@@ -93,6 +93,12 @@ class PermissionPolicy(BaseModel):
     allow_import_texture: bool = True
     allow_import_audio: bool = True
     allow_import_static_mesh: bool = True
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 round-2 F1 修订:
+    # default-allow tier(沿 image / audio / mesh import 同款 read-only +
+    # content-creating + no destructive side effects);D1 + D12 video bridge 链路
+    # 必需。三处必须**同 commit** 改:此字段 + permission_policy._OP_ALLOW_ATTR
+    # entry + ExportExecutor._is_importable whitelist。
+    allow_import_file_media_source: bool = True
     allow_create_material: bool = False          # Phase C; default off
     allow_create_sound_cue: bool = False         # Phase C; default off
     allow_modify_existing_assets: bool = False   # always deny unless explicit override

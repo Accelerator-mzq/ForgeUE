@@ -210,9 +210,13 @@ class ExportExecutor(StepExecutor):
 
     @staticmethod
     def _is_importable(art: Artifact) -> bool:
+        # OpenSpec change comfy-agent-cli-video-adoption Phase 3 round-2 F1 修订:
+        # whitelist 加 "video" — D-Runner-Extension + D1 决策驱动;否则 video Artifact
+        # 在此被静默过滤,不进 manifest_builder → P4 真机看不到 .uasset(沿 round-2
+        # F1 codex finding 揭示的盲点)。
         return (
             art.payload_ref.kind == PayloadKind.file
-            and art.artifact_type.modality in {"image", "mesh", "audio", "material"}
+            and art.artifact_type.modality in {"image", "mesh", "audio", "video", "material"}
         )
 
     @staticmethod

@@ -369,7 +369,7 @@
 
 > **round-2 F1 codex finding accepted-codex 2026-05-04 关键点**:round-1 design / spec / tasks 漏掉这 3 处真实 export gate。manifest_builder 单测可绿,但 `ExportExecutor.execute:95` 通过 `_is_importable(art)` 过滤 video Artifact → 不进 manifest_builder → P4 真机看不到 .uasset。3 处必须同 commit 改,否则 `is_op_allowed` 与 `PermissionPolicy` 字段 / `_OP_ALLOW_ATTR` 映射不一致也会破坏 video import 默认 allow tier。
 
-- [ ] 8c.1 在 `src/framework/runtime/executors/export.py:212-216` `_is_importable` modality whitelist 加 `"video"`:
+- [x] 8c.1 在 `src/framework/runtime/executors/export.py:212-216` `_is_importable` modality whitelist 加 `"video"`:
   ```python
   @staticmethod
   def _is_importable(art: Artifact) -> bool:
@@ -378,7 +378,7 @@
           and art.artifact_type.modality in {"image", "mesh", "audio", "video", "material"}  # NEW: "video" added
       )
   ```
-- [ ] 8c.2 在 `src/framework/core/policies.py:93-95` `PermissionPolicy` 加 `allow_import_file_media_source: bool = True` 字段(沿 audio / mesh / image 同 default-allow tier;permission tier 与 spec/ue-export-bridge "import_file_media_source is allowed by default" Requirement 对齐):
+- [x] 8c.2 在 `src/framework/core/policies.py:93-95` `PermissionPolicy` 加 `allow_import_file_media_source: bool = True` 字段:
   ```python
   class PermissionPolicy(BaseModel):
       allow_import_texture: bool = True
@@ -387,7 +387,7 @@
       allow_import_file_media_source: bool = True  # NEW (Phase 3 D1 + round-2 F1)
       # ...
   ```
-- [ ] 8c.3 在 `src/framework/ue_bridge/permission_policy.py:14-19` `_OP_ALLOW_ATTR` dict 加 `"import_file_media_source": "allow_import_file_media_source"` entry:
+- [x] 8c.3 在 `src/framework/ue_bridge/permission_policy.py:14-19` `_OP_ALLOW_ATTR` dict 加 `"import_file_media_source": "allow_import_file_media_source"` entry + `framework.core.ue.UEImportOperation.kind` Pydantic Literal 加 `"import_file_media_source"`(commit 8c 实施时发现的 4-th sweep 位置 — Literal 是 manifest schema 强 enforced 的真实 export gate,沿 round-2 F1 同款 critical invariant):
   ```python
   _OP_ALLOW_ATTR: dict[str, str] = {
       "import_texture": "allow_import_texture",
@@ -396,14 +396,14 @@
       "import_file_media_source": "allow_import_file_media_source",  # NEW
   }
   ```
-- [ ] 8c.4 `tests/unit/test_export_is_importable.py` 新建,加 1-2 fence:`test_is_importable_accepts_image_mesh_audio_material_video_after_phase3_extension`(post-change 5 modalities 全 pass + payload_kind=blob 仍 fail)
-- [ ] 8c.5 `tests/unit/test_permission_policy.py` 加 2 fence:
+- [x] 8c.4 fence `test_is_importable_accepts_image_mesh_audio_material_video_after_phase3_extension` 加在 `tests/unit/test_ue_bridge.py`(沿 audio / mesh / image 同款单测位置;不新建独立文件)— post-change 5 modalities 全 pass + payload_kind=blob 仍 fail ✅
+- [x] 8c.5 fence 加在 `tests/unit/test_ue_bridge.py`(同上,沿既有 permission_policy fence 位置):
   - `test_permission_policy_default_allows_import_file_media_source`(`PermissionPolicy()` default constructor 暴露 `allow_import_file_media_source: True`)
   - `test_is_op_allowed_grants_import_file_media_source_under_default_policy`(`permission_policy.is_op_allowed(PermissionPolicy(), op)` returns True for `op.kind == "import_file_media_source"`)
-- [ ] 8c.6 `tests/integration/test_p4_ue_manifest_only.py` 加 2 fence(端到端集成 — 不只是 _is_importable 直接单测,要覆盖 gate-to-manifest_builder 全路径):
+- [x] 8c.6 `tests/integration/test_p4_ue_manifest_only.py` 加 2 端到端 fence + 1 unskip(commit 8 暂 skip 的 dispatch fence):
   - `test_p4_export_executor_passes_video_artifact_through_is_importable_to_manifest_builder`(给一个 video Artifact 跑 `ExportExecutor.execute`,断言 `manifest.json` 含 `UEAssetEntry(asset_kind="file_media_source")`;**没**这个 fence,manifest_builder 单测可绿但实际 export 链路 silent-skip video)
   - `test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest_plan_and_evidence`(全 pipeline `ExportExecutor.execute` → manifest + plan + evidence 文件含 `import_file_media_source` operation;permission mask **不**会 skip;无 `status="skipped"` Evidence record with permission reason)
-- [ ] 8c.7 commit 8c:`feat(export): sweep video modality through ExportExecutor _is_importable + PermissionPolicy.allow_import_file_media_source + permission_policy._OP_ALLOW_ATTR (round-2 F1 fix)`
+- [x] 8c.7 commit 8c:`feat(export): sweep video modality through ExportExecutor _is_importable + PermissionPolicy.allow_import_file_media_source + permission_policy._OP_ALLOW_ATTR + UEImportOperation.kind Literal (round-2 F1 fix)` — pytest 实测 1408 passed + 1 skipped (1402+6 F1 sweep fence:3 unit + 2 integration + 1 unskip)
 
 ## 9. DryRunPass extension + bundle + probe(commit 9 + 10 + 11)
 
