@@ -118,6 +118,18 @@ _VALID_CODEX_REVIEW_REF_TYPES: frozenset[str] = frozenset({
     "codex_mixed_scope_review",
 })
 
+# implementation evidence 类型 — 这些类型必须填 autonomy_decision 字段
+# (design.md D-AutonomyBoundary:implementation evidence 必须填 autonomy_decision)
+# I-2 fix:提升为模块级 frozenset,避免在 check_frontmatter_protocol 循环内重建
+_IMPLEMENTATION_EV_TYPES: frozenset[str] = frozenset({
+    "subagent_implementer_report",
+    "subagent_spec_review",
+    "subagent_code_quality_review",
+    "subagent_final_review",
+    "tdd_log",
+    "debug_log",
+})
+
 # Frontmatter sentinel value indicating evidence was produced by the
 # subagent-driven-development command path. design.md D-EvidenceSchema +
 # round 1 F2 fix mandate the value be carried as a top-level audit field
@@ -731,15 +743,6 @@ def check_frontmatter_protocol(
         # P0.5 autonomy_boundary fence:检查 autonomy_decision 字段 + codex_review_ref 4 类硬校验
         # W2 writeback:仅对含 autonomy_decision 字段的 evidence 做 ref 4 类硬校验
         # (若字段存在但值非法 / ref 硬校验失败则 block;字段缺失仅对 implementation evidence 报错)
-        # implementation evidence 类型定义:subagent_* 系列 + tdd_log + debug_log
-        _IMPLEMENTATION_EV_TYPES = frozenset({
-            "subagent_implementer_report",
-            "subagent_spec_review",
-            "subagent_code_quality_review",
-            "subagent_final_review",
-            "tdd_log",
-            "debug_log",
-        })
         ev_type = fm.get("evidence_type") or ""
         # 对 implementation evidence 类型强制 autonomy_decision 字段
         # 对其他类型只有在 autonomy_decision 字段已存在时才做硬校验(宽松模式)
@@ -864,21 +867,29 @@ def _check_autonomy_boundary(
     做 autonomy_decision 边界校验,防止 claude_codex_concurred 在无合法 codex review
     证据支持的情况下绕过升级 fence。
 
-    4 类 ref 硬校验(仅 autonomy_decision == claude_codex_concurred 时触发):
-    a. codex_review_ref 字段存在
-    b. ref 路径文件存在(is_file())
-    c. ref 属于同 change(路径以 change_root 为前缀,不跨 change)
-    d. ref evidence_type 在 codex review 白名单内
-    e. ref disputed_open == 0(review 已 finalize)
+    检查结构:1 个字段存在前提 + 4 类 ref 硬校验(a/b/c/d)
+    - 前提:autonomy_decision 字段必须存在 + 值在 _AUTONOMY_DECISION_VALUES 内
+    - 4 类 ref 硬校验(仅 autonomy_decision == claude_codex_concurred 时触发):
+      a. codex_review_ref 路径存在(is_file())
+      b. ref 属于同 change(resolve 后路径以 change_root 为前缀,不跨 change)
+      c. ref evidence_type 在 _VALID_CODEX_REVIEW_REF_TYPES 白名单内
+      d. ref disputed_open == 0(review 已 finalize)
+
+    参数:
+    - evidence_path:被检查 evidence 文件的路径(用于错误消息中标识 file 来源)
+    - frontmatter:已解析的 evidence frontmatter dict
+    - change_root:本 change 的根目录(用于 ref 路径 resolve + 同 change scope 校验)
 
     返回错误字符串列表(空 = 无问题)。
     """
     errors: list[str] = []
+    # I-3 fix:在错误消息中引用 evidence_path.name,提升错误可读性
+    ev_name = evidence_path.name
 
     # 检查字段是否存在
     if "autonomy_decision" not in frontmatter:
         errors.append(
-            "autonomy_decision field missing from evidence frontmatter "
+            f"autonomy_decision field missing from evidence frontmatter in {ev_name} "
             "(design.md D-AutonomyBoundary: every implementation evidence MUST carry this field)"
         )
         return errors  # 无字段就不继续 ref 校验
@@ -889,7 +900,7 @@ def _check_autonomy_boundary(
     if value not in _AUTONOMY_DECISION_VALUES:
         valid_list = ", ".join(sorted(_AUTONOMY_DECISION_VALUES))
         errors.append(
-            f"autonomy_decision={value!r} is not a valid enum value "
+            f"autonomy_decision={value!r} in {ev_name} is not a valid enum value "
             f"(valid: {valid_list})"
         )
         return errors  # 枚举非法时不继续 ref 校验
@@ -902,51 +913,54 @@ def _check_autonomy_boundary(
     ref_value = frontmatter.get("codex_review_ref")
     if not ref_value or not isinstance(ref_value, str) or not ref_value.strip():
         errors.append(
-            "codex_review_ref field missing — autonomy_decision: claude_codex_concurred "
-            "MUST carry a codex_review_ref pointing to the review evidence file "
-            "(design.md D-AutonomyBoundary Mitigation)"
+            f"codex_review_ref field missing in {ev_name} — autonomy_decision: "
+            "claude_codex_concurred MUST carry a codex_review_ref pointing to the review "
+            "evidence file (design.md D-AutonomyBoundary Mitigation)"
         )
         return errors
 
     ref_rel = ref_value.strip()
 
-    # (b) ref 路径文件必须存在
-    # ref 路径解析:先尝试相对于 change_root,再尝试相对于 repo root(change_root.parent.parent)
+    # (a-cont) ref 路径文件必须存在
+    # ref 路径解析:先尝试相对于 change_root,再尝试相对于 repo root(I-1 fix:三层 parent)
     # 注意:Path.is_file() 会跟随 .. 符号链接,故先 is_file() 再 resolve() 确保一致性
     ref_candidate = change_root / ref_rel
     if ref_candidate.is_file():
         ref_abs = ref_candidate.resolve()
     else:
-        # 尝试从 repo root 解析(ref_rel 可能是 "openspec/changes/..." 形式)
-        repo_root = change_root.parent.parent  # changes/ → openspec/ → repo root
+        # I-1 fix:repo root = change_root 的三层 parent
+        # change_root = <repo>/openspec/changes/<change_id>
+        # parents:    <repo>/openspec/changes  → <repo>/openspec  → <repo>
+        # 之前误写两层 parent → 解析到 openspec/ 子目录,造成 openspec/openspec/... 双前缀 false blocker
+        repo_root = change_root.parent.parent.parent
         ref_candidate_repo = repo_root / ref_rel
         if not ref_candidate_repo.is_file():
             errors.append(
-                f"codex_review_ref={ref_rel!r} does not exist as a file "
+                f"codex_review_ref={ref_rel!r} in {ev_name} does not exist as a file "
                 f"(checked relative to change_root and repo root)"
             )
             return errors
         ref_abs = ref_candidate_repo.resolve()
 
-    # (c) ref 必须属于同 change(resolve 后路径以 change_root.resolve() 为前缀,禁止跨 change)
+    # (b) ref 必须属于同 change(resolve 后路径以 change_root.resolve() 为前缀,禁止跨 change)
     # 先 resolve 两端路径,消除 .. 和 symlink,确保路径比较语义正确
     change_root_resolved = change_root.resolve()
     try:
         ref_abs.relative_to(change_root_resolved)
     except ValueError:
         errors.append(
-            f"codex_review_ref={ref_rel!r} resolves outside of change directory "
-            f"{change_root.name!r} — cross-change reference is forbidden "
+            f"codex_review_ref={ref_rel!r} in {ev_name} resolves outside of change "
+            f"directory {change_root.name!r} — cross-change reference is forbidden "
             "(design.md D-AutonomyBoundary: codex_review_ref must be within same change scope)"
         )
         return errors
 
-    # (d) ref evidence_type 必须是 codex review 类型之一
+    # (c) ref evidence_type 必须是 codex review 类型之一
     try:
         ref_text = ref_abs.read_text(encoding="utf-8")
     except OSError:
         errors.append(
-            f"codex_review_ref={ref_rel!r} cannot be read (file unreadable)"
+            f"codex_review_ref={ref_rel!r} in {ev_name} cannot be read (file unreadable)"
         )
         return errors
 
@@ -955,11 +969,11 @@ def _check_autonomy_boundary(
     if ref_ev_type not in _VALID_CODEX_REVIEW_REF_TYPES:
         valid_types = ", ".join(sorted(_VALID_CODEX_REVIEW_REF_TYPES))
         errors.append(
-            f"codex_review_ref={ref_rel!r} has evidence_type={ref_ev_type!r} "
+            f"codex_review_ref={ref_rel!r} in {ev_name} has evidence_type={ref_ev_type!r} "
             f"which is not a codex review type (must be one of: {valid_types})"
         )
 
-    # (e) ref disputed_open 必须为 0(review 已 finalize)
+    # (d) ref disputed_open 必须为 0(review 已 finalize)
     disputed_raw = ref_fm.get("disputed_open")
     try:
         disputed_count = int(disputed_raw) if disputed_raw is not None else 0
@@ -967,9 +981,9 @@ def _check_autonomy_boundary(
         disputed_count = 0
     if disputed_count != 0:
         errors.append(
-            f"codex_review_ref={ref_rel!r} has disputed_open={disputed_count} (not 0) — "
-            "review must be finalized (disputed_open: 0) before evidence can claim "
-            "autonomy_decision: claude_codex_concurred"
+            f"codex_review_ref={ref_rel!r} in {ev_name} has disputed_open={disputed_count} "
+            "(not 0) — review must be finalized (disputed_open: 0) before evidence can "
+            "claim autonomy_decision: claude_codex_concurred"
         )
 
     return errors

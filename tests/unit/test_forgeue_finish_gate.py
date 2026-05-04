@@ -1650,14 +1650,26 @@ def test_worktree_isolation_requires_committed_change_artifacts(tmp_path):
 # (W2 writeback codex round 1 F2 finding)
 # ---------------------------------------------------------------------------
 
-# Codex review 文件 evidence_type 白名单 — ref 必须指向这 5 类之一才算合法 codex review
-_VALID_CODEX_REF_TYPES = {
-    "codex_adversarial_review",
-    "codex_design_review",
-    "codex_plan_review",
-    "codex_verification_review",
-    "codex_mixed_scope_review",
-}
+# M-1 fix:删除 dead code _VALID_CODEX_REF_TYPES(原定义后从未引用,helper 端引用的是
+# fg._VALID_CODEX_REVIEW_REF_TYPES 而非测试本地副本)
+
+
+@pytest.fixture
+def autonomy_evidence_setup(tmp_path):
+    """M-2 fix:autonomy_boundary fence test 公共 fixture。
+
+    创建标准的 change 目录 + 空 implementation evidence 文件,返回 callable
+    `setup(change_id)` -> (change_dir, evidence_path)。各测试只需提供 frontmatter
+    dict + 调用 fg._check_autonomy_boundary 即可,不再重复 4 行的 mkdir + write_text 样板。
+    """
+    def _setup(change_id: str = "fc-ab-fixture") -> tuple[Path, Path]:
+        change_dir = tmp_path / "openspec" / "changes" / change_id
+        change_dir.mkdir(parents=True, exist_ok=True)
+        evidence_path = change_dir / "execution" / "task_1_implementer.md"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+        return change_dir, evidence_path
+    return _setup
 
 
 def _write_codex_ref_evidence(
@@ -1703,12 +1715,13 @@ def _write_codex_ref_evidence(
     return ref_path
 
 
-def test_autonomy_boundary_missing_field_blocks(tmp_path):
+def test_autonomy_boundary_missing_field_blocks(autonomy_evidence_setup):
     """P0.6 fence:evidence 缺少 autonomy_decision 字段时 _check_autonomy_boundary
     必须返回含 'autonomy_decision' 关键词的错误。
+
+    M-2 fix:用 autonomy_evidence_setup fixture 替代手工 mkdir+write_text 样板。
     """
-    # build_report 走 check_frontmatter_protocol → _check_autonomy_boundary
-    # 只测试 helper 函数直接调用,不走完整 build_report(避免 evidence completeness 干扰)
+    change_dir, evidence_path = autonomy_evidence_setup("fc-ab-missing")
     # 构造一个缺少 autonomy_decision 的 frontmatter
     fm = {
         "change_id": "fc-ab-missing",
@@ -1716,12 +1729,6 @@ def test_autonomy_boundary_missing_field_blocks(tmp_path):
         "evidence_type": "subagent_implementer_report",
         "aligned_with_contract": True,
     }
-    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-missing"
-    change_dir.mkdir(parents=True, exist_ok=True)
-    evidence_path = change_dir / "execution" / "task_1_implementer.md"
-    evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    evidence_path.write_text("---\nchange_id: fc-ab-missing\n---\n\nbody\n", encoding="utf-8")
-
     errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
     # 缺少 autonomy_decision 字段 → 必须有错误
     assert errors, "missing autonomy_decision MUST produce an error"
@@ -1731,16 +1738,13 @@ def test_autonomy_boundary_missing_field_blocks(tmp_path):
     )
 
 
-def test_autonomy_boundary_value_enum(tmp_path):
+def test_autonomy_boundary_value_enum(autonomy_evidence_setup):
     """P0.8 fence:autonomy_decision 值不在 enum 内时必须报错。
     合法值:claude_autonomous / claude_codex_concurred / user_required / user_overrode
-    """
-    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-enum"
-    change_dir.mkdir(parents=True, exist_ok=True)
-    evidence_path = change_dir / "execution" / "task_1_implementer.md"
-    evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
 
+    M-2 fix:用 autonomy_evidence_setup fixture。
+    """
+    change_dir, evidence_path = autonomy_evidence_setup("fc-ab-enum")
     # 非法值 → 应该报错
     fm_bad = {"autonomy_decision": "auto_approved"}
     errors_bad = fg._check_autonomy_boundary(evidence_path, fm_bad, change_dir)
@@ -1758,16 +1762,13 @@ def test_autonomy_boundary_value_enum(tmp_path):
     )
 
 
-def test_autonomy_boundary_concurred_requires_codex_ref(tmp_path):
+def test_autonomy_boundary_concurred_requires_codex_ref(autonomy_evidence_setup):
     """P0.7 fence:autonomy_decision: claude_codex_concurred 时必须有 codex_review_ref
     字段;缺少时必须报错。
-    """
-    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-noref"
-    change_dir.mkdir(parents=True, exist_ok=True)
-    evidence_path = change_dir / "execution" / "task_1_implementer.md"
-    evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
 
+    M-2 fix:用 autonomy_evidence_setup fixture。
+    """
+    change_dir, evidence_path = autonomy_evidence_setup("fc-ab-noref")
     # concurred 但无 codex_review_ref → 必须报错
     fm = {"autonomy_decision": "claude_codex_concurred"}
     errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
@@ -1778,15 +1779,12 @@ def test_autonomy_boundary_concurred_requires_codex_ref(tmp_path):
     )
 
 
-def test_autonomy_boundary_bogus_ref_blocks(tmp_path):
+def test_autonomy_boundary_bogus_ref_blocks(autonomy_evidence_setup):
     """P0.9 fence:codex_review_ref 指向不存在的文件时必须报错(ref 路径不存在)。
-    """
-    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-bogus"
-    change_dir.mkdir(parents=True, exist_ok=True)
-    evidence_path = change_dir / "execution" / "task_1_implementer.md"
-    evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
 
+    M-2 fix:用 autonomy_evidence_setup fixture。
+    """
+    change_dir, evidence_path = autonomy_evidence_setup("fc-ab-bogus")
     # ref 指向不存在的文件
     fm = {
         "autonomy_decision": "claude_codex_concurred",
@@ -1967,4 +1965,126 @@ def test_verdict_normalization_critical_severity_rejected_conflicts():
     )
     assert result is False, (
         "severity=critical + resolution=rejected MUST conflict (escalate fence #3)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0 code review 修复:I-1 / I-5 / M-3 补充 fence
+# ---------------------------------------------------------------------------
+
+
+def test_autonomy_boundary_ref_with_repo_root_relative_path(tmp_path):
+    """I-1 fix fence:codex_review_ref 用 repo-root 相对路径
+    (`openspec/changes/<change_id>/notes/<file>.md`) 时不应误报 false blocker。
+
+    Pre-fix: `repo_root = change_root.parent.parent` 解析到 `<repo>/openspec/`
+    (openspec 子目录),fallback 拼接 `openspec/openspec/changes/...` → 文件找不到
+    false blocker。
+    Post-fix: `repo_root = change_root.parent.parent.parent` 正确指向 repo root,
+    repo-root-relative ref 可正确 resolve。
+    """
+    change_id = "fc-ab-reporoot"
+    # 写 ref 文件:存在 + 合法 codex review evidence_type + disputed_open=0
+    ref_path = _write_codex_ref_evidence(
+        tmp_path, change_id,
+        evidence_type="codex_adversarial_review",
+        disputed_open=0,
+    )
+    change_dir = tmp_path / "openspec" / "changes" / change_id
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+
+    # 用 repo-root 相对形式(spec 文档推荐写法)
+    # ref_path 实际位置:tmp_path/openspec/changes/<change_id>/notes/pre_p0/codex_review_round1.md
+    ref_repo_relative = ref_path.relative_to(tmp_path).as_posix()
+    assert ref_repo_relative.startswith("openspec/changes/"), (
+        f"ref_repo_relative should be repo-root relative, got: {ref_repo_relative!r}"
+    )
+
+    fm = {
+        "autonomy_decision": "claude_codex_concurred",
+        "codex_review_ref": ref_repo_relative,
+    }
+    errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
+    # I-1 fix:repo-root-relative path 应正确 resolve,不应有任何错误
+    assert errors == [], (
+        f"repo-root-relative codex_review_ref MUST resolve correctly; "
+        f"got false-blocker errors: {errors}"
+    )
+
+
+def test_autonomy_boundary_wired_into_check_frontmatter_protocol(tmp_path):
+    """I-5 fix fence:autonomy_boundary 已正确接入 check_frontmatter_protocol 调用链。
+
+    若 line 746 wiring 条件被误删,所有单元 helper 测试仍全绿但 finish gate 实际不校验。
+    本 integration test 通过 build_report 高层入口 + 落 implementation evidence
+    (subagent_implementer_report 缺 autonomy_decision 字段),assert 错误列表含
+    `autonomy_boundary_violation` blocker — 验证 wiring 真实生效。
+    """
+    b = make_complete_change(
+        tmp_path,
+        "fc-ab-wired",
+        with_codex=False,
+        with_cross_check=False,
+    )
+    # 落一个 subagent_implementer_report 类型的 implementation evidence,但缺 autonomy_decision
+    b.write_evidence(
+        "execution",
+        "task_1_implementer.md",
+        evidence_type="subagent_implementer_report",
+        stage="S4",
+        body="## Status: DONE\nimplementer body without autonomy_decision.\n",
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+        # 注意:builder 默认不写 autonomy_decision 字段(不在 EVIDENCE_FRONTMATTER_KEYS 12 key 内)
+    )
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id="fc-ab-wired",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None
+    # I-5 fix:必须有 autonomy_boundary_violation blocker(说明 wiring 生效)
+    autonomy_blockers = [bl for bl in report.blockers if bl.type == "autonomy_boundary_violation"]
+    assert autonomy_blockers, (
+        "autonomy_boundary fence MUST be wired into check_frontmatter_protocol — "
+        f"implementation evidence missing autonomy_decision must produce "
+        f"autonomy_boundary_violation blocker; got blockers: "
+        f"{[(bl.type, bl.detail) for bl in report.blockers]}"
+    )
+    joined_details = " ".join(bl.detail for bl in autonomy_blockers)
+    assert "autonomy_decision" in joined_details, (
+        f"blocker detail must mention 'autonomy_decision'; got: {joined_details!r}"
+    )
+
+
+def test_verdict_normalization_unknown_verdict_defaults_to_no_conflict():
+    """M-3 fix fence:_check_verdict_normalization 对未知顶层 verdict
+    (非 'approve' / 'needs-attention')保守处理 — 返回 True(无冲突,
+    让 controller 进一步判断),不主动断言冲突。
+
+    helper 实装注释明示"未知 verdict 保守处理:不断言冲突",但行为无测试覆盖。
+    本 fence 守门保守语义,防止后续重构改成 fail-closed 静默破坏 controller 兼容。
+    """
+    # 未知 verdict + 任意 claude resolution + 低 severity finding
+    findings = [{"id": "F1", "severity": "low", "resolution": "accepted-codex"}]
+    result_unknown = fg._check_verdict_normalization(
+        claude_resolution_list=["accepted-codex"],
+        codex_top_verdict="unknown_verdict_value",  # 未知值
+        codex_findings=findings,
+    )
+    assert result_unknown is True, (
+        "unknown codex verdict MUST default to no-conflict (True) — "
+        "helper docstring says 'conservative: don't assert conflict'"
+    )
+    # 空字符串 verdict 同理
+    result_empty = fg._check_verdict_normalization(
+        claude_resolution_list=["accepted-codex"],
+        codex_top_verdict="",
+        codex_findings=findings,
+    )
+    assert result_empty is True, (
+        "empty codex verdict MUST default to no-conflict (True)"
     )
