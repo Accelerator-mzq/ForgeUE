@@ -66,6 +66,25 @@ S3→S4-S5 transition(fallback 路径,自 `adopt-subagent-driven-development` ch
 - **direct 路径不进 isolated worktree**(沿 design.md D-Worktree-Detail 第 5 项 "fallback 路径仍跑在主 worktree";如需 worktree 隔离请改走 `/forgeue:change-apply-subagent`)。
 - **direct 路径 evidence shape 与 subagent 路径不同**:本路径产 `tdd_log` + `debug_log`(沿现 evidence 协议),**不产** `subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review` 4 类 per-task evidence(沿 D-EvidenceSchema)。`forgeue_finish_gate.py` 从 evidence frontmatter `triggered_by_command` 字段判定 dispatch mode(F2 修复),direct 路径无该 audit field → 不报缺失 4 类 subagent evidence。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S3→S4-S5(apply direct,fallback 路径)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_codex_concurred` 常规实施 / `user_required` 当 micro-task 边界超 scope):
+- 跑 codex plan review hook + 写 `review/plan_cross_check.md`
+- 调 Superpowers `executing-plans` + `test-driven-development`(无 subagent dispatch,Claude 主体实施)
+- 越界检测 + writeback-check + 推进 S5(cross-check `disputed_open: 0` + Level 0 PASS)
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:本命令不进 isolated worktree / 无 squash merge 步骤;直接主 worktree 提交 → 需确认提交内容
+- **Fence #2 跨 change**:越界检测发现改动超 design.md scope 且需同步修改其他 change 文档 → 升级确认
+- **Fence #3 review 冲突**:codex plan review 返回 `disputed_open > 0` 无法解决 → 升级用户裁决
+- **Fence #4 用户约束**:用户指定 task 执行顺序或范围限制 → 升级确认
+- **Fence #5 钱**:task 实施中需触发 L2 vendor API paid call(opt-in)→ 升级确认
+- **Fence #6 安全**:task 实施中需 read `.env` / 敏感凭证 → 升级确认
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-apply-direct` 行)— hook + 越界检测 真源

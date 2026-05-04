@@ -62,6 +62,26 @@ S5→S6 transition:Superpowers `requesting-code-review` skill + `code-reviewer` 
 - **evidence 不能成新规范源**:涉及 design choice 的 blocker 必回写 design.md(`written-back-to-design` + 真实 commit)或标 `disputed-permanent-drift`(reason ≥ 50 字 + Reasoning Notes anchor)。
 - **必跑 writeback 检测**;DRIFT 阻断 S7。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S5→S6(review)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_codex_concurred`):
+- 调 Superpowers `requesting-code-review` skill + `code-reviewer` subagent 自评
+- 跑 codex `/codex:adversarial-review --background` mixed scope(doc + code)对抗评审
+- 每条 blocker 独立验证 file:line;虚构 → reject;涉及 design choice → 回写 design.md
+- blocker 全清(0 unresolved) + writeback-check exit 0 → 自主推进 S7
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:本命令不涉及 archive / git push 等不可逆操作
+- **Fence #2 跨 change**:blocker 涉及修改其他 active change 的 design.md / tasks.md → 升级确认
+- **Fence #3 review 冲突**:codex adversarial review 找到 Claude 无法独立验证的 disputed blocker → 升级用户裁决(不把 codex claim 当结论;`feedback_verify_external_reviews` 原则)
+- **Fence #4 用户约束**:用户指定特定 review focus / 排除某 scope → 升级确认
+- **Fence #5 钱**:本命令不引入 vendor API paid call,无需升级
+- **Fence #6 安全**:本命令不 read `.env` 或敏感凭证
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-review` 行)— hook 真源:`Superpowers requesting-code-review + /codex:adversarial-review`

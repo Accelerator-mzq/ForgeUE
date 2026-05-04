@@ -65,6 +65,25 @@ next: <S8 ready | blocked + reason>
 - **必跑 doc_sync_check**;DRIFT 阻断 S8。
 - **本命令不直接触发 `/codex:adversarial-review` / `/codex:review`**(本命令是 docs 同步 gate,不属 stage review;若需 review 走 `/forgeue:change-{plan,apply,verify,review}` 对应 stage hook)。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S6→S7(doc sync)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_autonomous`):
+- 跑 `forgeue_doc_sync_check.py --change <id>` 静态扫描 10 份长期文档
+- 按 README §4.3 提示词分类 A/B/C/D;[REQUIRED] 项在用户确认后应用 patch
+- 写 `verification/doc_sync_report.md`;DRIFT 0 + REQUIRED 全应用 → 自主推进 S8
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:本命令不涉及 archive / git push 等不可逆操作
+- **Fence #2 跨 change**:doc sync 涉及修改其他 active change 正在编辑的文档(如 `CLAUDE.md` / `HLD.md`)→ 升级确认;[REQUIRED] patch 涉及跨 change scope → 升级裁决
+- **Fence #3 review 冲突**:本命令不触发 codex review hook(无冲突场景)
+- **Fence #4 用户约束**:用户指定 [REQUIRED] patch 不应用 / 排除某文档 → 升级确认
+- **Fence #5 钱**:本命令不引入 vendor API paid call,无需升级
+- **Fence #6 安全**:本命令不 read `.env` 或敏感凭证
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-doc-sync` 行)— hook 真源:`forgeue_doc_sync_check + §4.3 提示词 + 应用 [REQUIRED]`

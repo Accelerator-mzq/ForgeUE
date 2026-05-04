@@ -113,6 +113,27 @@ S3→S4-S5 transition(default 路径,自 `adopt-subagent-driven-development` cha
 - **(F5 audit)Token / model / usd 不进 12-key frontmatter**;以 evidence body 末尾 `## Token usage` 段记录;`forgeue_subagent_budget.py --record` 参数从 Task tool return 直接传,不从 frontmatter 读。
 - **多 implementer subagent 串行 dispatch only**(沿 SKILL.md Red Flag "Never dispatch multiple implementation subagents in parallel"):本命令仅接受 fresh subagent per task,**禁止**并行。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S3→S4-S5(apply subagent)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_codex_concurred` 常规实施 / `user_required` 每 task 边界 review):
+- 跑 codex plan review hook + 写 `review/plan_cross_check.md`
+- 创建 isolated worktree + commit change artifacts 快照
+- dispatch `superpowers:subagent-driven-development` 串行 per-task(implementer + spec_review + code_quality_review + final_review)
+- 收口 4 类 per-task evidence + 越界检测 + writeback-check
+- cross-check `disputed_open: 0` + Level 0 PASS → 自主推进 S5
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:squash merge isolated worktree 回主分支 / `git worktree remove` 清理 → 升级确认;每 task 完成的 mark-complete 动作(无跨 change 影响)→ 自主执行
+- **Fence #2 跨 change**:越界检测发现改动超出 design.md scope 且需同步修改其他 change 文档 → 升级确认
+- **Fence #3 review 冲突**:codex plan review 返回与 Claude 立场 disputed 且 `plan_cross_check.md` 无法解决(`disputed_open > 0`) → 升级用户裁决
+- **Fence #4 用户约束**:用户指定 task 执行顺序或范围限制 → 升级确认
+- **Fence #5 钱**:task 实施中需触发 L2 vendor API paid call(mesh.generation / live ComfyUI 等,opt-in 场景)→ 升级确认
+- **Fence #6 安全**:task 实施中需 read `.env` / FORGEUE_COMFY_SCRIPTS_DIR 等 secret → 升级确认
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §D-Worktree-Detail / §D-Default / §D-EvidenceSchema / §D-SkillInvoke / §D-TaskInput / §D-ADR009(本命令 hook 真源)

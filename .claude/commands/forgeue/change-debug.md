@@ -50,6 +50,25 @@ S4 实施过程中遇到 bug / 测试失败 / 意外行为时显式调用 Superp
 - **不让 evidence 成新规范源**:debug_log 揭示的 design 缺口必须回写 design.md(DRIFT type 4 protocol)。
 - **本命令不直接触发 `/codex:adversarial-review` / `/codex:review`**(本命令是 systematic-debugging,bug 排查不属 stage review;若需 review 走 `/forgeue:change-{plan,apply,verify,review}` 对应 stage hook)。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S4(任意阶段辅助 debug)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_autonomous`):
+- 调 Superpowers `systematic-debugging` skill(读操作为主:log 分析 / 代码检查 / hypothesis 形成)
+- 追加 debug 笔记到 `execution/debug_log.md`
+- 跑 `forgeue_change_state.py --writeback-check` 检测 DRIFT type 4(若发现 design 漏洞)
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:debug 修复涉及 git commit / push → 升级确认;debug 本身不 push
+- **Fence #2 跨 change**:debug 揭示需修改其他 active change 的 design.md → 升级确认
+- **Fence #3 review 冲突**:本命令不触发 codex review hook(无冲突场景)
+- **Fence #4 用户约束**:用户指定特定 debug 方法或限制探针范围 → 升级确认
+- **Fence #5 钱**:debug 重现步骤需要 vendor paid API call(如 live mesh.generation)→ 升级确认
+- **Fence #6 安全**:debug 步骤需 read `.env` / `FORGEUE_COMFY_SCRIPTS_DIR` / API key 等敏感文件 → 升级确认(即使 Level 0 guard 已设)
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-debug` 行)— hook 真源:`Superpowers debugging skill`

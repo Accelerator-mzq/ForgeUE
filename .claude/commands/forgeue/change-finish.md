@@ -58,6 +58,24 @@ S7→S8 transition:Finish Gate(中心化最后防线)。`forgeue_finish_gate.py`
 - **不让 evidence 成新规范源**:本命令是该原则的物理表达。
 - **本命令不直接触发 `/codex:adversarial-review` / `/codex:review`**(本命令是 finish gate 综合检查,不属 stage review;review hook 出现在 `/forgeue:change-{plan,apply,verify,review}` 对应 stage)。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S7→S8(finish gate)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: user_required` archive 类操作):
+- 跑 `forgeue_finish_gate.py --change <id>` 执行 12 项检查(evidence 完整性 / frontmatter 全检 / cross-check / writeback_commit 校验 / tasks unchecked / openspec validate / review-gate hook 检测)
+- finish_gate exit 0 + 写 `verification/finish_gate_report.md` 属自主执行范围
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:finish_gate exit 0 后准许走 `/opsx:archive` → **必须用户授权**(`user_required`);archive 是 S8 不可逆操作
+- **Fence #2 跨 change**:本命令检查当前 change 内文档,不直接修改其他 change;但 finish_gate 发现跨 change 未解决 DRIFT → 升级确认
+- **Fence #3 review 冲突**:本命令不触发 codex review hook(无冲突场景;review hook 已在 change-review 完成)
+- **Fence #4 用户约束**:用户指定跳过某项检查 / 接受特定 blocker → 升级裁决
+- **Fence #5 钱**:本命令不引入 vendor API paid call,无需升级
+- **Fence #6 安全**:本命令不 read `.env` 或敏感凭证(仅 `~/.claude/settings.json` review-gate 检测)
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-finish` 行)— hook 真源:`forgeue_finish_gate`

@@ -55,6 +55,26 @@ S2→S3 transition:把 OpenSpec contract artifact 转为 execution plan + micro 
 - **evidence 不能成新规范源**:codex finding 暴露 contract 漏洞 → 回写到 design.md / proposal.md / tasks.md(`drift_decision: written-back-to-<artifact>` + 真实 commit);否则 `disputed-permanent-drift` 必有 ≥ 50 字 reason + design.md `## Reasoning Notes` anchor。
 - **必跑 writeback 检测**:`forgeue_change_state.py --writeback-check` exit 5 阻断 S3。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S2→S3(plan stage)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_codex_concurred`):
+- 跑 codex `/codex:adversarial-review` design hook + 写 `review/design_cross_check.md`
+- 触发 Superpowers `writing-plans` 生成 `execution/execution_plan.md` + `micro_tasks.md`
+- 跑 `forgeue_change_state.py --writeback-check` 锚点检测
+- cross-check `disputed_open: 0` + writeback-check exit 0 → 自主推进 S3
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:本命令不涉及 archive / git push 等不可逆操作
+- **Fence #2 跨 change**:plan 涉及修改其他 active change 的 design.md / proposal.md → 升级确认
+- **Fence #3 review 冲突**:codex adversarial review 返回与 Claude 立场 disputed 且无法在 `design_cross_check.md` 内解决(`disputed_open > 0`) → 升级用户裁决
+- **Fence #4 用户约束**:用户指定特殊 plan 格式或限制 scope → 升级确认
+- **Fence #5 钱**:本命令不引入 vendor API paid call,无需升级
+- **Fence #6 安全**:本命令不 read `.env` 或敏感凭证
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-plan` 行)— hook 真源:`codex-plugin-cc /codex:adversarial-review + 写 cross-check`

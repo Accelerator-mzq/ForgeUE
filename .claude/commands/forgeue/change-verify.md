@@ -57,6 +57,25 @@ S4→S5 transition:跑 Level 0/1/2 验证(`forgeue_verify` 编排 pytest / live 
 - **verification 不走 cross-check**(design.md §3 Cross-check Protocol carve-out):codex `/codex:review --base <main>` 是单向挑错,Claude 独立验证 file:line(沿 `feedback_verify_external_reviews`)再决定接受;不写 verify_cross_check.md。
 - **evidence 不能成新规范源**:codex 找到的代码 bug 若映射 design.md 接口错位 → 回写 design.md(DRIFT type 3 protocol)。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S4→S5(verify)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_autonomous` Level 0/1 / `user_required` Level 2):
+- Level 0(默认):自主跑 `pytest -q` + offline bundle 冒烟 + codex `/codex:review --base main` 单向挑错
+- Level 1(需 LLM key,env guard 严格 `{1,true,yes,on}`):env guard 已设 → 自主触发;未设 → SKIP 落 reason
+- L0/L1 全绿 + writeback-check exit 0 → 自主推进 S6
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:本命令不涉及 archive / git push 等不可逆操作
+- **Fence #2 跨 change**:verification 发现跨 change 文档 drift → 升级确认
+- **Fence #3 review 冲突**:codex `/codex:review` 找到代码 bug 映射 design.md 接口错位 → 升级确认 DRIFT type 3 回写
+- **Fence #4 用户约束**:用户明确 level 参数 / 限定 verification scope → 尊重执行
+- **Fence #5 钱**:Level 2 涉及 vendor API paid call(mesh.generation / live ComfyUI / live UE)→ 必须用户 opt-in 才执行(`user_required`)
+- **Fence #6 安全**:本命令通常不 read `.env`;若 Level 2 env guard 需要读取 API key → 升级确认
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-verify` 行)— hook 真源:`forgeue_verify + /codex:review --base <main>`

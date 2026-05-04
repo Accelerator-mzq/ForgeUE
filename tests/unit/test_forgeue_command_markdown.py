@@ -144,3 +144,22 @@ def test_each_cmd_references_design_md_or_skill(cmd_files):
         if "design.md" not in body and "SKILL.md" not in body:
             bad.append(f.name)
     assert not bad, f"cmd missing design.md / SKILL.md reference: {bad}"
+
+
+def test_decision_delegation_section_exists(cmd_files):
+    """P1.10 fence:每个非 deprecated 命令必含 ## Decision Delegation section。
+
+    design.md D-AutonomyBoundary 要求每个命令模板显式声明
+    - 默认自主路径(autonomy_decision default)
+    - 6 类 D-FenceTaxonomy boundary fence 触发条件
+    - evidence frontmatter 必含 autonomy_decision 字段说明
+    """
+    bad: list[str] = []
+    for f in cmd_files:
+        body = f.read_text(encoding="utf-8")
+        # 检查 ## Decision Delegation section 存在(允许多个空格)
+        if "## Decision Delegation" not in body:
+            bad.append(f"{f.name}: missing '## Decision Delegation' section")
+    assert not bad, (
+        "cmd md missing Decision Delegation section:\n  " + "\n  ".join(bad)
+    )
