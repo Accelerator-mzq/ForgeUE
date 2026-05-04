@@ -1643,3 +1643,328 @@ def test_worktree_isolation_requires_committed_change_artifacts(tmp_path):
             text=True,
             timeout=30,
         )
+
+
+# ---------------------------------------------------------------------------
+# P0 enhance-workflow-automation:autonomy_boundary fence
+# (W2 writeback codex round 1 F2 finding)
+# ---------------------------------------------------------------------------
+
+# Codex review 文件 evidence_type 白名单 — ref 必须指向这 5 类之一才算合法 codex review
+_VALID_CODEX_REF_TYPES = {
+    "codex_adversarial_review",
+    "codex_design_review",
+    "codex_plan_review",
+    "codex_verification_review",
+    "codex_mixed_scope_review",
+}
+
+
+def _write_codex_ref_evidence(
+    tmp_path: Path,
+    change_id: str,
+    *,
+    evidence_type: str = "codex_adversarial_review",
+    disputed_open: int = 0,
+    subdir: str = "notes/pre_p0",
+    filename: str = "codex_review_round1.md",
+) -> Path:
+    """在 change 目录下写一份模拟 codex review evidence 文件。
+
+    autonomy_boundary 4 类 ref 校验都依赖能读到 codex ref 文件的 frontmatter;
+    这个 helper 为测试生成标准形态的 codex review 文件。
+    """
+    change_dir = tmp_path / "openspec" / "changes" / change_id
+    ref_dir = change_dir / subdir
+    ref_dir.mkdir(parents=True, exist_ok=True)
+    ref_path = ref_dir / filename
+    # 写 codex review evidence frontmatter
+    content = (
+        "---\n"
+        f"change_id: {change_id}\n"
+        "stage: S3\n"
+        f"evidence_type: {evidence_type}\n"
+        "contract_refs:\n"
+        "  - design.md\n"
+        "aligned_with_contract: true\n"
+        "drift_decision: null\n"
+        "writeback_commit: null\n"
+        "drift_reason: null\n"
+        "reasoning_notes_anchor: null\n"
+        "detected_env: claude-code\n"
+        "triggered_by: codex_invoke\n"
+        "codex_plugin_available: true\n"
+        f"disputed_open: {disputed_open}\n"
+        "verdict: approve\n"
+        "---\n\n"
+        "## F1\n\nseverity: low\nresolution: accepted-codex\n"
+    )
+    ref_path.write_text(content, encoding="utf-8")
+    return ref_path
+
+
+def test_autonomy_boundary_missing_field_blocks(tmp_path):
+    """P0.6 fence:evidence 缺少 autonomy_decision 字段时 _check_autonomy_boundary
+    必须返回含 'autonomy_decision' 关键词的错误。
+    """
+    # build_report 走 check_frontmatter_protocol → _check_autonomy_boundary
+    # 只测试 helper 函数直接调用,不走完整 build_report(避免 evidence completeness 干扰)
+    # 构造一个缺少 autonomy_decision 的 frontmatter
+    fm = {
+        "change_id": "fc-ab-missing",
+        "stage": "S4",
+        "evidence_type": "subagent_implementer_report",
+        "aligned_with_contract": True,
+    }
+    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-missing"
+    change_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\nchange_id: fc-ab-missing\n---\n\nbody\n", encoding="utf-8")
+
+    errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
+    # 缺少 autonomy_decision 字段 → 必须有错误
+    assert errors, "missing autonomy_decision MUST produce an error"
+    joined = " ".join(errors)
+    assert "autonomy_decision" in joined, (
+        f"error must mention 'autonomy_decision' field; got: {joined!r}"
+    )
+
+
+def test_autonomy_boundary_value_enum(tmp_path):
+    """P0.8 fence:autonomy_decision 值不在 enum 内时必须报错。
+    合法值:claude_autonomous / claude_codex_concurred / user_required / user_overrode
+    """
+    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-enum"
+    change_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+
+    # 非法值 → 应该报错
+    fm_bad = {"autonomy_decision": "auto_approved"}
+    errors_bad = fg._check_autonomy_boundary(evidence_path, fm_bad, change_dir)
+    assert errors_bad, f"invalid enum value must produce an error; got no errors"
+    joined_bad = " ".join(errors_bad)
+    assert "autonomy_decision" in joined_bad
+
+    # 合法值 claude_autonomous → 不需要 codex_review_ref → 不应该报 enum 错
+    fm_good = {"autonomy_decision": "claude_autonomous"}
+    errors_good = fg._check_autonomy_boundary(evidence_path, fm_good, change_dir)
+    # claude_autonomous 不要求 codex_review_ref,所以不应该有 "autonomy_decision" enum 错
+    enum_errors = [e for e in errors_good if "not a valid" in e or "enum" in e.lower()]
+    assert not enum_errors, (
+        f"'claude_autonomous' is valid enum; should not produce enum error; got: {errors_good}"
+    )
+
+
+def test_autonomy_boundary_concurred_requires_codex_ref(tmp_path):
+    """P0.7 fence:autonomy_decision: claude_codex_concurred 时必须有 codex_review_ref
+    字段;缺少时必须报错。
+    """
+    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-noref"
+    change_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+
+    # concurred 但无 codex_review_ref → 必须报错
+    fm = {"autonomy_decision": "claude_codex_concurred"}
+    errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
+    assert errors, "concurred without codex_review_ref MUST produce an error"
+    joined = " ".join(errors)
+    assert "codex_review_ref" in joined, (
+        f"error must mention 'codex_review_ref'; got: {joined!r}"
+    )
+
+
+def test_autonomy_boundary_bogus_ref_blocks(tmp_path):
+    """P0.9 fence:codex_review_ref 指向不存在的文件时必须报错(ref 路径不存在)。
+    """
+    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-bogus"
+    change_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+
+    # ref 指向不存在的文件
+    fm = {
+        "autonomy_decision": "claude_codex_concurred",
+        "codex_review_ref": "notes/pre_p0/does_not_exist.md",
+    }
+    errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
+    assert errors, "non-existent ref path MUST produce an error"
+    joined = " ".join(errors)
+    # 应该提到 ref 路径不存在
+    assert any(keyword in joined for keyword in ("not found", "does not exist", "not a file", "exist")), (
+        f"error must indicate ref path not found; got: {joined!r}"
+    )
+
+
+def test_autonomy_boundary_cross_change_ref_blocks(tmp_path):
+    """P0.10 fence:codex_review_ref 指向另一个 change 目录下的文件时必须报错
+    (ref 不属于同一 change — 跨 change 污染)。
+
+    测试方案:将 ref_rel 写成 relative_to change_dir 的 '../other-change/...' 形式
+    使文件真实存在(b 检查通过)但路径 resolve 后超出 change_dir 范围(c 检查失败)。
+    """
+    # 创建本 change
+    change_dir = tmp_path / "openspec" / "changes" / "fc-ab-cross"
+    change_dir.mkdir(parents=True, exist_ok=True)
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+
+    # 创建另一个 change 并在那里写一份 codex review 文件
+    other_change_dir = tmp_path / "openspec" / "changes" / "other-change"
+    other_change_dir.mkdir(parents=True, exist_ok=True)
+    ref_file = other_change_dir / "notes" / "codex_review.md"
+    ref_file.parent.mkdir(parents=True, exist_ok=True)
+    ref_file.write_text(
+        "---\nchange_id: other-change\nevidence_type: codex_adversarial_review\n"
+        "disputed_open: 0\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+    # 用 ../other-change/... 形式:相对于 change_dir 可以 resolve 到真实文件
+    # 但路径穿越出 change_dir → 触发 (c) cross-change 检查
+    fm = {
+        "autonomy_decision": "claude_codex_concurred",
+        "codex_review_ref": "../other-change/notes/codex_review.md",
+    }
+    errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
+    assert errors, "cross-change ref MUST produce an error"
+    joined = " ".join(errors)
+    # 应该提到 cross-change 或 scope 违反
+    assert any(keyword in joined for keyword in ("cross-change", "same change", "scope", "not within", "outside")), (
+        f"error must indicate cross-change ref violation; got: {joined!r}"
+    )
+
+
+def test_autonomy_boundary_wrong_evidence_type_blocks(tmp_path):
+    """P0.11 fence:codex_review_ref 指向的文件 evidence_type 不是合法的 codex review
+    类型时必须报错。合法类型:codex_adversarial/design/plan/verification/mixed_scope _review
+    """
+    change_id = "fc-ab-type"
+    # 在 change 内写一份 ref 文件,但 evidence_type 是非 codex review 类型
+    ref_path = _write_codex_ref_evidence(
+        tmp_path, change_id,
+        evidence_type="subagent_implementer_report",  # 非法 ref evidence_type
+        disputed_open=0,
+    )
+    change_dir = tmp_path / "openspec" / "changes" / change_id
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+
+    # ref 文件存在且属于同 change,但 evidence_type 不是 codex review
+    ref_rel = ref_path.relative_to(change_dir).as_posix()
+    fm = {
+        "autonomy_decision": "claude_codex_concurred",
+        "codex_review_ref": ref_rel,
+    }
+    errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
+    assert errors, "wrong evidence_type ref MUST produce an error"
+    joined = " ".join(errors)
+    assert any(keyword in joined for keyword in ("evidence_type", "codex review", "not a codex")), (
+        f"error must indicate wrong evidence_type for ref; got: {joined!r}"
+    )
+
+
+def test_autonomy_boundary_disputed_open_ref_blocks(tmp_path):
+    """P0.12 fence:codex_review_ref 指向的文件 disputed_open != 0 时必须报错。
+    ref 必须是已 finalize 的 review(disputed_open: 0),否则 evidence 未完成不得 concurred。
+    """
+    change_id = "fc-ab-disputed"
+    # 写 ref 文件:evidence_type 合法,但 disputed_open = 3(未解决)
+    ref_path = _write_codex_ref_evidence(
+        tmp_path, change_id,
+        evidence_type="codex_adversarial_review",
+        disputed_open=3,  # 未 finalize
+    )
+    change_dir = tmp_path / "openspec" / "changes" / change_id
+    evidence_path = change_dir / "execution" / "task_1_implementer.md"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+
+    ref_rel = ref_path.relative_to(change_dir).as_posix()
+    fm = {
+        "autonomy_decision": "claude_codex_concurred",
+        "codex_review_ref": ref_rel,
+    }
+    errors = fg._check_autonomy_boundary(evidence_path, fm, change_dir)
+    assert errors, "disputed_open != 0 ref MUST produce an error"
+    joined = " ".join(errors)
+    assert any(keyword in joined for keyword in ("disputed_open", "finalize", "not finalized")), (
+        f"error must mention disputed_open; got: {joined!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# P0 enhance-workflow-automation:verdict normalization (W3 writeback F3 finding)
+# P0.13:8 row 表驱动 + 2 per-finding edge case
+# ---------------------------------------------------------------------------
+
+# 8 row 表驱动测试数据 — (codex_top_verdict, claude_resolution, expected_no_conflict: bool)
+_VERDICT_TABLE_ROWS = [
+    # Codex approve 组 — 除 disputed-open 外都不冲突
+    ("approve",         "accepted-codex",  True),   # row 1:双方都 OK
+    ("approve",         "accepted-claude", True),   # row 2:Claude 接 codex 推荐 + 主动改进
+    ("approve",         "rejected",        True),   # row 3:Claude 拒接提议但 codex 顶层批准
+    ("approve",         "disputed-open",   False),  # row 4:codex OK 但 Claude 觉得有问题
+    # Codex needs-attention 组 — 只有 accepted-codex 不冲突
+    ("needs-attention", "accepted-codex",  True),   # row 5:Claude 接 finding
+    ("needs-attention", "accepted-claude", False),  # row 6:意见相反
+    ("needs-attention", "rejected",        False),  # row 7:Claude 拒接但 codex 持续 needs-attention
+    ("needs-attention", "disputed-open",   False),  # row 8:双方 unfinalized
+]
+
+
+@pytest.mark.parametrize("codex_verdict,claude_resolution,expected_no_conflict", _VERDICT_TABLE_ROWS)
+def test_verdict_normalization_8_rows(codex_verdict, claude_resolution, expected_no_conflict):
+    """P0.13 fence:按 design.md D-FenceTaxonomy Fence #3 Verdict Normalization
+    8 row 表验证 _check_verdict_normalization 对每种组合的判定。
+    返回 True = 不冲突(自主路径);返回 False = 冲突(升级 fence #3)。
+    """
+    # finding 列表:用低 severity(low/info)不触发 per-finding edge case
+    findings = [{"id": "F1", "severity": "low", "resolution": claude_resolution}]
+    result = fg._check_verdict_normalization(
+        claude_resolution_list=[claude_resolution],
+        codex_top_verdict=codex_verdict,
+        codex_findings=findings,
+    )
+    assert result is expected_no_conflict, (
+        f"verdict_normalization({codex_verdict!r}, {claude_resolution!r}) "
+        f"expected no_conflict={expected_no_conflict}, got {result}"
+    )
+
+
+def test_verdict_normalization_high_severity_rejected_conflicts():
+    """P0.13 per-finding edge case:severity=high + resolution=rejected → 冲突
+    即使 codex 顶层 verdict=approve,高优先 finding 被 rejected 也必须升级。
+    """
+    findings = [{"id": "F1", "severity": "high", "resolution": "rejected"}]
+    result = fg._check_verdict_normalization(
+        claude_resolution_list=["rejected"],
+        codex_top_verdict="approve",  # 顶层批准,但 per-finding 有 high+rejected
+        codex_findings=findings,
+    )
+    # high severity + rejected → 冲突 → 返回 False
+    assert result is False, (
+        "severity=high + resolution=rejected MUST conflict (escalate fence #3)"
+    )
+
+
+def test_verdict_normalization_critical_severity_rejected_conflicts():
+    """P0.13 per-finding edge case:severity=critical + resolution=rejected → 冲突
+    critical severity 同 high 规则。
+    """
+    findings = [{"id": "F1", "severity": "critical", "resolution": "rejected"}]
+    result = fg._check_verdict_normalization(
+        claude_resolution_list=["rejected"],
+        codex_top_verdict="approve",
+        codex_findings=findings,
+    )
+    assert result is False, (
+        "severity=critical + resolution=rejected MUST conflict (escalate fence #3)"
+    )
