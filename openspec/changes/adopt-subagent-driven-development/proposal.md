@@ -17,7 +17,7 @@ ForgeUE Integrated AI Change Workflow 文档（`docs/ai_workflow/forgeue_integra
   - `execution/task_<n>_spec_review.md` (`evidence_type: subagent_spec_review`)
   - `execution/task_<n>_code_quality_review.md` (`evidence_type: subagent_code_quality_review`)
   - `review/subagent_final_review.md` (`evidence_type: subagent_final_review`)
-- **新建 ADR-008（token-budget tracking informational）**（决议 D-BudgetMode）：与 ADR-007 vendor API 双扣边界**根本不同**，仅追踪 token 消耗 + soft WARNING，**不**对 dispatch 做 hard gate / auto fallback；用户保留判断权。
+- **新建 ADR-009（token-budget tracking informational）**（决议 D-BudgetMode）：与 ADR-007 vendor API 双扣边界**根本不同**，仅追踪 token 消耗 + soft WARNING，**不**对 dispatch 做 hard gate / auto fallback；用户保留判断权。
 - **新增 `tools/forgeue_subagent_budget.py`**（决议 D3-a）：stdlib-only informational tracker；`--status` / `--record` / `--json` 三个子命令；`exit 0` 始终（除 I/O 异常）；超 `FORGEUE_SUBAGENT_BUDGET_WARN_USD` 阈值时 stdout 打 `[WARN]` 行，不阻断 dispatch。
 - **`tools/forgeue_finish_gate.py` 扩 evidence_type enum**：加 4 项 per-task evidence_type + 默认 path 表；finish_gate 完整性检查识别新 type；evidence 索引核心逻辑不动（沿 line 60-62 frontmatter-indexed 设计）。
 - **Self-host bootstrap dogfooding**（决议 D-SelfHost / D4-a / P3）：本 change 自身实施阶段（P1-P10）使用 subagent-driven-development 跑（Claude 主 session 用 Task tool 手工模拟 fresh subagent dispatch，沿 fuse-openspec-superpowers-workflow self-host 模式，Pre-P0 一次性附录）。
@@ -37,7 +37,7 @@ ForgeUE Integrated AI Change Workflow 文档（`docs/ai_workflow/forgeue_integra
 ## Impact
 
 - **文档级（5 份）**：`docs/ai_workflow/forgeue_integrated_ai_workflow.md` §B.3 + §A.6；`docs/ai_workflow/README.md` §5 Agent 分工表；`CLAUDE.md` ForgeUE Integrated AI Change Workflow 段；`AGENTS.md` 同段；`.claude/skills/forgeue-integrated-change-workflow/SKILL.md` Superpowers 集成边界表。
-- **SRS / 验收（2 份)**：`docs/requirements/SRS.md` 新增 ADR-008（token-budget tracking informational，与 ADR-007 切分）；`docs/acceptance/acceptance_report.md` ADR 表加 ADR-008 行。
+- **SRS / 验收（2 份)**：`docs/requirements/SRS.md` 新增 ADR-009（token-budget tracking informational，与 ADR-007 切分）；`docs/acceptance/acceptance_report.md` ADR 表加 ADR-009 行。
 - **命令级（2 个文件)**：`.claude/commands/forgeue/change-apply-subagent.md` 新建（default subagent dispatch 路径）；`.claude/commands/forgeue/change-apply-direct.md` 新建（fallback executing-plans 路径，从现 `change-apply.md` 迁移并简化）；现 `change-apply.md` 标 deprecated 重定向到两个新命令（向后兼容过渡）。
 - **代码级（2 改 1 新)**：
   - `tools/forgeue_subagent_budget.py` 新建（~100 行 stdlib-only）

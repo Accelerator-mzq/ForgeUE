@@ -242,7 +242,7 @@ ForgeUE 已采用 OpenSpec 作为 AI 主工作流。完整规则见 [`docs/ai_wo
 - `tools/forgeue_verify.py` — Level 0/1/2 编排,产 `verification/verify_report.md`(12-key audit frontmatter)
 - `tools/forgeue_doc_sync_check.py` — 10 文档静态扫,标 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT]
 - `tools/forgeue_finish_gate.py` — 中心化最后防线(evidence 完整性 + frontmatter 全检 + cross-check + writeback 真实性 + tasks unchecked + `openspec validate --strict`;dispatch mode 从 evidence frontmatter `triggered_by_command` 字段判定)
-- `tools/forgeue_subagent_budget.py` — ADR-008 token-budget tracker(informational + soft WARNING;`exit 0` 始终,**不**做 hard gate;与 ADR-007 vendor API 双扣边界**根本不同**)
+- `tools/forgeue_subagent_budget.py` — ADR-009 token-budget tracker(informational + soft WARNING;`exit 0` 始终,**不**做 hard gate;与 ADR-007 vendor API 双扣边界**根本不同**)
 
 **12-key audit frontmatter**:每份 formal evidence(`execution/` / `review/` / `verification/`)必含 8 个 always-required key(`change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `detected_env` / `triggered_by` / `codex_plugin_available`)+ 4 个 conditional key(`drift_decision` / `writeback_commit` / `drift_reason` / `reasoning_notes_anchor`,在 `aligned_with_contract: false` 时必填);`notes/` helper 子目录不强制。
 

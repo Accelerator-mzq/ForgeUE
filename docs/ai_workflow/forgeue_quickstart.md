@@ -154,7 +154,7 @@ S9 (archived)
 - ✓ 不调付费 provider 默认(env guard `{1,true,yes,on}`)
 - ✓ subagent path 每个 task 必有 spec_review + code_quality_review evidence;通过的 task 允许"frontmatter + 一行 summary"轻量化,未通过的 task MUST 完整 issues 列表
 - ✓ Token / cost 字段**不进** 12-key frontmatter,在 evidence body `## Token usage` 段记录
-- ✓ ADR-008 budget tracker 仅 informational + soft WARNING(`exit 0` 始终,**不**做 hard gate;用户保留判断权)
+- ✓ ADR-009 budget tracker 仅 informational + soft WARNING(`exit 0` 始终,**不**做 hard gate;用户保留判断权)
 
 **常见错误**:
 - ✗ 边写代码边改 design.md decisions(应当先回写 contract,确认 + commit 后再实施)

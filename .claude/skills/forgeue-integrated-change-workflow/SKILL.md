@@ -43,7 +43,7 @@ OpenSpec contract artifact 是项目唯一规范锚点;Superpowers / codex / For
 | `verification-before-completion` | S5 | verify_report 输入 |
 | `finishing-a-development-branch` | S9 后 | git 层 merge / PR / discard;不进 evidence |
 | `using-git-worktrees` | **REQUIRED for `/forgeue:change-apply-subagent`**(自 `adopt-subagent-driven-development` change 起) | 起 isolated worktree;详 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支) |
-| `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-008 token-budget tracker informational) | 4× LLM 调用;per-task 4 类 evidence + `subagent_budget.log`;ADR-008 与 ADR-007 vendor API 双扣边界**根本不同** |
+| `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational) | 4× LLM 调用;per-task 4 类 evidence + `subagent_budget.log`;ADR-009 与 ADR-007 vendor API 双扣边界**根本不同** |
 
 ## codex stage hook(design.md §3 / §4 / forgeue_integrated_ai_workflow.md §B.4)
 

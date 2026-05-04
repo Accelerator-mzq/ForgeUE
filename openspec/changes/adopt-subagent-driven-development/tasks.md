@@ -1,6 +1,6 @@
 > **★ CONTRACT IS THE SOURCE OF TRUTH ★** — 本 `tasks.md` 是 `proposal.md` + `design.md` + `specs/examples-and-acceptance/spec.md` 的 derived task list。本文件与 design / spec 冲突时,**优先 design / spec**。Implementer 在每个 commit 前先读对应 design 段 + spec Requirement,task 描述只作 actionable checklist 用。
 >
-> **Scope:** 把 Superpowers `subagent-driven-development` skill 从 ForgeUE §B.3 的 OPTIONAL 名义占位升级为 `/forgeue:change-apply-subagent` 命令的 default 路径;新增 ADR-008 把 token-budget 边界与 ADR-007 vendor API 双扣边界**根本切分**;解禁 `using-git-worktrees`;per-task subagent return 固化为 OpenSpec change evidence。
+> **Scope:** 把 Superpowers `subagent-driven-development` skill 从 ForgeUE §B.3 的 OPTIONAL 名义占位升级为 `/forgeue:change-apply-subagent` 命令的 default 路径;新增 ADR-009 把 token-budget 边界与 ADR-007 vendor API 双扣边界**根本切分**;解禁 `using-git-worktrees`;per-task subagent return 固化为 OpenSpec change evidence。
 >
 > **8 项 D-fixed 决策(用户 2026-05-04 拍板;详见 `design.md` ## Decisions D-Worktree / D-Default / D-EvidenceSchema / D-SkillInvoke / D-TaskInput / D-ADR008 / D-BudgetMode / D-SelfHost)**:
 > - **D-Worktree**(P1-a):解禁 `using-git-worktrees`;`forgeue_integrated_ai_workflow.md` §B.3 表 `using-git-worktrees` 行从 `禁用` 改为 `REQUIRED for change-apply-subagent`;**纯文档级修改**,代码 0 改动
@@ -8,7 +8,7 @@
 > - **D-EvidenceSchema**(D2-a):per-task evidence 扁平命名 `execution/task_<n>_{implementer,spec_review,code_quality_review}.md` + `review/subagent_final_review.md`;沿 `forgeue_finish_gate.py` frontmatter-indexed 范式
 > - **D-SkillInvoke**:`change-apply-subagent` 命令直接 invoke `superpowers:subagent-driven-development` skill,**不**重写 / 不复制 skill 内部 3 个 prompt 模板
 > - **D-TaskInput**:主 session Claude 从 `execution/micro_tasks.md` extract task list,完整文本作为 prompt 传 implementer subagent;subagent 不读 plan 文件
-> - **D-ADR008**:新增 ADR-008 把 token-budget 边界与 ADR-007 切分;ADR-007 拦截 vendor API 双扣已完成 job(浪费),ADR-008 仅记录 LLM token 持续消耗(打断 = 损失)
+> - **D-ADR008**:新增 ADR-009 把 token-budget 边界与 ADR-007 切分;ADR-007 拦截 vendor API 双扣已完成 job(浪费),ADR-009 仅记录 LLM token 持续消耗(打断 = 损失)
 > - **D-BudgetMode**(D3-a / 用户 informational 调整):`tools/forgeue_subagent_budget.py` 是 informational tracker,**不**做 hard gate / auto fallback;超阈值仅 stdout `[WARN]`;exit 0 始终
 > - **D-SelfHost**(P3 / D4-a):本 change 自身用 subagent-driven-development 跑 dogfooding;Pre-P0 一次性附录 + Claude 主 session 用 Task tool 手工模拟 fresh subagent dispatch
 >
@@ -31,16 +31,16 @@
 
 - [ ] 2.1 编辑 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §B.3 表:
   - `using-git-worktrees` 行:`禁用` → `REQUIRED for change-apply-subagent`(沿 D-Worktree)
-  - `subagent-driven-development` 行:`OPTIONAL | paid API 拦截:env guard {1,true,yes,on} + ADR-007 引用` → `default for change-apply-subagent | ADR-008 token-budget tracker informational`
+  - `subagent-driven-development` 行:`OPTIONAL | paid API 拦截:env guard {1,true,yes,on} + ADR-007 引用` → `default for change-apply-subagent | ADR-009 token-budget tracker informational`
 - [ ] 2.1b 编辑 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §B.1 状态机表(line 113-124):
   - **S3 行** "允许命令" 列 `ForgeUE change-{apply,debug,status}` → `ForgeUE change-{apply-subagent,apply-direct,debug,status}`
   - **S4 行** 同 S3 行同款修改
 - [ ] 2.2 编辑 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §B.4 表后加新段 §B.6 `subagent-driven-development 集成边界`,描述 4 类 per-task evidence_type + 命令分流(`change-apply-subagent` vs `change-apply-direct`)
 - [ ] 2.3 编辑 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §A.6 命令边界段:加 `change-apply-subagent` / `change-apply-direct` 两个 ForgeUE 命令的描述行;现 `change-apply` 行标 deprecated
-- [ ] 2.4 编辑 `docs/ai_workflow/README.md` §5 Agent 分工表 Superpowers 行:删 `subagent-driven-development paid API 拦截(env guard + ADR-007)` 描述,改成 `subagent-driven-development default for /forgeue:change-apply-subagent;ADR-008 token-budget tracker informational`;`using-git-worktrees 禁用` 改 `using-git-worktrees REQUIRED for subagent path`
+- [ ] 2.4 编辑 `docs/ai_workflow/README.md` §5 Agent 分工表 Superpowers 行:删 `subagent-driven-development paid API 拦截(env guard + ADR-007)` 描述,改成 `subagent-driven-development default for /forgeue:change-apply-subagent;ADR-009 token-budget tracker informational`;`using-git-worktrees 禁用` 改 `using-git-worktrees REQUIRED for subagent path`
 - [ ] 2.4b 编辑 `docs/ai_workflow/README.md` §8 入口表(line 283):"进入 S3→S4-S5:implementation" 行 `/forgeue:change-apply <id>(...)` → 拆 2 行:`/forgeue:change-apply-subagent <id>(default;invoke superpowers:subagent-driven-development + 4 类 per-task evidence + budget tracker informational)` + `/forgeue:change-apply-direct <id>(fallback;executing-plans + TDD + tdd_log/debug_log)`
 - [ ] 2.4c 编辑 **repo 根 `README.md`**(非 `docs/ai_workflow/README.md`)line 380-388 ForgeUE 命令清单表:`/forgeue:change-apply` 行(line 383)拆成 `/forgeue:change-apply-subagent`(default subagent dispatch + 4 类 per-task evidence + budget tracker informational)+ `/forgeue:change-apply-direct`(fallback executing-plans + TDD)两行;命令总数从 8 → 9
-- [ ] 2.5 编辑 `CLAUDE.md` `### ForgeUE Integrated AI Change Workflow` 段:更新 8 个 `/forgeue:change-*` 命令描述,把 `change-apply` 拆成 `change-apply-subagent` + `change-apply-direct`(命令数从 8 → 9);加 ADR-008 引用
+- [ ] 2.5 编辑 `CLAUDE.md` `### ForgeUE Integrated AI Change Workflow` 段:更新 8 个 `/forgeue:change-*` 命令描述,把 `change-apply` 拆成 `change-apply-subagent` + `change-apply-direct`(命令数从 8 → 9);加 ADR-009 引用
 - [ ] 2.6 编辑 `AGENTS.md` 同段(与 `CLAUDE.md` 对齐;Codex CLI / Cursor / Aider 视角)
 - [ ] 2.7 编辑 `.claude/skills/forgeue-integrated-change-workflow/SKILL.md` Superpowers 集成边界表 + 命令清单;沿 `forgeue_integrated_ai_workflow.md` §B.3 / §B.6 同步
 - [ ] 2.8 编辑 `docs/ai_workflow/forgeue_quickstart.md`(3 处必改):
@@ -49,13 +49,13 @@
   - **§6 速查卡(line 286)**:"实施代码 + TDD + plan review" 行 `/forgeue:change-apply <id>` → 拆成 "实施(default subagent path)" + "实施(fallback direct path)" 两行
 - [ ] 2.9 验证 `docs/ai_workflow/validation_matrix.md` 不需要改(grep 已确认无 `change-apply` 字面引用,只涉及 Level 0/1/2 验证矩阵,与命令拆分无关)
 
-## 3. SRS / acceptance_report 加 ADR-008
+## 3. SRS / acceptance_report 加 ADR-009
 
-- [ ] 3.1 编辑 `docs/requirements/SRS.md` § ADR 表:在 ADR-007 行后新增 ADR-008 行
+- [ ] 3.1 编辑 `docs/requirements/SRS.md` § ADR 表:在 ADR-007 行后新增 ADR-009 行
   - 描述:`subagent dispatch token-budget tracker(informational + soft WARNING);与 ADR-007 vendor API 双扣边界根本不同`
   - 决策正文:`framework 不对 LLM token cost 做 hard gate;tools/forgeue_subagent_budget.py 仅记录 + 超阈值 stdout WARN;exit 0 始终(I/O 异常 exit 1 例外);用户保留 dispatch 中断判断权(沿 ForgeUE memory feedback_decisive_approval)`
-  - 与 ADR-007 对比段:`ADR-007 拦截 mesh.generation 重试时双扣已完成 job(浪费);ADR-008 仅记录 LLM token 持续产生价值的消耗(拦截 = 打断)`
-- [ ] 3.2 编辑 `docs/acceptance/acceptance_report.md` § ADR 状态表:新增 ADR-008 行,状态 `✅ 已批准 + 工具实施待 §6 完成`
+  - 与 ADR-007 对比段:`ADR-007 拦截 mesh.generation 重试时双扣已完成 job(浪费);ADR-009 仅记录 LLM token 持续产生价值的消耗(拦截 = 打断)`
+- [ ] 3.2 编辑 `docs/acceptance/acceptance_report.md` § ADR 状态表:新增 ADR-009 行,状态 `✅ 已批准 + 工具实施待 §6 完成`
 
 ## 4. ForgeUE 命令重构(`/forgeue:change-apply` 拆 2)
 
@@ -152,7 +152,7 @@
 
 ## 10. Documentation Sync Gate + Finish Gate
 
-- [ ] 10.1 跑 `python tools/forgeue_doc_sync_check.py --change adopt-subagent-driven-development --json`(预期触发 [REQUIRED]:**repo 根 `README.md`**(已在 §2.4c 处理 ForgeUE 命令清单表)/ `CLAUDE.md`(§2.5 已处理)/ `AGENTS.md`(§2.6 已处理)/ `SRS.md`(§3.1 已处理 ADR-008)/ `acceptance_report.md`(§3.2 已处理 ADR 表)/ `CHANGELOG.md`([Unreleased] 段在 §11.4 archive close-out 时加新条目记录 9 命令变更 + ADR-008,**不**改 line 88-89 fuse change 的历史描述);[OPTIONAL]:`HLD.md`(本 change 不动架构边界 / 子系统职责,HLD §5.5 ADR-007 worker 边界与 ADR-008 LLM token 边界不重叠,无需交叉引用)/ `LLD.md`(grep 确认 LLD 0 处引用 ADR-007 / ForgeUE 工具,新增 `tools/forgeue_subagent_budget.py` 是 stdlib 工具不进 LLD framework runtime 范畴);[SKIP]:`test_spec.md`(无新测试策略,只加 fence test);[SKIP]:`openspec/specs/*`(已通过 spec delta 自动 sync;主 spec `provider-routing` / `runtime-core` / `probe-and-validation` 的 ADR-007 引用全部是 mesh/audio/video worker 双扣边界,与 ADR-008 LLM token 不重叠,无需交叉引用))。注:`docs/ai_workflow/` 子文档(`forgeue_integrated_ai_workflow.md` / `forgeue_quickstart.md` / `validation_matrix.md`)**不在** doc_sync_check 工具扫描的 10 份主清单内,但本 change 已通过 §2.1-§2.9 直接编辑同步,§10.1 工具结果不应再标记它们 DRIFT
+- [ ] 10.1 跑 `python tools/forgeue_doc_sync_check.py --change adopt-subagent-driven-development --json`(预期触发 [REQUIRED]:**repo 根 `README.md`**(已在 §2.4c 处理 ForgeUE 命令清单表)/ `CLAUDE.md`(§2.5 已处理)/ `AGENTS.md`(§2.6 已处理)/ `SRS.md`(§3.1 已处理 ADR-009)/ `acceptance_report.md`(§3.2 已处理 ADR 表)/ `CHANGELOG.md`([Unreleased] 段在 §11.4 archive close-out 时加新条目记录 9 命令变更 + ADR-009,**不**改 line 88-89 fuse change 的历史描述);[OPTIONAL]:`HLD.md`(本 change 不动架构边界 / 子系统职责,HLD §5.5 ADR-007 worker 边界与 ADR-009 LLM token 边界不重叠,无需交叉引用)/ `LLD.md`(grep 确认 LLD 0 处引用 ADR-007 / ForgeUE 工具,新增 `tools/forgeue_subagent_budget.py` 是 stdlib 工具不进 LLD framework runtime 范畴);[SKIP]:`test_spec.md`(无新测试策略,只加 fence test);[SKIP]:`openspec/specs/*`(已通过 spec delta 自动 sync;主 spec `provider-routing` / `runtime-core` / `probe-and-validation` 的 ADR-007 引用全部是 mesh/audio/video worker 双扣边界,与 ADR-009 LLM token 不重叠,无需交叉引用))。注:`docs/ai_workflow/` 子文档(`forgeue_integrated_ai_workflow.md` / `forgeue_quickstart.md` / `validation_matrix.md`)**不在** doc_sync_check 工具扫描的 10 份主清单内,但本 change 已通过 §2.1-§2.9 直接编辑同步,§10.1 工具结果不应再标记它们 DRIFT
 - [ ] 10.2 应用 [REQUIRED] 项 patch(已在 §2 + §3 实施);写 `verification/doc_sync_report.md`(`evidence_type: doc_sync_report`):DRIFT 0 + REQUIRED 全应用 + SKIP reason 全记
 - [ ] 10.3 跑 `python tools/forgeue_finish_gate.py --change adopt-subagent-driven-development --json`(11 项检查全过;新增 evidence_type enum 已在 §5 验证;cross-check `disputed_open == 0`)
 - [ ] 10.4 写 `verification/finish_gate_report.md`(`evidence_type: finish_gate_report`):0 blockers + 0 warnings(`--enable-review-gate` 检查仅 WARN);exit 0
@@ -161,20 +161,20 @@
 ## 11. Archive close-out
 
 - [ ] 11.1 tasks unchecked tick:把本文件全部 task 改 `[x]`(§9 self-stage `[x]`,§10-§11 self-stage 在 finish_gate 跑后 `[x]`)
-- [ ] 11.2 单 commit close:`feat(openspec): adopt subagent-driven-development as default change-apply path + ADR-008 budget tracker`
+- [ ] 11.2 单 commit close:`feat(openspec): adopt subagent-driven-development as default change-apply path + ADR-009 budget tracker`
 - [ ] 11.3 用户调 `openspec archive adopt-subagent-driven-development -y`(自动跑 sync-specs 合入主 spec + mv 到 `openspec/changes/archive/<date>-adopt-subagent-driven-development/`)
 - [ ] 11.4 archive 后 commit:`chore(openspec): archive adopt-subagent-driven-development + sync examples-and-acceptance ADDED requirement`
 
 ## Documentation Sync
 
 - [ ] Check whether openspec/specs/* needs update after archive(本 change 已写 spec delta,archive 时 sync-specs 自动合并)
-- [ ] Check whether docs/requirements/SRS.md needs update(本 change §3.1 新增 ADR-008,REQUIRED)
+- [ ] Check whether docs/requirements/SRS.md needs update(本 change §3.1 新增 ADR-009,REQUIRED)
 - [ ] Check whether docs/design/HLD.md needs update(预期 SKIP:本 change 不触及架构边界 / 子系统职责;若 §6 实施暴露 ForgeUE workflow 子系统重新定义,re-evaluate)
 - [ ] Check whether docs/design/LLD.md needs update(预期 SKIP:本 change 不触及接口 / 模型 / CLI entry;`tools/forgeue_subagent_budget.py` 新工具规模太小,不进 LLD)
 - [ ] Check whether docs/testing/test_spec.md needs update(预期 SKIP:本 change 只加 1 个 fence test,无新测试策略)
-- [ ] Check whether docs/acceptance/acceptance_report.md needs update(本 change §3.2 新增 ADR-008 行,REQUIRED)
+- [ ] Check whether docs/acceptance/acceptance_report.md needs update(本 change §3.2 新增 ADR-009 行,REQUIRED)
 - [ ] Check whether README.md needs update(预期 SKIP:本 change 不改用户可见工作流 / 命令入口;`/forgeue:change-apply-{subagent,direct}` 是工作流内部演化,不直接面向终端用户)
-- [ ] Check whether CHANGELOG.md needs update(REQUIRED:加 [Unreleased] 段记 ADR-008 + change-apply 拆分 + subagent-driven-development default)
+- [ ] Check whether CHANGELOG.md needs update(REQUIRED:加 [Unreleased] 段记 ADR-009 + change-apply 拆分 + subagent-driven-development default)
 - [ ] Check whether CLAUDE.md needs update(本 change §2.5 REQUIRED)
 - [ ] Check whether AGENTS.md needs update(本 change §2.6 REQUIRED)
 - [ ] Record skipped docs with reason(写到 §10.2 doc_sync_report.md)

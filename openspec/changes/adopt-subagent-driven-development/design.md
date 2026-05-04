@@ -111,9 +111,9 @@ ForgeUE 的角色 = **OpenSpec evidence wrapper**：
 
 ### D-ADR008：token-budget tracker 是 informational，不是 enforcement
 
-新增 ADR-008 到 `docs/requirements/SRS.md`：
+新增 ADR-009 到 `docs/requirements/SRS.md`：
 
-> **ADR-008**：subagent dispatch token-budget **tracker**（informational + soft WARNING）。与 ADR-007 vendor API 双扣边界**根本不同**：ADR-007 拦截 “重试时双扣已完成 job”（浪费），budget tracker 仅记录 “持续产生价值的 token 消耗”（拦截 = 打断有价值的工作）。框架**不**对 token cost 做 hard gate，**仅**给信息让用户自决。
+> **ADR-009**：subagent dispatch token-budget **tracker**（informational + soft WARNING）。与 ADR-007 vendor API 双扣边界**根本不同**：ADR-007 拦截 “重试时双扣已完成 job”（浪费），budget tracker 仅记录 “持续产生价值的 token 消耗”（拦截 = 打断有价值的工作）。框架**不**对 token cost 做 hard gate，**仅**给信息让用户自决。
 
 `tools/forgeue_subagent_budget.py`（决议 D3-a / 用户 informational 调整）：
 

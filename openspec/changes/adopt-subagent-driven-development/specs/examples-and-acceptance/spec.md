@@ -63,4 +63,4 @@
 
 - GIVEN ADR-007 在 `docs/requirements/SRS.md` 约束 framework 不得对 mesh.generation 等 vendor 外部 API 做静默重试,因为重试会双扣已完成 job
 - WHEN 把 LLM token 消耗(persist value-producing,不会双扣)纳入考虑
-- THEN ADR-008 在 `docs/requirements/SRS.md` SHALL 显式声明 token-budget tracker 与 ADR-007 是不同的安全边界:ADR-007 拦截 "重试时双扣已完成 job"(浪费),ADR-008 budget tracker 仅记录 "持续产生价值的 token 消耗"(打断 = 损失);框架 SHALL NOT 对 token cost 做 hard gate;ADR-008 描述 SHALL 包含与 ADR-007 的对比段说明边界不同
+- THEN ADR-009 在 `docs/requirements/SRS.md` SHALL 显式声明 token-budget tracker 与 ADR-007 是不同的安全边界:ADR-007 拦截 "重试时双扣已完成 job"(浪费),ADR-009 budget tracker 仅记录 "持续产生价值的 token 消耗"(打断 = 损失);框架 SHALL NOT 对 token cost 做 hard gate;ADR-009 描述 SHALL 包含与 ADR-007 的对比段说明边界不同

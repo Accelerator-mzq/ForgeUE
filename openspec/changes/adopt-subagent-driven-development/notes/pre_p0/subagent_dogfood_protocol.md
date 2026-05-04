@@ -124,7 +124,7 @@ codex_plugin_available: true
 
 `tools/forgeue_subagent_budget.py` 在本 change §6 才实装。Pre-P0 与 §1-§5 阶段的 token 记录走 evidence body 路径,**不**通过 12-key frontmatter,**不**事后从 frontmatter 估算回填:
 
-- **§1-§5 dispatch 时立即记录到 evidence body**:每次 Task tool dispatch return 后,主 session Claude 在对应 evidence 文件(如 `execution/task_<n>_implementer.md`)body 末尾追加独立段(沿 design.md D-ADR008 修复后约定):
+- **§1-§5 dispatch 时立即记录到 evidence body**:每次 Task tool dispatch return 后,主 session Claude 在对应 evidence 文件(如 `execution/task_<n>_implementer.md`)body 末尾追加独立段(沿 design.md D-ADR009 修复后约定):
   ```markdown
   ## Token usage
 

@@ -146,7 +146,7 @@ Superpowers plugin / codex-plugin-cc **可选**。不可用时:
 | `verification-before-completion` | S5 | verify_report 输入 |
 | `finishing-a-development-branch` | S9 后 | git 层 merge / PR / discard;不进 evidence |
 | `using-git-worktrees` | **REQUIRED for change-apply-subagent**(自 `adopt-subagent-driven-development` change 起;沿 subagent-driven-development SKILL.md 硬依赖) | 起 isolated worktree;`change-apply-subagent` step 6.5-10.5 协议见 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支)|
-| `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-008 token-budget tracker informational) | 4× LLM 调用(implementer + spec reviewer + code quality reviewer per task + final reviewer);per-task evidence 4 类 + `subagent_budget.log`;ADR-008 与 ADR-007 vendor API 双扣边界**根本不同**(LLM token 不双扣) |
+| `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational) | 4× LLM 调用(implementer + spec reviewer + code quality reviewer per task + final reviewer);per-task evidence 4 类 + `subagent_budget.log`;ADR-009 与 ADR-007 vendor API 双扣边界**根本不同**(LLM token 不双扣) |
 
 ### B.4 codex stage hook 触发
 
@@ -167,7 +167,7 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 
 **命令分流**:`/forgeue:change-apply` 拆为两条独立命令(沿 design.md D-Default,**不**走 env flag facade):
 
-- `/forgeue:change-apply-subagent <id>` — **default 路径**;invoke `superpowers:subagent-driven-development` skill;每 task 派 implementer + spec compliance reviewer + code quality reviewer subagent + 全 task 完成后 final reviewer subagent;落 4 类 per-task evidence;**REQUIRED** `superpowers:using-git-worktrees`(isolated worktree);ADR-008 token-budget tracker informational
+- `/forgeue:change-apply-subagent <id>` — **default 路径**;invoke `superpowers:subagent-driven-development` skill;每 task 派 implementer + spec compliance reviewer + code quality reviewer subagent + 全 task 完成后 final reviewer subagent;落 4 类 per-task evidence;**REQUIRED** `superpowers:using-git-worktrees`(isolated worktree);ADR-009 token-budget tracker informational
 - `/forgeue:change-apply-direct <id>` — **fallback 路径**;沿原 `executing-plans + TDD` 编排;落 `tdd_log` / `debug_log`;不派 subagent;不需要 worktree isolation;轻量 change(< 3 micro-task)/ budget 紧张时使用
 
 **4 类 per-task evidence schema**(扁平命名;沿 `forgeue_finish_gate.py` frontmatter-indexed 范式):
@@ -181,7 +181,7 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 
 **Dispatch mode 判定**(沿 design.md D-EvidenceSchema):evidence frontmatter 必含 audit 字段 `triggered_by_command: change-apply-subagent`;`forgeue_finish_gate.py` 从此字段判定 dispatch mode,**不依赖** helper marker file(防 marker 缺失绕过 gate)。
 
-**Token / cost audit**:tokens / model / usd 字段**不进** 12-key frontmatter,在 evidence body `## Token usage` 段记录(`data_source: task_tool_return` / `manual_estimate` 区分);`tools/forgeue_subagent_budget.py --record` 由 controller 直接传参,不读 frontmatter。ADR-008 budget tracker 仅 informational + soft WARNING(stdout `[WARN]` 行),始终 `exit 0`,**不**做 hard gate / auto fallback;用户保留 dispatch 中断判断权。
+**Token / cost audit**:tokens / model / usd 字段**不进** 12-key frontmatter,在 evidence body `## Token usage` 段记录(`data_source: task_tool_return` / `manual_estimate` 区分);`tools/forgeue_subagent_budget.py --record` 由 controller 直接传参,不读 frontmatter。ADR-009 budget tracker 仅 informational + soft WARNING(stdout `[WARN]` 行),始终 `exit 0`,**不**做 hard gate / auto fallback;用户保留 dispatch 中断判断权。
 
 **Skill invoke 协议**:`change-apply-subagent` 直接 invoke `superpowers:subagent-driven-development` skill,**不**重写 / 不复制 skill 内部 3 个 prompt 模板(`implementer-prompt.md` / `spec-reviewer-prompt.md` / `code-quality-reviewer-prompt.md`);ForgeUE 角色 = OpenSpec evidence wrapper。
 

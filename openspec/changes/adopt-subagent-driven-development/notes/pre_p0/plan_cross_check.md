@@ -35,7 +35,7 @@ note: |
 - **D-EvidenceSchema**(D2-a 用户拍板):per-task evidence 扁平命名 `execution/task_<n>_{implementer,spec_review,code_quality_review}.md` + `review/subagent_final_review.md`;沿 `forgeue_finish_gate.py` line 60-62 frontmatter-indexed 范式(已证不依赖文件路径绑定);通过 review 的 task evidence 允许 body 一行 summary,未通过的 task MUST 完整 issues 列表
 - **D-SkillInvoke**(用户独立指出):`change-apply-subagent` 命令直接 invoke `superpowers:subagent-driven-development` skill,**不**重写 / 不复制 / 不引用 skill 内部 3 个 prompt 模板(`implementer-prompt.md` / `spec-reviewer-prompt.md` / `code-quality-reviewer-prompt.md`),Superpowers 自管;ForgeUE 角色 = OpenSpec evidence wrapper,仅做收口
 - **D-TaskInput**:`change-apply-subagent` 主 session Claude 从 `execution/micro_tasks.md` extract task list、从 `execution/execution_plan.md` 提取 per-task context,**完整文本作为 prompt 传 implementer subagent**(沿 `subagent-driven-development/SKILL.md` Red Flag "Make subagent read plan file (provide full text instead)");subagent 不被授权读 plan 文件
-- **D-ADR008**(用户 informational 调整后):新增 ADR-008 把 token-budget 边界与 ADR-007 vendor API 双扣边界**根本切分**。ADR-007 拦截 mesh.generation 重试时双扣已完成 job(浪费);ADR-008 仅记录 LLM token 持续产生价值的消耗(打断 = 损失);两者**不是同一安全边界**
+- **D-ADR008**(用户 informational 调整后):新增 ADR-009 把 token-budget 边界与 ADR-007 vendor API 双扣边界**根本切分**。ADR-007 拦截 mesh.generation 重试时双扣已完成 job(浪费);ADR-009 仅记录 LLM token 持续产生价值的消耗(打断 = 损失);两者**不是同一安全边界**
 - **D-BudgetMode**(D3-a + 用户 informational 调整):`tools/forgeue_subagent_budget.py` 是 informational tracker,仅 `--status` / `--record` / `--json` + 超阈值 stdout `[WARN]` 行,**始终 `exit 0`**(I/O 异常 `exit 1` 例外),**不**做 hard gate / auto fallback;用户保留 dispatch 中断判断权(沿 ForgeUE memory `feedback_decisive_approval`)
 - **D-SelfHost**(P3 / D4-a 用户拍板):本 change 自身用 subagent-driven-development 跑 dogfooding;Pre-P0 一次性附录(本文件 + `subagent_dogfood_protocol.md`)+ §3-§6 阶段 Claude 主 session 用 Task tool 手工模拟 subagent dispatch,沿 fuse-openspec-superpowers-workflow self-host 模式
 
@@ -50,7 +50,7 @@ note: |
   - §2.5 + §2.6:CLAUDE.md / AGENTS.md
   - §2.7:`.claude/skills/forgeue-integrated-change-workflow/SKILL.md`
   - §2.8 + §2.9:`docs/ai_workflow/forgeue_quickstart.md` 3 处 + `validation_matrix.md` SKIP
-- §3 SRS / acceptance_report 加 ADR-008
+- §3 SRS / acceptance_report 加 ADR-009
 - §4 ForgeUE 命令重构:新建 2 个 + deprecated 1 个
 - §5 `forgeue_finish_gate.py` 扩 evidence_type enum 4 项 + fence test
 - §6 `tools/forgeue_subagent_budget.py` 新建(stdlib only ~100 行)+ fence test
@@ -73,7 +73,7 @@ note: |
 - **文档同步**:11 处编辑(§2 全部)
 - **Python 代码**:1 工具新建(`forgeue_subagent_budget.py`,~100 行 stdlib)+ 1 工具扩展(`forgeue_finish_gate.py` evidence_type enum + 默认 path 表)+ 1 fence test 新建 + finish_gate fence test 4 个 case 新增
 - **命令文件**:2 个新建(`change-apply-subagent.md` / `change-apply-direct.md`)+ 1 个改写为 deprecated banner
-- **SRS / acceptance**:1 个 ADR(ADR-008)+ ADR 表加行
+- **SRS / acceptance**:1 个 ADR(ADR-009)+ ADR 表加行
 - **Subagent dispatch 估算**:30+ micro-task × 4 subagent ≈ 120 次 Task tool 调用(self-host dogfood);每次 Task tool 是一次 LLM 调用
 - **Budget 估算**:按平均 $0.30/task × 30 task = $9.0(超 default WARN 阈值 $2.0,但 informational 不阻断)
 
