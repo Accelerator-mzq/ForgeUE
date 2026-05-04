@@ -20,16 +20,13 @@ detected_env: claude-code
 triggered_by: "/forgeue:change-apply (S3→S4-S5 transition; Superpowers executing-plans + TDD pending)"
 codex_plugin_available: true
 created_at: 2026-05-04T12:15:00+08:00
-resolved_at: null
 resolved_at: 2026-05-04T13:40:00+08:00
 disputed_open: 0
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks+proposal+runner.py (4 findings 全 accepted-codex; commit 1185377 含全部 round-3 PF1-PF4 修订;PF1 路径 (a) 用户 2026-05-04 拍板 → ComfyUI runner.py user-authored extension 已实施;PF2/PF3/PF4 同步 sweep)
-writeback_commit: 11853772fcc909ddc17f945a7c41596e94fa935b
+writeback_commit: 1185377
+drift_reason: "round-3 codex plan review 4 findings PF1-PF4 全 accepted-codex,commit 1185377 含全部修订(PF1 ComfyUI runner.py user-authored extension 用户授权 + PF2 BMFF largesize reject + PF3 spec sweep + PF4 dataclass enforcement layer)"
 reasoning_notes_anchor: "design.md `## Reasoning Notes — round-3 codex plan review (2026-05-04)`"
-writeback_commit: null
-drift_reason: null
-reasoning_notes_anchor: null
 note: |
   本 plan_cross_check 在调 codex /codex:adversarial-review plan hook 之前冻结 `## A` 段,
   以避免 Claude 看完 codex finding 后回填 ## A(协议自我保护)。

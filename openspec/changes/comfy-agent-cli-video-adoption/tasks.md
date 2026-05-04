@@ -518,9 +518,9 @@
 
 ## 11. L2 evidence — 本机跑 video live smoke(commit 16)
 
-- [ ] 11.1 用户准备:Wan 2.1 1.3B 模型权重已缓存(无 HuggingFace 拉延迟;首次拉 ~3GB ~10-30 分钟取决于网络)
-- [ ] 11.2 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, 17-30s 冷启动 + 模型加载);ComfyUI server pre-warm 后再进 §11.3
-- [ ] 11.3 终端 2 跑 `framework.run` smoke:
+- [x] 11.1 用户准备:Wan 2.1 1.3B 模型权重已缓存(无 HuggingFace 拉延迟;首次拉 ~3GB ~10-30 分钟取决于网络)
+- [x] 11.2 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, 17-30s 冷启动 + 模型加载);ComfyUI server pre-warm 后再进 §11.3
+- [x] 11.3 终端 2 跑 `framework.run` smoke:
   ```bash
   PYTHONPATH=src \
   FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts \
@@ -528,40 +528,40 @@
     --run-id video_smoke_l2_<date> --artifact-root artifacts/<today>
   ```
   预计:Wan 1.3B 5sec 单次约 7 分钟生成 + framework 端 1-2 分钟启动 / 持久化 ≈ **9-10 分钟总耗时**;若 worker_timeout_s=600 不够(冷启动超时),调到 900-1200 重跑
-- [ ] 11.4 验证 L2 evidence 客观判定(round-2 F4 修订:加 BMFF strict 4-tuple 校验):
+- [x] 11.4 验证 L2 evidence 客观判定(round-2 F4 修订:加 BMFF strict 4-tuple 校验):
   - (a) `artifacts/<today>/video_smoke_l2_<date>/<artifact_id>.mp4` 存在
   - (b) 文件大小 > 1 MB(预期 5-15 MB,Wan 1.3B 5sec @ 832x480 / 81 frames / 25 steps)
   - (c) BMFF strict header(round-2 F4 + round-3 PF2 修订):`len(data) >= 16` AND `data[4:8] == b"ftyp"` AND `box_size = int.from_bytes(data[0:4], "big")` 在 `[8, len(data)]` 范围(round-3 PF2:**reject `box_size == 1`** 64-bit largesize,follow-on `video-bmff-largesize-support`)AND `data[8:12]` major_brand 非空非全 0 / 非全 space
   - (d) producer attribution:`Artifact.metadata.worker_metadata.comfy_capability == "video"` + producer = `comfy_agent_cli` + model = `comfy/local-video`
   - (e) duration / frame_count / width / height / fps 顶层 metadata 全 None(D8 + 本 change scope;follow-on `video-metadata-parser` 加 ffprobe 解析)
-- [ ] 11.5 evidence 文件 `notes/live_smoke_video_<date>.md` 记录:命令行 / run_id / artifact_id / 文件大小 / magic bytes / producer attribution / metadata 6 keys 验证 / 总耗时 / 任何 round-2 修订(若 OQ-1 实测发现 `outputs.video` 字段名不符)
+- [x] 11.5 evidence 文件 `notes/live_smoke_video_<date>.md` 记录:命令行 / run_id / artifact_id / 文件大小 / magic bytes / producer attribution / metadata 6 keys 验证 / 总耗时 / 任何 round-2 修订(若 OQ-1 实测发现 `outputs.video` 字段名不符)
 
 ### 11b. a2_video UE 真机 P4 验收(commit 16 续 — commandlet 自动化,D15)
 
-- [ ] 11b.1 用户准备:UE 5.x 安装(推荐 5.7+),目标 `.uproject` 启用 `PythonScriptPlugin`;`<UE_path>/Engine/Binaries/Win64/UnrealEditor-Cmd.exe` 可执行
-- [ ] 11b.2 设 `FORGEUE_RUN_FOLDER=<repo>/artifacts/<today>/video_smoke_l2_<date>` 指向 §11.3 的产物
-- [ ] 11b.3 跑 commandlet(Bash 直接驱动,Claude 不需要用户手工点 Python Console;D15 + a2_mesh 2026-04-23 模式):
+- [x] 11b.1 用户准备:UE 5.x 安装(推荐 5.7+),目标 `.uproject` 启用 `PythonScriptPlugin`;`<UE_path>/Engine/Binaries/Win64/UnrealEditor-Cmd.exe` 可执行
+- [x] 11b.2 设 `FORGEUE_RUN_FOLDER=<repo>/artifacts/<today>/video_smoke_l2_<date>` 指向 §11.3 的产物
+- [x] 11b.3 跑 commandlet(Bash 直接驱动,Claude 不需要用户手工点 Python Console;D15 + a2_mesh 2026-04-23 模式):
   ```bash
   "$UE_PATH/Engine/Binaries/Win64/UnrealEditor-Cmd.exe" \
     "$UE_PROJECT" \
     -ExecutePythonScript="<repo>/ue_scripts/run_import.py" \
     -nullrhi -nosplash -unattended
   ```
-- [ ] 11b.4 验证 UE-side a2_video evidence:
+- [x] 11b.4 验证 UE-side a2_video evidence:
   - (a) `<UE_project>/Content/Movies/video_smoke_l2_<date>/MS_<base>.mp4` 存在(D12 路径分流 — Movies/,**NOT** Generated/)
   - (b) `<UE_project>/Content/Generated/video_smoke_l2_<date>/MS_<base>.uasset` 存在(FileMediaSource asset)
   - (c) UE Editor GUI 双击 `.uasset` 看到 FileMediaSource 详情面板 file_path 字段指向 `Movies/<run_id>/MS_<base>.mp4`(可选人工确认;commandlet 模式不强制 GUI)
   - (d) `evidence.json` 含一条 `import_file_media_source` 操作 `status="success"` record
-- [ ] 11b.5 evidence 文件 `notes/live_smoke_video_<date>.md` 续写 a2_video section,记录:UE 版本 / commandlet 命令行 / Movies path / Generated path / .uasset 文件大小 / evidence.json 摘录 / 任何 UE API 偏差(若 `unreal.FileMediaSourceFactory` API 不符 design.md D1 预期,走 round-2 design 修订)
-- [ ] 11b.6 commit 16:`docs(openspec): L2 + a2_video P4 actual PASS evidence + commandlet automation`
+- [x] 11b.5 evidence 文件 `notes/live_smoke_video_<date>.md` 续写 a2_video section,记录:UE 版本 / commandlet 命令行 / Movies path / Generated path / .uasset 文件大小 / evidence.json 摘录 / 任何 UE API 偏差(若 `unreal.FileMediaSourceFactory` API 不符 design.md D1 预期,走 round-2 design 修订)
+- [x] 11b.6 commit 16:`docs(openspec): L2 + a2_video P4 actual PASS evidence + commandlet automation`
 
 ## 12. Codex review hooks(沿 audio Phase 2 round 1-7 节奏 + 5 项 D-fixed 应将轮数压到 1-2 轮)
 
-- [ ] 12.1 G6 `/codex:review --base main` 验证 hook(代码级,无 cross-check;沿 audio G6 模式):
+- [x] 12.1 G6 `/codex:review --base main` 验证 hook(代码级,无 cross-check;沿 audio G6 模式):
   - 跑 `/codex:review --base main` 或 `/codex:review --range origin/main..HEAD`
   - 输出落 `verification/verify_report.md`(12-key audit frontmatter)
   - 若 codex 报 high/medium finding,先 fix 再继续 §13 review;若全 low / no finding,直接进 §13
-- [ ] 12.2 G11 `/codex:adversarial-review` mixed scope 终审(沿 audio G11 模式):
+- [x] 12.2 G11 `/codex:adversarial-review` mixed scope 终审(沿 audio G11 模式):
   - 跑 `/codex:adversarial-review` 对全 change(design + spec + tasks + production code + tests + docs)
   - 输出落 `review/codex_adversarial_review_round_final.md`(12-key audit frontmatter)
   - 若 codex 报 blocker(high finding),writeback 到对应 contract artifact(design / spec / tasks)+ 重跑 affected tests + 重新 G11
@@ -569,17 +569,17 @@
 
 ## 13. Finish gate(中心化最后防线)
 
-- [ ] 13.1 `python -m pytest -q` 实测:基线 1294(audio Phase 2 后)→ 预计 ~1352(round-2 F1 + F4 修订后:+58 fence;原 +50 + F1 sweep 5 fence + F4 BMFF strict 9 fence - 原 webm 4 fence;具体以实测为准,**不**硬编码)
-- [ ] 13.2 跑 `python tools/forgeue_finish_gate.py --change comfy-agent-cli-video-adoption`(per CLAUDE.md ForgeUE Integrated AI Change Workflow §「Finish Gate」),它检查:
+- [x] 13.1 `python -m pytest -q` 实测:基线 1294(audio Phase 2 后)→ 预计 ~1352(round-2 F1 + F4 修订后:+58 fence;原 +50 + F1 sweep 5 fence + F4 BMFF strict 9 fence - 原 webm 4 fence;具体以实测为准,**不**硬编码)
+- [x] 13.2 跑 `python tools/forgeue_finish_gate.py --change comfy-agent-cli-video-adoption`(per CLAUDE.md ForgeUE Integrated AI Change Workflow §「Finish Gate」),它检查:
   - evidence 完整性(execution / review / verification 各目录有 12-key audit frontmatter)
   - cross-check `disputed_open == 0`
   - writeback 真实性(`drift_decision: written-back-to-*` 带真实 git commit hash)
   - tasks unchecked 项 == 0(本文件全部 `- [x]`)
   - `openspec validate --strict comfy-agent-cli-video-adoption` 通过
-- [ ] 13.3 跑 `/forgeue:change-doc-sync`(本 change 触发提示词;Documentation Sync Gate 静态扫描 10 文档)
+- [x] 13.3 跑 `/forgeue:change-doc-sync`(本 change 触发提示词;Documentation Sync Gate 静态扫描 10 文档)
   - 若有 [REQUIRED] 未 sync,补 commit
   - 若有 [DRIFT] 标记,逐项 review + writeback or 标 acceptable drift
-- [ ] 13.4 archive change:`openspec archive comfy-agent-cli-video-adoption --target main`(沿 CLAUDE.md OpenSpec 工作流);archive 后:
+- [x] 13.4 archive change:`openspec archive comfy-agent-cli-video-adoption --target main`(沿 CLAUDE.md OpenSpec 工作流);archive 后:
   - `openspec/changes/archive/<archive_date>-comfy-agent-cli-video-adoption/` 是历史记录
   - `openspec/specs/{provider-routing, runtime-core, artifact-contract, examples-and-acceptance, probe-and-validation, ue-export-bridge}/spec.md` 已 sync 本 change 的 ADDED + MODIFIED requirements
   - `openspec/changes/` 主目录无 active change(干净)

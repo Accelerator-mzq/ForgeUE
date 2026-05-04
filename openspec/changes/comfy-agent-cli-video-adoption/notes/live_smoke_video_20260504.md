@@ -8,7 +8,7 @@ detected_env: claude-code
 triggered_by: claude
 codex_plugin_available: true
 drift_decision: written-back-to-domain_video.py
-writeback_commit: pending
+writeback_commit: 1dfa5db
 drift_reason: "P4 commandlet 实测暴露 D1 implementation 漏 — UE 5.7 FileMediaSource 没有 `loop` / `play_on_open` editor property,domain_video.py:99-102 set_editor_property 报 'Failed to find property loop'。这两项是 MediaPlayer 运行时属性而非 MediaSource asset 属性。修法:从 domain_video.py 移除两行 set,保留 import_options 在 manifest 给 follow-on(LevelSequence / MediaPlayer 配置层)消费。属于 type-4 contract gap(evidence_exposes_contract_gap)。design.md D1 表述"loop / play_on_open 沿 user-override pattern"未限定 target asset 类型,真实 UE API 边界由 commandlet 实测划定。"
 reasoning_notes_anchor: "design.md#reasoning-notes-round-7"
 ---
