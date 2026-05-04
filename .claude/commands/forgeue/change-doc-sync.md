@@ -67,7 +67,7 @@ next: <S8 ready | blocked + reason>
 
 ## Decision Delegation
 
-本命令在 ForgeUE Integrated AI Change Workflow **S6→S7(doc sync)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+本命令在 ForgeUE Integrated AI Change Workflow **S6→S7(doc sync)** 阶段触发。Claude controller 默认按 design.md `D-AutonomyBoundary` + `D-FenceTaxonomy`(Fence #1-#6 trigger keyword 真源)决策升级路径:
 
 **默认自主路径**(`autonomy_decision: claude_autonomous`):
 - 跑 `forgeue_doc_sync_check.py --change <id>` 静态扫描 10 份长期文档

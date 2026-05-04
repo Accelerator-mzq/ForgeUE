@@ -60,7 +60,7 @@ S7→S8 transition:Finish Gate(中心化最后防线)。`forgeue_finish_gate.py`
 
 ## Decision Delegation
 
-本命令在 ForgeUE Integrated AI Change Workflow **S7→S8(finish gate)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+本命令在 ForgeUE Integrated AI Change Workflow **S7→S8(finish gate)** 阶段触发。Claude controller 默认按 design.md `D-AutonomyBoundary` + `D-FenceTaxonomy`(Fence #1-#6 trigger keyword 真源)决策升级路径:
 
 **默认自主路径**(`autonomy_decision: user_required` archive 类操作):
 - 跑 `forgeue_finish_gate.py --change <id>` 执行 12 项检查(evidence 完整性 / frontmatter 全检 / cross-check / writeback_commit 校验 / tasks unchecked / openspec validate / review-gate hook 检测)

@@ -146,7 +146,7 @@ def test_each_cmd_references_design_md_or_skill(cmd_files):
     assert not bad, f"cmd missing design.md / SKILL.md reference: {bad}"
 
 
-def test_decision_delegation_section_exists(cmd_files):
+def test_each_cmd_has_decision_delegation_section(cmd_files):
     """P1.10 fence:每个非 deprecated 命令必含 ## Decision Delegation section。
 
     design.md D-AutonomyBoundary 要求每个命令模板显式声明

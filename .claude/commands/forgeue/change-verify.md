@@ -59,7 +59,7 @@ S4→S5 transition:跑 Level 0/1/2 验证(`forgeue_verify` 编排 pytest / live 
 
 ## Decision Delegation
 
-本命令在 ForgeUE Integrated AI Change Workflow **S4→S5(verify)** 阶段触发。Claude controller 默认按 D-AutonomyBoundary 6 类 fence 决策升级路径:
+本命令在 ForgeUE Integrated AI Change Workflow **S4→S5(verify)** 阶段触发。Claude controller 默认按 design.md `D-AutonomyBoundary` + `D-FenceTaxonomy`(Fence #1-#6 trigger keyword 真源)决策升级路径:
 
 **默认自主路径**(`autonomy_decision: claude_autonomous` Level 0/1 / `user_required` Level 2):
 - Level 0(默认):自主跑 `pytest -q` + offline bundle 冒烟 + codex `/codex:review --base main` 单向挑错
