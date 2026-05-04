@@ -10,6 +10,7 @@ from framework.runtime.executors.generate_audio import GenerateAudioExecutor
 from framework.runtime.executors.generate_image import GenerateImageExecutor
 from framework.runtime.executors.generate_image_edit import GenerateImageEditExecutor
 from framework.runtime.executors.generate_mesh import GenerateMeshExecutor
+from framework.runtime.executors.generate_video import GenerateVideoExecutor
 from framework.runtime.executors.review import ReviewExecutor
 from framework.runtime.executors.select import SelectExecutor
 
@@ -21,6 +22,7 @@ __all__ = [
     "GenerateImageEditExecutor",
     "GenerateImageExecutor",
     "GenerateMeshExecutor",
+    "GenerateVideoExecutor",
     "ReviewExecutor",
     "SelectExecutor",
     "StepContext",
