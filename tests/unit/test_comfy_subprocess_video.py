@@ -658,3 +658,43 @@ def test_generate_video_does_not_read_forgeue_comfy_input_dir_env_var(tmp_path, 
         )
     assert len(candidates) == 1
     assert candidates[0].format == "mp4"
+
+
+# ---------------------------------------------------------------------------
+# DryRunPass gate(commit 9):comfy/local-video 触发 reachability probe
+# ---------------------------------------------------------------------------
+
+
+def test_dry_run_probes_comfy_when_comfy_local_video_in_routes(tmp_path, monkeypatch):
+    """commit 9:DryRunPass `_check_comfy_reachability` gate set 扩 `comfy/local-video`
+    (沿 P-F4 + audio commit 6 同款 set membership 模式)— bundle 含 video_local
+    alias 时触发 ComfyUI subprocess probe。
+    """
+    from unittest.mock import MagicMock
+
+    from framework.providers.model_registry import ResolvedRoute
+    from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
+
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "comfyui_api").mkdir()
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(scripts_dir))
+
+    dry_run = DryRunPass()
+    report = DryRunReport(passed=True)
+
+    step = MagicMock()
+    step.provider_policy.prepared_routes = [
+        ResolvedRoute(model="comfy/local-video", api_key_env=None, api_base=None,
+                      kind="video", pricing=None),
+    ]
+
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed("ok", returncode=0)
+        dry_run._check_comfy_reachability(report, steps=[step])
+        # comfy/local-video 触发 probe(commit 9 gate 扩)
+        assert run_mock.call_count == 1
+        cmd = run_mock.call_args[0][0]
+        assert "comfyui_api" in " ".join(cmd)
+        assert "status" in cmd
+    assert report.checks.get("comfy.cli_reachable") is True
