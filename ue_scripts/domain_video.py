@@ -94,12 +94,11 @@ def import_video_entry(entry: dict, *, project_root: str) -> dict:
     relative_file_path = f"Movies/{run_id}/{ue_name}.mp4"
     new_asset.set_editor_property("file_path", relative_file_path)
 
-    # Apply import_options(D1:loop / play_on_open;沿 user-override pattern)
-    import_options = entry.get("import_options") or {}
-    if "loop" in import_options:
-        new_asset.set_editor_property("loop", bool(import_options["loop"]))
-    if "play_on_open" in import_options:
-        new_asset.set_editor_property("play_on_open", bool(import_options["play_on_open"]))
+    # 注:`import_options.loop` / `play_on_open` 字段保留在 manifest 但不 set 到
+    # FileMediaSource — 这两项是 MediaPlayer 运行时属性而非 MediaSource asset 属性
+    # (UE 5.x FileMediaSource 仅有 FilePath / PrecacheFile editor properties);
+    # follow-on:LevelSequence / MediaPlayer 配置层接入时再消费这些字段
+    # (a2_video P4 commandlet 实测 `loop` 报 "Failed to find property" 印证此结论)
 
     # Save the new asset
     package = new_asset.get_outer()

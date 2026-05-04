@@ -625,3 +625,66 @@ if isinstance(exc, AudioWorkerTimeout): ...
 - **writeback 影响**:design.md D8 / D9 收紧 + 新增 D12b;5 个 spec delta(provider-routing / artifact-contract / examples-and-acceptance / probe-and-validation / ue-export-bridge)更新;tasks.md §3 / §5 / §8c(新增)/ §9c / §11 + §13.1 fence 总数估算更新;proposal.md _VIDEO_FORMAT_WHITELIST 字段更新
 - **新增 follow-on**:`comfy-video-webm-adoption`(F2 副作用;触发条件 = 用户实际有 webm use case);**不**进 SRS §7.3 register(沿 D-Followon-Registry 立场,与 `video-metadata-parser` / `video-worker-remote-adoption` / `comfy-video-image-sequence-adoption` 同模式 — 已知方向 follow-on 不进 §7.3 TBD register,只在 design.md / proposal.md 文字提及)
 - **fence 总数估算调整**:原 +50 → +58 fence(+5 F1 sweep + 9 F4 BMFF strict - 4 webm fence 删除 - 2 magic bytes 4-byte fence 删除)— 具体以实测为准,不硬编码
+
+## Reasoning Notes — round-7 P4 commandlet writeback (2026-05-04) {#reasoning-notes-round-7}
+
+> 本 round-7 是 a2_video P4 真机 UE 5.7 commandlet 实测期间暴露的 D1 implementation gap writeback;DRIFT type 4(`evidence_exposes_contract_gap`),由 `notes/live_smoke_video_20260504.md` evidence 触发,沿 audio Phase 2 同款 contract-gap-from-evidence 模式。
+
+### Round-7 R1 — D1 `loop` / `play_on_open` 不属于 FileMediaSource asset property
+
+**Evidence 摘要**:`a2_video_20260504` run-1 commandlet evidence import_file_media_source 状态 failed,UE Python API raise:
+```
+Exception: FileMediaSource: Failed to find property 'loop' for attribute 'loop' on 'FileMediaSource'
+  File "ue_scripts/domain_video.py", line 100, in import_video_entry
+    new_asset.set_editor_property("loop", bool(import_options["loop"]))
+```
+
+**根因**:UE 5.7 `FileMediaSource` 类只有 `FilePath` / `PrecacheFile` editor properties。`loop` / `play_on_open` 是 `MediaPlayer` 运行时属性(`UMediaPlayer::SetLooping`)而非 `MediaSource` asset 属性。design.md D1 表述 "loop / play_on_open 沿 user-override pattern" 未限定 target asset 类型,导致 domain_video.py 实施层直接 set 到 FileMediaSource asset → UE Python API reject。
+
+**Resolution(已 writeback to code)**:
+- `ue_scripts/domain_video.py:99-102` 移除 `set_editor_property("loop")` + `set_editor_property("play_on_open")` 两行 set;加注释说明 MediaPlayer runtime property 边界
+- import_options 在 manifest 保留 `loop` / `play_on_open` 字段(给 follow-on 消费),但 domain_video.py 不再尝试 set
+- run-2 a2_video_20260504_v2 实测全 success(.uasset 1702B + .mp4 338KB,D12 packaging 路径分流验证 PASS)
+
+**Contract impact**:
+- D1 决策核心(FileMediaSource + .mp4 asset 选择)**不变**
+- D1 implementation note 加 "loop / play_on_open 不 set 在 FileMediaSource asset(UE API 边界);follow-on LevelSequence / MediaPlayer 配置层接入时再消费这些 import_options 字段"
+- 不新增 follow-on registry — 沿 D-Followon-Registry 立场,implementation gap 由 evidence 划定 API 边界,LevelSequence follow-on `comfy-video-level-sequence-adoption` 已有(本 change scope 外)
+
+### Round-7 R2 — Wan T2V manifest 漏 VHS_VideoCombine widget 默认 patch [accepted-claude,沿 D-Runner-Extension 模式]
+
+**Evidence 摘要**:L2 v1 / v2 跑 framework.run 全失败 `video_worker_unsupported`;直接 probe `comfyui_api run` 返回 `HTTPError 400 Bad Request`。读 ComfyUI log:
+```
+Failed to validate prompt for output 10:
+* VHS_VideoCombine 10:
+  - Value not in list: format: 'format' not in ['image/gif', ..., 'video/h264-mp4', ..., 'video/webm']
+  - Failed to convert an input value to a INT value: loop_count, loop_count, invalid literal for int() with base 10: 'loop_count'
+  - Failed to convert an input value to a FLOAT value: frame_rate, frame_rate, could not convert string to float: 'frame_rate'
+```
+
+**根因**:`Vedio/Wan2.1-T2V-1.3B_native_5sec.json` workflow 的 VHS_VideoCombine 节点 widget 全部是占位符字符串(`"frame_rate": "frame_rate"`、`"format": "format"` 等),workflow author 把 widget value 留作 manifest patch 注入。但对应 manifest `Vedio/Wan2.1-T2V-1.3B_native_5sec.json`(同名)只暴露了 8 个 param key(positive_prompt / negative_prompt / width / height / num_frames / seed / steps / filename_prefix),**漏暴露** 5 个 VHS_VideoCombine widget patch:`frame_rate` / `loop_count` / `format` / `pingpong` / `save_output`。占位符字符串原样发给 ComfyUI prompt validator → HTTP 400。
+
+**Resolution(已 writeback to ComfyUI manifest 共享目录)**:
+- `D:/AI/ComfyUI/scripts/comfyui_api/manifests/Vedio/Wan2.1-T2V-1.3B_native_5sec.json` 加 5 个 default patches:
+  - `frame_rate` (float, default 24.0 → VHS_VideoCombine.frame_rate)
+  - `loop_count` (int, default 0 → VHS_VideoCombine.loop_count)
+  - `format` (string, default "video/h264-mp4" → VHS_VideoCombine.format)
+  - `pingpong` (bool, default false → VHS_VideoCombine.pingpong)
+  - `save_output` (bool, default true → VHS_VideoCombine.save_output)
+- `D:/AI/ComfyUI/scripts/comfyui_api/manifests/Vedio/Wan2.1-T2V-1.3B_native.json`(非-5sec 变体)同步补 5 项
+- 沿 D-Runner-Extension 同性质 user-authored ComfyUI 配置补漏(SHARED_DIR scope),由用户授权 Claude 修;ComfyUI 重装时与 D-Runner-Extension runner.py / `03_mini_image_to_3d_hunyuan_loadimage.json` 一并手工保留
+- CLAUDE.md ComfyUI 接入段 "ComfyUI 共享目录新增 ForgeUE 依赖" 子节加这两份 manifest 文件路径(round-7 follow-on doc sync 一并落实)
+
+**Contract impact**:
+- D3 决策核心(默认 Wan 1.3B 5sec manifest)**不变**
+- D-Runner-Extension SHARED_DIR scope 扩展:不仅 `runner.py` + LoadImage workflow,还包括 Wan T2V manifests 5-widget patch 补漏
+- 不新增 follow-on — manifest 漏 patch 是 user-authored 配置 bug,与本 change scope 内 D3 manifest 选择无概念冲突
+
+**evidence ref**:`notes/live_smoke_video_20260504.md` "Pre-flight 修复" 段。
+
+### round-7 codex review 总结
+
+- **2 个 finding 全 writeback**:R1 contract-gap(domain_video.py 修复)+ R2 manifest 漏 patch(D-Runner-Extension SHARED_DIR scope 扩展);均无 disputed-permanent-drift,无 disputed-pending
+- **disputed_open: 0**,符合 S5→S6 verification 通过条件
+- **writeback 影响**:`ue_scripts/domain_video.py` 移除两行 set_editor_property + 加注释;design.md D1 implementation note 收紧 UE API 边界;`notes/live_smoke_video_20260504.md` evidence aligned_with_contract: false + drift_decision: written-back-to-domain_video.py;ComfyUI shared `Vedio/Wan2.1-T2V-1.3B_native_5sec.json` + non-5sec manifest 5-widget patch 补漏(D-Runner-Extension SHARED_DIR scope)
+- **L2 + a2_video P4 全 PASS**:L2 video_smoke_l2_20260504_v3 实测 589KB mp4 / BMFF strict 5-tuple PASS;a2_video_20260504_v2 commandlet 三 op evidence 全 success / D12 packaging 路径分流(.uasset → Content/Generated/Video/, .mp4 → Content/Movies/)实测验证
