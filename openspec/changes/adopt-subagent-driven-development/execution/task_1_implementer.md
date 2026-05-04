@@ -8,7 +8,7 @@ contract_refs:
   - design.md#D-ADR009
 aligned_with_contract: true
 drift_decision: written-back-to-design.md+tasks.md+proposal.md+specs+notes+docs+CLAUDE+AGENTS+SKILL+README
-writeback_commit: PENDING_COMMIT_SHA
+writeback_commit: 051ef9fcd97f03fcfd646f788e4215958a0b85e8
 drift_reason: "implementer subagent dispatch 时发现 ID collision: docs/acceptance/acceptance_report.md line 323 既有 ADR-008(2026-04-23 A1 'UE plugin 启用不违反 ADR-001'立项)+ line 700/748/768 三处引用;本 change 原 D-ADR008 + tasks.md §3.1/§3.2 + spec delta + ai_workflow 子文档全部假定 ADR-008 编号空闲。DRIFT taxonomy: evidence_exposes_contract_gap(沿 forgeue_integrated_ai_workflow.md §D.3)。Status: BLOCKED 上报 controller。controller 接受 implementer 推荐路径 (C),2026-05-04T23:50 完成回写 — 13 文件 ADR-008 → ADR-009;既有 ADR-008(UE plugin)+ acceptance_report.md / ue-export-bridge spec / 3 archived 不动。本 BLOCKED 上报是 D-SelfHost dogfood 协议预期价值的实证(implementer fresh context 抓到 controller anchored context 漏掉的 ID collision)。"
 reasoning_notes_anchor: null
 detected_env: claude-code
