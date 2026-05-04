@@ -76,8 +76,8 @@
 
 > **依赖**:无(纯新建)。`audio_worker.py` 作为参考模板,本 task 复制 + 命名替换 + 加 video-specific 字段。
 
-- [ ] 3.1 新建 `src/framework/providers/workers/video_worker.py`,顶部 `from __future__ import annotations` + 标准 imports(typing / dataclasses / abc)
-- [ ] 3.2 加 `VideoCandidate` dataclass(类比 `AudioCandidate`,扩 video-specific 顶层字段;**round-2 F2 修订:format Literal mp4-only**,webm follow-on `comfy-video-webm-adoption`):
+- [x] 3.1 新建 `src/framework/providers/workers/video_worker.py`,顶部 `from __future__ import annotations` + 标准 imports(typing / dataclasses / abc)
+- [x] 3.2 加 `VideoCandidate` dataclass(类比 `AudioCandidate`,扩 video-specific 顶层字段;**round-2 F2 修订:format Literal mp4-only**,webm follow-on `comfy-video-webm-adoption`):
   ```python
   from dataclasses import dataclass, field
   from typing import Any, Literal
@@ -93,7 +93,7 @@
       height: int | None = None
       fps: float | None = None
   ```
-- [ ] 3.3 加异常树(类比 `AudioWorkerError` 三层):
+- [x] 3.3 加异常树(类比 `AudioWorkerError` 三层):
   ```python
   class VideoWorkerError(RuntimeError):
       """Video worker base error."""
@@ -104,7 +104,7 @@
   class VideoWorkerUnsupportedResponse(VideoWorkerError):
       """Video worker returned invalid / unexpected output."""
   ```
-- [ ] 3.4 加 `VideoWorker(ABC)` ABC(类比 `AudioWorker`):
+- [x] 3.4 加 `VideoWorker(ABC)` ABC(类比 `AudioWorker`):
   ```python
   from abc import ABC, abstractmethod
 
@@ -122,14 +122,16 @@
       ) -> list[VideoCandidate]:
           """Generate video candidates from spec.comfy_params or provider-specific spec."""
   ```
-- [ ] 3.5 加 `FakeVideoWorker(VideoWorker)` 测试 fixture:返回 minimal valid mp4 bytes(magic `b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00..."` ~50-100 bytes,offset 4 是 `b"ftyp"` per ISO/IEC 14496-12 BMFF),不依赖第三方 codec。`num_candidates` 个相同 candidates(metadata 加 `is_fake: True` 标识)
+- [x] 3.5 加 `FakeVideoWorker(VideoWorker)` 测试 fixture:返回 minimal valid mp4 bytes(magic `b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00..."` ~50-100 bytes,offset 4 是 `b"ftyp"` per ISO/IEC 14496-12 BMFF),不依赖第三方 codec。`num_candidates` 个相同 candidates(metadata 加 `is_fake: True` 标识)— **实施时加了 `program(...)` API 沿 audio FakeAudioWorker 模式**(7 fence 含 `test_fake_video_worker_program_returns_preset_candidates` + `..._program_raises_preset_error`)
 - [ ] 3.6 `tests/unit/test_video_worker.py` 新建,加 5 fence(round-2 F2 + **round-3 PF4 修订**:`test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal` 沿 audio Phase 2 同款 enforcement 模式):
   - `test_video_worker_abc_requires_generate_video`(用 dynamic class 做 instantiation 测试 raise `TypeError`)
   - `test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal`(**round-3 PF4 修订**:`format="mp4"` 构造成功;`format="webm"` / `format="mov"` 通过 `# type: ignore[arg-type]` 写法 dataclass 也接受不 raise — Python `@dataclass` 不在 runtime 强制 `Literal` 类型注解;实际 mp4-only 守门在 worker 层 `_run_once_video` 扩展名检查 + BMFF strict header validation;沿 audio Phase 2 `tests/unit/test_audio_worker.py::test_audio_candidate_format_whitelist` 同款行为)
   - `test_video_worker_exception_tree_inheritance`(`issubclass(VideoWorkerTimeout, VideoWorkerError) is True` × 2)
   - `test_fake_video_worker_returns_minimal_valid_mp4_bytes`(check `cand.data[4:8] == b"ftyp"` + box_size 在合理范围 + major_brand 非空,沿 round-2 F4 BMFF strict 5-tuple 同款最小 valid bytes)
   - `test_fake_video_worker_respects_num_candidates_parameter`(num=3 → len(result)==3)
-- [ ] 3.7 commit 2:`feat(video): introduce VideoWorker ABC + VideoCandidate dataclass + exception tree (TBD-009 Phase 3 baseline)`
+- [x] 3.6 (实测) `tests/unit/test_video_worker.py` 7 fence 全 PASS;`pytest -q` 全量 1344 passed
+- [x] 3.7 commit 2:`feat(video): introduce VideoWorker ABC + VideoCandidate dataclass + exception tree (TBD-009 Phase 3 baseline)` — pending commit
+- [x] 3.8 (round-3 PF1 prep) sweep `src/framework/providers/workers/__init__.py` re-exports 加 `VideoCandidate` / `VideoWorker` / `VideoWorkerError` / `VideoWorkerTimeout` / `VideoWorkerUnsupportedResponse` / `FakeVideoWorker` 6 个符号(P2 脆弱点 1 命中:audio Phase 2 漏掉 `AudioWorkerUnsupportedResponse` re-export — 留 audio sweep follow-on,本 commit 不补)
 
 ## 4. ModelRegistry config 扩展(commit 3)
 
