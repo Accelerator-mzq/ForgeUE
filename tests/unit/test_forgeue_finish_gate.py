@@ -1282,3 +1282,310 @@ def test_finish_gate_required_slot_not_satisfied_by_notes_helper(tmp_path):
         f"notes/ helper with evidence_type: verify_report must not satisfy REQUIRED; "
         f"blockers: {[(b.type, b.file) for b in blockers]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# adopt-subagent-driven-development §5 (F1 + F2): subagent dispatch mode
+# detection + 4 new evidence_types + worktree fence
+# ---------------------------------------------------------------------------
+
+
+def _add_subagent_quad(b, *, task_n: int = 1) -> None:
+    """Helper: write the 4 subagent_* evidence files for one micro-task."""
+    b.write_evidence(
+        "execution",
+        f"task_{task_n}_implementer.md",
+        evidence_type="subagent_implementer_report",
+        stage="S4",
+        body="## Status: DONE\nimplementer return body.\n",
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    b.write_evidence(
+        "execution",
+        f"task_{task_n}_spec_review.md",
+        evidence_type="subagent_spec_review",
+        stage="S4",
+        body="## Status: Spec compliant\nspec reviewer body.\n",
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    b.write_evidence(
+        "execution",
+        f"task_{task_n}_code_quality_review.md",
+        evidence_type="subagent_code_quality_review",
+        stage="S4",
+        body="## Status: APPROVED\ncode quality reviewer body.\n",
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    b.write_evidence(
+        "review",
+        "subagent_final_review.md",
+        evidence_type="subagent_final_review",
+        stage="S6",
+        body="## Status: APPROVED\nfinal review body.\n",
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+
+
+def test_subagent_evidence_types_pass_frontmatter_validation(tmp_path):
+    """§5.4 case 1: 4 new evidence_types are accepted by frontmatter validation.
+
+    A change carrying the 4 subagent_* evidence files alongside the standard
+    base evidence MUST NOT trip ``evidence_type_mismatch`` /
+    ``evidence_malformed`` blockers — the new types are first-class.
+    """
+    b = make_complete_change(
+        tmp_path,
+        "fc-sub-fm",
+        with_codex=False,
+        with_cross_check=False,
+    )
+    _add_subagent_quad(b, task_n=1)
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id="fc-sub-fm",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None
+    bad_types = {"evidence_type_mismatch", "evidence_malformed"}
+    offending = [b for b in report.blockers if b.type in bad_types]
+    assert offending == [], (
+        f"4 new subagent_* evidence_types must validate cleanly; got: "
+        f"{[(bl.type, bl.file, bl.detail) for bl in offending]}"
+    )
+
+
+def test_subagent_dispatch_mode_required_evidence_missing_blocks(tmp_path):
+    """§5.4 case 2 (F2 fence): ANY frontmatter ``triggered_by_command:
+    change-apply-subagent`` flips the change to subagent dispatch mode →
+    the 4 subagent_* evidence types are REQUIRED → missing them produces
+    ``evidence_missing`` blockers (exit 2). MUST NOT silent-WARN.
+    """
+    b = make_complete_change(
+        tmp_path,
+        "fc-sub-required",
+        with_codex=False,
+        with_cross_check=False,
+    )
+    # Plant only ONE subagent evidence file (the implementer) carrying the
+    # dispatch-mode signal; the other 3 are deliberately missing.
+    b.write_evidence(
+        "execution",
+        "task_1_implementer.md",
+        evidence_type="subagent_implementer_report",
+        stage="S4",
+        body="## Status: DONE\nimplementer return.\n",
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id="fc-sub-required",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None
+    missing_details = [
+        bl.detail for bl in report.blockers if bl.type == "evidence_missing"
+    ]
+    joined = " ".join(missing_details)
+    # The 3 missing subagent_* evidence types MUST surface as evidence_missing
+    for needed in (
+        "subagent_spec_review",
+        "subagent_code_quality_review",
+        "subagent_final_review",
+    ):
+        assert needed in joined, (
+            f"subagent dispatch mode must REQUIRE {needed!r}; missing from blockers: "
+            f"{missing_details!r}"
+        )
+
+
+def test_direct_dispatch_mode_does_not_require_subagent_evidence(tmp_path):
+    """§5.4 case 3 (F2 fence): NO frontmatter carries
+    ``triggered_by_command: change-apply-subagent`` → direct / legacy mode
+    → 4 subagent_* evidence types are NOT REQUIRED → finish_gate must pass
+    without them.
+    """
+    b = make_complete_change(
+        tmp_path,
+        "fc-sub-direct",
+        with_codex=False,
+        with_cross_check=False,
+    )
+    # Default make_complete_change carries no triggered_by_command field;
+    # the 3 base evidence files satisfy the legacy REQUIRED set.
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id="fc-sub-direct",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None
+    missing_subagent = [
+        bl
+        for bl in report.blockers
+        if bl.type == "evidence_missing"
+        and any(
+            kw in (bl.detail or "")
+            for kw in (
+                "subagent_implementer_report",
+                "subagent_spec_review",
+                "subagent_code_quality_review",
+                "subagent_final_review",
+            )
+        )
+    ]
+    assert missing_subagent == [], (
+        f"direct dispatch (no triggered_by_command) MUST NOT require subagent_* evidence; "
+        f"got blockers: {[(bl.type, bl.detail) for bl in missing_subagent]}"
+    )
+
+
+def test_subagent_dispatch_mode_other_value_does_not_trigger_required(tmp_path):
+    """§5.4 case 3 reinforcement: ``triggered_by_command`` with a different
+    value (e.g. ``change-apply-direct``) MUST NOT flip subagent mode.
+    """
+    b = make_complete_change(
+        tmp_path,
+        "fc-sub-other",
+        with_codex=False,
+        with_cross_check=False,
+    )
+    b.write_evidence(
+        "execution",
+        "tdd_log.md",
+        evidence_type="tdd_log",
+        stage="S4",
+        body="## TDD\nlegacy direct path tdd log.\n",
+        extra_frontmatter={"triggered_by_command": "change-apply-direct"},
+    )
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id="fc-sub-other",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None
+    missing_subagent = [
+        bl
+        for bl in report.blockers
+        if bl.type == "evidence_missing"
+        and "subagent_" in (bl.detail or "")
+    ]
+    assert missing_subagent == [], (
+        f"triggered_by_command other than 'change-apply-subagent' MUST NOT require "
+        f"subagent_* evidence; got: {[(bl.type, bl.detail) for bl in missing_subagent]}"
+    )
+
+
+def test_subagent_full_quad_satisfies_dispatch_mode(tmp_path):
+    """§5.4 case 1 reinforcement: a complete subagent dispatch run carrying
+    all 4 subagent_* evidence files MUST PASS without ``evidence_missing``
+    for the 4 types.
+    """
+    b = make_complete_change(
+        tmp_path,
+        "fc-sub-full",
+        with_codex=False,
+        with_cross_check=False,
+    )
+    _add_subagent_quad(b, task_n=1)
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id="fc-sub-full",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None
+    # No missing blocker should reference the 4 subagent_* types
+    for ev_type in (
+        "subagent_implementer_report",
+        "subagent_spec_review",
+        "subagent_code_quality_review",
+        "subagent_final_review",
+    ):
+        assert not any(
+            bl.type == "evidence_missing" and ev_type in (bl.detail or "")
+            for bl in report.blockers
+        ), f"complete subagent quad MUST satisfy {ev_type}"
+
+
+def test_worktree_isolation_requires_committed_change_artifacts(tmp_path):
+    """§5.4 case 4 (F1 worktree fence): in a real ``git worktree add``
+    isolation scenario, untracked files in the main worktree are invisible
+    to the isolated worktree. tasks.md §4.1 step 6.5 mandates
+    ``change-apply-subagent`` commits untracked change artifacts BEFORE
+    spawning per-task subagent worktrees; otherwise subagents see an empty
+    ``openspec/changes/<id>/`` and cannot read tasks / design.
+
+    This fence simulates the failure mode by:
+    1. init a fresh git repo,
+    2. write contract artifacts (proposal/design/tasks) WITHOUT committing,
+    3. ``git worktree add`` to a sibling dir,
+    4. assert the sibling sees NONE of the uncommitted artifacts.
+
+    This guards against regression of the §4.1 step 6.5 commit step in
+    ``change-apply-subagent.md``. If a future refactor drops the
+    pre-dispatch commit, this fence still passes (worktree isolation
+    semantics are git-level, not our tool); the regression would be in the
+    skill's behavior. The fence value is documenting the constraint so
+    test_forgeue_finish_gate.py loudly asserts the assumption every CI run.
+    """
+    b = ChangeBuilder(repo=tmp_path, change_id="fc-wt")
+    b.init_git()
+    # bootstrap commit so HEAD exists for `git worktree add`
+    (tmp_path / "README.md").write_text("# repo\n", encoding="utf-8")
+    b.commit_all("init", paths=["README.md"])
+
+    # Write change artifacts under openspec/ but DO NOT commit them.
+    b.write_proposal()
+    b.write_design()
+    b.write_tasks(anchors=["1.1"], checkmarks_under_3=True)
+    proposal = tmp_path / "openspec" / "changes" / "fc-wt" / "proposal.md"
+    assert proposal.is_file(), "main worktree must see uncommitted file"
+
+    # Spawn an isolated worktree from HEAD (which lacks the openspec/ tree).
+    wt_dir = tmp_path.parent / f"{tmp_path.name}-wt"
+    if wt_dir.exists():
+        # Clean up any leftover from a prior test run
+        import shutil as _shutil
+
+        _shutil.rmtree(wt_dir, ignore_errors=True)
+    try:
+        proc = subprocess.run(
+            ["git", "worktree", "add", str(wt_dir), "HEAD"],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env={**os.environ, "GIT_CONFIG_GLOBAL": str(tmp_path / ".gitconfig-test"),
+                 "GIT_CONFIG_SYSTEM": str(tmp_path / ".gitconfig-system-test")},
+            timeout=30,
+        )
+        if proc.returncode != 0:
+            # If worktree add fails (rare on Windows shared FS), the fence
+            # is informational rather than enforced. Skip.
+            pytest.skip(f"git worktree add unavailable: {proc.stderr!r}")
+
+        wt_proposal = wt_dir / "openspec" / "changes" / "fc-wt" / "proposal.md"
+        assert not wt_proposal.exists(), (
+            "F1 fence: isolated worktree MUST NOT see uncommitted change artifacts; "
+            "tasks.md §4.1 step 6.5 MUST commit them before subagent dispatch — "
+            "regression in change-apply-subagent.md commit step would be undetected "
+            "without this assumption being asserted."
+        )
+    finally:
+        # Always attempt cleanup so subsequent test runs are not polluted.
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", str(wt_dir)],
+            cwd=str(tmp_path),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )

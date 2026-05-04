@@ -568,3 +568,205 @@ def test_S4_stays_when_verify_report_has_real_fail_step(tmp_path):
     assert data.get("state") != "S5", (
         f"Real [FAIL] step must NOT infer S5; got state={data.get('state')!r}"
     )
+
+
+# ---------------------------------------------------------------------------
+# adopt-subagent-driven-development §5.6 (F3): subagent_* evidence types
+# participate in DRIFT detection (contradicts contract / exposes gap)
+# ---------------------------------------------------------------------------
+
+
+def test_subagent_implementer_def_outside_design_triggers_drift_contra(tmp_path):
+    """§5.6 case 1 (F3 fence): a ``subagent_implementer_report`` body that
+    declares ``def``/``class`` identifiers absent from design.md fenced code
+    MUST trip ``evidence_contradicts_contract`` DRIFT (exit 5). Mirrors
+    legacy ``tdd_log`` behavior.
+    """
+    b = ChangeBuilder(repo=tmp_path, change_id="fc-sub-contra")
+    b.write_proposal()
+    # design.md only declares LegitFunc; the implementer body introduces
+    # ``UnknownHelper`` which is NOT in the contract.
+    b.write_design(
+        with_reasoning_notes=True,
+        python_idents=["LegitFunc"],
+        backticked_idents=["LegitClass"],
+        decision_ids=["D-Existing"],
+    )
+    b.write_tasks(anchors=["1.1"])
+    b.write_evidence(
+        "execution",
+        "task_1_implementer.md",
+        evidence_type="subagent_implementer_report",
+        stage="S4",
+        body=(
+            "## Status: DONE\n\n"
+            "Added a helper class.\n\n"
+            "```python\n"
+            "class UnknownHelper:\n"
+            "    pass\n"
+            "```\n"
+        ),
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    report = fcs.build_report(
+        repo=tmp_path, change_id="fc-sub-contra", writeback_check=True
+    )
+    assert report is not None
+    contra = [d for d in report.drifts if d.type == fcs.DRIFT_CONTRA]
+    assert contra, (
+        f"subagent_implementer_report def outside design.md MUST trigger DRIFT_CONTRA; "
+        f"got drifts: {[(d.type, d.ref) for d in report.drifts]}"
+    )
+    assert any(d.ref == "UnknownHelper" for d in contra)
+
+
+def test_subagent_spec_review_failure_keyword_triggers_drift_gap(tmp_path):
+    """§5.6 case 2 (F3 fence): a ``subagent_spec_review`` body that
+    surfaces a ``_KNOWN_FAILURE_KEYWORDS`` token absent from design.md
+    MUST trip ``evidence_exposes_contract_gap`` DRIFT (exit 5). Mirrors
+    legacy ``debug_log`` behavior — covers the spec-review "missing
+    requirement" / "extra feature" / "misunderstood" gap-keyword case.
+    """
+    b = ChangeBuilder(repo=tmp_path, change_id="fc-sub-gap")
+    b.write_proposal()
+    # design.md declares BudgetExceeded but NOT WorkerTimeout.
+    b.write_design(
+        with_reasoning_notes=True,
+        failure_keywords=["BudgetExceeded"],
+        decision_ids=["D-Existing"],
+    )
+    b.write_tasks(anchors=["1.1"])
+    b.write_evidence(
+        "execution",
+        "task_1_spec_review.md",
+        evidence_type="subagent_spec_review",
+        stage="S4",
+        body=(
+            "## Status: missing requirement\n\n"
+            "Spec review surfaced WorkerTimeout failure mode that is NOT "
+            "documented in design.md — extra feature / misunderstood scope.\n"
+        ),
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    report = fcs.build_report(
+        repo=tmp_path, change_id="fc-sub-gap", writeback_check=True
+    )
+    assert report is not None
+    gaps = [d for d in report.drifts if d.type == fcs.DRIFT_GAP]
+    assert gaps, (
+        f"subagent_spec_review with WorkerTimeout absent from design.md MUST trigger "
+        f"DRIFT_GAP; got drifts: {[(d.type, d.ref) for d in report.drifts]}"
+    )
+    assert any(d.ref == "WorkerTimeout" for d in gaps)
+
+
+def test_subagent_code_quality_review_critical_failure_mode_triggers_drift_gap(tmp_path):
+    """§5.6 case 3 (F3 fence): a ``subagent_code_quality_review`` body that
+    flags a Critical issue referencing an undocumented failure mode MUST
+    trip DRIFT_GAP (exit 5).
+    """
+    b = ChangeBuilder(repo=tmp_path, change_id="fc-sub-cq-gap")
+    b.write_proposal()
+    b.write_design(
+        with_reasoning_notes=True,
+        failure_keywords=["BudgetExceeded"],
+        decision_ids=["D-Existing"],
+    )
+    b.write_tasks(anchors=["1.1"])
+    b.write_evidence(
+        "execution",
+        "task_1_code_quality_review.md",
+        evidence_type="subagent_code_quality_review",
+        stage="S4",
+        body=(
+            "## Status: APPROVED_WITH_CONCERNS\n\n"
+            "## Issues (Critical)\n\n"
+            "- ProviderTimeout failure mode is observed in tests but design.md "
+            "does not document it. Critical contract gap.\n"
+        ),
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    report = fcs.build_report(
+        repo=tmp_path, change_id="fc-sub-cq-gap", writeback_check=True
+    )
+    assert report is not None
+    gaps = [d for d in report.drifts if d.type == fcs.DRIFT_GAP]
+    assert gaps, (
+        f"subagent_code_quality_review Critical issue referencing undocumented "
+        f"failure mode MUST trigger DRIFT_GAP; got drifts: "
+        f"{[(d.type, d.ref) for d in report.drifts]}"
+    )
+    assert any(d.ref == "ProviderTimeout" for d in gaps)
+
+
+def test_subagent_final_review_def_outside_design_triggers_drift_contra(tmp_path):
+    """§5.6 reinforcement: ``subagent_final_review`` shares the same allow-list
+    as the per-task reviews; out-of-contract identifiers in fenced code
+    blocks MUST trigger DRIFT_CONTRA exit 5.
+    """
+    b = ChangeBuilder(repo=tmp_path, change_id="fc-sub-final")
+    b.write_proposal()
+    b.write_design(
+        with_reasoning_notes=True,
+        python_idents=["LegitFunc"],
+        backticked_idents=["LegitClass"],
+        decision_ids=["D-Existing"],
+    )
+    b.write_tasks(anchors=["1.1"])
+    b.write_evidence(
+        "review",
+        "subagent_final_review.md",
+        evidence_type="subagent_final_review",
+        stage="S6",
+        body=(
+            "## Status: APPROVED\n\n"
+            "```python\n"
+            "def stealth_helper():\n"
+            "    return 1\n"
+            "```\n"
+        ),
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    report = fcs.build_report(
+        repo=tmp_path, change_id="fc-sub-final", writeback_check=True
+    )
+    assert report is not None
+    contra = [d for d in report.drifts if d.type == fcs.DRIFT_CONTRA]
+    assert any(d.ref == "stealth_helper" for d in contra), (
+        f"subagent_final_review def outside design.md MUST trigger DRIFT_CONTRA; "
+        f"got drifts: {[(d.type, d.ref) for d in report.drifts]}"
+    )
+
+
+def test_subagent_drift_cli_exits_5(tmp_path):
+    """§5.6 CLI integration: subagent_* DRIFT detection MUST surface as
+    exit 5 from ``--writeback-check --json`` (sames as legacy DRIFT types).
+    """
+    b = ChangeBuilder(repo=tmp_path, change_id="fc-sub-cli")
+    b.write_proposal()
+    b.write_design(
+        with_reasoning_notes=True,
+        python_idents=["LegitFunc"],
+        decision_ids=["D-Existing"],
+    )
+    b.write_tasks(anchors=["1.1"])
+    b.write_evidence(
+        "execution",
+        "task_1_implementer.md",
+        evidence_type="subagent_implementer_report",
+        stage="S4",
+        body=(
+            "## Status: DONE\n\n"
+            "```python\n"
+            "class OffPiste:\n    pass\n"
+            "```\n"
+        ),
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    proc = _run_cli(
+        tmp_path, ["--change", "fc-sub-cli", "--writeback-check", "--json"]
+    )
+    assert proc.returncode == 5
+    data = json.loads(proc.stdout)
+    types = [d["type"] for d in data["drifts"]]
+    assert fcs.DRIFT_CONTRA in types

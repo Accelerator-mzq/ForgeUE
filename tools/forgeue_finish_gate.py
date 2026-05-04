@@ -81,7 +81,27 @@ _REQUIRED_EVIDENCE_CLAUDE_PLUGIN: list[tuple[str, str]] = [
 ]
 
 
+# Conditional REQUIRED only when dispatch mode == change-apply-subagent
+# (per design.md D-EvidenceSchema "Dispatch mode 判定" + adopt-subagent-driven-development
+# round 1 F2 fix). Triggered when ANY evidence file under the change carries
+# frontmatter ``triggered_by_command: change-apply-subagent``. The default
+# paths use globs because per-task evidence is named ``task_<n>_*.md``.
+_REQUIRED_EVIDENCE_SUBAGENT: list[tuple[str, str]] = [
+    ("subagent_implementer_report", "execution/task_*_implementer.md"),
+    ("subagent_spec_review", "execution/task_*_spec_review.md"),
+    ("subagent_code_quality_review", "execution/task_*_code_quality_review.md"),
+    ("subagent_final_review", "review/subagent_final_review.md"),
+]
+
+
 _CROSS_CHECK_TYPES = frozenset({"design_cross_check", "plan_cross_check"})
+
+# Frontmatter sentinel value indicating evidence was produced by the
+# subagent-driven-development command path. design.md D-EvidenceSchema +
+# round 1 F2 fix mandate the value be carried as a top-level audit field
+# beyond the standard 12-key schema.
+_DISPATCH_MODE_FIELD = "triggered_by_command"
+_DISPATCH_MODE_SUBAGENT_VALUE = "change-apply-subagent"
 
 # Subdirectories that require strict 12-key evidence (helpers in notes/ are
 # allowed to omit frontmatter; per F3-adv ``notes/`` is the helper bucket
@@ -244,6 +264,39 @@ def _validate_evidence_file(
     return blockers
 
 
+def _detect_subagent_dispatch_mode(change_dir: Path) -> bool:
+    """True iff any formal-evidence file carries ``triggered_by_command: change-apply-subagent``.
+
+    Per design.md D-EvidenceSchema "Dispatch mode 判定" segment + round 1
+    F2 fix (codex review): finish_gate must NOT depend on a separate marker
+    file (``notes/pre_p0/dispatch_mode.txt``) — that file is helper-tier and
+    silently absent on legitimate subagent runs would have bypassed the
+    gate. Instead the per-task evidence files emitted by
+    ``change-apply-subagent`` MUST carry the ``triggered_by_command``
+    frontmatter field, and finish_gate scans for that signal directly.
+
+    Scope: only formal evidence subdirs (notes/ helpers excluded — they may
+    quote the field in body prose as documentation example without
+    intending to dispatch). Single hit anywhere flips the change to
+    subagent-mode.
+    """
+    for sub in _FORMAL_EVIDENCE_SUBDIRS:
+        sd = change_dir / sub
+        if not sd.is_dir():
+            continue
+        for p in sorted(sd.rglob("*.md")):
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, _ = _common.parse_frontmatter(text)
+            if fm.get(_DISPATCH_MODE_FIELD) == _DISPATCH_MODE_SUBAGENT_VALUE:
+                return True
+    return False
+
+
 def check_evidence_completeness(
     change_dir: Path,
     *,
@@ -258,6 +311,12 @@ def check_evidence_completeness(
     with ``evidence_type: codex_verification_review``) — the type field is
     canonical, file paths are diagnostic. Per F8-adv, also validates
     frontmatter / body content for each found file.
+
+    Subagent dispatch mode (adopt-subagent-driven-development round 1 F2):
+    iff any formal evidence file frontmatter carries
+    ``triggered_by_command: change-apply-subagent``, the 4 subagent_*
+    evidence types are added to the REQUIRED set. Otherwise (direct mode /
+    legacy change) the 4 subagent_* types remain OPTIONAL.
     """
     if by_type is None:
         by_type = _scan_evidence_by_type(change_dir)
@@ -265,6 +324,8 @@ def check_evidence_completeness(
     required: list[tuple[str, str]] = list(_REQUIRED_EVIDENCE_BASE)
     if detected_env == "claude-code" and codex_plugin_available:
         required.extend(_REQUIRED_EVIDENCE_CLAUDE_PLUGIN)
+    if _detect_subagent_dispatch_mode(change_dir):
+        required.extend(_REQUIRED_EVIDENCE_SUBAGENT)
     for ev_type, default_path in required:
         files = by_type.get(ev_type, [])
         if not files:
