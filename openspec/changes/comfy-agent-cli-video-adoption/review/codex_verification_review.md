@@ -2,13 +2,14 @@
 change_id: comfy-agent-cli-video-adoption
 stage: S5
 evidence_type: codex_verification_review
-contract_refs: [tasks.md#12.1]
+contract_refs:
+  - tasks.md#12.1
 aligned_with_contract: false
 detected_env: claude-code
 triggered_by: "/codex:review --base 5ea85ae --background"
 codex_plugin_available: true
 drift_decision: written-back-to-ue_scripts/run_import.py+examples/comfy_local_smoke_video.json
-writeback_commit: 7a7b7dc
+writeback_commit: "7a7b7dc"
 drift_reason: "codex review 给出 2 P2 findings:(1) run_import.py 不 honor framework PermissionPolicy(allow_import_file_media_source=False)denied op,会绕过权限创建 asset;(2) examples/comfy_local_smoke_video.json worker_timeout_s=600s 实测 896s 超时。两项都已 writeback to code(commit pending),并加 P4 stub fence test_p4_run_import_skips_permission_denied_file_media_source_op cover (1) 修复(asserts AssetTools.create_asset NEVER 被调 + skipped record 仅 1 条)"
 ---
 

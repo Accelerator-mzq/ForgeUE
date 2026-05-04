@@ -2,7 +2,10 @@
 change_id: comfy-agent-cli-video-adoption
 stage: S5
 evidence_type: doc_sync_report
-contract_refs: [tasks.md#15, tasks.md#16, tasks.md#13]
+contract_refs:
+  - tasks.md#15
+  - tasks.md#16
+  - tasks.md#13
 aligned_with_contract: true
 detected_env: claude-code
 triggered_by: "/forgeue:change-doc-sync (Documentation Sync Gate prescan + 10-doc sync)"

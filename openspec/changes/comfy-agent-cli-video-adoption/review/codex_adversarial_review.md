@@ -2,13 +2,14 @@
 change_id: comfy-agent-cli-video-adoption
 stage: S6
 evidence_type: codex_adversarial_review
-contract_refs: [tasks.md#12.2]
+contract_refs:
+  - tasks.md#12.2
 aligned_with_contract: false
 detected_env: claude-code
 triggered_by: "/codex:adversarial-review --base 5ea85ae --background"
 codex_plugin_available: true
 drift_decision: written-back-to-tasks.md+notes+specs/ue-export-bridge+CLAUDE.md+AGENTS.md
-writeback_commit: 7a7b7dc
+writeback_commit: "7a7b7dc"
 drift_reason: "codex adversarial review (review-mor0pkxs-hxsviy) 给 3 findings:(1) [high] tasks.md §11/§11b/§12/§13 仍 unchecked + writeback_commit: pending(归档 gate 未闭合);(2) [high] specs/ue-export-bridge/spec.md:145-155 仍要求 set loop / play_on_open editor properties + 描述 AssetImportTask 路径(与 round-7 R1 实测修复 + AssetTools.create_asset 路径不一致);(3) [medium] CLAUDE.md 共享目录依赖段只登记 runner.py 没登记 round-7 R2 manifest 5-patch。三项已全 writeback to artifact"
 ---
 

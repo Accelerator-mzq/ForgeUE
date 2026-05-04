@@ -24,7 +24,7 @@ resolved_at: 2026-05-04T13:40:00+08:00
 disputed_open: 0
 aligned_with_contract: false
 drift_decision: written-back-to-design+specs+tasks+proposal+runner.py (4 findings 全 accepted-codex; commit 1185377 含全部 round-3 PF1-PF4 修订;PF1 路径 (a) 用户 2026-05-04 拍板 → ComfyUI runner.py user-authored extension 已实施;PF2/PF3/PF4 同步 sweep)
-writeback_commit: 1185377
+writeback_commit: "1185377"
 drift_reason: "round-3 codex plan review 4 findings PF1-PF4 全 accepted-codex,commit 1185377 含全部修订(PF1 ComfyUI runner.py user-authored extension 用户授权 + PF2 BMFF largesize reject + PF3 spec sweep + PF4 dataclass enforcement layer)"
 reasoning_notes_anchor: "design.md `## Reasoning Notes — round-3 codex plan review (2026-05-04)`"
 note: |

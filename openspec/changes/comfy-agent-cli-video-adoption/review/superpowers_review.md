@@ -2,7 +2,16 @@
 change_id: comfy-agent-cli-video-adoption
 stage: S6
 evidence_type: superpowers_review
-contract_refs: [proposal.md, design.md, tasks.md, specs/provider-routing/spec.md, specs/runtime-core/spec.md, specs/artifact-contract/spec.md, specs/ue-export-bridge/spec.md, specs/probe-and-validation/spec.md, specs/examples-and-acceptance/spec.md]
+contract_refs:
+  - proposal.md
+  - design.md
+  - tasks.md
+  - specs/provider-routing/spec.md
+  - specs/runtime-core/spec.md
+  - specs/artifact-contract/spec.md
+  - specs/ue-export-bridge/spec.md
+  - specs/probe-and-validation/spec.md
+  - specs/examples-and-acceptance/spec.md
 aligned_with_contract: true
 detected_env: claude-code
 triggered_by: "/forgeue:change-review (Superpowers requesting-code-review finalize)"
