@@ -22,8 +22,8 @@ created_at: 2026-05-04T11:11:00+08:00
 resolved_at: 2026-05-04T11:48:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: written-back-to-design+specs+tasks (4 findings accepted-codex; writeback 已落盘到 design.md `## Reasoning Notes — round-2 codex review` 段 + 5 个 spec delta + tasks.md §3/§5/§8c/§9c/§11;writeback_commit 待用户在 finish-gate 之前 git commit 时回填真实 SHA — 当前 S2→S3 transition 阶段 change 仍 fully untracked,沿 audio Phase 2 提交节奏:实施 commit chain 之前 cross-check + writeback 一起 commit 拿 hash 回填)
-writeback_commit: null
+drift_decision: written-back-to-design+specs+tasks (4 findings accepted-codex; writeback 已落盘到 design.md `## Reasoning Notes — round-2 codex review` 段 + 5 个 spec delta + tasks.md §3/§5/§8c/§9c/§11;commit 55dc4d4 含全部 round-2 修订 + S3 outputs 一起 land)
+writeback_commit: 55dc4d48f670a8e8e20b4dcb781a23936a7f71c6
 drift_reason: null
 reasoning_notes_anchor: "design.md `## Reasoning Notes — round-2 codex review (2026-05-04)`"
 note: |

@@ -270,11 +270,14 @@ ctx.repository.put(
 **决策**(**round-2 codex F4 accepted-codex 修订 2026-05-04**):`_run_once_video` 强制 magic bytes 二次校验 + 最小 BMFF 头校验,扩展名 + magic bytes / BMFF header 不一致 raise `WorkerUnsupportedResponse`。video format whitelist 缩到 mp4 only(F2 修订),BMFF header strict 校验:
 
 ```python
-# mp4: BMFF (ISO/IEC 14496-12) strict header check (round-2 F4 修订)
-# - 文件长度 >= 16 bytes(最少容纳 1 个 ftyp box)
+# mp4: BMFF (ISO/IEC 14496-12) strict header check (round-2 F4 修订 + round-3 PF2 修订)
+# - 文件长度 >= 16 bytes(最少容纳 1 个 32-bit ftyp box)
 # - 第一个 box: [size:4 bytes][type:4 bytes];type == b"ftyp" at offset 4
-# - box_size 合理(8 <= box_size <= len(data),or box_size == 1 表示 64-bit largesize)
+# - box_size 合理(8 <= box_size <= len(data));round-3 PF2 修订:reject box_size == 1
+#   (64-bit largesize),follow-on `video-bmff-largesize-support` 触发条件 = 真实 mp4 ≥4 GiB
 # - major_brand 非空(offset 8-12 4 bytes,not all-zero / not all-space)
+# - **NOT** validating compatible_brands list / minor_version range(留 follow-on
+#   `video-brand-strict-validation` 当 UE FileMediaSource import 拒绝某 brand 时再加)
 
 if ext != "mp4":
     raise WorkerUnsupportedResponse(
@@ -292,11 +295,13 @@ if data[4:8] != b"ftyp":
         f"mp4 BMFF header mismatch: offset 4-8 = {data[4:8]!r}, expected b'ftyp'"
     )
 
-# box_size sanity
+# box_size sanity (round-3 PF2 修订:统一 reject box_size == 1 / < 8 / > len(data);
+# largesize parsing 有 spec gotcha — 拒绝是 minimum-touch 修复)
 box_size = int.from_bytes(data[0:4], "big")
-if box_size != 1 and (box_size < 8 or box_size > len(data)):
+if box_size == 1 or box_size < 8 or box_size > len(data):
     raise WorkerUnsupportedResponse(
-        f"mp4 BMFF first box_size={box_size} out of range [8, {len(data)}]"
+        f"mp4 BMFF first box_size={box_size} out of range [8, {len(data)}] "
+        f"(largesize box_size==1 deferred to follow-on `video-bmff-largesize-support`; round-3 PF2)"
     )
 
 # major_brand non-empty
@@ -359,6 +364,49 @@ if src.is_symlink():
 **Implication**:`UEAssetEntry` schema 不需要新增 `external_payload_path` 字段;`source_uri` 仍是统一字段,domain_video 内部知道 video 走 Movies/ subdir。这是「framework 端只 DECLARE 资产 import 意图,UE 端 EXECUTE 实际文件放置」原则的实例(沿 manifest_builder.py 顶部 docstring §E.1)。
 
 **Alternative 考虑**:在 `UEAssetEntry` 加 `external_payload_path` 字段显式表达 mp4 落 Movies/。**Rejected**:增加 schema 字段;Movies/ vs Generated/ 是 file_media_source asset_kind 内部约定,不需要 schema-level 表达;沿 audio sound_wave kind 内部决定 import_options.intended_use = "sfx" vs "music" 同模式,kind-specific 决策落 domain_*.py 内部。
+
+### D-Runner-Extension — ComfyUI runner.py 扩 `extract_outputs` 加 `video` 收集(**round-3 codex plan PF1 修订,用户授权 2026-05-04**)
+
+**决策**(**round-3 codex plan PF1 accepted-codex 路径 (a) 修订 2026-05-04**):D6 4-dict `_REQUIRED_OUTPUT_KEY["video"] = "video"` 假设 ComfyUI agent CLI `extract_outputs` 返回 dict 含 `video` key,但 round-3 codex plan review PF1 实测 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py:186-249` `extract_outputs` 当前只返回 `{images, audio, glb, raw}` — **没有 `video` key**。Wan T2V 7-min 跑后 `_validate_outputs(outputs)` 会判 missing `outputs.video` 直接 raise,UE import 链路全断。
+
+User-authored 修复(沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式;CLAUDE.md「ComfyUI 共享目录新增 ForgeUE 依赖」段更新):
+
+**修改文件**:`D:/AI/ComfyUI/scripts/comfyui_api/runner.py` 的 `extract_outputs` 函数(line 186-249)。
+
+**具体改动**:
+1. 加 `videos = []` 初始化(line 211 audio 后)
+2. 加 video 收集 block(类比 audio block 模式):
+   ```python
+   # --- video (VHS_VideoCombine emits via legacy "gifs" UI key) ---
+   for vid in node_out.get("gifs", []):
+       if vid.get("type") != "output":
+           continue
+       fullpath = vid.get("fullpath")
+       if fullpath:
+           videos.append(str(fullpath))
+           continue
+       subfolder = vid.get("subfolder", "")
+       filename = vid.get("filename", "")
+       path = str(out_root / subfolder / filename) if subfolder else str(out_root / filename)
+       videos.append(path)
+   ```
+3. 返回 dict 加 `"video": videos` key
+
+**为什么 "gifs" key**:实测 `D:/AI/ComfyUI/apps/experiment/ComfyUI-aki-v3/ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite/videohelpersuite/nodes.py:633` `VideoCombine.combine_video` 返回 `{"ui": {"gifs": [preview]}, "result": ((save_output, output_files),)}` — VHS 节点用 `"gifs"` UI key 是 legacy naming(VHS 最早只做 GIF,后扩展到 mp4 / webm / 等容器但 key 名未变),preview dict 含 `filename` / `subfolder` / `type` / `format` / `frame_rate` / `workflow` / `fullpath`。
+
+**为什么用 fullpath 优先 fallback subfolder/filename**:VHS_VideoCombine 实测在 `preview["fullpath"] = output_files[-1]`(line 628)给出绝对路径,与 ComfyUI 端 `out_root / subfolder / filename` 组合等价。优先 fullpath 是简单 fast-path;fallback subfolder/filename 兼容理论上不发 fullpath 的场景。
+
+**理由**:
+- 与 image / audio / glb 收集协议**完全对称**(ForgeUE 端 `_validate_outputs(outputs)` 直接走 `outputs.video`,沿 4-dict 协议无任何特殊路径 — 这是 codex plan PF1 推荐路径 (a) 的核心优势)
+- 沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式(已建立先例 — CLAUDE.md ComfyUI 接入段已记录用户手工保留)
+- 后续 ComfyUI / VHS 节点升级 video 输出 key 名时,改 1 处 `runner.py` 即可,**不**影响 ForgeUE 代码
+
+**Alternative 考虑(路径 b)**:ForgeUE worker 端 `_run_once_video` 走 `outputs.raw[<node_id>]` fallback 解析 video paths。**Rejected by user 2026-05-04**:与 image / audio / glb 收集路径不对称(image/audio/glb 走 `extract_outputs` 提供的 dict,video 走 raw 解析),实施 + review 复杂度高;ComfyUI 升级 VHS 节点改 key 名 / 结构,worker 端会挂(脆弱)。
+
+**ComfyUI 共享目录新增 ForgeUE 依赖(round-3 PF1)**:
+- `D:/AI/ComfyUI/scripts/comfyui_api/runner.py` `extract_outputs` 加 video 收集 block(round-3 PF1 fix,2026-05-04)
+- 这个文件是 user-authored ComfyUI 共享目录,ComfyUI 重装时**手工保留**(否则 ForgeUE video L2 evidence 失败)
+- CLAUDE.md ComfyUI 接入段相应行更新(commit 12-15 docs sync 阶段)
 
 ### D12b — Export gate 三处 sweep 扩 video(**round-2 codex F1 修订**)
 
@@ -505,6 +553,70 @@ if isinstance(exc, AudioWorkerTimeout): ...
 **Resolution**:走 (a) — 工程量小(~10 行 code + 9 fence),video 是新建 capability 严标准从一开始建立 vs 沿用 audio 弱标准(audio Phase 2 magic bytes 也只检 4-byte,留 audio sweep follow-on `audio-magic-bytes-hardening`,不在本 change scope)。
 
 **Writeback target**:design.md D9(BMFF strict 校验段全文 + 理由 + Mp4 BMFF first box 选 ftyp 段 + 未校验 brand 子集说明)+ specs/provider-routing/spec.md(generate_video method spec + 5 个新 BMFF strict scenario fence)+ specs/probe-and-validation/spec.md(fence 名:test_generate_video_bmff_too_short / _ftyp_mismatch / _box_size_too_small / _box_size_exceeds_len / _box_size_largesize_1_accepted / _major_brand_zero / _major_brand_spaces / _valid_mp4_accepts_with_isom_brand / _valid_mp4_accepts_with_mp42_brand)+ specs/examples-and-acceptance/spec.md(L2 evidence 加 BMFF strict 4-tuple 校验)+ tasks.md(§5.2 BMFF strict 段 + §11.4 L2 evidence 验证)。
+
+## Reasoning Notes — round-3 codex plan review (2026-05-04)
+
+> 本 round-3 是 plan 阶段(S3→S4-S5)第一轮 codex /codex:adversarial-review hook 触发,沿 `/forgeue:change-apply` workflow §5。Codex 提了 4 条 plan finding(1 high + 3 medium),全 accepted-codex writeback 到 design / spec / tasks / proposal。详细 cross-check 在 `review/plan_cross_check.md` `## B / C / D` 段。本节记录 4 个 finding 的 design-level decision rationale + writeback target。
+
+### Round-3-PF1 (high) — D-Runner-Extension 用户授权扩 ComfyUI runner.py [accepted-codex,路径 (a)]
+
+**finding 摘要**:`outputs.video` key 被当成已确认事实,但 codex 实测 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py:186-249` `extract_outputs` 当前只返回 `{images, audio, glb, raw}` — 无 `video` key。Wan T2V 7-min 跑后 `_validate_outputs(outputs)` 判 missing `outputs.video` raise,UE import 链路全断;mock fence 漏检 live 断点。
+
+**Decision options**:(a) **扩 ComfyUI runner.py 加 video 收集**(沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式;CLAUDE.md「ComfyUI 共享目录新增 ForgeUE 依赖」段更新);(b) **ForgeUE-side fallback** — `_run_once_video` 走 `outputs.raw` 遍历 node_outputs 寻找 video 文件路径(脆弱)。
+
+**Resolution**:**用户 2026-05-04 拍板路径 (a)**。理由:
+- 与 image / audio / glb 收集协议**完全对称**(ForgeUE 端 `_validate_outputs(outputs)` 直接走 `outputs.video`,沿 4-dict 协议无任何特殊路径)
+- 沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式(已建立先例,user 手工保留)
+- 长期维护成本低(ComfyUI / VHS 节点升级时改 1 处 `runner.py` 即可,不影响 ForgeUE 代码)
+- 实测 VHS_VideoCombine 节点用 legacy `gifs` UI key 装 video preview dict(`D:/AI/ComfyUI/apps/experiment/ComfyUI-aki-v3/ComfyUI/custom_nodes/ComfyUI-VideoHelperSuite/videohelpersuite/nodes.py:633` `return {"ui": {"gifs": [preview]}, "result": ...}`),preview dict 含 `filename` / `subfolder` / `type` / `format` / `frame_rate` / `workflow` / `fullpath`(`fullpath = output_files[-1]` 是 absolute path,优先 fast-path)
+
+**Writeback target**:design.md §Decisions D-Runner-Extension(本文件新增段)+ tasks.md §1c(新加 prep step,4 sub-tasks 实施 runner.py 扩展)+ tasks.md §1.5b(从 non-blocking 改为 S4 阻塞项)+ specs/probe-and-validation/spec.md(加 3 fence:`test_comfyui_runner_extract_outputs_collects_video_from_vhs_gifs_key` + `..._skips_non_output_type_video` + `..._video_falls_back_to_subfolder_filename_when_fullpath_missing`)+ proposal.md(_run_once_video 实施段更新)+ CLAUDE.md(commit 12-15 docs sync 阶段加新行,沿 round 5 D10 mini-LoadImage 模式)。
+
+**实施状态(2026-05-04)**:用户授权后 Claude 已直接实施 runner.py 扩展(commit 待 land)— 加 `videos = []` + `for vid in node_out.get("gifs", []):` collection block + `"video": videos` 进 return dict + 顶部 docstring 更新;沿 audio / image / glb 同款 fast-path (fullpath 优先) + fallback (subfolder / filename) 模式。
+
+### Round-3-PF2 (medium) — BMFF box_size==1 largesize 拒绝 [accepted-codex,简化路径]
+
+**finding 摘要**:round-2 D9 BMFF strict 校验允许 `box_size == 1`,但没有解析 64-bit `largesize`。在 ISO BMFF 中 size==1 时 bytes 8-15 是 largesize,major_brand 应从 byte 16 起;current spec 错用 `data[8:12]` 当 major_brand。16-byte 伪 header(size=1、ftyp、非零 largesize 字节、no real major_brand)能过"strict"校验。
+
+**Decision options**:(a) 简化:本 change 拒绝 `box_size == 1` + follow-on `video-bmff-largesize-support`;(b) 完整支持 largesize(parse `data[8:16]` 作 largesize + `data[16:20]` 作 major_brand)。
+
+**Resolution**:走 (a) 简化路径。理由:
+- Wan T2V 标准输出 mp4 5-15MB << 4GiB(largesize 触发阈值),不会用 largesize box
+- 本 change scope 已大,largesize 解析增加复杂度 + 新 fence 不必要
+- follow-on `video-bmff-largesize-support` 触发条件明确(用户实际遇到 ≥4GiB mp4,如 Wan A14B 高分辨率 / 长时长生成)
+
+**Writeback target**:design.md D9 BMFF strict 段(改 `box_size != 1 and (...)` → `box_size == 1 or box_size < 8 or box_size > len(data)` 三种情况统一 reject)+ specs/provider-routing/spec.md generate_video method spec 同款 + tasks.md §5.2 同款 + specs/probe-and-validation/spec.md fence 名(`test_generate_video_bmff_box_size_largesize_1_accepted` → `..._rejected_pending_follow_on`)。新增 follow-on `video-bmff-largesize-support`(D-Followon-Registry 扩展)。
+
+### Round-3-PF3 (medium) — round-2 mp4-only writeback 完整 sweep [accepted-codex]
+
+**finding 摘要**:round-2 F2 mp4-only writeback 漏改 `specs/provider-routing/spec.md:7` VideoCandidate dataclass description Requirement 顶层 Literal 仍是 `["mp4", "webm"]`;proposal.md `_VIDEO_FORMAT_WHITELIST` 字段已改但 `format: Literal["mp4", "webm"]` 在 round-1 描述段残留;archive 后留下自相矛盾的行为契约。
+
+**Decision**:accepted-codex,sweep 所有 webm 残留改 mp4-only。
+
+**Writeback target**:specs/provider-routing/spec.md line 7(VideoCandidate description Requirement 顶层 `Literal["mp4", "webm"]` → `Literal["mp4"]` + 加 round-2 F2 + round-3 PF3 sweep 注释)+ proposal.md line 22(`Literal["mp4", "webm"]` → `Literal["mp4"]` + 加修订注释)+ proposal.md line 88 fence 描述(magic bytes mp4/webm → mp4-only BMFF strict)。
+
+### Round-3-PF4 (medium) — VideoCandidate dataclass 不强制 Literal,enforcement 在 worker 层 [accepted-codex,沿 audio Phase 2 (b) 模式]
+
+**finding 摘要**:`tasks.md` 要求 `VideoCandidate` 是普通 `@dataclass`,但 `test_video_candidate_format_whitelist_mp4_only` 又要求 `format="webm"` 触发 dataclass `Literal["mp4"]` 校验失败。Python `@dataclass` 不会运行时校验 `Literal`;`tests/unit/test_audio_worker.py:39-53` 已显式记录 audio 同款行为(dataclass 不 enforce Literal,worker 层守门)。commit 2 fence 按原样无法变绿。
+
+**Decision options**:(a) 引入 `__post_init__` raise ValueError if format != "mp4",construction-time enforcement;(b) 沿 audio Phase 2 模式 — dataclass accept 任意 string,worker 层 `_run_once_video` 扩展名检查 enforcement。
+
+**Resolution**:走 (b) 沿 audio Phase 2 模式。理由:
+- audio Phase 2 已显式选 (b) 并落 fence(`test_audio_candidate_format_whitelist` 只测 valid formats accepted,worker 层守门 fence 在 `tests/unit/test_comfy_subprocess.py::test_generate_audio_unsupported_extension_ogg_raises_unsupported_response`)
+- 与 audio 路径完全对称(同 enforcement layer)
+- (a) 引入 `__post_init__` 增加 dataclass 复杂度,且 Pydantic 与 dataclass 风格不一致(audio 是 dataclass)
+- 实际 mp4-only invariant 守门由 `_run_once_video` 提供,与 BMFF strict 校验同 layer
+
+**Writeback target**:tasks.md §3.6 fence 名 + 内容更新(删 `test_video_candidate_format_whitelist_mp4_only` + 加 `test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal`)+ specs/provider-routing/spec.md(line 7 加 round-3 PF4 修订注释 + line 40-44 Scenario 重写为 audio 同款 enforcement 行为描述)+ specs/probe-and-validation/spec.md fence 名同款更新 + proposal.md(round-3 PF4 修订注释)。
+
+### round-3 codex review 总结
+
+- **4 个 finding 全 accepted-codex writeback**,无 disputed-permanent-drift,无 disputed-pending
+- **disputed_open: 0**,符合 S3→S4-S5 cross-check 通过条件
+- **PF1 critical blocker resolved**:用户 2026-05-04 授权路径 (a),Claude 已直接实施 ComfyUI runner.py 扩展;新增 D-Runner-Extension design 段 + tasks §1c prep step
+- **PF2/PF3/PF4 全部 accepted-codex 简化 / sweep / 沿 audio 模式**
+- **新增 follow-on**:`video-bmff-largesize-support`(PF2 副作用;触发条件 = 真实 mp4 ≥ 4GiB);**不**进 SRS §7.3 register(沿 D-Followon-Registry 立场)
+- **fence 总数估算调整**:原 +58 → +61 fence(+3 runner.py user-authored extension fence;-1 dataclass Literal enforcement fence 名变更不增减总数;PF2 fence 改名不增减;PF3 全是 description sweep 不影响 fence)
 
 ### round-2 codex review 总结
 

@@ -34,7 +34,7 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 - `test_generate_video_bmff_ftyp_mismatch_raises_unsupported_response` (file >= 16 bytes but `data[4:8] != b"ftyp"` raises with message containing `"mp4 BMFF header mismatch"` + actual bytes)
 - `test_generate_video_bmff_box_size_too_small_raises` (box_size < 8 raises with message containing `"out of range"`)
 - `test_generate_video_bmff_box_size_exceeds_len_raises` (box_size > len(data) raises with message containing `"out of range"`)
-- `test_generate_video_bmff_box_size_largesize_1_accepted` (box_size == 1 indicates 64-bit largesize, accepted)
+- `test_generate_video_bmff_box_size_largesize_1_rejected_pending_follow_on` (round-3 PF2 修订:box_size == 1 indicates 64-bit largesize;本 change scope reject + follow-on `video-bmff-largesize-support`,触发条件 = 真实 mp4 ≥ 4 GiB;Wan T2V 标准输出 5-15MB 不用 largesize)
 - `test_generate_video_bmff_major_brand_zero_raises` (`data[8:12] == b"\x00\x00\x00\x00"` raises with message containing `"major_brand is empty"`)
 - `test_generate_video_bmff_major_brand_spaces_raises` (`data[8:12] == b"    "` raises with message containing `"major_brand is empty"`)
 - `test_generate_video_bmff_valid_mp4_accepts_with_isom_brand` (valid Wan T2V output with major_brand `b"isom"` accepted)
@@ -80,7 +80,7 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 
 **VideoWorker ABC contract (test_video_worker.py, NEW file):**
 - `test_video_worker_abc_requires_generate_video` (instantiating concrete subclass without `generate_video` raises `TypeError`)
-- `test_video_candidate_format_whitelist_mp4_only` (round-2 F2 修订:whitelist is `{"mp4"}`; webm / mov / any other format raises / fails Pydantic Literal validation)
+- `test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal` (round-2 F2 + round-3 PF4 修订:Python `@dataclass` 不在 runtime enforce Literal;dataclass accepts `format="mp4"` AND non-Literal strings (`"webm"` / `"mov"`) at construction without raising;实际 mp4-only enforcement 在 worker 层 `_run_once_video` 扩展名检查 + BMFF strict header validation;沿 audio Phase 2 `tests/unit/test_audio_worker.py::test_audio_candidate_format_whitelist` 同款行为)
 - `test_video_worker_exception_tree_inheritance` (`VideoWorkerTimeout` and `VideoWorkerUnsupportedResponse` subclass `VideoWorkerError`)
 - `test_fake_video_worker_returns_minimal_valid_mp4_bytes` (FakeVideoWorker fixture produces mp4 bytes with `b"ftyp"` magic at offset 4, no third-party codec dependency)
 - `test_fake_video_worker_respects_num_candidates_parameter` (returns list of length `num_candidates`)
@@ -116,6 +116,11 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 - `test_default_import_options_for_file_media_source_kind_returns_video_keys` (assert dict contains `loop` / `play_on_open` / `duration_seconds` / `frame_count` / `width` / `height` / `fps` / `source_format` keys)
 - `test_metadata_overrides_whitelist_includes_video_keys` (assert `frame_count` / `width` / `height` / `fps` / `loop` / `play_on_open` are in the metadata_overrides whitelist set so they propagate to UEAssetEntry)
 - `test_video_artifact_with_mp4_shape_produces_ms_prefixed_ue_name` (round-trip: `Artifact(modality="video", shape="mp4")` → `UEAssetEntry.ue_naming.ue_name` starts with `"MS_"`)
+
+**ComfyUI runner.py user-authored extension fence (round-3 PF1 修订, NEW):**
+- `test_comfyui_runner_extract_outputs_collects_video_from_vhs_gifs_key` (verify D:/AI/ComfyUI/scripts/comfyui_api/runner.py extract_outputs 输出 dict 含 `video` key + 收集 VHS_VideoCombine `gifs` UI key 的 fullpath / subfolder+filename;此 fence 走 stub history_entry 模拟 VHS 节点输出 shape,不依赖真实 ComfyUI subprocess)
+- `test_comfyui_runner_extract_outputs_skips_non_output_type_video` (verify `gifs[].type != "output"` 被 skip;`type=="temp"` 等不进 video list)
+- `test_comfyui_runner_extract_outputs_video_falls_back_to_subfolder_filename_when_fullpath_missing` (verify `gifs[].fullpath` 缺失时走 `out_root / subfolder / filename` fallback)
 
 **P4 真机 stub fence (test_p4_ue_manifest_only.py extension):**
 - `test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video` (sweep-mirror of audio / mesh / image P4 stub fence: substitute `unreal` module with stub, run `run_import.run()` against a manifest containing one `file_media_source` entry, assert `domain_video.import_video_entry` is invoked + Evidence record appended with `status="success"`)

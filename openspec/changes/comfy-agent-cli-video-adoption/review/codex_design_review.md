@@ -23,8 +23,8 @@ findings_severity_breakdown: "high=2, medium=2"
 created_at: 2026-05-04T11:25:00+08:00
 codex_completed_at: 2026-05-04T11:43:00+08:00
 aligned_with_contract: false
-drift_decision: written-back-to-design+specs+tasks (4 findings 全 accepted-codex;详见 design_cross_check.md ## B/C/D;writeback_commit 待 git commit 时回填真实 SHA)
-writeback_commit: null
+drift_decision: written-back-to-design+specs+tasks (4 findings 全 accepted-codex;详见 design_cross_check.md ## B/C/D;commit 55dc4d4 含全部 round-2 修订)
+writeback_commit: 55dc4d48f670a8e8e20b4dcb781a23936a7f71c6
 drift_reason: null
 reasoning_notes_anchor: "design.md `## Reasoning Notes — round-2 codex review (2026-05-04)`"
 note: |

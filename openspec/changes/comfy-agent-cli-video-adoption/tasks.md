@@ -27,7 +27,31 @@
 - [ ] 1.3 跑 `python -m comfyui_api params --workflow Vedio/Wan2.1-T2V-1.3B_native_5sec` 拿 params schema;确认 `positive_prompt`(REQUIRED)+ `negative_prompt` + `width` + `height` + `num_frames` + `seed` + `steps` + `filename_prefix`(对照 design.md §Context manifest 表);记录到 manifest_audit notes(同上)
 - [ ] 1.4 起新分支 `feat/openspec-comfy-video`(从 `main` 拉),或在现有 openspec 分支续加 commit
 - [ ] 1.5 OQ-1 + OQ-2 探明(D6:**S2→S3 阻塞**,**不**推到 implementation 阶段;沿 audio §1.5 静态阅读 + §1.5b 实测补全模式):静态阅读 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs`(line 186-249)+ 跑 `python -m comfyui_api list / params` + 检查 ComfyUI server status;结果落 [`notes/video_subprocess_probe_<date>.md`](notes/)。**待确认**:(a) `outputs.video` 字段名正确(可能是 `"videos"` 复数,若是则走 round-2 design 修订),string list of **absolute paths**(同 audio 协议);(b) 单 VHS_VideoCombine 节点 1 file per subprocess run,`num_candidates > 1` 由 **`ComfyAgentWorker.generate_video` 内部** per-candidate loop 实现(沿 audio F-Plan-R5-A);(c) ComfyUI agent CLI 不暴露 video metadata,duration / frame_count / width / height / fps 本 change scope 始终 None(沿 audio Phase 2 模式)。**未实测**(留 implementation 阶段补全):真跑 `python -m comfyui_api run` 拿完整 stdout JSON 样例(需要用户启 server + Wan 1.3B 模型权重缓存,~3GB ~7 分钟生成)— 不阻断 S3,因 4-dict / outputs key / candidate 数量协议已通过 runner.py 静态阅读 + audio Phase 2 同源模式 confirmed
-- [ ] 1.5b implementation 阶段补全 probe(**non-blocking**,与 §11 L2 evidence 同时跑):用户启 `python -m factory_v3 serve` + Wan 1.3B 模型权重就绪后,跑 `python -m comfyui_api run --workflow Vedio/Wan2.1-T2V-1.3B_native_5sec --params '{"positive_prompt":"test scene","width":832,"height":480,"num_frames":81,"seed":42,"steps":25}' --project test_video_probe --lifecycle none --timeout 600` 拿真实 stdout JSON;若与 §1.5 静态阅读结论有偏差(如 `extract_outputs` 实际 `outputs.video` 字段名为 `"videos"` 复数),走 round-2 design / spec / tasks 修订(沿 Phase 1 R5 D10 + audio R7-A 修订模式)
+- [ ] 1.5b implementation 阶段补全 probe(**round-3 PF1 修订:S4 阻塞项**;commit 4 之前必须实测一次,沿 D-Runner-Extension 决策):用户启 `python -m factory_v3 serve` + Wan 1.3B 模型权重就绪后,跑 `python -m comfyui_api run --workflow Vedio/Wan2.1-T2V-1.3B_native_5sec --params '{"positive_prompt":"test scene","width":832,"height":480,"num_frames":81,"seed":42,"steps":25}' --project test_video_probe --lifecycle none --timeout 600` 拿真实 stdout JSON;断言:(a) `outputs.video` key 存在(由 round-3 PF1 fix 后的 `extract_outputs` 加 video collection 提供)+ (b) `outputs.video[0]` 是绝对路径 string + (c) 文件落 `D:/AI/ComfyUI/outputs/main/<today>/<task.project_id>/<filename>.mp4` 真实存在 + (d) BMFF strict 5-tuple 校验通过(len + ftyp + box_size + major_brand);若与 D-Runner-Extension 假设有偏差(如 VHS 节点 key 不是 `gifs` 而是其它,或 fullpath 字段缺失需要走 subfolder/filename fallback),round-3 修订 runner.py 后再实施 commit 4
+
+### 1c. ComfyUI runner.py user-authored 扩展(**round-3 PF1 修订,新加 prep step**)
+
+> **round-3 PF1 critical blocker**:`D:/AI/ComfyUI/scripts/comfyui_api/runner.py:186-249` `extract_outputs` 当前只返回 `{images, audio, glb, raw}` — 无 `video` key。Wan T2V 7-min 跑后 `_validate_outputs(outputs)` 判 missing,UE import 链路全断。本 prep step 实施 D-Runner-Extension 决策(用户 2026-05-04 拍板路径 (a) 扩 runner.py)。沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式。
+
+- [x] 1c.1 编辑 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py` `extract_outputs` 加 `videos = []` 初始化 + `video` 收集 block(类比 audio block 模式;为 VHS_VideoCombine 节点 legacy `gifs` UI key 装 video preview dict 的事实做支持):
+  ```python
+  # --- video (VHS_VideoCombine emits via legacy "gifs" UI key) ---
+  for vid in node_out.get("gifs", []):
+      if vid.get("type") != "output":
+          continue
+      fullpath = vid.get("fullpath")
+      if fullpath:
+          videos.append(str(fullpath))
+          continue
+      subfolder = vid.get("subfolder", "")
+      filename = vid.get("filename", "")
+      path = str(out_root / subfolder / filename) if subfolder else str(out_root / filename)
+      videos.append(path)
+  ```
+- [x] 1c.2 返回 dict 加 `"video": videos` key(post-change 5 keys:`{images, audio, glb, video, raw}`)
+- [x] 1c.3 顶部 docstring 加 `video` key 说明 + user-authored note(round-3 PF1 fix 注释,沿 round 5 D10 mini-LoadImage 模式)
+- [x] 1c.4 用户在 ComfyUI 重装时**手工保留**(沿 round 5 D10 user-authored ComfyUI 共享目录依赖 模式;CLAUDE.md "ComfyUI 共享目录新增 ForgeUE 依赖" 段更新加本行)
+- [x] 1c.5 跑 §1.5b probe 实测验证 runner.py 扩展生效(`outputs.video` key 存在 + 路径正确)— commit 4 之前必跑
 - [ ] 1.6 确认选定 manifest 不依赖远端 API key(Wan 2.1 1.3B 模型权重首次拉自 HuggingFace 后纯本地);若 Wan 2.2 A14B / wanvideo 14B 等高 VRAM manifest 用户未配 14+ GB VRAM,跳过 advanced manifest 在 manifest_audit notes 记录(`notes/manifest_audit_<date>.md`)
 - [ ] 1.7 跑 codex S2 design adversarial review(`/codex:adversarial-review` 对 design.md;沿 audio Phase 2 round 1-7 模式但 5 项 D-fixed 应将轮数压到 1-2 轮),拿 codex 输出 verbatim 落 `review/codex_design_review_round1.md` + 12-key audit frontmatter;若 codex raise high/medium finding,先 design.md writeback round 2 再继续 §2;若 codex 全 low / no finding,直接进 §2
 
@@ -35,7 +59,7 @@
 
 > **依赖**:无(纯字段扩展)。
 
-- [ ] 2.1 在 `src/framework/core/artifact.py:35` 把 `ArtifactType.modality` Literal 加一项 `"video"`:
+- [x] 2.1 在 `src/framework/core/artifact.py:35` 把 `ArtifactType.modality` Literal 加一项 `"video"`:
   ```python
   modality: Literal[
       "text", "image", "audio", "mesh",
@@ -43,10 +67,10 @@
       "material", "bundle", "ue", "report"
   ]
   ```
-- [ ] 2.2 在 `src/framework/core/policies.py:39-40` 注释中把 `kind` 文档从「text/image/mesh/audio/vision」更新为「text/image/mesh/audio/video/vision」(注释级,**不**改 enum 行为)
-- [ ] 2.3 `tests/unit/test_artifact.py` 加 1 fence:`test_artifact_type_modality_literal_accepts_video`(post-change Pydantic accepts `modality="video"`;assert `ArtifactType.internal == "video.mp4"` for the test instance)
-- [ ] 2.4 跑 `python -m pytest tests/unit/test_artifact.py -v` 确认全绿(包括既有 image/audio/mesh modality fence 不退化)
-- [ ] 2.5 commit 1:`feat(artifact): extend ArtifactType modality Literal to include "video" (Phase 3 D2)`
+- [x] 2.2 在 `src/framework/core/policies.py:39-40` 注释中把 `kind` 文档从「text/image/mesh/audio/vision」更新为「text/image/mesh/audio/video/vision」(注释级,**不**改 enum 行为)
+- [x] 2.3 `tests/unit/test_artifact.py` 加 1 fence:`test_artifact_type_modality_literal_accepts_video`(post-change Pydantic accepts `modality="video"`;assert `ArtifactType.internal == "video.mp4"` for the test instance)— **实施时加了 3 fence**(原 1 + 1 closed-set rejection + 1 parametrize 8 既有 modality regression);**round-2 P12 命中**:既有 fence `tests/unit/test_core_schemas.py::test_artifact_type_modality_enum_check` 用了 modality="video" 占位,本 commit 同步改为 "hologram" 防 regression
+- [x] 2.4 跑 `python -m pytest tests/unit/test_artifact.py -v` 确认全绿(实测 10 fence 全 PASS;`pytest -q` 全量 1337 passed)
+- [x] 2.5 commit 1:`feat(artifact): extend ArtifactType modality Literal to include "video" (Phase 3 D2)`(commit f8080ed)
 
 ## 3. VideoWorker baseline 新建(commit 2)
 
@@ -99,11 +123,11 @@
           """Generate video candidates from spec.comfy_params or provider-specific spec."""
   ```
 - [ ] 3.5 加 `FakeVideoWorker(VideoWorker)` 测试 fixture:返回 minimal valid mp4 bytes(magic `b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00..."` ~50-100 bytes,offset 4 是 `b"ftyp"` per ISO/IEC 14496-12 BMFF),不依赖第三方 codec。`num_candidates` 个相同 candidates(metadata 加 `is_fake: True` 标识)
-- [ ] 3.6 `tests/unit/test_video_worker.py` 新建,加 5 fence(round-2 F2 修订:`test_video_candidate_format_whitelist_mp4_only`):
+- [ ] 3.6 `tests/unit/test_video_worker.py` 新建,加 5 fence(round-2 F2 + **round-3 PF4 修订**:`test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal` 沿 audio Phase 2 同款 enforcement 模式):
   - `test_video_worker_abc_requires_generate_video`(用 dynamic class 做 instantiation 测试 raise `TypeError`)
-  - `test_video_candidate_format_whitelist_mp4_only`(round-2 F2:`format="mp4"` 构造成功;`format="webm"` / `format="mov"` 触发 dataclass `Literal["mp4"]` 校验失败)
+  - `test_video_candidate_format_mp4_accepted_dataclass_does_not_runtime_enforce_literal`(**round-3 PF4 修订**:`format="mp4"` 构造成功;`format="webm"` / `format="mov"` 通过 `# type: ignore[arg-type]` 写法 dataclass 也接受不 raise — Python `@dataclass` 不在 runtime 强制 `Literal` 类型注解;实际 mp4-only 守门在 worker 层 `_run_once_video` 扩展名检查 + BMFF strict header validation;沿 audio Phase 2 `tests/unit/test_audio_worker.py::test_audio_candidate_format_whitelist` 同款行为)
   - `test_video_worker_exception_tree_inheritance`(`issubclass(VideoWorkerTimeout, VideoWorkerError) is True` × 2)
-  - `test_fake_video_worker_returns_minimal_valid_mp4_bytes`(check `cand.data[4:8] == b"ftyp"`)
+  - `test_fake_video_worker_returns_minimal_valid_mp4_bytes`(check `cand.data[4:8] == b"ftyp"` + box_size 在合理范围 + major_brand 非空,沿 round-2 F4 BMFF strict 5-tuple 同款最小 valid bytes)
   - `test_fake_video_worker_respects_num_candidates_parameter`(num=3 → len(result)==3)
 - [ ] 3.7 commit 2:`feat(video): introduce VideoWorker ABC + VideoCandidate dataclass + exception tree (TBD-009 Phase 3 baseline)`
 
@@ -195,7 +219,7 @@
       - `ext = src.suffix.lower()[1:]`
       - 不在 `{"mp4"}` whitelist → raise `WorkerUnsupportedResponse(f"unsupported video format {ext!r}, expected 'mp4' (webm follow-on; round-2 F2)")`(round-2 F2 修订:mp4-only)
       - `data = src.read_bytes()`(D4:全字节读)
-      - **BMFF strict header 校验**(D9 + round-2 F4 修订,mandatory):
+      - **BMFF strict header 校验**(D9 + round-2 F4 + **round-3 PF2 修订**,mandatory):
         ```python
         # mp4: BMFF (ISO/IEC 14496-12) strict header check
         if len(data) < 16:
@@ -207,9 +231,11 @@
                 f"mp4 BMFF header mismatch: offset 4-8 = {data[4:8]!r}, expected b'ftyp'"
             )
         box_size = int.from_bytes(data[0:4], "big")
-        if box_size != 1 and (box_size < 8 or box_size > len(data)):
+        # round-3 PF2 修订:reject box_size == 1 (largesize follow-on)
+        if box_size == 1 or box_size < 8 or box_size > len(data):
             raise WorkerUnsupportedResponse(
-                f"mp4 BMFF first box_size={box_size} out of range [8, {len(data)}]"
+                f"mp4 BMFF first box_size={box_size} out of range [8, {len(data)}] "
+                f"(largesize box_size==1 deferred to follow-on `video-bmff-largesize-support`; round-3 PF2)"
             )
         major_brand = data[8:12]
         if major_brand == b"\x00\x00\x00\x00" or major_brand == b"    ":
