@@ -312,9 +312,9 @@
 
 ### 8a. manifest_builder.py + import_plan_builder 扩 video(commit 7)
 
-- [ ] 8a.1 在 `src/framework/ue_bridge/manifest_builder.py` `_KIND_MAP` 加 `("video", "mp4"): "file_media_source"`
-- [ ] 8a.2 在 `_PREFIX_BY_KIND` 加 `"file_media_source": "MS_"`(沿 SM_ / S_ / T_ / M_ 风格,2 字符前缀)
-- [ ] 8a.3 在 `_default_import_options(kind, art)` 新增 `if kind == "file_media_source"` 分支:
+- [x] 8a.1 在 `src/framework/ue_bridge/manifest_builder.py` `_KIND_MAP` 加 `("video", "mp4"): "file_media_source"`
+- [x] 8a.2 在 `_PREFIX_BY_KIND` 加 `"file_media_source": "MS_"`(沿 SM_ / S_ / T_ / M_ 风格,2 字符前缀)
+- [x] 8a.3 在 `_default_import_options(kind, art)` 新增 `if kind == "file_media_source"` 分支:
   ```python
   if kind == "file_media_source":
       md = art.metadata or {}
@@ -329,18 +329,18 @@
           "source_format": art.format,
       }
   ```
-- [ ] 8a.4 把 `metadata_overrides` 白名单 set 加 `{"frame_count", "width", "height", "fps", "loop", "play_on_open"}`(沿 sound_wave 已有 `{"duration_sec", "sample_rate", ...}` 模式;`manifest_builder.py:119-124`)
-- [ ] 8a.5 顶部 docstring 注释加 `video.mp4 → file_media_source` 行(line 11-16)+ `MS_<base> for file_media_source`(line 17-20)
-- [ ] 8a.6 在 `src/framework/ue_bridge/import_plan_builder.py` 把 `file_media_source` asset_kind 映射到 operation kind `import_file_media_source`(对照已有 `import_texture` / `import_static_mesh` / `import_audio` 命名 + dispatch 习惯)
-- [ ] 8a.7 在 `src/framework/ue_bridge/permissions.py`(若存在;否则在 `import_plan_builder.py` permission tier 表)把 `import_file_media_source` 加入默认 allow tier(沿 spec ue-export-bridge "import_file_media_source is allowed by default" Requirement)
-- [ ] 8a.8 `tests/unit/test_manifest_builder.py` 加 ~5 fence:
+- [x] 8a.4 把 `metadata_overrides` 白名单 set 加 `{"frame_count", "fps", "loop", "play_on_open"}`(width/height 已存在沿用 image 模式;沿 sound_wave 已有 `{"duration_sec", "sample_rate", ...}` 模式)
+- [x] 8a.5 顶部 docstring 注释加 `video.mp4 → file_media_source` 行 + `MS_<base> for file_media_source`
+- [x] 8a.6 在 `src/framework/ue_bridge/import_plan_builder.py` `_IMPORT_OP_KIND` 加 `"file_media_source": "import_file_media_source"` entry
+- [-] 8a.7 permission tier 留 commit 8c(round-2 F1 export gate sweep)同 commit 改 — `PermissionPolicy.allow_import_file_media_source` + `permission_policy._OP_ALLOW_ATTR` 加 entry 必须**同 commit** 三处一起改,沿 round-2 F1 critical invariant
+- [x] 8a.8 `tests/unit/test_ue_bridge.py` 加 7 fence(沿 audio _KIND_MAP 同款 fence 模式 + 加 negative regression):
   - `test_kind_map_video_mp4_routes_to_file_media_source`
   - `test_prefix_by_kind_file_media_source_is_MS_underscore`
   - `test_default_import_options_for_file_media_source_kind_returns_video_keys`
   - `test_metadata_overrides_whitelist_includes_video_keys`
   - `test_video_artifact_with_mp4_shape_produces_ms_prefixed_ue_name`
-- [ ] 8a.9 `tests/unit/test_ue_bridge.py`(or import_plan_builder fence file)加 1-2 fence:`test_import_plan_builder_maps_file_media_source_to_import_file_media_source_op` + `test_import_file_media_source_default_allow`
-- [ ] 8a.10 commit 7:`feat(ue-bridge): map (video, mp4) to file_media_source asset_kind with MS_ prefix in manifest_builder`
+- [x] 8a.9 `tests/unit/test_ue_bridge.py` 加 import_plan_builder fence:`test_import_plan_builder_maps_file_media_source_to_import_file_media_source_op` ✅;`test_import_file_media_source_default_allow` 留 commit 8c(F1 sweep)同 commit 加,沿 8a.7 同决策
+- [x] 8a.10 commit 7:`feat(ue-bridge): map (video, mp4) to file_media_source asset_kind with MS_ prefix in manifest_builder` — pytest 实测 1400 passed + 1 skipped (1393+7 video manifest fence)
 
 ### 8b. ue_scripts/domain_video.py 新建 + run_import dispatch(commit 8)
 

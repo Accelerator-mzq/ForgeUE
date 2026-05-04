@@ -268,3 +268,146 @@ def test_evidence_writer_appends_atomically(tmp_path):
     assert len(loaded) == 2
     assert loaded[0].op_id == "op1"
     assert loaded[1].status == "skipped"
+
+
+# ---------------------------------------------------------------------------
+# OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1 + D12
+# Video manifest_builder + import_plan_builder fences(7 fence)
+# ---------------------------------------------------------------------------
+
+
+from framework.ue_bridge.import_plan_builder import _IMPORT_OP_KIND  # noqa: E402
+from framework.ue_bridge.manifest_builder import (  # noqa: E402
+    _KIND_MAP,
+    _PREFIX_BY_KIND,
+    _default_import_options,
+)
+
+
+def test_kind_map_video_mp4_routes_to_file_media_source():
+    """D1:`_KIND_MAP[("video", "mp4")] == "file_media_source"`(唯一映射 invariant)。"""
+    assert _KIND_MAP[("video", "mp4")] == "file_media_source"
+
+
+def test_prefix_by_kind_file_media_source_is_MS_underscore():
+    """D1:`_PREFIX_BY_KIND["file_media_source"] == "MS_"`(沿 SM_ / S_ / T_ / M_ 风格)。"""
+    assert _PREFIX_BY_KIND["file_media_source"] == "MS_"
+
+
+def test_default_import_options_for_file_media_source_kind_returns_video_keys():
+    """D1:_default_import_options 对 file_media_source kind 返回 video import 字段
+    (loop / play_on_open / duration_seconds / frame_count / width / height / fps /
+    source_format)。本 change scope 5 个 video metadata 字段全 None defaults。"""
+    # Mock minimal Artifact-like with .metadata + .format
+    class _MockArt:
+        metadata = {}  # 空 metadata → 5 video fields 全走 None default
+        format = "mp4"
+
+    opts = _default_import_options("file_media_source", _MockArt())
+    assert set(opts.keys()) == {
+        "loop", "play_on_open", "duration_seconds",
+        "frame_count", "width", "height", "fps", "source_format",
+    }
+    assert opts["loop"] is False
+    assert opts["play_on_open"] is False
+    assert opts["duration_seconds"] is None
+    assert opts["frame_count"] is None
+    assert opts["width"] is None
+    assert opts["height"] is None
+    assert opts["fps"] is None
+    assert opts["source_format"] == "mp4"
+
+
+def test_metadata_overrides_whitelist_includes_video_keys(tmp_path):
+    """D1:metadata_overrides 白名单含 video metadata fields(frame_count / fps /
+    loop / play_on_open + 既有 width / height)— 让 build_manifest 把 art.metadata
+    内的 video 字段透传到 UEAssetEntry.metadata_overrides。"""
+    proj = _fake_ue_project(tmp_path)
+    repo = _repo(tmp_path / "a")
+    t = _target(proj)
+    # 构造一个 video Artifact 含 video metadata 字段(假装 follow-on parser 已填)
+    vid = repo.put(
+        artifact_id="vid1", value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4",
+                                   display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="r", step_id="g"),
+        metadata={
+            "ue_asset_name": "Intro",
+            "frame_count": 81,  # 模拟 follow-on parser 填的值
+            "fps": 24.0,
+            "width": 832,
+            "height": 480,
+            "loop": True,
+            "play_on_open": False,
+        },
+        file_suffix=".mp4",
+    )
+    manifest = build_manifest(run_id="r", target=t, artifacts=[vid])
+    assert len(manifest.assets) == 1
+    entry = manifest.assets[0]
+    assert entry.asset_kind == "file_media_source"
+    # metadata_overrides 透传 video metadata fields
+    overrides = entry.metadata_overrides
+    assert overrides.get("frame_count") == 81
+    assert overrides.get("fps") == 24.0
+    assert overrides.get("width") == 832
+    assert overrides.get("height") == 480
+    assert overrides.get("loop") is True
+    assert overrides.get("play_on_open") is False
+
+
+def test_video_artifact_with_mp4_shape_produces_ms_prefixed_ue_name(tmp_path):
+    """D1:video Artifact (modality="video", shape="mp4") 经 build_manifest 后产
+    UEAssetEntry.ue_naming.ue_name 以 "MS_" 开头(沿 SM_ / S_ / T_ / M_ 风格)。"""
+    proj = _fake_ue_project(tmp_path)
+    repo = _repo(tmp_path / "a")
+    t = _target(proj)
+    vid = repo.put(
+        artifact_id="vid1", value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4",
+                                   display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="r", step_id="g"),
+        metadata={"ue_asset_name": "OpeningScene"},
+        file_suffix=".mp4",
+    )
+    manifest = build_manifest(run_id="r", target=t, artifacts=[vid])
+    assert len(manifest.assets) == 1
+    entry = manifest.assets[0]
+    assert entry.asset_kind == "file_media_source"
+    assert entry.ue_naming["prefix"] == "MS_"
+    assert entry.ue_naming["ue_name"] == "MS_OpeningScene"
+
+
+def test_import_plan_builder_maps_file_media_source_to_import_file_media_source_op(tmp_path):
+    """D1 + D12:import_plan_builder._IMPORT_OP_KIND["file_media_source"] ==
+    "import_file_media_source"(ue_scripts/run_import.py _OP_HANDLERS dispatch
+    到 domain_video.import_video_entry)。"""
+    assert _IMPORT_OP_KIND["file_media_source"] == "import_file_media_source"
+
+
+def test_video_artifact_with_unmapped_shape_does_not_route_to_file_media_source(tmp_path):
+    """Negative regression:video Artifact shape 不在 _KIND_MAP 中(如 webm 未扩 follow-on
+    `comfy-video-webm-adoption` 之前)→ build_manifest 静默 skip 该 artifact(不
+    生成 UEAssetEntry)。守门「shape="mp4" 唯一映射 invariant」防止未来 webm 实施时
+    漏扩 _KIND_MAP 静默落 manifest 错误 entry。"""
+    proj = _fake_ue_project(tmp_path)
+    repo = _repo(tmp_path / "a")
+    t = _target(proj)
+    # webm shape — _KIND_MAP 不含 ("video", "webm")(本 change scope mp4-only)
+    vid = repo.put(
+        artifact_id="vid_webm", value=b"\x1a\x45\xdf\xa3" + b"\x00" * 50,
+        artifact_type=ArtifactType(modality="video", shape="webm",
+                                   display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="webm", mime_type="video/webm",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="r", step_id="g"),
+        metadata={"ue_asset_name": "WebmTest"},
+        file_suffix=".webm",
+    )
+    manifest = build_manifest(run_id="r", target=t, artifacts=[vid])
+    # webm 不在 _KIND_MAP → 静默 skip(per existing _KIND_MAP.get(...) is None pattern)
+    assert len(manifest.assets) == 0, "webm shape 应被 silent-skip(本 change scope mp4-only)"
