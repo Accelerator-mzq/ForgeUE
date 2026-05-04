@@ -5,12 +5,13 @@
 文档面向 AI 编码代理(Claude Code、Codex CLI、其他通用 agent)与项目维护者,说明:
 - **A. Fusion Contract** — 中心化架构 + 三层服务关系 + ForgeUE 守护工具链定位
 - **B. Agent Phase Gate Policy** — S0-S9 状态机 + Superpowers 集成边界 + codex stage hook 触发
-- **C. Documentation Sync Gate** — 沿 README.md §4 主规则 + 工具层静态扫描衔接
-- **D. State Machine + Writeback Protocol** — evidence 子目录约定 + 12-key frontmatter + 4 类 DRIFT + writeback 协议 + cross-check A/B/C/D 模板
+- **C. Autonomy Boundary Protocol** — D-AutonomyBoundary + 6 类 fence + autonomy_decision 字段 + D-DefaultBackground + D-CodexContextBridge
+- **D. Documentation Sync Gate** — 沿 README.md §4 主规则 + 工具层静态扫描衔接
+- **E. State Machine + Writeback Protocol** — evidence 子目录约定 + 12-key frontmatter + 4 类 DRIFT + writeback 协议 + cross-check A/B/C/D 模板
 
 > 本文档是 `docs/ai_workflow/README.md` 的 implementation orchestration 延伸,**不替代**主流程文档:
 > - README §1-§3 / §6-§8(OpenSpec 主流程 + 入口)— 不变
-> - README §4(Documentation Sync Gate 主规则)— 不变(本文档 §C 引用其规则,新增 tool 静态扫描衔接)
+> - README §4(Documentation Sync Gate 主规则)— 不变(本文档 §D 引用其规则,新增 tool 静态扫描衔接)
 > - README §5(Agent 分工)— 本 change 升级 Superpowers / Codex CLI 行
 >
 > contract artifact 真源:
@@ -208,9 +209,105 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 
 ---
 
-## C. Documentation Sync Gate
+## C. Autonomy Boundary Protocol
 
-### C.1 主规则(沿用 README §4)
+> 本节描述 D-AutonomyBoundary 决议(enhance-workflow-automation change)。完整设计见 `openspec/changes/enhance-workflow-automation/design.md`。
+
+### C.1 默认自主路径
+
+Claude controller 默认走自主路径 + 同步 invoke `/codex:review` 二次验证:
+
+1. Claude 提案 + 推荐方案
+2. invoke `/codex:review`(D-DefaultBackground:大 scope 默认 background,轮询 `/codex:status --wait` + `/codex:result` 拿结果)
+3. 解析 codex output → 生成 verdict 矩阵
+4. **Claude verdict ≈ Codex verdict** → 直接执行,evidence frontmatter `autonomy_decision: claude_codex_concurred` + `codex_review_ref: <evidence 路径>`
+5. **Claude verdict ≠ Codex verdict** → 升级到用户决策,evidence frontmatter `autonomy_decision: user_required`
+
+**`autonomy_decision` 字段枚举**(每条 implementation evidence 必填):
+
+| 枚举值 | 含义 |
+|---|---|
+| `claude_autonomous` | 完全自主(无需 codex 验证的极小 step,如 typo / 单行 edit) |
+| `claude_codex_concurred` | Claude + Codex 一致 → 自主执行;必配套 `codex_review_ref` |
+| `user_required` | 边界 fence 触发 / Claude+Codex 冲突 → 用户拍板 |
+| `user_overrode` | 用户主动否决 Claude 推荐(rare;controller 在用户反馈后落) |
+
+`autonomy_decision: claude_codex_concurred` 必须配套 `codex_review_ref` 字段(指向具体 round N evidence 文件)。`forgeue_finish_gate.py` `_check_autonomy_boundary` fence 守门:缺字段 / 值非法 / `concurred` 缺 ref / ref 路径不存在 / ref 跨 change → exit 非 0。
+
+### C.2 6 类 boundary fence(无条件升级用户)
+
+下述 6 类场景**不走 codex 验证**,直接 `AskUserQuestion` 升级:
+
+| Fence # | 类别 | 触发关键字 / 条件 |
+|---|---|---|
+| 1 | **不可逆操作** | `git push` / `git push --force` / `archive change`(`mv openspec/changes/<id> archive/`)/ `git reset --hard` / `git branch -D` / `rm <非 /tmp/ 临时文件>` / `git commit --amend`(已 push 的 commit) |
+| 2 | **跨 change 决策** | 修改非本 change scope 的 D-decision / 修改其他 active change 的 contract artifact / 删除其他 change 的 evidence |
+| 3 | **Claude+Codex review 冲突** | verdict 不一致(blocker vs non-blocker)/ severity 评估不一致(critical vs minor)/ 推荐方向相反;按 §C.3 Verdict Normalization 判定,**非**自由文本字符串 == 比较 |
+| 4 | **用户先验显式约束** | `~/.claude/CLAUDE.md` / project `CLAUDE.md` / `MEMORY.md` 内 explicit fence rule 触发场景 |
+| 5 | **钱** | 任何 vendor API paid call(ADR-007 边界:Hunyuan3D / Tripo3D / 远端付费 LLM live 调用 / `--live-llm` flag dispatch) |
+| 6 | **Secret / 安全** | `.env` 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作 / mock production credentials 写文件系统 |
+
+Claude controller 在每个 step 自检意图时 grep 自身计划描述,任意 fence 命中 → 升级用户。
+
+### C.3 Fence #3 Verdict Normalization
+
+Codex round N 输出顶层 `verdict ∈ {approve, needs-attention}`,Claude cross-check `## B Matrix` 给每个 finding 一个 `resolution ∈ {accepted-codex, accepted-claude, rejected, disputed-open}`。两层 schema 不可直接字符串比较,冲突判定按下表归一化:
+
+| Codex 顶层 verdict | Claude resolution | 判定 |
+|---|---|---|
+| `approve` | `accepted-codex` | 不冲突 → `claude_codex_concurred` |
+| `approve` | `accepted-claude` | 不冲突 → `concurred` |
+| `approve` | `rejected` | 不冲突 → `concurred` |
+| `approve` | `disputed-open` | **冲突** → fence #3 升级 |
+| `needs-attention` | `accepted-codex` | 不冲突 → `concurred` |
+| `needs-attention` | `accepted-claude` | **冲突** → fence #3 升级 |
+| `needs-attention` | `rejected` | **冲突** → fence #3 升级 |
+| `needs-attention` | `disputed-open` | **冲突** → fence #3 升级 |
+
+**Per-finding 维度额外触发**:
+- codex finding `severity ∈ {critical, high}` 且 Claude resolution `rejected` → 冲突 + 升级
+- codex finding 推荐方向与 Claude writeback 实际改动方向相反 → 冲突 + 升级
+
+### C.4 Codex 默认 background dispatch(D-DefaultBackground)
+
+`/codex:review` / `/codex:adversarial-review` 默认走 background 模式。仅当**全部 3 条同时满足**时才前台 wait:
+
+1. 变更 ≤ 2 files **且** 总 diff ≤ 50 lines(`git diff --shortstat` 实测)
+2. 非 `adversarial-review` 模式(adversarial 永远 background)
+3. main session 下一动作必须等 review 结果(controller 显式判断)
+
+**背景启动后**:job id 从 stdout `Codex review started in the background. Job id: <id>` 解析 → 写 `notes/<review_type>_active_jobs.txt` → main session 在下次需要 codex 输出前 `/codex:status --wait <job>` + `/codex:result <job>` 拿结果。
+
+命令模板保留 `--wait` / `--background` 显式 flag 作 user override 通道,显式 flag 优先于 size estimation。
+
+### C.5 Codex 多轮 context bridge(D-CodexContextBridge)
+
+同 `change_id` + 同 `review_type` 的 round N→round N+1,round N+1 prompt **首段**自动注入:
+
+```
+本次 review 是 round {N+1}(继承 round {N} verdict)。
+**强制要求**:开始 review 前 MUST 先读 openspec/changes/<change_id>/notes/codex_<scope>_review_round{N}.md
+```
+
+约束:
+- **同 change_id only** — 跨 change 绝不共享
+- **同 review_type only** — 同 change 内 design_review 与 plan_review 不共享
+- **直接前驱 only** — round N+1 仅引用 round N
+- Round 1 不引用任何上轮(无前置)
+- Round counter 状态落 `notes/codex_<review_type>_round_counter.txt`(sticky 跨 controller session,git-tracked)
+
+### C.6 Edge cases
+
+- **`mv 临时文件` 算不算 fence #1?** — `/tmp/` 及项目内 `.gitignore` 明确排除的临时文件不算"删除文件";非临时文件需升级
+- **6 类 fence 兜底** — 任何 Claude 无 high confidence 判定的 step 默认升级用户(列举式 + 兜底)
+- **Self-host bootstrap 豁免** — 本 change 实施期间 fence 命令模板还没落地时,controller 临时在 planning layer 自检 6 类 trigger(沿 D-SelfHost 模式);archive 后走命令模板
+- **`claude_codex_concurred` 必须先拿 codex result** — controller MUST 先 `/codex:status --wait <job>` 确认 done + `/codex:result <job>` 拿完整 output,否则改 `user_required`
+
+---
+
+## D. Documentation Sync Gate
+
+### D.1 主规则(沿用 README §4)
 
 `docs/ai_workflow/README.md` §4 主规则**不变**。本节是工具层衔接说明:
 
@@ -219,7 +316,7 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 - **§4.3** 固定提示词(agent 调用)— 本 change 不改提示词文本
 - **§4.4** tasks.md 必含段模板 — 本 change 不改模板
 
-### C.2 工具层静态扫描衔接
+### D.2 工具层静态扫描衔接
 
 新增 `tools/forgeue_doc_sync_check.py` 提供静态预扫描,作为 §4.3 提示词的 context 输入:
 
@@ -230,7 +327,7 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 - `--dry-run` 必无副作用
 - stdlib only;`sys.stdout.reconfigure(encoding="utf-8")` + ASCII fallback
 
-### C.3 启发式规则
+### D.3 启发式规则
 
 - commit-touching change → CHANGELOG REQUIRED
 - `src/framework/core/` 改动 → LLD REQUIRED
@@ -241,14 +338,14 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 - 无 FR / NFR 变更 → SRS SKIP
 - 无 test 策略变更 → test_spec SKIP
 
-### C.4 应用流程(`/forgeue:change-doc-sync` 内部)
+### D.4 应用流程(`/forgeue:change-doc-sync` 内部)
 
 1. tool 静态扫描 → 输出标签 + JSON
 2. agent 拿 tool 输出作 context,跑 README §4.3 提示词,输出 A / B / C / D 类
 3. 用户确认 [REQUIRED] 项后 agent 应用 patch
 4. `verification/doc_sync_report.md` 落盘:DRIFT 0 + REQUIRED 全应用 + SKIP reason 全记 + frontmatter `aligned_with_contract: true`
 
-### C.5 与 OpenSpec sync-specs 的关系
+### D.5 与 OpenSpec sync-specs 的关系
 
 `/opsx:archive` 跑 sync-specs 时把本 change 的 ADDED Requirement(若有)合入 `openspec/specs/<cap>/spec.md` 主 spec。
 
@@ -256,13 +353,13 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 
 ---
 
-## D. State Machine + Writeback Protocol
+## E. State Machine + Writeback Protocol
 
 > 本节是 contract artifact 的物理表达:evidence 落哪、含哪些字段、什么样的 drift 算合规、什么样的 drift 阻断 archive。
 >
 > 真源:`design.md` §3 + `specs/examples-and-acceptance/spec.md` ADDED Requirement。
 
-### D.1 evidence 子目录结构
+### E.1 evidence 子目录结构
 
 ```
 openspec/changes/<change-id>/
@@ -294,7 +391,7 @@ openspec/changes/<change-id>/
 
 archive 时整目录随 change 走(`openspec/changes/archive/<date>-<id>/` 完整保留 evidence + notes/)。
 
-### D.2 frontmatter 12-key schema(11 audit + 1 wrapper)
+### E.2 frontmatter 12-key schema(11 audit + 1 wrapper)
 
 每份 evidence 文件必含统一 frontmatter(决议 D-FrontmatterSchema = accepted-codex):
 
@@ -336,7 +433,7 @@ codex_plugin_available: true         # 仅 claude-code env 有意义
 
 `evidence_type` enum:`brainstorming` / `execution_plan` / `micro_tasks` / `tdd_log` / `debug_log` / `superpowers_review` / `codex_design_review` / `codex_plan_review` / `codex_verification_review` / `codex_adversarial_review` / `design_cross_check` / `plan_cross_check` / `verify_report` / `doc_sync_report` / `finish_gate_report`。
 
-### D.3 4 类 named DRIFT taxonomy
+### E.3 4 类 named DRIFT taxonomy
 
 `tools/forgeue_change_state.py --writeback-check` 检测 4 类 named DRIFT,exit 5 阻断状态机推进:
 
@@ -355,7 +452,7 @@ codex_plugin_available: true         # 仅 claude-code env 有意义
 - `disputed-permanent-drift` 但 `drift_reason` < 50 字 → finish_gate exit 2(非 WARN)
 - `disputed-permanent-drift` 但 `design.md` 无 `## Reasoning Notes` 段对应 anchor → finish_gate exit 2
 
-### D.4 writeback 协议三态
+### E.4 writeback 协议三态
 
 `drift_decision` 取值的物理含义:
 
@@ -364,7 +461,7 @@ codex_plugin_available: true         # 仅 claude-code env 有意义
 - **`written-back-to-<artifact>`** — drift 已通过修改 contract artifact(`proposal.md` / `design.md` / `tasks.md` / `specs/<cap>/spec.md`)消化;`writeback_commit` 必有真实 commit sha;`forgeue_finish_gate.py` 用 `git rev-parse <sha>` + `git show --stat <sha>` 二次校验该 commit 实际改了对应 artifact。
 - **`disputed-permanent-drift`** — drift 经评估**永久不回写**(原决策无误,evidence 提议被 reject);必有 ≥ 50 字 `drift_reason` 解释;必有 `reasoning_notes_anchor` 指向 `design.md` `## Reasoning Notes` 段对应 anchor;该 section 必须实际存在并含 ≥ 20 词解释段。
 
-### D.5 cross-check A/B/C/D 段结构(restatement of design.md §3 Cross-check Protocol)
+### E.5 cross-check A/B/C/D 段结构(restatement of design.md §3 Cross-check Protocol)
 
 > design.md §3 **Cross-check Protocol** 是唯一权威源;本节复述要点供阅读,不引入新约束。任何修订请回写 design.md。
 
@@ -402,7 +499,7 @@ frontmatter 必含:`disputed_open: <int>` / `codex_review_ref: <path>` / `create
 - `0` — 全部 resolution 决定(`aligned` / `accepted-codex` / `accepted-claude` / `disputed-permanent-drift`);可进下一阶段
 - `> 0` — 至少一项仍是 `disputed-pending`(待用户裁决);阻断下一阶段
 
-### D.6 Resolution 取值(restatement of design.md §3 Cross-check Protocol)
+### E.6 Resolution 取值(restatement of design.md §3 Cross-check Protocol)
 
 > 下表与 design.md §3 **Resolution 取值**表一致,本节为阅读引导;任何修订请回写 design.md。
 
@@ -415,7 +512,7 @@ frontmatter 必含:`disputed_open: <int>` / `codex_review_ref: <path>` / `create
 | `disputed-pending` | 待用户裁决 | 必含在 `## C` 段 |
 | `disputed-permanent-drift` | 用户裁决保留 drift,evidence 不被接受为新规范源 | reason ≥ 50 字 + design.md `## Reasoning Notes` anchor |
 
-### D.7 Self-host(本 change 是第一个用本工作流跑通的 change)
+### E.7 Self-host(本 change 是第一个用本工作流跑通的 change)
 
 决议 14.5 self-host:本 fusion change 用本 change 定义的工作流跑通,作为 dogfooding 验证。Pre-P0 + P0 阶段已落:
 

@@ -88,9 +88,9 @@ S9 (archived)
 ```
 
 **做什么**(4 步串联):
-1. **codex** `/codex:adversarial-review` design hook → `review/codex_design_review.md`(verbatim 完整保留)
+1. **codex** `/codex:adversarial-review`(默认 background dispatch,D-DefaultBackground)→ `review/codex_design_review.md`(verbatim 完整保留;round N+1 时 prompt 首段自动注入 round N reference,D-CodexContextBridge)
 2. **Superpowers** `writing-plans` → `execution/execution_plan.md` + `execution/micro_tasks.md`(引用 `tasks.md#X.Y` 锚点)
-3. **Claude** 写 cross-check matrix → `review/design_cross_check.md`(`## A` 冻结于 codex 调用前;A/B/C/D 4 段齐 + `disputed_open: 0`)
+3. **Claude** 写 cross-check matrix → `review/design_cross_check.md`(`## A` 冻结于 codex 调用前;A/B/C/D 4 段齐 + `disputed_open: 0`);按 D-AutonomyBoundary 判定 `autonomy_decision`(routine step 自主 → `claude_codex_concurred` / 6 类 fence 触发 → `user_required`)
 4. **`forgeue_change_state.py --writeback-check`** → 4 类 named DRIFT 检测(锚点 / 决策越界 / 接口字段 / 异常段)
 
 **关键检查**:
@@ -178,6 +178,11 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 
 **做什么**:Level 0 必跑(`pytest -q` + offline-bundle-smoke);Level 1/2 默认 SKIP,env guard truthy 才跑
 
+**codex verification hook**(D-DefaultBackground):
+- `/codex:review --base <main>` 默认 background 启动 → `notes/verification_active_jobs.txt` 记 job id
+- main session 用 `/codex:status --wait <job>` + `/codex:result <job>` 轮询拿结果(不能在 result 未 finalize 前写 `claude_codex_concurred`)
+- **`autonomy_decision` 字段**:routine verify step 写 `claude_autonomous` 或 `claude_codex_concurred`(若走 codex 验证);verify 发现 6 类 fence 场景写 `user_required`
+
 **产出**:`verification/verify_report.md`(frontmatter `aligned_with_contract: true` + body summary `[OK]: N / [FAIL]: 0 / [SKIP]: M`)
 
 **关键检查**:
@@ -197,17 +202,24 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 
 **做什么**:
 1. **Superpowers** `requesting-code-review` + `code-reviewer` subagent finalize → `review/superpowers_review.md`
-2. **codex** `/codex:adversarial-review` mixed scope(post-implementation)→ `review/codex_adversarial_review.md`
+2. **codex** `/codex:adversarial-review`(adversarial 永远 background,D-DefaultBackground)→ `review/codex_adversarial_review.md`(若是 round 2+,prompt 首段自动注入 round N-1 reference,D-CodexContextBridge)
+
+**autonomy_decision 字段**(evidence frontmatter 必填):
+- 大部分 S6 finding 处理:Claude 接受 codex finding → `claude_codex_concurred`
+- Claude 拒绝 codex finding 但 codex verdict `needs-attention` → fence #3 冲突 → `user_required`
+- 用户主动参与裁决 → `user_required` 或 `user_overrode`
 
 **关键检查**:
 - ✓ 每条 blocker **独立验证** TRUE 后才接受(verdict per item;沿 memory `feedback_verify_external_reviews`)
 - ✓ 用户裁决"全改"后,沿**双 commit 模式**(见 §5)落地
+- ✓ `/codex:status --wait <job>` + `/codex:result <job>` 拿完整 output 后才写 `concurred` evidence
 
 **常见错误**:
 - ✗ 把 codex 的 claim 当结论不验证 file:line(项目用户明确要求)
 - ✗ self-review 与 codex review 重合 finding 不分别记录(失去对照价值)
+- ✗ background job 未完成就写 `autonomy_decision: claude_codex_concurred`(必须先拿 result)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook S6 mixed scope
+**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook S6 + §C Autonomy Boundary Protocol
 
 ---
 

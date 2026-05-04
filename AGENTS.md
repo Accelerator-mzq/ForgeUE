@@ -208,6 +208,19 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 规则:不机械同步;不更新必须记录原因;docs / tests / code / CHANGELOG 冲突时标记 doc drift,不自行猜测。触发提示词见 `docs/ai_workflow/README.md` §4.3。
 
+### 决策权下放与 Autonomy Boundary(自 `enhance-workflow-automation` change 起,ADR-010)
+
+Claude 默认拍板执行 + 自动 codex 二次验证。**以下 6 类 fence 无条件升级到用户**:
+
+1. **不可逆操作** — `git push` / `archive change` / `git reset --hard` / `git branch -D` / 删非临时文件 / `commit --amend` 已 push
+2. **跨 change 决策** — 修改非本 change scope 的 D-decision / 动其他 active change 的 contract artifact
+3. **Claude+Codex review 冲突** — verdict 不一致(D-FenceTaxonomy Verdict Normalization 判定)
+4. **用户先验显式约束** — `CLAUDE.md` / `AGENTS.md` / `MEMORY.md` 内 explicit fence rule 触发
+5. **钱** — 任何 vendor API paid call(ADR-007 边界)
+6. **Secret / 安全** — `.env` 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作
+
+每条 implementation evidence frontmatter 必填 `autonomy_decision` 字段(`claude_autonomous` / `claude_codex_concurred` / `user_required` / `user_overrode`);`concurred` 必配 `codex_review_ref`。`/codex:review` / `/codex:adversarial-review` 默认 background;Codex 多轮 review(同 change_id + 同 review_type)round N+1 prompt 首段自动注入 round N evidence reference,防止重提已解决 finding。完整协议见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C](docs/ai_workflow/forgeue_integrated_ai_workflow.md)。
+
 ### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
 
 > 本节与 `CLAUDE.md` §"ForgeUE Integrated AI Change Workflow" 保持语义同步;视角调整为 Codex / 其他外部 agent。

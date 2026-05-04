@@ -209,6 +209,19 @@ ForgeUE 已采用 OpenSpec 作为 AI 主工作流。完整规则见 [`docs/ai_wo
 - 不修改 OpenSpec 默认产物全集:`.claude/commands/opsx/*` / `.claude/skills/openspec-*` / `.codex/commands/opsx/*` / `.codex/skills/openspec-*`。
 - 贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);失败时 surface job_id 给用户,先 `probe_hunyuan_3d_query` 再决定 `--resume`。
 
+### 决策权下放(自 `enhance-workflow-automation` change 起,ADR-010)
+
+Claude 默认拍板 + 自动 invoke `/codex:review` 二次验证。**以下 6 类 fence 无条件升级到用户**:
+
+1. **不可逆操作** — `git push` / `archive change` / `git reset --hard` / `git branch -D` / 删非临时文件 / `commit --amend` 已 push 的 commit
+2. **跨 change 决策** — 修改非本 change scope 的 D-decision / 动其他 active change 的 contract artifact
+3. **Claude+Codex review 冲突** — verdict 不一致(按 D-FenceTaxonomy Verdict Normalization 判定,**非**字符串 == 比较)
+4. **用户先验显式约束** — `CLAUDE.md` / `MEMORY.md` 内 explicit fence rule 触发
+5. **钱** — 任何 vendor API paid call(ADR-007 边界:`--live-llm` dispatch / Hunyuan3D / Tripo3D)
+6. **Secret / 安全** — `.env` 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作
+
+每条 implementation evidence frontmatter 必填 `autonomy_decision` 字段(`claude_autonomous` / `claude_codex_concurred` / `user_required` / `user_overrode`);`concurred` 必配 `codex_review_ref`。`/codex:review` 默认 background 分发(大 scope);adversarial 永远 background。完整协议见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C。
+
 ### Documentation Sync Gate(摘要)
 
 每个非平凡 change 在 archive 或 merge 前必须执行 Documentation Sync Gate(完整规则见 `docs/ai_workflow/README.md` §4)。

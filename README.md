@@ -388,7 +388,9 @@ OpenSpec change `fuse-openspec-superpowers-workflow` 引入中心化融合工作
 | `/forgeue:change-doc-sync` | Documentation Sync Gate(10 文档静态扫 + §4.3 提示词 + 应用 [REQUIRED]) |
 | `/forgeue:change-finish` | Finish Gate(中心化最后防线,12-key frontmatter + writeback 真实性 + cross-check `disputed_open == 0`) |
 
-6 个 stdlib-only 工具支撑:`tools/forgeue_env_detect.py` / `forgeue_change_state.py`(回写检测主力,扩 4 类 subagent evidence DRIFT detector)/ `forgeue_verify.py` / `forgeue_doc_sync_check.py` / `forgeue_finish_gate.py` / `forgeue_subagent_budget.py`(ADR-009 informational tracker)。完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)(4 section:fusion contract / agent phase gate policy / documentation sync gate / state machine + writeback)。
+6 个 stdlib-only 工具支撑:`tools/forgeue_env_detect.py` / `forgeue_change_state.py`(回写检测主力,扩 4 类 subagent evidence DRIFT detector)/ `forgeue_verify.py` / `forgeue_doc_sync_check.py` / `forgeue_finish_gate.py`(含 `_check_autonomy_boundary` fence)/ `forgeue_subagent_budget.py`(ADR-009 informational tracker)。完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)(5 section:fusion contract / agent phase gate policy / **autonomy boundary protocol** / documentation sync gate / state machine + writeback)。
+
+**自 `enhance-workflow-automation` change(ADR-010):Claude 默认自主拍板 + codex 二次验证;6 类 fence(不可逆 / 跨 change / review 冲突 / 用户约束 / 钱 / 安全)无条件升级用户。`/codex:review` 默认 background 分发;Codex 多轮 review 自动注入前轮 context 防止重提已解决 finding。**
 
 ---
 

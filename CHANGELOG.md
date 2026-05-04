@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Workflow autonomy boundary + default background codex review**(2026-05-05,OpenSpec change `enhance-workflow-automation`):
+  - **ADR-010**(`docs/requirements/SRS.md` + `docs/acceptance/acceptance_report.md` ADR table):D-AutonomyBoundary "Workflow autonomy boundary fence" — Claude 默认拍板 + 自动 codex 二次验证 + 6 类 fence 升级用户(不可逆 / 跨 change / Claude+Codex 冲突 / 用户约束 / 钱 / 安全)
+  - **D-DefaultBackground**:`/codex:review` / `/codex:adversarial-review` 默认 background 分发;仅全部 3 条满足(≤2 files / ≤50 lines / 非 adversarial / 下一步必须等结果)才前台 wait;命令模板保留 `--wait` / `--background` 显式 flag;background 启动 job id 写 `notes/<review_type>_active_jobs.txt`;**移除 "Do not call BashOutput" 矛盾文本**,替换为 "Main session MUST poll job before consuming verdict via /codex:status --wait + /codex:result"
+  - **D-CodexContextBridge**:同 `change_id` + 同 `review_type` round N→N+1 prompt 首段自动注入 round N evidence reference;round counter 落 `notes/codex_<review_type>_round_counter.txt`;round 1 无注入;跨 change / 跨 review_type 绝不共享
+  - **autonomy_decision frontmatter 字段**:每条 implementation evidence 必填;`claude_codex_concurred` 必配 `codex_review_ref`;`forgeue_finish_gate.py` `_check_autonomy_boundary` fence 守门(缺字段 / 值非法 / ref 路径不存在 / ref 跨 change / ref 未 finalize → exit 非 0)
+  - **9 个 forgeue 命令模板 + 2 个 codex 命令模板**加 `## Decision Delegation` section,显式声明哪些 step Claude 自主走 / 哪些必须请求用户
+  - **11 处文档同步**:
+    - `docs/ai_workflow/forgeue_integrated_ai_workflow.md` 加 §C "Autonomy Boundary Protocol"(D-AutonomyBoundary + 6 类 fence + autonomy_decision + D-DefaultBackground + D-CodexContextBridge + edge cases;原 §C/§D 顺延为 §D/§E)
+    - `docs/ai_workflow/README.md` §4 加 §4.4 "决策权下放与 Autonomy Boundary" 摘要
+    - `docs/ai_workflow/forgeue_quickstart.md` S2/S5/S6 stage 描述加 default background + autonomy_decision 字段说明
+    - `CLAUDE.md` `## OpenSpec 工作流` 加 "决策权下放" 摘要(6 类 fence 列表)
+    - `README.md` ForgeUE Workflow 描述加 default background + autonomy boundary 说明
+    - `AGENTS.md` 加 "决策权下放与 Autonomy Boundary" 同款摘要
+    - `CHANGELOG.md` [Unreleased] 加本 change entry(当前条目)
+    - `.claude/skills/forgeue-integrated-change-workflow/SKILL.md` 加 autonomy boundary + codex default background 协议
+    - `docs/requirements/SRS.md` 加 ADR-010 行
+    - `docs/acceptance/acceptance_report.md` 加 ADR-010 status 行
+    - `openspec/specs/examples-and-acceptance/spec.md` 留 archive 时 openspec 自动 sync(P3.9 confirm skip)
+  - **主要 commit SHA**:99540e2 / 1ea80b5 / 730de52 / 55d15d7 / 1e4dfb9 / 8e897c4 / c6913ae / 8b1f9cc
+  - **测试覆盖**:以 `python -m pytest -q` 实测为准(文档 + finish_gate fence + forgeue_command_markdown fence + codex_command_markdown fence)
+
 - **Adopt Superpowers `subagent-driven-development` as default `/forgeue:change-apply` path**(2026-05-04,OpenSpec change `adopt-subagent-driven-development`):
   - **8 项 D 决议**(用户拍板):D-Worktree(解禁 `using-git-worktrees` REQUIRED;纯文档修改代码 0 改动)/ D-Default(`/forgeue:change-apply` 拆 `change-apply-subagent`(default)+ `change-apply-direct`(fallback);拒绝 env flag facade)/ D-EvidenceSchema(per-task 4 类 evidence 扁平命名 `task_<n>_{implementer,spec_review,code_quality_review}.md` + `subagent_final_review.md`;`triggered_by_command: change-apply-subagent` audit field 判定 dispatch mode)/ D-SkillInvoke(直接 invoke skill 不重写 prompt 模板)/ D-TaskInput(完整 task text 作 prompt 不让 subagent 读 plan files)/ D-ADR009(token-budget tracker informational + soft WARNING;与 ADR-007 vendor API 双扣边界根本不同)/ D-BudgetMode(stdout `[WARN]` + exit 0 始终)/ D-SelfHost(本 change 用 subagent-driven-development 跑 dogfooding self-host bootstrap)
   - **NEW ADR-009**(`docs/requirements/SRS.md` ADR table line 383):subagent dispatch token-budget tracker informational tracker(`tools/forgeue_subagent_budget.py` 实装;ADR-008 编号已被 acceptance_report.md A1 立项 "UE plugin" 占用,本表跳号至 ADR-009)

@@ -184,7 +184,19 @@ D. 建议 patch
 在我确认前,先不要写文件。
 ```
 
-### 4.4 tasks.md 必含段模板
+### 4.4 决策权下放与 Autonomy Boundary
+
+自 `enhance-workflow-automation` change(2026-05-05)起,ForgeUE workflow 默认走**Claude 自主路径**,减少 rubber-stamp 式 ping-pong:
+
+- **默认自主**:Claude 提案 + 同步 invoke `/codex:review`(大 scope 默认 background);Claude+Codex 一致 → 直接执行,evidence frontmatter `autonomy_decision: claude_codex_concurred`
+- **6 类 fence 必须升级用户**(无条件):不可逆操作 / 跨 change 决策 / Claude+Codex 冲突 / 用户先验约束 / 钱(ADR-007)/ Secret 安全
+- **autonomy_decision 字段**:每条 implementation evidence 必填(`claude_autonomous` / `claude_codex_concurred` / `user_required` / `user_overrode`);`claude_codex_concurred` 必配 `codex_review_ref`
+- **Codex 默认 background**:`/codex:review` / `/codex:adversarial-review` 默认 background 分发;仅极小 scope(≤2 files / ≤50 lines / 非 adversarial / 下一步必须等结果)才前台 wait
+- **Codex 多轮 context bridge**:同 change_id + 同 review_type 的 round N→N+1 prompt 首段自动注入 round N evidence 文件 reference,防止重提已解决 finding
+
+完整协议见 [`forgeue_integrated_ai_workflow.md` §C Autonomy Boundary Protocol](forgeue_integrated_ai_workflow.md)。
+
+### 4.5 tasks.md 必含段模板
 
 每个 change 的 `tasks.md` 末尾必须含:
 

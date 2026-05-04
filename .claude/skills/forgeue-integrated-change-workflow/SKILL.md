@@ -45,14 +45,41 @@ OpenSpec contract artifact 是项目唯一规范锚点;Superpowers / codex / For
 | `using-git-worktrees` | **REQUIRED for `/forgeue:change-apply-subagent`**(自 `adopt-subagent-driven-development` change 起) | 起 isolated worktree;详 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支) |
 | `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational) | 4× LLM 调用;per-task 4 类 evidence + `subagent_budget.log`;ADR-009 与 ADR-007 vendor API 双扣边界**根本不同** |
 
+## Autonomy Boundary Protocol(ADR-010,自 `enhance-workflow-automation` change 起)
+
+Claude 默认拍板执行 + 同步 invoke codex 二次验证。**6 类 fence 无条件升级用户**:
+
+| Fence | 类别 | 触发 |
+|---|---|---|
+| 1 | 不可逆操作 | `git push` / `archive change` / `git reset --hard` / `git branch -D` / `rm <非临时>` / `commit --amend` 已 push |
+| 2 | 跨 change 决策 | 修改非本 change D-decision / 动其他 active change contract artifact |
+| 3 | Claude+Codex 冲突 | verdict 不一致;Verdict Normalization 判定(非字符串 == 比较) |
+| 4 | 用户先验约束 | CLAUDE.md / AGENTS.md / MEMORY.md explicit fence rule 触发 |
+| 5 | 钱 | ADR-007 vendor API paid call |
+| 6 | Secret / 安全 | .env 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作 |
+
+**`autonomy_decision` 字段**(每条 implementation evidence 必填):
+- `claude_autonomous` — 极小 step 无 codex 验证
+- `claude_codex_concurred` — Claude+Codex 一致 → 自主执行;必配 `codex_review_ref`
+- `user_required` — fence 触发 / Claude+Codex 冲突
+- `user_overrode` — 用户主动否决
+
+`forgeue_finish_gate.py` `_check_autonomy_boundary` fence 守门(缺字段 / 值非法 / `concurred` 缺 ref / ref 路径不存在 / ref 跨 change → exit 非 0)。
+
+**Codex 默认 background dispatch(D-DefaultBackground)**:大 scope 默认 background;仅 ≤2 files / ≤50 lines / 非 adversarial / 下一步必须等结果时才前台 wait。Background 启动后 main session 轮询 `/codex:status --wait <job>` + `/codex:result <job>` 拿 result 后才能写 `claude_codex_concurred` evidence。
+
+**Codex 多轮 context bridge(D-CodexContextBridge)**:同 change_id + 同 review_type round N→N+1 prompt 首段自动注入 round N evidence reference;round counter 落 `notes/codex_<review_type>_round_counter.txt`;跨 change / 跨 review_type 绝不共享。
+
+完整协议见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C Autonomy Boundary Protocol。
+
 ## codex stage hook(design.md §3 / §4 / forgeue_integrated_ai_workflow.md §B.4)
 
 | stage | hook 命令 | 评审范围 | cross-check 要求 |
 |---|---|---|---|
-| **S2 design** | `/codex:adversarial-review --background "<design focus>"` | 文档级 | 强制 cross-check(`review/design_cross_check.md`)|
-| **S3 plan** | `/codex:adversarial-review --background "<plan focus>"` | 文档级 | 强制 cross-check(`review/plan_cross_check.md`)|
-| **S5 verification** | `/codex:review --base <main>` | 代码级 | 单向挑错,**无** cross-check |
-| **S6 adversarial** | `/codex:adversarial-review --background "<full focus>"` | mixed scope | blocker 独立验证;**无** cross-check |
+| **S2 design** | `/codex:adversarial-review`(默认 background;大 scope)| 文档级 | 强制 cross-check(`review/design_cross_check.md`)|
+| **S3 plan** | `/codex:adversarial-review`(默认 background)| 文档级 | 强制 cross-check(`review/plan_cross_check.md`)|
+| **S5 verification** | `/codex:review --base <main>`(默认 background;仅极小 scope 才 wait)| 代码级 | 单向挑错,**无** cross-check |
+| **S6 adversarial** | `/codex:adversarial-review`(adversarial 永远 background)| mixed scope | blocker 独立验证;**无** cross-check |
 
 **env-conditional + plugin-conditional 双重 enforce**:
 - claude-code env + plugin available → REQUIRED
