@@ -86,6 +86,6 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 
 - `design.md` §4 commands 表(`/forgeue:change-review` 行)— hook 真源:`Superpowers requesting-code-review + /codex:adversarial-review`
 - `design.md` §3 Cross-check Protocol(adversarial carve-out:不走 cross-check)
-- `forgeue_integrated_ai_workflow.md` §B.4 / §D
+- `forgeue_integrated_ai_workflow.md` §B.4 / §E(原 §D 在 enhance-workflow-automation change 后顺延)
 - ForgeUE memory `feedback_verify_external_reviews`(逐条 file:line 独立验证)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`

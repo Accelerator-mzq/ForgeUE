@@ -8,7 +8,7 @@ metadata:
   version: "1.0"
 ---
 
-ForgeUE Documentation Sync Gate 编排器。`/forgeue:change-doc-sync` command 的 backbone skill。沿 `docs/ai_workflow/README.md` §4 主规则**不动**(§4.1 必检 10 文档 / §4.2 核心原则 / §4.3 固定提示词 / §4.4 tasks.md 必含段模板);新增工具层静态预扫描衔接。
+ForgeUE Documentation Sync Gate 编排器。`/forgeue:change-doc-sync` command 的 backbone skill。沿 `docs/ai_workflow/README.md` §4 主规则**不动**(§4.1 必检 10 文档 / §4.2 核心原则 / §4.3 固定提示词 / §4.4 决策权下放与 Autonomy Boundary[enhance-workflow-automation 新增] / §4.5 tasks.md 必含段模板[原 §4.4 顺延]);新增工具层静态预扫描衔接。
 
 **真源**:
 - `docs/ai_workflow/README.md` §4(Documentation Sync Gate 主规则,2026-04-24 起立);
@@ -94,8 +94,8 @@ ForgeUE Documentation Sync Gate 编排器。`/forgeue:change-doc-sync` command �
 
 ## References
 
-- `docs/ai_workflow/README.md` §4(主规则不动)+ §4.1(10 文档)+ §4.2(核心原则)+ §4.3(固定提示词)+ §4.4(tasks.md 必含段)
+- `docs/ai_workflow/README.md` §4(主规则不动)+ §4.1(10 文档)+ §4.2(核心原则)+ §4.3(固定提示词)+ §4.4(决策权下放与 Autonomy Boundary;enhance-workflow-automation 新增)+ §4.5(tasks.md 必含段;原 §4.4 顺延)
 - `openspec/changes/fuse-openspec-superpowers-workflow/design.md` §7(Integration)+ §5(`forgeue_doc_sync_check.py` 输出契约)
 - `openspec/changes/fuse-openspec-superpowers-workflow/tasks.md` §7(P6 Documentation Sync;§7.5 12 项 checklist)
-- `forgeue_integrated_ai_workflow.md` §C(Documentation Sync Gate 应用流程)
+- `forgeue_integrated_ai_workflow.md` §D(Documentation Sync Gate 应用流程;原 §C 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`(中心化编排;本 skill 是其在 doc-sync 维度的延伸)

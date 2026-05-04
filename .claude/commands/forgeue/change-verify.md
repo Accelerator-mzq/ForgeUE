@@ -81,5 +81,5 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 - `design.md` §4 commands 表(`/forgeue:change-verify` 行)— hook 真源:`forgeue_verify + /codex:review --base <main>`
 - `design.md` §3 Cross-check Protocol(verification carve-out:不走 cross-check)
 - `docs/ai_workflow/validation_matrix.md` Level 0/1/2 矩阵(`forgeue_verify.py` 是机器版)
-- `forgeue_integrated_ai_workflow.md` §B.4 / §D
+- `forgeue_integrated_ai_workflow.md` §B.4 / §E(原 §D 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`

@@ -79,5 +79,5 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 
 - `design.md` §4 commands 表(`/forgeue:change-plan` 行)— hook 真源:`codex-plugin-cc /codex:adversarial-review + 写 cross-check`
 - `design.md` §3 Cross-check Protocol — A/B/C/D 模板 + Resolution enum + frontmatter 必含字段
-- `forgeue_integrated_ai_workflow.md` §B.4(codex stage hook)+ §D.5/§D.6(cross-check 模板复述)
+- `forgeue_integrated_ai_workflow.md` §B.4(codex stage hook)+ §E.5/§E.6(cross-check 模板复述;原 §D.5/§D.6 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`

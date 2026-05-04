@@ -72,6 +72,6 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-debug` 行)— hook 真源:`Superpowers debugging skill`
-- `forgeue_integrated_ai_workflow.md` §B.3(Superpowers `systematic-debugging` 集成边界)+ §D.3(DRIFT type 4)
+- `forgeue_integrated_ai_workflow.md` §B.3(Superpowers `systematic-debugging` 集成边界)+ §E.3(DRIFT type 4;原 §D.3 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`
 - ForgeUE memory `feedback_no_silent_retry_on_billable_api`(debug 涉及 mesh.generation 等贵族 API:不静默重试)

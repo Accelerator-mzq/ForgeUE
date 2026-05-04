@@ -87,8 +87,8 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-doc-sync` 行)— hook 真源:`forgeue_doc_sync_check + §4.3 提示词 + 应用 [REQUIRED]`
-- `docs/ai_workflow/README.md` §4(主规则不动)+ §4.3(固定提示词)+ §4.4(tasks.md 必含段模板)
+- `docs/ai_workflow/README.md` §4(主规则不动)+ §4.3(固定提示词)+ §4.4(决策权下放与 Autonomy Boundary;enhance-workflow-automation 新增)+ §4.5(tasks.md 必含段模板;原 §4.4 顺延)
 - `design.md` §7 Documentation Sync Gate Integration(启发式规则)
-- `forgeue_integrated_ai_workflow.md` §C(Documentation Sync Gate 应用流程)
+- `forgeue_integrated_ai_workflow.md` §D(Documentation Sync Gate 应用流程;原 §C 在 enhance-workflow-automation change 后顺延)
 - primary skill: `.claude/skills/forgeue-doc-sync-gate/SKILL.md`
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`(中心化编排,与其他 7 个 ForgeUE commands 共享)

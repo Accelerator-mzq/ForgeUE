@@ -73,5 +73,5 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-status` 行)— hook 真源:`调 forgeue_change_state`
-- `forgeue_integrated_ai_workflow.md` §B.1(状态机 S0-S9)+ §D.1(evidence 子目录结构)
+- `forgeue_integrated_ai_workflow.md` §B.1(状态机 S0-S9)+ §E.1(evidence 子目录结构;原 §D.1 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`

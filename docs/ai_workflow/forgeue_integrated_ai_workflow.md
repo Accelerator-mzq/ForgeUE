@@ -238,6 +238,8 @@ Claude controller 默认走自主路径 + 同步 invoke `/codex:review` 二次�
 
 下述 6 类场景**不走 codex 验证**,直接 `AskUserQuestion` 升级:
 
+> 注:本表是 [`openspec/changes/enhance-workflow-automation/design.md` D-FenceTaxonomy](../../openspec/changes/enhance-workflow-automation/design.md) 完整 6 fence trigger 表的简化派生(省略 design.md 表里的"触发示例"列,本节聚焦关键字/条件维度);**design.md D-FenceTaxonomy 是 source of truth**,触发示例与 implementation-layer keyword grep 协议见原表。
+
 | Fence # | 类别 | 触发关键字 / 条件 |
 |---|---|---|
 | 1 | **不可逆操作** | `git push` / `git push --force` / `archive change`(`mv openspec/changes/<id> archive/`)/ `git reset --hard` / `git branch -D` / `rm <非 /tmp/ 临时文件>` / `git commit --amend`(已 push 的 commit) |
@@ -314,7 +316,7 @@ Codex round N 输出顶层 `verdict ∈ {approve, needs-attention}`,Claude cross
 - **§4.1** 必须检查的 10 份文档(`openspec/specs/*` / `docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md` / `README.md` / `CHANGELOG.md` / `CLAUDE.md` / `AGENTS.md`)
 - **§4.2** 核心原则(不机械同步 / 不更新要记录原因 / Drift 显式化 / 数字以实测为准 / 五件套保持长篇)
 - **§4.3** 固定提示词(agent 调用)— 本 change 不改提示词文本
-- **§4.4** tasks.md 必含段模板 — 本 change 不改模板
+- **§4.5** tasks.md 必含段模板 — 本 change 不改模板(原 §4.4 在 enhance-workflow-automation change 后顺延为 §4.5,因 §4.4 改为 "决策权下放与 Autonomy Boundary")
 
 ### D.2 工具层静态扫描衔接
 

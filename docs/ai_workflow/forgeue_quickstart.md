@@ -104,7 +104,7 @@ S9 (archived)
 - ✗ plan 引用 `tasks.md#99.1` 但 tasks 没 §99.1(`evidence_references_missing_anchor` DRIFT 阻断)
 - ✗ plan / cross-check 内偷偷加新决策不回写 design.md(`evidence_introduces_decision_not_in_contract` DRIFT 阻断)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook + §D.3 4 类 DRIFT
+**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook + §E.3 4 类 DRIFT(原 §D.3 在 enhance-workflow-automation change 后顺延)
 
 ---
 
@@ -239,7 +239,7 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 
 **产出**:`verification/doc_sync_report.md`(unresolved DRIFT = 0)
 
-**深读**:`docs/ai_workflow/README.md` §4 主规则 + `forgeue_integrated_ai_workflow.md` §C
+**深读**:`docs/ai_workflow/README.md` §4 主规则 + `forgeue_integrated_ai_workflow.md` §D(Documentation Sync Gate;原 §C 在 enhance-workflow-automation change 后顺延)
 
 ---
 
@@ -343,14 +343,14 @@ git commit -m "docs: backfill writeback_commit in P<N> review evidence"
 
 | 症状 | 优先看 |
 |---|---|
-| `evidence_missing` blocker(finish gate) | `forgeue_integrated_ai_workflow.md` §D.1 evidence 子目录 + §3.1 / §3.2 evidence 类型表 |
+| `evidence_missing` blocker(finish gate) | `forgeue_integrated_ai_workflow.md` §E.1 evidence 子目录(原 §D.1 顺延)+ §3.1 / §3.2 evidence 类型表 |
 | `evidence_references_missing_anchor` exit 5 | 检查 `execution/execution_plan.md` 引用的 `tasks.md#X.Y` 是否真存在;不存在则回写 tasks.md 加锚或删除引用 |
 | `aligned_false_no_drift` blocker | evidence frontmatter `aligned_with_contract: false` 必须配 `drift_decision`(写回 / disputed-permanent-drift)三选一 |
 | `writeback_commit_unrelated` blocker | `git show --stat <sha>` 看该 commit 是否真改了 frontmatter 声明的 artifact;不是则补 commit 或换 sha |
 | `disputed_drift_anchor_unresolved` blocker | `design.md` `## Reasoning Notes` 段加 `> Anchor: <slug>` + ≥ 20 词 / ≥ 60 非空白字符段落 |
 | `tasks_unchecked` blocker | 早期 §1-§8 task 真未做完;§9-§11 self-stage 自动豁免(stage-aware filter) |
 | `openspec_cli_missing` blocker | npm install -g @fastify/openspec;Windows 上 finish_gate 已用 `shutil.which` 解析 `.cmd` shim |
-| 不知道某 evidence frontmatter 该写啥 | `forgeue_integrated_ai_workflow.md` §D.2 12-key schema + 已 archived change `openspec/changes/archive/2026-04-27-fuse-openspec-superpowers-workflow/review/` 里取模板 |
+| 不知道某 evidence frontmatter 该写啥 | `forgeue_integrated_ai_workflow.md` §E.2 12-key schema(原 §D.2 顺延)+ 已 archived change `openspec/changes/archive/2026-04-27-fuse-openspec-superpowers-workflow/review/` 里取模板 |
 | Documentation Sync Gate `[DRIFT]` 不知怎么解 | `docs/ai_workflow/README.md` §4.3 提示词 → 输出 A/B/C/D 类裁决 |
 | Codex review claim 看不出真假 | 沿 ForgeUE memory `feedback_verify_external_reviews`:**逐条** `file:line` 独立对照代码,verdict per item;**不**把 claim 当结论 |
 

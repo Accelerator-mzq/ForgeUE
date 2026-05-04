@@ -89,5 +89,5 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 
 - `design.md` §4 commands 表(`/forgeue:change-apply-direct` 行)— hook + 越界检测 真源
 - `design.md` §3 Cross-check Protocol(plan_cross_check 同协议)
-- `forgeue_integrated_ai_workflow.md` §B.4 / §B.6(direct vs subagent 路径分流)/ §D
+- `forgeue_integrated_ai_workflow.md` §B.4 / §B.6(direct vs subagent 路径分流)/ §E(原 §D 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`

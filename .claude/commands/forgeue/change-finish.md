@@ -81,5 +81,5 @@ evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_auto
 - `design.md` §4 commands 表(`/forgeue:change-finish` 行)— hook 真源:`forgeue_finish_gate`
 - `design.md` §5 Tool Design(`forgeue_finish_gate.py` 检查矩阵)
 - `specs/examples-and-acceptance/spec.md` ADDED Requirement(active change evidence 协议;archive 后合入主 spec)
-- `forgeue_integrated_ai_workflow.md` §B.2(横切硬约束)+ §D
+- `forgeue_integrated_ai_workflow.md` §B.2(横切硬约束)+ §E(原 §D 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`
