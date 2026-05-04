@@ -109,7 +109,7 @@ ForgeUE 的角色 = **OpenSpec evidence wrapper**：
 - `tasks.md#X.Y` 锚点引用作 audit trail 进 evidence frontmatter `contract_refs`，**不**直接进入 subagent prompt（subagent 不知道 tasks.md 存在）。
 - `execution/execution_plan.md` 与 `execution/micro_tasks.md` 由前序 stage `/forgeue:change-plan` 通过 `superpowers:writing-plans` skill 产生（沿 §B.3 ForgeUE 改造的 writing-plans 输出路径）。
 
-### D-ADR008：token-budget tracker 是 informational，不是 enforcement
+### D-ADR009：token-budget tracker 是 informational，不是 enforcement
 
 新增 ADR-009 到 `docs/requirements/SRS.md`：
 
