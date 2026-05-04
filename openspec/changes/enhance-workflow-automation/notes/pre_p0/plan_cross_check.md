@@ -10,7 +10,7 @@ contract_refs:
   - notes/pre_p0/codex_review_round1.md
 aligned_with_contract: true
 drift_decision: written-back-to-design+tasks+spec
-writeback_commit: pending
+writeback_commit: 99540e2d7a0d12be5824453ab044863ca03a92a8
 drift_reason: codex round 1 raised 4 findings (3 high + 1 medium); Claude independently verified all accepted-codex; writeback applied to design.md (W3 verdict normalization), tasks.md (W1 review_type 5-counter + W2 ref hard validation tasks + W4 polling tasks), spec.md (W2 4 ref scenarios + W3 normalization scenario + W4 3 polling scenarios)
 reasoning_notes_anchor: notes/pre_p0/codex_review_round1.md
 detected_env: claude-code

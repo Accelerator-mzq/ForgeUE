@@ -9,7 +9,7 @@ contract_refs:
   - specs/examples-and-acceptance/spec.md
 aligned_with_contract: false
 drift_decision: accepted-codex-all
-writeback_commit: pending
+writeback_commit: 99540e2d7a0d12be5824453ab044863ca03a92a8
 drift_reason: codex round 1 raised 4 findings (3 high + 1 medium) all impact contract artifacts; Claude independently verified all 4 are真实漏洞 not false-positive; writeback 全部 4 finding 到 design / proposal / tasks / spec
 reasoning_notes_anchor: notes/pre_p0/plan_cross_check.md
 detected_env: claude-code
