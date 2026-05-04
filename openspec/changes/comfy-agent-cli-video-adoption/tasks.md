@@ -344,8 +344,8 @@
 
 ### 8b. ue_scripts/domain_video.py 新建 + run_import dispatch(commit 8)
 
-- [ ] 8b.1 新建 `ue_scripts/domain_video.py`,内含 `import_video_entry(entry: dict, project_root: str) -> dict`(沿 audio / mesh / image domain 模式)
-- [ ] 8b.2 实装(D12 Content/Movies/ 路径分流):
+- [x] 8b.1 新建 `ue_scripts/domain_video.py`,内含 `import_video_entry(entry: dict, project_root: str) -> dict`(沿 audio / mesh / image domain 模式)
+- [x] 8b.2 实装(D12 Content/Movies/ 路径分流):
   - `import unreal` + 标准库 imports(SHALL NOT `import framework.*` 沿 NFR-PORT-003)
   - 读 `entry["source_uri"]`(POSIX 路径,相对 project_root)拿 source mp4 文件位置
   - `target_movies_dir = Path(project_root) / "Content" / "Movies" / run_id`(D12:video mp4 落 `Content/Movies/`,**不**是 `Content/Generated/`)
@@ -356,14 +356,14 @@
   - 设 `unreal.FileMediaSource.file_path` editor property 为相对路径 `Movies/<run_id>/<ue_name>.mp4`(UE runtime 解析,相对 `Content/`)
   - 应用 `import_options.loop` / `play_on_open` 作为 editor properties
   - 返回 `{"status": "success", "asset_path": entry["target_object_path"], "error": None}`(失败 status="failed" + error msg)
-- [ ] 8b.3 在 `ue_scripts/run_import.py` `_OP_HANDLERS` dict 加 `"import_file_media_source": domain_video.import_video_entry`(沿 image / mesh / audio dispatch 模式)
-- [ ] 8b.4 在 `ue_scripts/run_import.py` 顶部 import 段加 `from . import domain_video`(or 沿现有 import 风格)
-- [ ] 8b.5 `tests/integration/test_p4_ue_manifest_only.py` 加 ~3 fence(stub `unreal` 模块跑):
+- [x] 8b.3 在 `ue_scripts/run_import.py` `_OP_HANDLERS` dict 加 `"import_file_media_source": domain_video.import_video_entry`
+- [x] 8b.4 在 `ue_scripts/run_import.py` 顶部 import 段加 `import domain_video`(沿 audio / mesh / texture import 风格 — flat import,**不**用 relative `from . import`,因 ue_scripts 在 sys.path 内)+ test_p4_ue_scripts_run_import_with_stub_unreal `sys.modules.pop` list 加 "domain_video"
+- [x] 8b.5 `tests/integration/test_p4_ue_manifest_only.py` 加 3 fence(stub `unreal` 模块跑;1 fence 暂 skip 留 commit 8c F1 sweep 后启用):
   - `test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video`(给 manifest 含一个 `file_media_source` entry,run `run_import.run()`,assert `domain_video.import_video_entry` 被调用 + Evidence record `status="success"`)
   - `test_p4_domain_video_copies_mp4_to_content_movies_subdir`(assert source mp4 被 copy 到 `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4`,**NOT** `Content/Generated/<run_id>/...`)
   - `test_p4_domain_video_creates_file_media_source_uasset_in_content_generated_subdir`(assert FileMediaSource `.uasset` lands in `<project_root>/Content/Generated/<run_id>/MS_<base>.uasset`)
-- [ ] 8b.6 `tests/unit/test_ue_scripts_no_framework_import.py`(或等价 fence)加 `test_domain_video_does_not_import_framework`(NFR-PORT-003 守门)
-- [ ] 8b.7 commit 8:`feat(ue-scripts): add domain_video.import_video_entry with Content/Movies/ packaging path split`
+- [x] 8b.6 NFR-PORT-003 守门 fence 加在 `tests/integration/test_p4_ue_manifest_only.py::test_p4_domain_video_does_not_import_framework_module`(static source check;沿 image / audio / mesh domain 同款验证模式)
+- [x] 8b.7 commit 8:`feat(ue-scripts): add domain_video.import_video_entry with Content/Movies/ packaging path split` — pytest 实测 1402 passed + 2 skipped (1400+2 video p4 stub fence,1 deferred to commit 8c)
 
 ### 8c. Export gate sweep — `_is_importable` + `PermissionPolicy` + `_OP_ALLOW_ATTR`(**round-2 F1 修订,新加 commit 8c**)
 

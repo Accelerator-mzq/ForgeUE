@@ -30,12 +30,17 @@ import evidence_writer  # noqa: E402
 import domain_texture   # noqa: E402
 import domain_audio     # noqa: E402
 import domain_mesh      # noqa: E402
+import domain_video     # noqa: E402  (OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1)
 
 
 _OP_HANDLERS = {
     "import_texture": domain_texture.import_texture_entry,
     "import_audio": domain_audio.import_audio_entry,
     "import_static_mesh": domain_mesh.import_static_mesh_entry,
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1:
+    # file_media_source asset_kind dispatch to domain_video.import_video_entry;
+    # D12 路径分流 mp4 → Content/Movies/<run_id>/,.uasset → Content/Generated/<run_id>/
+    "import_file_media_source": domain_video.import_video_entry,
 }
 
 
