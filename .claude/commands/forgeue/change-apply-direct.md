@@ -64,6 +64,7 @@ S3→S4-S5 transition(fallback 路径,自 `adopt-subagent-driven-development` ch
 - **evidence 不能成新规范源**:tdd_log / debug_log 暴露的 contract 漏洞必须回写到 design.md / proposal.md / tasks.md。
 - **必跑 writeback 检测**;DRIFT type 3/4 阻断 S5。
 - **direct 路径不进 isolated worktree**(沿 design.md D-Worktree-Detail 第 5 项 "fallback 路径仍跑在主 worktree";如需 worktree 隔离请改走 `/forgeue:change-apply-subagent`)。
+- **direct 路径 evidence shape 与 subagent 路径不同**:本路径产 `tdd_log` + `debug_log`(沿现 evidence 协议),**不产** `subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review` 4 类 per-task evidence(沿 D-EvidenceSchema)。`forgeue_finish_gate.py` 从 evidence frontmatter `triggered_by_command` 字段判定 dispatch mode(F2 修复),direct 路径无该 audit field → 不报缺失 4 类 subagent evidence。
 
 **References**
 
