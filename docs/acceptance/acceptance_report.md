@@ -321,6 +321,7 @@
 | ADR-005 | plan_v1 降级归档 | ✅(本轮文档重构) |
 | ADR-006 | TransitionEngine per-arun 隔离(`cloned_for_run`) | ✅ 代码固化 + 3 fence 守门 |
 | ADR-008 | 启用 UE 自带 plugin(PythonScriptPlugin / 未来 RemoteControl)不算违反 ADR-001 | ✅(2026-04-23 A1 立项):ADR-001 禁止**"我们自己写 UE 插件"**;启用 Epic 维护、UE 引擎自带的 plugin 不在禁令范围。逐条对照 SRS:374 的 6 个顾虑:**Python 版本绑定** — UE 自带 plugin 已随 UE 版本编译,不强制我们绑特定 Python;**阻塞 game thread** — 我们不在 game thread 写代码,plugin 已在 editor 模块隔离;**无法跑纯 Python 单测套件**(2026-04-23 ADR-008 立项时基线 543+ 单测)— 启用 plugin 不影响纯 Python 单测套件,framework 侧仍 0 UE 依赖;**隔离网络合规** — 启用 plugin 不引入新网络通道;**多工程复用** — `.uproject` Plugins 段是工程级配置,跨工程同样可声明;**开发环境门槛** — 启用是 1 行 .uproject + 1 行 commandlet,不像写 plugin 要 VS + UE source 编译。注意:ADR-007 在 SRS:380 是"贵族 API 不允许 framework 静默重试",与本条无关 |
+| ADR-009 | subagent dispatch token-budget tracker(informational) | ✅ 已批准 + 工具实施待 OpenSpec change adopt-subagent-driven-development §6 完成(forgeue_subagent_budget.py) |
 
 ---
 

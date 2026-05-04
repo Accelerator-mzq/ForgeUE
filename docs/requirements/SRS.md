@@ -380,6 +380,7 @@ ForgeUE **不做**:
 | ADR-005 | `plan_v1` 从唯一权威降级为归档史料,权威转为五件套 | 文档重构 v1,2026-04-22 |
 | ADR-006 | `TransitionEngine` 实例**per-arun 隔离**,`Orchestrator.arun` 入口调 `cloned_for_run()` 创建本次 run 专属副本 | 早期实现把 engine 当 orchestrator 单例,counters 跨 run 泄漏(顺序两 run 计数累加 / 并发两 run 共享字典);改用 `copy.copy(self)` + 重置 counters 既保留子类身份与注入扩展点,又隔离计数器 |
 | ADR-007 | 贵族 API(mesh.generation,~$0.20-1/job)**不允许 framework 静默重试**;失败立即 raise,CLI surface job_id 给用户,让其手工 query 已完成状态后再决定 --resume | 用户实测一个 mesh job 因 4 层叠加重试被扣 16 调用 × 20 积分;独立 probe 验证客户端断开后远端仍生成 → blind retry 双扣已完成 job;Codex 独立 review 协助找出 executor 内部循环漏层。具体修法见 acceptance_report §6.6 (TBD-007) |
+| ADR-009 | subagent dispatch token-budget tracker(informational + soft WARNING)— 与 ADR-007 vendor API 双扣边界根本不同 | ADR-007 拦截 mesh.generation 重试时双扣已完成 job(浪费,client 断开远端仍跑);ADR-009 仅追踪 LLM token 持续产生价值的消耗(打断 = 损失,token 不会双扣)。framework 不对 token cost 做 hard gate;tools/forgeue_subagent_budget.py 仅 stdout [WARN] + exit 0 始终(I/O 异常 exit 1 例外);用户保留 dispatch 中断判断权(沿 ForgeUE memory feedback_decisive_approval)。工具实装见 OpenSpec change adopt-subagent-driven-development §6(forgeue_subagent_budget.py 新建,~100 行 stdlib only)。注:ADR-008 编号已被 acceptance_report.md A1 立项 "UE plugin" 占用,本表跳号至 ADR-009;详见 docs/acceptance/acceptance_report.md ADR 表 |
 
 ---
 
