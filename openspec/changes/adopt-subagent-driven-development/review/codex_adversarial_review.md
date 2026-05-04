@@ -14,10 +14,10 @@ codex_effort: high
 codex_thread_id: 019df3e4-e97c-70f3-b146-b661a9ee683c
 codex_turn_id: 019df3e4-ed55-7530-958f-c246cf6e7d8d
 codex_verdict: needs-attention
-aligned_with_contract: false
-drift_decision: pending
-writeback_commit: null
-drift_reason: "codex S6 round 2 5 high finding 全 accepted-codex 待 controller 处理:F6 命令 Step 12 args 不全(实装 forgeue_subagent_budget.py 必填 task-n + subagent-type)/ F7 finish_gate per-task triple 不强制 / F8 DRIFT gap detector 没覆盖 reviewer gap keywords / F9 final reviewer evidence land 后 verify_report 归类 stale / F10 tasks ordering 让 finish_gate 永久 block。F6/F7/F8/F10 是真 impl/design gap;F9 已部分解决(landed subagent_final_review.md);全部 written-back-to-* 待 fix dispatch + writeback_commit。drift_decision pending until controller fix accepted-codex finding 全部 written-back-to-* with real writeback_commit。"
+aligned_with_contract: true
+drift_decision: written-back-to-change-apply-subagent.md+tasks.md+subagent_dogfood_protocol.md+forgeue_finish_gate.py+forgeue_change_state.py+verify_report.md
+writeback_commit: e5f3eb9aab08d3e3777f07575a557bf9523872e1
+drift_reason: "codex S6 round 2 5 high finding 全 accepted-codex,controller direct fix completed in commit e5f3eb9: F6 命令 Step 12 args 完整(3 files) / F7 finish_gate per-task triple check 加 + fence / F8 DRIFT gap detector 加 reviewer gap keywords + colon anchor + fence / F9 verify_report 归类更新 + subagent_final_review.md landed / F10 tasks.md §11.0 pre-tick before finish_gate. Verification: pytest 1450 PASS / 0 ERRORS / writeback-check drifts: []."
 reasoning_notes_anchor: null
 detected_env: claude-code
 triggered_by: forced (S6 review hook;controller dispatched via /codex:adversarial-review --base main)
