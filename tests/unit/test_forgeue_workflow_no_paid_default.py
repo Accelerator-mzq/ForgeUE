@@ -23,9 +23,22 @@ _TOOLS = _REPO / "tools"
 if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
+import _common  # noqa: E402
 import forgeue_verify as fv  # noqa: E402
 
 CMD_DIR = _REPO / ".claude" / "commands" / "forgeue"
+
+
+def _is_deprecated(path: Path) -> bool:
+    """Frontmatter ``tags`` includes ``deprecated``(见
+    test_forgeue_command_markdown 同款 helper rationale)。"""
+    fm, _ = _common.parse_frontmatter(path.read_text(encoding="utf-8"))
+    tags = fm.get("tags") or []
+    if isinstance(tags, str):
+        tags_str = tags
+    else:
+        tags_str = ", ".join(str(t) for t in tags)
+    return "deprecated" in tags_str
 
 
 # ---------------------------------------------------------------------------
@@ -85,8 +98,11 @@ _NEG_OR_GUARD_MARKERS = (
 
 @pytest.fixture(scope="module")
 def cmd_files() -> list[Path]:
-    files = sorted(CMD_DIR.glob("change-*.md"))
-    assert len(files) == 8
+    # Active 命令文件 = 9(post-task 2 split:change-apply-subagent +
+    # change-apply-direct;旧 change-apply.md frontmatter ``tags`` 标
+    # ``deprecated``,通过 tags-aware skip 排除)。
+    files = sorted(p for p in CMD_DIR.glob("change-*.md") if not _is_deprecated(p))
+    assert len(files) == 9
     return files
 
 

@@ -1,5 +1,19 @@
-"""tasks.md §5.4.4 fence: 8 forgeue command md files have required
+"""tasks.md §5.4.4 fence: forgeue command md files have required
 frontmatter + Steps + Output + Guardrails sections + active-change binding.
+
+Active-command count:9(2026-05-04 起,task 2 引入 ``change-apply-subagent`` /
+``change-apply-direct`` 替代旧 ``change-apply``;后者保留 1 archive cycle 作
+deprecation banner stub,frontmatter 标 ``tags: [forgeue, deprecated]``,fixture
+通过 tags-aware skip 排除,见 design.md ``## Migration Plan``)。
+
+fixture 选择 Option C(tags-aware skip),以避免:
+- Option A:fixture magic string ``change-apply.md``(future deprecated 命令需
+  再次更新 fixture)
+- Option B:archive 物理移动(破坏 ``/forgeue:change-apply`` skill 发现 +
+  违反 Migration Plan ``保留 1 archive cycle 让用户切换`` 精神)
+
+Future deprecated 命令只需在 frontmatter ``tags`` 加 ``deprecated``,
+fixture 自动 skip 无需改动。
 """
 from __future__ import annotations
 
@@ -18,10 +32,28 @@ import _common  # noqa: E402
 CMD_DIR = _REPO / ".claude" / "commands" / "forgeue"
 
 
+def _is_deprecated(path: Path) -> bool:
+    """Return True iff command md frontmatter ``tags`` includes ``deprecated``.
+
+    parse_frontmatter 不支持 flow-style list,``tags: [forgeue, deprecated]``
+    被解析成 raw string ``'[forgeue, deprecated]'`` — 用 substring 检测即可
+    覆盖 flow / block 两种风格(沿 test_each_cmd_tags_includes_forgeue 同款)。
+    """
+    fm, _ = _common.parse_frontmatter(path.read_text(encoding="utf-8"))
+    tags = fm.get("tags") or []
+    if isinstance(tags, str):
+        tags_str = tags
+    else:
+        tags_str = ", ".join(str(t) for t in tags)
+    return "deprecated" in tags_str
+
+
 @pytest.fixture(scope="module")
 def cmd_files() -> list[Path]:
-    files = sorted(CMD_DIR.glob("change-*.md"))
-    assert len(files) == 8, f"expected exactly 8 command files, found {len(files)}"
+    # Active(非 deprecated)命令文件:7 keep + change-apply-subagent +
+    # change-apply-direct = 9。change-apply.md 走 deprecation banner 路径排除。
+    files = sorted(p for p in CMD_DIR.glob("change-*.md") if not _is_deprecated(p))
+    assert len(files) == 9, f"expected exactly 9 active command files, found {len(files)}"
     return files
 
 
