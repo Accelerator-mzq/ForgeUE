@@ -11,6 +11,7 @@ triggered_by: forced (Pre-P0 一次性,plan §1.2-1.5 路径 A)
 created_at: 2026-05-04T22:30:00+08:00
 disputed_open: 0
 resolved_at: 2026-05-04T23:15:00+08:00
+writeback_commit: 2ec9cfd36e16a19b8f775b0dc902b9fa1b6a602c
 note: |
   本 cross-check 是 plan-level 手工预演,非 S2/S3 正式 lifecycle-level cross-check。
   ## A. Claude's Decision Summary 段冻结于 codex 调用之前,Claude 不允许在写 ## B/C/D 时回填 ## A
@@ -137,5 +138,5 @@ disputed_open: 0
 - [x] 所有 `accepted-codex` 已回写到 design.md / proposal.md / tasks.md / dogfood protocol(F1-F5 5 项 2026-05-04T23:30 完成,见 ## D.2)
 - [x] `disputed-permanent-drift` 不适用(disputed_open 0)
 - [x] `openspec validate adopt-subagent-driven-development --strict` PASS(回写后)
-- [ ] `python tools/forgeue_change_state.py --change adopt-subagent-driven-development --writeback-check --json` exit 0(进 §2 前必跑)
-- [ ] git commit + amend cross-check frontmatter 填 `writeback_commit: <sha>`(双 commit 模式)
+- [x] `python tools/forgeue_change_state.py --change adopt-subagent-driven-development --writeback-check --json` exit 0(commit `2ec9cfd` 之前已实测 state: S2 / drifts: [] / 无 issues)
+- [x] git commit + amend cross-check frontmatter 填 `writeback_commit: 2ec9cfd36e16a19b8f775b0dc902b9fa1b6a602c`(commit 1 sha;commit 2 backfill 本字段)
