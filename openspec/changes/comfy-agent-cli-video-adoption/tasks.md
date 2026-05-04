@@ -159,7 +159,7 @@
 
 ## 5. ComfyAgentWorker capability-aware 扩 video(commit 4)
 
-- [ ] 5.1 在 `src/framework/providers/workers/comfy_worker.py` 扩 4 个类常量字典 video entry:
+- [x] 5.1 在 `src/framework/providers/workers/comfy_worker.py` 扩 4 个类常量字典 video entry:
   ```python
   _CAPABILITY_BY_MODEL_ID: dict[str, str] = {
       "comfy/local": "image",
@@ -247,9 +247,10 @@
         ```
       - 构造 `VideoCandidate(data=data, format="mp4", metadata={"comfy_manifest": comfy_workflow, "comfy_params_snapshot": params_snapshot, "comfy_capability": "video", "comfy_original_filename": src.name, "comfy_subprocess_run_metadata": {...}}, duration_seconds=None, frame_count=None, width=None, height=None, fps=None)`(D8:format hardcoded `"mp4"` post-F2 修订;5 metadata 顶层 None)
     - 返回 list 长度 = `len(outputs.video)`(单 VHS_VideoCombine 节点通常 1 file per run)
-- [ ] 5.3 `__init__` 守门错误消息列表自动包含 `comfy/local-video`(因 5.1 字典扩展;无需手动改 error string,但检查 message 现在列出 4 个 supported ids)
-- [ ] 5.4 `tests/unit/test_comfy_subprocess.py` 加 video fence(具体名见 `specs/probe-and-validation/spec.md` "ComfyUI video capability dispatch has dedicated regression fences" Requirement 列表;**round-2 F2 + F4 修订后 ~16 fence**:capability dispatch 2 + 三段表 video 行 5+3 regression + BMFF strict 9 + per-candidate loop 2 + path trust-boundary 2 + generate_video 实装 7 + single-source 1 + webm rejection 1)
-- [ ] 5.5 commit 4:`feat(comfy): extend ComfyAgentWorker with video capability dispatch + generate_video method`
+- [x] 5.2 (实施) `_run_once_video` BMFF strict 5-tuple 校验完成 — len + ftyp + box_size in [8, len] 拒绝 box_size==1 + major_brand non-empty/non-zero/non-spaces;沿 audio `_run_once_audio` 复制 + video-specific 改写 (mp4-only + BMFF strict + 5 metadata None defaults)
+- [x] 5.3 `__init__` 守门错误消息列表自动包含 `comfy/local-video`(commit 4 同时改:由 P3 脆弱点 #1 命中,加 `_CAPABILITY_BY_MODEL_ID` 后错误消息 supported list 自动 4 项,**附加更新**括号注释从 `(video is the only remaining follow-on; see SRS TBD-009)` 改为 `(all TBD-009 phases closed: image / mesh / audio / video)`)
+- [x] 5.4 `tests/unit/test_comfy_subprocess_video.py` 新建(沿 audio `test_comfy_subprocess_audio.py` 模式独立文件)加 28 fence(超出原计划 16 fence,因 BMFF strict 5-tuple 拆出 7 reject + 2 happy + 沿 audio 模式补 cross-capability regression 3 fence;详见文件):capability dispatch 2 + 三段表 video 行 5 + cross-capability regression 3 + format whitelist mp4-only 3 + BMFF strict 9 + path trust-boundary 2 + per-candidate loop 1 + metadata provenance 2 + env independence 1
+- [x] 5.5 commit 4:`feat(comfy): extend ComfyAgentWorker with video capability dispatch + generate_video method` — pytest 实测 1373 passed + 1 skipped (windows symlink)
 
 ## 6. GenerateVideoExecutor + ExecutorRegistry 注册(commit 5)
 
