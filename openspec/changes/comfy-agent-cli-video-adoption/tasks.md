@@ -281,11 +281,11 @@
 
 ## 7. FailureModeMap video_worker_* mode(commit 6)
 
-- [ ] 7.1 在 `src/framework/runtime/failure_mode_map.py` 加 2 个 video mode entry:
+- [x] 7.1 在 `src/framework/runtime/failure_mode_map.py` 加 2 个 video mode entry:
   - `FailureMode.video_worker_timeout` → `Decision.abort_or_fallback`
   - `FailureMode.video_worker_unsupported` → `Decision.abort_or_fallback`
   - 沿 audio Phase 2 `audio_worker_*` 镜像
-- [ ] 7.2 在 `FailureModeMap.from_exception` 加分类(顺序至关重要,wrapped video 异常必须**在** audio / mesh / generic ComfyWorker / WorkerTimeout 之前匹配;D14):
+- [x] 7.2 在 `FailureModeMap.from_exception` 加分类(顺序至关重要,wrapped video 异常必须**在** audio / mesh / generic ComfyWorker / WorkerTimeout 之前匹配;D14):
   ```python
   if isinstance(exc, VideoWorkerTimeout):
       return FailureMode.video_worker_timeout
@@ -297,14 +297,14 @@
   if isinstance(exc, AudioWorkerTimeout): ...
   # Mesh / Image / generic worker_* (existing)
   ```
-- [ ] 7.3 `tests/unit/test_failure_mode_map.py` 加 6 fence:
+- [x] 7.3 `tests/unit/test_failure_mode_map.py` 加 6 fence(沿 audio Phase 2 同款 6-fence pattern,实施后全 PASS):
   - `test_failure_mode_map_video_worker_timeout_maps_to_abort_or_fallback`
   - `test_failure_mode_map_video_worker_unsupported_maps_to_abort_or_fallback`
   - `test_failure_mode_map_routes_wrapped_video_worker_timeout_to_abort_or_fallback`
   - `test_failure_mode_map_routes_wrapped_video_worker_unsupported_to_abort_or_fallback`
   - `test_failure_mode_map_video_worker_error_generic_maps_to_unsupported`
   - `test_failure_mode_map_video_takes_priority_over_generic_worker_exception`
-- [ ] 7.4 commit 6:`feat(failure-mode): map VideoWorkerTimeout / VideoWorkerUnsupportedResponse to abort_or_fallback`
+- [x] 7.4 commit 6:`feat(failure-mode): map VideoWorkerTimeout / VideoWorkerUnsupportedResponse to abort_or_fallback` — pytest 实测 1393 passed + 1 skipped (1387+6 video failure mode fence)
 
 ## 8. UE bridge video 资产链路(commit 7 + 8)
 
