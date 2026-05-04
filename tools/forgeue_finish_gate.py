@@ -324,7 +324,8 @@ def check_evidence_completeness(
     required: list[tuple[str, str]] = list(_REQUIRED_EVIDENCE_BASE)
     if detected_env == "claude-code" and codex_plugin_available:
         required.extend(_REQUIRED_EVIDENCE_CLAUDE_PLUGIN)
-    if _detect_subagent_dispatch_mode(change_dir):
+    subagent_mode = _detect_subagent_dispatch_mode(change_dir)
+    if subagent_mode:
         required.extend(_REQUIRED_EVIDENCE_SUBAGENT)
     for ev_type, default_path in required:
         files = by_type.get(ev_type, [])
@@ -344,6 +345,56 @@ def check_evidence_completeness(
         # Validate each file claiming this type
         for p in files:
             blockers.extend(_validate_evidence_file(p, change_dir, expected_type=ev_type))
+    # adopt-subagent-driven-development codex S6 round 2 F7 fix:
+    # subagent dispatch mode 下额外验证每个 task_n 都有完整 implementer/spec_review/
+    # code_quality_review 三件套(per design.md D-EvidenceSchema)。原 detector 只检查
+    # evidence_type 存在,可被多 task change 仅交 task_1 三件套 + final review 绕过。
+    if subagent_mode:
+        blockers.extend(_check_per_task_triple(by_type))
+    return blockers
+
+
+def _check_per_task_triple(by_type: dict[str, list[Path]]) -> list[Blocker]:
+    """Per-task triple check (F7 fix): each task_<n> must have implementer +
+    spec_review + code_quality_review evidence. Extracts task_n set from
+    `task_<n>_*.md` filenames in 3 evidence_type buckets, then reports
+    per-task missing component as a separate blocker.
+    """
+    import re as _re
+
+    _RE_TASK_N = _re.compile(r"task_([\w.]+)_(?:implementer|spec_review|code_quality_review)")
+    triple_types = (
+        "subagent_implementer_report",
+        "subagent_spec_review",
+        "subagent_code_quality_review",
+    )
+    # Collect task_n per evidence_type bucket
+    task_n_by_type: dict[str, set[str]] = {t: set() for t in triple_types}
+    all_task_n: set[str] = set()
+    for ev_type in triple_types:
+        for p in by_type.get(ev_type, []):
+            m = _RE_TASK_N.search(p.name)
+            if m:
+                n = m.group(1)
+                task_n_by_type[ev_type].add(n)
+                all_task_n.add(n)
+    # For each task_n seen, verify all 3 types present
+    blockers: list[Blocker] = []
+    for task_n in sorted(all_task_n):
+        for ev_type in triple_types:
+            if task_n not in task_n_by_type[ev_type]:
+                blockers.append(
+                    Blocker(
+                        type="evidence_missing_per_task",
+                        detail=(
+                            f"per-task evidence missing: task_{task_n} expected "
+                            f"{ev_type} evidence at execution/task_{task_n}_*.md "
+                            "(D-EvidenceSchema requires implementer + spec_review + "
+                            "code_quality_review triple per task)"
+                        ),
+                        file=f"execution/task_{task_n}_*.md",
+                    )
+                )
     return blockers
 
 

@@ -1515,6 +1515,60 @@ def test_subagent_full_quad_satisfies_dispatch_mode(tmp_path):
         ), f"complete subagent quad MUST satisfy {ev_type}"
 
 
+def test_per_task_triple_check_blocks_when_task_2_missing_review(tmp_path):
+    """§5.4 case 5 (F7 fix from codex S6 round 2): subagent dispatch mode 下
+    每个 task_n 必须有 implementer + spec_review + code_quality_review 三件套。
+    本 fence simulates 一个 multi-task change 仅交 task_1 三件套 + task_2 implementer
+    缺 spec_review / code_quality_review。F7 修复后 finish_gate 必须报
+    ``evidence_missing_per_task`` blocker;F7 修复前会被绕过(只查 evidence_type 存在)。
+    """
+    b = make_complete_change(
+        tmp_path,
+        "fc-sub-pertask",
+        with_codex=False,
+        with_cross_check=False,
+    )
+    # Add task_1 full triple + final review(满足 evidence_type 存在 baseline)
+    _add_subagent_quad(b, task_n=1)
+    # Add task_2 implementer ONLY(缺 spec_review + code_quality_review)
+    fm_audit = (
+        "change_id: fc-sub-pertask\n"
+        "stage: S4\n"
+        "evidence_type: subagent_implementer_report\n"
+        "contract_refs: [tasks.md#x.y]\n"
+        "aligned_with_contract: true\n"
+        "drift_decision: null\n"
+        "writeback_commit: null\n"
+        "drift_reason: null\n"
+        "reasoning_notes_anchor: null\n"
+        "detected_env: claude-code\n"
+        "triggered_by: forced\n"
+        "codex_plugin_available: true\n"
+        "triggered_by_command: change-apply-subagent\n"
+    )
+    (b.change_dir / "execution" / "task_2_implementer.md").write_text(
+        f"---\n{fm_audit}---\n\n# Task 2 implementer (no review)\n",
+        encoding="utf-8",
+    )
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id="fc-sub-pertask",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None
+    # F7 修复:必须报 task_2 missing spec_review + code_quality_review
+    per_task_blockers = [bl for bl in report.blockers if bl.type == "evidence_missing_per_task"]
+    assert len(per_task_blockers) >= 2, (
+        f"F7 fix: expect ≥2 per-task blockers for task_2 missing spec_review + "
+        f"code_quality_review, got {[bl.detail for bl in per_task_blockers]}"
+    )
+    # 验证 blocker 提到 task_2(不是 task_1)
+    task_2_blockers = [bl for bl in per_task_blockers if "task_2" in (bl.detail or "")]
+    assert len(task_2_blockers) >= 2, "blockers should specifically reference task_2"
+
+
 def test_worktree_isolation_requires_committed_change_artifacts(tmp_path):
     """§5.4 case 4 (F1 worktree fence): in a real ``git worktree add``
     isolation scenario, untracked files in the main worktree are invisible

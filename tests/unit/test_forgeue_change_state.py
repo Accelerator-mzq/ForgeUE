@@ -660,6 +660,55 @@ def test_subagent_spec_review_failure_keyword_triggers_drift_gap(tmp_path):
     assert any(d.ref == "WorkerTimeout" for d in gaps)
 
 
+def test_subagent_spec_review_reviewer_gap_keyword_triggers_drift_gap(tmp_path):
+    """F8 fix from codex S6 round 2: reviewer gap keyword(`missing requirement` /
+    `extra feature` / `misunderstood` / `Critical issue` / `Important issue`)
+    必须触发 DRIFT_GAP,即使没有 framework runtime failure mode keyword。
+    F8 修复前 ``_KNOWN_FAILURE_KEYWORDS`` 只含 runtime token,reviewer 只写
+    "missing requirement: X" 不会 trip DRIFT。F8 修复后 keyword list 扩展,
+    reviewer gap keyword 与 design.md 不含的 X cross-check 触发 DRIFT_GAP。
+    """
+    b = ChangeBuilder(repo=tmp_path, change_id="fc-sub-reviewer-gap")
+    b.write_proposal()
+    # design.md 不含任何 reviewer gap keyword
+    b.write_design(
+        with_reasoning_notes=True,
+        failure_keywords=[],
+        decision_ids=["D-Existing"],
+    )
+    b.write_tasks(anchors=["1.1"])
+    # spec_review body 含 `missing requirement` keyword(F8 新加 keyword)
+    # 但**没有** WorkerTimeout / BudgetExceeded 等 runtime keyword
+    b.write_evidence(
+        "execution",
+        "task_1_spec_review.md",
+        evidence_type="subagent_spec_review",
+        stage="S4",
+        body=(
+            "## Status: ❌ Issues found\n\n"
+            "Spec review found:\n"
+            "- missing requirement: implementer 漏建造 X feature\n"
+        ),
+        extra_frontmatter={"triggered_by_command": "change-apply-subagent"},
+    )
+    report = fcs.build_report(
+        repo=tmp_path, change_id="fc-sub-reviewer-gap", writeback_check=True
+    )
+    assert report is not None
+    # F8 修复:`missing requirement` keyword 与 design.md 不含 → DRIFT_GAP
+    gaps = [d for d in report.drifts if d.type == fcs.DRIFT_GAP]
+    assert gaps, (
+        f"F8 fix: subagent_spec_review with reviewer gap keyword 'missing requirement' "
+        f"absent from design.md MUST trigger DRIFT_GAP; got drifts: "
+        f"{[(d.type, d.ref) for d in report.drifts]}"
+    )
+    # 验证触发的是 reviewer gap keyword(冒号限定,不是 runtime keyword)
+    assert any(d.ref == "missing requirement:" for d in gaps), (
+        f"F8 fix: DRIFT_GAP ref must be 'missing requirement:' (with colon, "
+        f"reviewer finding form), got refs: {[d.ref for d in gaps]}"
+    )
+
+
 def test_subagent_code_quality_review_critical_failure_mode_triggers_drift_gap(tmp_path):
     """§5.6 case 3 (F3 fence): a ``subagent_code_quality_review`` body that
     flags a Critical issue referencing an undocumented failure mode MUST

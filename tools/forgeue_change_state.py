@@ -97,6 +97,7 @@ _RE_BACKTICKED_IDENT = re.compile(r"`([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)`")
 # Common failure-mode names the framework already knows; if a debug_log
 # mentions one that design.md does NOT, that is a contract gap.
 _KNOWN_FAILURE_KEYWORDS = (
+    # Framework runtime failure modes (sourced from FailureModeMap)
     "BudgetExceeded",
     "BudgetTracker",
     "WorkerTimeout",
@@ -107,6 +108,15 @@ _KNOWN_FAILURE_KEYWORDS = (
     "ComfyUIConnectionError",
     "UEExportFailure",
     "TransitionEngine",
+    # Subagent reviewer gap keywords (adopt-subagent-driven-development codex S6 round 2 F8 fix):
+    # Reviewer body 含这些关键词 + design.md 不含同款 → DRIFT_GAP(沿 tasks.md §5.5/§5.6 承诺)。
+    # 注意:**加冒号限定**触发 reviewer report finding 形式(如 "missing requirement: X")
+    # 而非 generic phrase reference(如 "无 missing requirement / 无 misunderstanding" 这种
+    # ✅ Spec compliant 反例描述);避免 reviewer 自然语言引用误判 false positive。
+    # 不含 severity tag("Critical issue" / "Important issue" 是 reviewer 分级标签不是 gap)
+    "missing requirement:",
+    "extra feature:",
+    "misunderstood:",
 )
 
 

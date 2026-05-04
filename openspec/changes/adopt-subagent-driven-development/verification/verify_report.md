@@ -23,11 +23,9 @@ triggered_by_command: change-apply-subagent
 
 ## Summary
 
-```
-[OK]: 4
-[FAIL]: 0
-[SKIP]: 2
-```
+- [OK]: 4
+- [FAIL]: 0
+- [SKIP]: 2
 
 ## §8.1 — `python -m pytest -q`(全量)
 
@@ -53,13 +51,13 @@ triggered_by_command: change-apply-subagent
 ## §8.3 — `python tools/forgeue_finish_gate.py --json`
 
 - **Status**: [SKIP](S5 stage runs finish_gate as smoke check;FAIL is **expected** at S5 because S6 review evidence + S7 doc_sync_report + S8 finish_gate_report 由后续 stage 落盘)
-- finish_gate 报 9 个 `evidence_missing` blockers,全部来自 S6/S7/S8 stage 待落 evidence:
+- finish_gate 报 9 个 `evidence_missing` blockers:
   - `verify_report.md`(本文件 — 落盘后此 blocker 自然消失)
   - `doc_sync_report.md`(§10 落)
-  - `superpowers_review.md` finalize(§9 落)
-  - `codex_design_review.md` / `codex_plan_review.md` / `codex_verification_review.md` / `codex_adversarial_review.md`(§9 落)
+  - `subagent_final_review.md`(**dogfood evidence,§9 落** — 不是 S6 后续 stage,是当前 dogfood loop final reviewer 产物;F9 修复后明确)
+  - `superpowers_review.md` finalize / `codex_design_review.md` / `codex_plan_review.md` / `codex_verification_review.md` / `codex_adversarial_review.md`(§9 落)
   - `design_cross_check.md` / `plan_cross_check.md`(本 change 是 self-host bootstrap,Pre-P0 已落 `notes/pre_p0/plan_cross_check.md`;`design_cross_check.md` 在 self-host scope 之外 — 沿 Pre-P0 一次性附录精神;**finish_gate stage 时**评估是否标 OPTIONAL 或写 stub)
-- **本 stage 预期 FAIL**;后续 §9-§10 落 evidence 后再跑 finish_gate(§10.3)预期 PASS
+- **本 stage 预期 FAIL**;§9 review evidence 落盘后(含 dogfood `subagent_final_review.md` + codex `codex_adversarial_review.md` verbatim)+ §10 doc_sync_report.md 后再跑 finish_gate(§10.3)预期 PASS
 
 ## §8.4 — `python tools/forgeue_change_state.py --writeback-check --json`
 

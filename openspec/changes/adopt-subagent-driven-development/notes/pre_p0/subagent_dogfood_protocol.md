@@ -43,7 +43,7 @@ Task tool dispatch implementer subagent (general-purpose)
     │    12-key frontmatter(stage: S4 / aligned_with_contract: true 或带 drift / change_id: adopt-subagent-driven-development)
     │
     │  controller 调:
-    │    python tools/forgeue_subagent_budget.py --change adopt-subagent-driven-development --record \
+    │    python tools/forgeue_subagent_budget.py --change adopt-subagent-driven-development --record --task-n <n> --subagent-type <implementer|spec_review|code_quality_review|final_review> \
     │      --task-n <n> --subagent-type implementer --tokens-input <N> --tokens-output <M> --usd <X>
     │  (Pre-P0 阶段 forgeue_subagent_budget.py 还未实装,跳过 record 步;§6 实装后回填补 record)
     │

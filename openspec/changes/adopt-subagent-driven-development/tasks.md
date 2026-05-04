@@ -67,7 +67,7 @@
   - **Step 6.7 新增**:`cd` 到 isolated worktree,**所有后续命令(step 7-10 dispatch + evidence 落盘 + 越界检测 + 回写检测;以及 §8 verify / §9 review / §10 doc-sync + finish-gate)以该 worktree 为 cwd 执行**(沿 D-Worktree-Detail 第 3 项)
   - **Step 7 重写**:invoke `superpowers:subagent-driven-development` skill;主 session Claude 从 `execution/micro_tasks.md` extract task list + `execution/execution_plan.md` 提取 per-task context,完整文本作为 prompt 传 implementer subagent(沿 D-TaskInput)
   - **Step 8 新增 evidence 收口**:每个 task 完成后落 `execution/task_<n>_implementer.md` / `task_<n>_spec_review.md` / `task_<n>_code_quality_review.md`(12-key frontmatter 完整);全 task 完成后落 `review/subagent_final_review.md`。**所有 4 类 subagent evidence frontmatter 必含额外 audit 字段** `triggered_by_command: change-apply-subagent`(F2 修复 — `forgeue_finish_gate.py` 完整性检查从此字段判定 dispatch mode,不依赖 helper marker);**Token usage 写 evidence body 末尾段**(F5 修复 — `## Token usage` 段含 input_tokens / output_tokens / model / estimated_usd / data_source,沿 design.md D-ADR008 / dogfood protocol §5)
-  - **Step 8.5 新增 budget record**:每次 dispatch return 后调 `python tools/forgeue_subagent_budget.py --change <id> --record --tokens-input <N> --tokens-output <M> --usd <X> --model <name>`(参数从 Task tool return 的 token usage 直接传,**不**从 evidence frontmatter 读;沿 F5 修复)
+  - **Step 8.5 新增 budget record**:每次 dispatch return 后调 `python tools/forgeue_subagent_budget.py --change <id> --record --task-n <n> --subagent-type <implementer|spec_review|code_quality_review|final_review> --tokens-input <N> --tokens-output <M> --usd <X> --model <name>`(参数从 Task tool return 的 token usage 直接传,**不**从 evidence frontmatter 读;沿 F5 修复 + F6 修复 6 args 全列)
   - Step 9-10:越界检测 + 回写检测 + 状态推进(沿 change-apply.md 不变;**以 isolated worktree 为 cwd** 执行)
   - **Step 10.5 新增**(F1 修复 — evidence 同步回主分支):全部 micro-task done + Level 0 全绿 + finish_gate exit 0 后,squash merge 或 cherry-pick isolated worktree 全部 commits(含 evidence 落盘 commits)回主分支;然后 `git worktree remove <isolated-path>` 清理。**禁止** force-push 或 evidence 文件手工 cp(沿 D-Worktree-Detail 第 4 项)
   - Guardrails:加 `不复制 / 不引用 implementer-prompt.md / spec-reviewer-prompt.md / code-quality-reviewer-prompt.md 文本`(沿 D-SkillInvoke);加 `subagent 不被授权读 micro_tasks.md / execution_plan.md`(沿 D-TaskInput)
@@ -167,7 +167,8 @@
 
 ## 11. Archive close-out
 
-- [ ] 11.1 tasks unchecked tick:把本文件全部 task 改 `[x]`(§9 self-stage `[x]`,§10-§11 self-stage 在 finish_gate 跑后 `[x]`)
+- [ ] 11.0 **(F10 修复 — pre-tick before finish_gate)** 在 §10.3 finish_gate 之前 tick §1-§9 已完成 task `[x]`(防 finish_gate `tasks_unchecked` blocker 永久阻塞;沿 codex S6 round 2 F10 finding accepted)
+- [ ] 11.1 tasks unchecked tick:把本文件全部 task 改 `[x]`(§10-§11 self-stage 在 finish_gate 跑后 `[x]`)
 - [ ] 11.2 单 commit close:`feat(openspec): adopt subagent-driven-development as default change-apply path + ADR-009 budget tracker`
 - [ ] 11.3 用户调 `openspec archive adopt-subagent-driven-development -y`(自动跑 sync-specs 合入主 spec + mv 到 `openspec/changes/archive/<date>-adopt-subagent-driven-development/`)
 - [ ] 11.4 archive 后 commit:`chore(openspec): archive adopt-subagent-driven-development + sync examples-and-acceptance ADDED requirement`

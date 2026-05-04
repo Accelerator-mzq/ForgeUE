@@ -51,7 +51,7 @@ S3→S4-S5 transition(default 路径,自 `adopt-subagent-driven-development` cha
       - 段内含 `input_tokens=N` / `output_tokens=M` / `model=<name>` / `estimated_usd=$X.XX` / `data_source=<source>`
       - 数据来自 Task tool return 的 token usage 字段;若不可获取 → `data_source: estimated only, not gate-grade`,且**不**追加到正式 `verification/subagent_budget.log`
 12. **budget record(每次 dispatch return 后)**(D-ADR009):
-    - 调 `python tools/forgeue_subagent_budget.py --change <id> --record --tokens-input <N> --tokens-output <M> --usd <X> --model <name>`
+    - 调 `python tools/forgeue_subagent_budget.py --change <id> --record --task-n <n> --subagent-type <implementer|spec_review|code_quality_review|final_review> --tokens-input <N> --tokens-output <M> --usd <X> --model <name>`(F6 修复:6 必填 args 沿 forgeue_subagent_budget._validate_record_args 实装)
     - 参数从 Task tool return 的 token usage **直接传**,**不**从 evidence frontmatter 读取(沿 F5 修复)
     - 工具仅 informational + soft WARN,exit 0;超 `FORGEUE_SUBAGENT_BUDGET_WARN_USD`(default `$2.0`)stdout 打 `[WARN]` 行
     - 追加 JSON Lines 到 `verification/subagent_budget.log`
