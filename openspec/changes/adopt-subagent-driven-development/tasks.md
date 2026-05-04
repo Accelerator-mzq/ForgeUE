@@ -112,6 +112,13 @@
   - `subagent_spec_review` body 含 "missing requirement" / "extra feature" / "misunderstood" 等 contract gap 关键字 → `--writeback-check` exit 5(沿 4 类 named DRIFT taxonomy)
   - `subagent_code_quality_review` body 含 Critical issue → exit 5
   - `subagent_implementer_report` body 内 `def`/`class` identifier 不在 design.md fenced code 内 → exit 5(沿 detect_drift_contradicts 现有 _RE_PY_DEF 检测)
+- [ ] 5.7 修 task 2 引入的 fence count regression(task 3 §5 dogfood code_quality_reviewer 独立验证暴露;`evidence_exposes_contract_gap` DRIFT writeback,16 errors outstanding):
+  - **背景**:task 2 commit `af2892a` 引入 `change-apply-direct.md` + `change-apply-subagent.md`,让 `.claude/commands/forgeue/` 实际有 10 个 .md 文件;但 3 个 fixture (`tests/unit/test_forgeue_command_markdown.py` + `test_forgeue_workflow_no_paid_default.py` + `test_forgeue_workflow_plugin_invocation.py`)硬编码 "expected exactly 8 forgeue command files",导致全量 pytest 16 errors。task 2 dogfood loop reviewer 当时未跑全量 pytest 漏抓(systematic gap)
+  - **修复路径**:**不是**简单 `8` → `10` mechanical replacement(reviewer 验证)— `change-apply.md` 现是 deprecated stub(只有 frontmatter + 一段 banner,无 `Steps` / `Output Format` / `Guardrails` body sections),fixture 里多个 assert(`test_each_cmd_mentions_codex_hook` / `test_each_cmd_references_forgeue_env_detect` / `test_each_cmd_has_required_body_sections` / `test_paid_mentions_qualified`)都会对 stub fail
+  - **正确修复**:在 3 个 fixture 文件:(a)`files = sorted(p for p in CMD_DIR.glob("change-*.md") if p.name != "change-apply.md")` 排除 deprecated stub + assertion 改 `len == 9`;(b) 或归档 deprecated stub 到 `.claude/commands/forgeue/_deprecated/change-apply.md`(更彻底,但跨 archive cycle 处置)
+  - **dogfood 价值**:让此修复**走完整 dogfood loop**(implementer + spec_review + code_quality_review),是双重价值:既修 16 errors,又当 后续 task dogfood evidence subject
+  - **lessons learned**(写入 forgeue_integrated_ai_workflow.md follow-on,non-blocker):dogfood reviewer 应该跑全量 pytest 而非仅相关测试,否则会漏抓 cross-file regression
+  - **完成标准**:全量 pytest exit 0,1 SKIP / 0 ERRORS;3 个 erroring fixture 文件 PASS;`change-apply.md` deprecated stub 处置策略明确(fixture-level exclude vs file move);spec compliance reviewer + code quality reviewer 走完整 dogfood loop
 
 ## 6. `tools/forgeue_subagent_budget.py` 新建 + fence test
 
