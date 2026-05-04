@@ -21,9 +21,12 @@ triggered_by: "/forgeue:change-apply (S3→S4-S5 transition; Superpowers executi
 codex_plugin_available: true
 created_at: 2026-05-04T12:15:00+08:00
 resolved_at: null
+resolved_at: 2026-05-04T13:40:00+08:00
 disputed_open: 0
 aligned_with_contract: false
-drift_decision: pending-codex-plan-review-still-running
+drift_decision: written-back-to-design+specs+tasks+proposal+runner.py (4 findings 全 accepted-codex; commit 1185377 含全部 round-3 PF1-PF4 修订;PF1 路径 (a) 用户 2026-05-04 拍板 → ComfyUI runner.py user-authored extension 已实施;PF2/PF3/PF4 同步 sweep)
+writeback_commit: 11853772fcc909ddc17f945a7c41596e94fa935b
+reasoning_notes_anchor: "design.md `## Reasoning Notes — round-3 codex plan review (2026-05-04)`"
 writeback_commit: null
 drift_reason: null
 reasoning_notes_anchor: null

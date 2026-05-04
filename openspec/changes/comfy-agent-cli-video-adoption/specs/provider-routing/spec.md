@@ -183,9 +183,11 @@ The system SHALL implement `ComfyAgentWorker.generate_video(spec, num_candidates
             f"mp4 BMFF header mismatch: offset 4-8 = {data[4:8]!r}, expected b'ftyp'"
         )
     box_size = int.from_bytes(data[0:4], "big")
-    if box_size != 1 and (box_size < 8 or box_size > len(data)):
+    # round-3 PF2 修订:reject box_size == 1 (largesize follow-on `video-bmff-largesize-support`)
+    if box_size == 1 or box_size < 8 or box_size > len(data):
         raise WorkerUnsupportedResponse(
-            f"mp4 BMFF first box_size={box_size} out of range [8, {len(data)}]"
+            f"mp4 BMFF first box_size={box_size} out of range [8, {len(data)}] "
+            f"(largesize box_size==1 deferred to follow-on `video-bmff-largesize-support`; round-3 PF2)"
         )
     major_brand = data[8:12]
     if major_brand == b"\x00\x00\x00\x00" or major_brand == b"    ":
@@ -219,11 +221,14 @@ The system SHALL implement `ComfyAgentWorker.generate_video(spec, num_candidates
 - **WHEN** `generate_video(...)` runs
 - **THEN** raises `WorkerUnsupportedResponse` with message containing `"mp4 BMFF header mismatch"` and the actual bytes at offset 4-8; `tests/unit/test_comfy_subprocess.py::test_generate_video_bmff_ftyp_mismatch_raises_unsupported_response` fences this
 
-#### Scenario: generate_video BMFF box_size out of range raises (round-2 F4)
+#### Scenario: generate_video BMFF box_size out of range raises (round-2 F4 + round-3 PF2 修订:largesize=1 同 reject)
 
-- **GIVEN** `outputs.video = ["<abs_path>/corrupt.mp4"]` where the file has `b"ftyp"` at offset 4 but `data[0:4]` (box_size big-endian) is either `< 8` (e.g. 0 / 4) or `> len(data)` (e.g. 999999 in a 1KB file); box_size == 1 (64-bit largesize indicator) is allowed
+- **GIVEN** `outputs.video = ["<abs_path>/corrupt.mp4"]` where the file has `b"ftyp"` at offset 4 but `data[0:4]` (box_size big-endian) is either:
+  - `< 8` (e.g. 0 / 4 — too small for header)
+  - `> len(data)` (e.g. 999999 in a 1KB file — exceeds payload)
+  - **`== 1`** (round-3 PF2 修订:64-bit largesize box,本 change scope **rejected**;follow-on `video-bmff-largesize-support` 触发条件 = 真实 mp4 ≥ 4 GiB,Wan T2V 标准输出 5-15MB 不用 largesize)
 - **WHEN** `generate_video(...)` runs
-- **THEN** raises `WorkerUnsupportedResponse` with message containing `"mp4 BMFF first box_size=<N> out of range"`; `tests/unit/test_comfy_subprocess.py::test_generate_video_bmff_box_size_too_small_raises` + `::test_generate_video_bmff_box_size_exceeds_len_raises` + `::test_generate_video_bmff_box_size_largesize_1_accepted` fence this (3 fences)
+- **THEN** raises `WorkerUnsupportedResponse` with message containing `"mp4 BMFF first box_size=<N> out of range"` (and 提及 `largesize box_size==1 deferred to follow-on` for box_size==1 case); `tests/unit/test_comfy_subprocess.py::test_generate_video_bmff_box_size_too_small_raises` + `::test_generate_video_bmff_box_size_exceeds_len_raises` + `::test_generate_video_bmff_box_size_largesize_1_rejected_pending_follow_on` fence this (3 fences;round-3 PF2 修订:fence 名 `_largesize_1_accepted` → `_largesize_1_rejected_pending_follow_on`)
 
 #### Scenario: generate_video BMFF major_brand empty raises (round-2 F4)
 

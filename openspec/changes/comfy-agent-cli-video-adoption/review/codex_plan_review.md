@@ -23,8 +23,8 @@ findings_severity_breakdown: "high=1, medium=3"
 created_at: 2026-05-04T12:30:00+08:00
 codex_completed_at: 2026-05-04T12:50:00+08:00
 aligned_with_contract: false
-drift_decision: pending-user-direction-on-PF1 (PF1 是 critical blocker — extract_outputs 不发 video key,需要决策扩 runner.py 还是 ForgeUE-side workaround;PF2-PF4 待 writeback round)
-writeback_commit: null
+drift_decision: written-back-to-design+specs+tasks+proposal+runner.py (4 findings 全 accepted-codex;PF1 用户拍板路径 (a) → ComfyUI runner.py user-authored extension 已实施;commit 1185377 含全部 round-3 修订)
+writeback_commit: 11853772fcc909ddc17f945a7c41596e94fa935b
 drift_reason: "PF1 (high) requires user-level decision on whether to extend D:/AI/ComfyUI/scripts/comfyui_api/runner.py (user-authored ComfyUI shared dir, 沿 round 5 D10 mini-LoadImage 模式) or implement ForgeUE-side fallback parsing outputs.raw"
 reasoning_notes_anchor: "design.md `## Reasoning Notes — round-3 codex plan review (2026-05-04)` (待 PF1 决策后写)"
 note: |

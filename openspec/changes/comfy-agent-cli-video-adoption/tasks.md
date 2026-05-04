@@ -530,7 +530,7 @@
 - [ ] 11.4 验证 L2 evidence 客观判定(round-2 F4 修订:加 BMFF strict 4-tuple 校验):
   - (a) `artifacts/<today>/video_smoke_l2_<date>/<artifact_id>.mp4` 存在
   - (b) 文件大小 > 1 MB(预期 5-15 MB,Wan 1.3B 5sec @ 832x480 / 81 frames / 25 steps)
-  - (c) BMFF strict header(round-2 F4):`len(data) >= 16` AND `data[4:8] == b"ftyp"` AND `box_size = int.from_bytes(data[0:4], "big")` 在 `[8, len(data)]` 范围(or `box_size == 1` 64-bit largesize)AND `data[8:12]` major_brand 非空非全 0 / 非全 space
+  - (c) BMFF strict header(round-2 F4 + round-3 PF2 修订):`len(data) >= 16` AND `data[4:8] == b"ftyp"` AND `box_size = int.from_bytes(data[0:4], "big")` 在 `[8, len(data)]` 范围(round-3 PF2:**reject `box_size == 1`** 64-bit largesize,follow-on `video-bmff-largesize-support`)AND `data[8:12]` major_brand 非空非全 0 / 非全 space
   - (d) producer attribution:`Artifact.metadata.worker_metadata.comfy_capability == "video"` + producer = `comfy_agent_cli` + model = `comfy/local-video`
   - (e) duration / frame_count / width / height / fps 顶层 metadata 全 None(D8 + 本 change scope;follow-on `video-metadata-parser` 加 ffprobe 解析)
 - [ ] 11.5 evidence 文件 `notes/live_smoke_video_<date>.md` 记录:命令行 / run_id / artifact_id / 文件大小 / magic bytes / producer attribution / metadata 6 keys 验证 / 总耗时 / 任何 round-2 修订(若 OQ-1 实测发现 `outputs.video` 字段名不符)
