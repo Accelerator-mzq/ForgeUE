@@ -345,6 +345,20 @@ models:
     provider: comfy_api
     kind: audio
     pricing: null
+
+  # 本地 ComfyUI video virtual model id(OpenSpec change comfy-agent-cli-video-adoption Phase 3)
+  # 与 comfy_local / comfy_local_mesh / comfy_local_audio 平行,但 kind=video;真"workflow" 由 bundle
+  # `step.config.spec.comfy_workflow` 指定的 video manifest 决定(默认 D3 `Vedio/Wan2.1-T2V-1.3B_native_5sec`
+  # — D5 上游 `Vedio/` 拼写照实跟随,不做翻译;7 分钟生成 / 6GB VRAM)。pricing: null 触发
+  # ADR-007 边界判定为非 premium ((None or {}).get("per_task_usd", 0) == 0),
+  # 走 _generate_via_comfy_worker 内部 retry loop(沿 audio Phase 2 R7-B _should_retry honor RetryPolicy.retry_on)。
+  # round-2 F2 + round-3 PF3 sweep:VideoCandidate.format Literal["mp4"] mp4-only,
+  # webm follow-on `comfy-video-webm-adoption`(触发条件:用户实际有 webm use case)。
+  comfy_local_video:
+    id: "comfy/local-video"
+    provider: comfy_api
+    kind: video
+    pricing: null
 aliases:
   # 别名按「场景能力」命名，不按厂商 / 成本档位命名。想换模型（国内国外、
   # 便宜强力）直接改 preferred / fallback 里引用的 model 名字即可 ——
@@ -424,4 +438,14 @@ aliases:
   # 留 follow-on change `audio-worker-audiocraft-adoption`)
   audio_local:
     preferred: [comfy_local_audio]
+    fallback: []
+
+  # 本地 ComfyUI video generation(OpenSpec change comfy-agent-cli-video-adoption Phase 3)
+  # SRS FR-MODEL-007 alias 列表第 12 alias(image_local + mesh_local + audio_local 之后)
+  # bundle 写 provider_policy.models_ref: "video_local" → 解析为 comfy/local-video
+  # → GenerateVideoExecutor._should_use_comfy_worker_path 检测 model id → ComfyAgentWorker.generate_video
+  # fallback: [] 不 fallback 到云端(本地 ComfyUI video 是独立 capability;远端 video worker
+  # Runway / Pika / Sora 留 follow-on change `video-worker-remote-adoption`)
+  video_local:
+    preferred: [comfy_local_video]
     fallback: []

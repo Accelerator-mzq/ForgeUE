@@ -135,7 +135,7 @@
 
 ## 4. ModelRegistry config 扩展(commit 3)
 
-- [ ] 4.1 在 `config/models.yaml` `models:` 段加 `comfy_local_video` entry:
+- [x] 4.1 在 `config/models.yaml` `models:` 段加 `comfy_local_video` entry:
   ```yaml
   comfy_local_video:
     id: "comfy/local-video"
@@ -152,10 +152,10 @@
 - [ ] 4.2 在 `config/models.yaml` `aliases:` 段加 `video_local` alias:`preferred: ["comfy_local_video"]` + `fallback: []`(无远端 video worker fallback;留 follow-on `video-worker-remote-adoption`)
 - [ ] 4.3 `providers.comfy_api` entry **不动**(image / mesh / audio change 已加,沿用)
 - [ ] 4.4 `tests/fixtures/test_models.yaml` 同步加 `comfy_local_video` + `video_local`(用于 unit test 不污染 production yaml)
-- [ ] 4.5 `tests/unit/test_model_registry.py` 加 2 fence:
-  - `test_comfy_local_video_model_resolves_via_video_local_alias`
-  - `test_video_local_alias_kind_is_video`
-- [ ] 4.6 commit 3:`feat(registry): add comfy/local-video virtual model + video_local alias`
+- [x] 4.5 `tests/unit/test_model_registry.py` 加 2 fence:
+  - `test_comfy_local_video_model_resolves_via_video_local_alias` ✅
+  - `test_video_local_alias_kind_is_video` ✅
+- [x] 4.6 commit 3:`feat(registry): add comfy/local-video virtual model + video_local alias`(实测 pytest -q 1346 passed,1344+2 fence)
 
 ## 5. ComfyAgentWorker capability-aware 扩 video(commit 4)
 

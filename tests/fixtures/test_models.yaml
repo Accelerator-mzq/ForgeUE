@@ -131,6 +131,12 @@ models:
     provider: comfy_api
     kind: audio
 
+  # OpenSpec change comfy-agent-cli-video-adoption Phase 3 video
+  comfy_local_video:
+    id: "comfy/local-video"
+    provider: comfy_api
+    kind: video
+
 aliases:
   # capability-named aliases only —— swap models freely without renaming
 
@@ -172,4 +178,8 @@ aliases:
   # OpenSpec change comfy-agent-cli-audio-adoption Phase 2: local ComfyUI audio
   audio_local:
     preferred: [comfy_local_audio]
+    fallback: []
+  # OpenSpec change comfy-agent-cli-video-adoption Phase 3: local ComfyUI video
+  video_local:
+    preferred: [comfy_local_video]
     fallback: []
