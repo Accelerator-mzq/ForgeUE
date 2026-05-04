@@ -13,6 +13,10 @@ detected_env: claude-code
 triggered_by: forced (Pre-P0 self-host bootstrap)
 codex_plugin_available: true
 triggered_by_command: change-apply-subagent
+disputed_open: 0
+codex_review_ref: notes/pre_p0/codex_review_round1.md
+created_at: 2026-05-04T22:30:00+08:00
+resolved_at: 2026-05-04T23:15:00+08:00
 ---
 
 # Design Cross-Check — reference to Pre-P0 plan_cross_check.md
