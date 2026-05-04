@@ -187,6 +187,20 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 
 **Task 输入**:主 session Claude 从 `execution/micro_tasks.md` extract task list + `execution/execution_plan.md` 提取 per-task context,**完整文本作为 prompt 传 implementer subagent**(沿 SKILL.md Red Flag);subagent 不被授权读 plan 文件。
 
+**Self-host bootstrap controller emulation 豁免**(自 `adopt-subagent-driven-development` archived 2026-05-04 后正式形式化):
+
+在 self-host bootstrap change(change 自身实施时 `change-apply-subagent` 命令尚未存在,如 `adopt-subagent-driven-development` 自身)Pre-P0 + §1-§3(命令未实装阶段),Claude controller 允许用 Claude Code 内置 `Agent` tool(`subagent_type: general-purpose`)**手工 emulation** Superpowers `subagent-driven-development` skill 的 dispatch protocol(自己写 implementer-prompt / spec-reviewer-prompt / code-quality-reviewer-prompt 等价 prompt;手工编排 implementer → 2-stage review 顺序)。
+
+**Audit field convention**:evidence frontmatter `triggered_by` 字段必须显式声明 dispatch mode:
+
+- `triggered_by: forced (self-host bootstrap manual dispatch)` — controller emulation(用 Claude Code Agent tool 手工 dispatch + 自写 prompt;无 model selection,主 session model;无 SKILL.md 内部协议自动驱动);仅 self-host bootstrap Pre-P0 + §1-§3 阶段允许
+- `triggered_by: skill_invoke` — 真 invoke `superpowers:subagent-driven-development` skill(skill 自家协议驱动 + SKILL.md "Model Selection" 段分级 cheap / standard / capable model + 3 内部 prompt 模板自动 import + UI 显式标 model 如 `Agent(...) Sonnet 4.6`);self-host bootstrap §4+ 命令实装后 + 所有 follow-on change 必须使用此模式
+- `triggered_by: auto` — 用户实际调 `/forgeue:change-apply-subagent` 命令时由命令文件自动驱动 skill invoke;evidence frontmatter 由命令收口流程自动写入
+
+**§4+ 命令实装后必须 switch 到 `triggered_by: skill_invoke`**(self-host bootstrap exemption 不延伸到命令实装后阶段)。
+
+**Layer 6 dogfood meta-finding**(`adopt-subagent-driven-development` archived 2026-05-04 揭示):本 change 实施全程(Pre-P0 → §10)用 controller emulation,§4 命令实装后未切真 skill invoke,**违反**本 exemption 边界。Lessons learned:future self-host bootstrap change 必须在命令实装的 stage transition 时显式 switch evidence `triggered_by` 字段;`forgeue_finish_gate.py` 后续 follow-on 应加 fence test 验证 §4+ 阶段 evidence 不允许 `triggered_by: forced (manual dispatch)` 字面。
+
 ### B.5 禁用项
 
 - `/codex:rescue` 在 ForgeUE workflow 内(违反 review-only 原则);markdown lint fence 扫 ForgeUE 命令文件不允出现 `/codex:rescue` 字面;Pre-P0 是本 fusion change 一次性例外,未来其他 change 不适用(详 design.md §11.4)。
