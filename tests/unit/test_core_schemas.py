@@ -89,8 +89,10 @@ def test_artifact_type_internal_is_two_segment():
 
 
 def test_artifact_type_modality_enum_check():
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D2:
+    # "video" 已加入 modality Literal,本 fence 改用 "hologram"(永远不在 Literal)继续守门 closed-set 行为。
     with pytest.raises(ValidationError):
-        ArtifactType(modality="video", shape="mp4", display_name="x")  # not in Literal
+        ArtifactType(modality="hologram", shape="x", display_name="x")  # not in Literal
 
 
 # ---------- Artifact (§B.6) ----------

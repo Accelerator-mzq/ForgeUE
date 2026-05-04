@@ -36,7 +36,7 @@ class PreparedRoute(BaseModel):
     Each route carries its own `api_key_env` + `api_base`, so an alias can mix
     multiple providers in its preferred / fallback chain without sharing auth.
 
-    `kind` tags the modality (text / image / mesh / audio / vision) so
+    `kind` tags the modality (text / image / mesh / audio / video / vision) so
     modality-specific executors can assert the policy points at compatible
     models before routing.
 

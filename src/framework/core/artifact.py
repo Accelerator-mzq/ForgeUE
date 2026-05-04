@@ -32,7 +32,7 @@ class PayloadRef(BaseModel):
 class ArtifactType(BaseModel):
     """Two-segment internal type + flat external display name."""
 
-    modality: Literal["text", "image", "audio", "mesh", "material", "bundle", "ue", "report"]
+    modality: Literal["text", "image", "audio", "mesh", "video", "material", "bundle", "ue", "report"]
     shape: str
     display_name: str
 
