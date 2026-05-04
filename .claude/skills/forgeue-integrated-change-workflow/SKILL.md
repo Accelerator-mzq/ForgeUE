@@ -8,7 +8,7 @@ metadata:
   version: "1.0"
 ---
 
-ForgeUE Integrated AI Change Workflow 的中心化编排器。本 skill 是 8 个 `/forgeue:change-*` command(`change-{status,plan,apply,debug,verify,review,doc-sync,finish}`)的共享 backbone:统一架构 + 状态机 + 协议,每个 command 只引用本 skill,不重复定义。
+ForgeUE Integrated AI Change Workflow 的中心化编排器。本 skill 是 9 个 `/forgeue:change-*` command(`change-{status,plan,apply-subagent,apply-direct,debug,verify,review,doc-sync,finish}`;自 `adopt-subagent-driven-development` change 起,`change-apply` 拆为 subagent default + direct fallback 两条路径)的共享 backbone:统一架构 + 状态机 + 协议,每个 command 只引用本 skill,不重复定义。
 
 **真源**:`openspec/changes/fuse-openspec-superpowers-workflow/design.md` §1-§11 + Reasoning Notes;`docs/ai_workflow/forgeue_integrated_ai_workflow.md`(本 skill 的 user-facing 详表 + 阅读引导)。
 
@@ -42,8 +42,8 @@ OpenSpec contract artifact 是项目唯一规范锚点;Superpowers / codex / For
 | `requesting-code-review` | S5-S6 | superpowers_review 增量 + finalize |
 | `verification-before-completion` | S5 | verify_report 输入 |
 | `finishing-a-development-branch` | S9 后 | git 层 merge / PR / discard;不进 evidence |
-| `using-git-worktrees` | **禁用** | 与 ForgeUE 单-worktree 假设冲突 |
-| `subagent-driven-development` | OPTIONAL | paid API 拦截:env guard `{1,true,yes,on}` + ADR-007 |
+| `using-git-worktrees` | **REQUIRED for `/forgeue:change-apply-subagent`**(自 `adopt-subagent-driven-development` change 起) | 起 isolated worktree;详 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支) |
+| `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-008 token-budget tracker informational) | 4× LLM 调用;per-task 4 类 evidence + `subagent_budget.log`;ADR-008 与 ADR-007 vendor API 双扣边界**根本不同** |
 
 ## codex stage hook(design.md §3 / §4 / forgeue_integrated_ai_workflow.md §B.4)
 
@@ -63,7 +63,7 @@ OpenSpec contract artifact 是项目唯一规范锚点;Superpowers / codex / For
 
 完整表见 `forgeue_integrated_ai_workflow.md` §B.1。关键横切硬约束:
 
-- 没 active change → `/forgeue:change-{plan,apply,...}` abort
+- 没 active change → `/forgeue:change-{plan,apply-subagent,apply-direct,...}` abort
 - proposal/design/tasks 不齐 → 不能进 S3
 - 测试未跑 / 未解释 SKIP → 不能进 S6
 - review blocker 未清 → 不能进 S7

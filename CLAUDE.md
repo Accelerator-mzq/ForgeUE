@@ -223,24 +223,26 @@ ForgeUE 已采用 OpenSpec 作为 AI 主工作流。完整规则见 [`docs/ai_wo
 
 中心化融合 OpenSpec(契约锚点)× Superpowers(evidence 生成器)× codex-plugin-cc(stage cross-review hook)。OpenSpec change artifact 是唯一规范源,evidence 服务于契约,实施暴露的契约漏洞必须回写到 design / proposal / tasks。
 
-**8 个 Claude slash 命令**(对应 S0-S9 状态机各 stage,通过 `/forgeue:change-*` 触发):
+**9 个 Claude slash 命令**(对应 S0-S9 状态机各 stage,通过 `/forgeue:change-*` 触发;自 `adopt-subagent-driven-development` change 起,`change-apply` 拆为 `change-apply-subagent` + `change-apply-direct`):
 
 - `/forgeue:change-status` — 列 active changes / state / evidence(只读)
 - `/forgeue:change-plan` — S2→S3:codex `/codex:adversarial-review` design hook + Superpowers `writing-plans` + 锚点检测
-- `/forgeue:change-apply` — S3→S4-S5:codex plan review hook + `executing-plans` / `test-driven-development` + 越界检测
+- `/forgeue:change-apply-subagent` — **default for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill;每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`)+ `subagent_budget.log`;REQUIRED `superpowers:using-git-worktrees`(isolated worktree)
+- `/forgeue:change-apply-direct` — **fallback for S3→S4-S5**;沿原 `executing-plans` / `test-driven-development`;落 `tdd_log` / `debug_log`;不派 subagent;不需要 worktree isolation;轻量 change(< 3 micro-task)/ budget 紧张时使用
 - `/forgeue:change-debug` — 显式调 Superpowers `systematic-debugging`;debug_log 增量,暴露异常缺口必回写
 - `/forgeue:change-verify` — Level 0 / 1 / 2 + codex `/codex:review --base main` 验证 hook
 - `/forgeue:change-review` — Superpowers `requesting-code-review` finalize + codex `/codex:adversarial-review` mixed scope + blocker 回写
 - `/forgeue:change-doc-sync` — Documentation Sync Gate(10 文档静态扫 + §4.3 提示词 + 应用 [REQUIRED])
 - `/forgeue:change-finish` — Finish Gate(中心化最后防线;12-key frontmatter + writeback 真实性 + cross-check `disputed_open == 0`)
 
-**5 个 stdlib-only 工具**(沿 design.md §5 Tool Design):
+**6 个 stdlib-only 工具**(沿 design.md §5 Tool Design;自 `adopt-subagent-driven-development` change 起,新增 `forgeue_subagent_budget.py`):
 
 - `tools/forgeue_env_detect.py` — 5 层 env 检测 + plugin 可用性启发式
-- `tools/forgeue_change_state.py` — state 推断 + `--writeback-check` 4 类 named DRIFT 检测(回写检测主力)
+- `tools/forgeue_change_state.py` — state 推断 + `--writeback-check` 4 类 named DRIFT 检测(回写检测主力;DRIFT detector 扩 4 类 subagent evidence_type)
 - `tools/forgeue_verify.py` — Level 0/1/2 编排,产 `verification/verify_report.md`(12-key audit frontmatter)
 - `tools/forgeue_doc_sync_check.py` — 10 文档静态扫,标 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT]
-- `tools/forgeue_finish_gate.py` — 中心化最后防线(evidence 完整性 + frontmatter 全检 + cross-check + writeback 真实性 + tasks unchecked + `openspec validate --strict`)
+- `tools/forgeue_finish_gate.py` — 中心化最后防线(evidence 完整性 + frontmatter 全检 + cross-check + writeback 真实性 + tasks unchecked + `openspec validate --strict`;dispatch mode 从 evidence frontmatter `triggered_by_command` 字段判定)
+- `tools/forgeue_subagent_budget.py` — ADR-008 token-budget tracker(informational + soft WARNING;`exit 0` 始终,**不**做 hard gate;与 ADR-007 vendor API 双扣边界**根本不同**)
 
 **12-key audit frontmatter**:每份 formal evidence(`execution/` / `review/` / `verification/`)必含 8 个 always-required key(`change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `detected_env` / `triggered_by` / `codex_plugin_available`)+ 4 个 conditional key(`drift_decision` / `writeback_commit` / `drift_reason` / `reasoning_notes_anchor`,在 `aligned_with_contract: false` 时必填);`notes/` helper 子目录不强制。
 

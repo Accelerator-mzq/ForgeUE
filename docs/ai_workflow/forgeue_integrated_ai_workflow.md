@@ -87,9 +87,10 @@ Superpowers plugin 已提供成熟的 implementation methodology skills(完整�
   - `/opsx:new` / `/opsx:propose` / `/opsx:ff` — 创建 change scaffold
   - `/opsx:archive` — 归档 change(跑 sync-specs 把 ADDED Requirement 合入主 spec)
   - `/opsx:apply` / `/opsx:continue` / `/opsx:verify` / `/opsx:explore` 等 — OpenSpec contract 操作
-- **ForgeUE 命令**(`/forgeue:change-*`,8 个,详 §B):
+- **ForgeUE 命令**(`/forgeue:change-*`,**9 个**自 `adopt-subagent-driven-development` change 起;`change-apply` 拆为 `change-apply-subagent` + `change-apply-direct`,详 §B + §B.6):
   - 编排 S2-S8 实施 / cross-review / Sync Gate / Finish Gate
   - **不**做 contract create/archive(用户主动调 `/opsx:*`,显式声明 contract 操作)
+  - **不**用 env flag facade 切换 dispatch mode(沿 D-Default;两条命令独立显式声明)
 
 理由(决议 D-CommandsCount,见 design.md §11.1):用户主动调 OpenSpec 命令显式声明"我现在在做规范变更",而不是把它隐藏在 `/forgeue:change-*` facade 后面。优先选清晰角色边界,而非体验一致性。
 
@@ -115,8 +116,8 @@ Superpowers plugin / codex-plugin-cc **可选**。不可用时:
 | **S0** | 无 active change | 仓库初始 / 上一 change archive 完 | `/opsx:new` `/opsx:propose` `/opsx:ff` | OpenSpec 全部;ForgeUE `/forgeue:change-status`(只读) | brainstorming 输出无处落 | 无 contract |
 | **S1** | scaffolded,proposal 起草中 | `/opsx:new` 成功 | proposal+design+tasks 齐 + strict validate PASS | OpenSpec `/opsx:continue` `/opsx:ff`;ForgeUE `change-status` | brainstorming notes 内容必须显式抄入 proposal.md(中心) | proposal.md 起草 |
 | **S2** | contract ready | 三件套齐 + strict validate PASS | execution_plan + micro_tasks 落盘 + writeback PASS + (claude-code+plugin) cross-check disputed_open=0 | OpenSpec `/opsx:verify`(预检);ForgeUE `change-plan` `change-status` | Superpowers `writing-plans` skill auto-trigger;ForgeUE 配输出路径;codex `/codex:adversarial-review` design hook | execution_plan 引用 tasks.md 锚点 |
-| **S3** | execution plan ready | plan 落盘 + writeback PASS | 实际代码改动开始 | ForgeUE `change-{apply,debug,status}` | codex `/codex:adversarial-review` plan hook + cross-check;Superpowers `executing-plans` 待启 | plan vs tasks.md 锚点对齐 |
-| **S4** | implementation in progress | 代码改动开始 | 所有 micro-task done + Level 0 PASS + writeback PASS | ForgeUE `change-{apply,debug,status}` | Superpowers TDD / debugging / requesting-code-review auto-trigger;tdd_log / debug_log / superpowers_review 追加 evidence | git diff vs design 模块越界检测 |
+| **S3** | execution plan ready | plan 落盘 + writeback PASS | 实际代码改动开始 | ForgeUE `change-{apply-subagent,apply-direct,debug,status}`(自 `adopt-subagent-driven-development` change 起,`change-apply` 拆为两条路径;default subagent / fallback direct,详 §B.6) | codex `/codex:adversarial-review` plan hook + cross-check;Superpowers `subagent-driven-development`(default for `change-apply-subagent`)/ `executing-plans`(`change-apply-direct`) | plan vs tasks.md 锚点对齐 |
+| **S4** | implementation in progress | 代码改动开始 | 所有 micro-task done + Level 0 PASS + writeback PASS | ForgeUE `change-{apply-subagent,apply-direct,debug,status}` | Superpowers TDD / debugging / requesting-code-review auto-trigger;subagent path 落 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`)+ `subagent_budget.log`;direct path 沿 `tdd_log` / `debug_log` / `superpowers_review` | git diff vs design 模块越界检测 |
 | **S5** | verification ready | Level 0 全绿 + 所有 task done | verify_report 落盘 + 无 [FAIL] + (claude-code) codex_verification_review evidence | ForgeUE `change-{verify,review,status}` | Superpowers `verification-before-completion`;codex `/codex:review --base <main>` verification hook(代码级,无 cross-check) | Codex 找的代码 bug 是否反映 design.md 接口错位 |
 | **S6** | review ready | S5 通过 | superpowers_review finalize + codex_adversarial_review evidence + blocker 0 | ForgeUE `change-{review,doc-sync,status}` | Superpowers `requesting-code-review` + `code-reviewer` subagent finalize;codex `/codex:adversarial-review` mixed scope | review blocker 涉及 design choice → 回写或 disputed-permanent-drift |
 | **S7** | Documentation Sync Gate ready | S6 通过 | doc_sync_report 落盘 + DRIFT 0 + REQUIRED 全应用 | ForgeUE `change-{doc-sync,finish,status}` | 不直接介入(ForgeUE 独有概念) | docs / openspec/specs / contract 一致性 |
@@ -144,8 +145,8 @@ Superpowers plugin / codex-plugin-cc **可选**。不可用时:
 | `requesting-code-review` | S5-S6 | superpowers_review 增量 + finalize |
 | `verification-before-completion` | S5 | verify_report 输入 |
 | `finishing-a-development-branch` | S9 后 | git 层 merge / PR / discard;不进 evidence |
-| `using-git-worktrees` | **禁用** | 与 ForgeUE 单-worktree 假设冲突;plugin settings 关 |
-| `subagent-driven-development` | OPTIONAL | paid API 拦截:env guard `{1,true,yes,on}` + ADR-007 引用 |
+| `using-git-worktrees` | **REQUIRED for change-apply-subagent**(自 `adopt-subagent-driven-development` change 起;沿 subagent-driven-development SKILL.md 硬依赖) | 起 isolated worktree;`change-apply-subagent` step 6.5-10.5 协议见 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支)|
+| `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-008 token-budget tracker informational) | 4× LLM 调用(implementer + spec reviewer + code quality reviewer per task + final reviewer);per-task evidence 4 类 + `subagent_budget.log`;ADR-008 与 ADR-007 vendor API 双扣边界**根本不同**(LLM token 不双扣) |
 
 ### B.4 codex stage hook 触发
 
@@ -161,6 +162,30 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 - **claude-code env + plugin available** → REQUIRED;evidence 缺漏 → finish gate exit 2
 - **claude-code env + plugin not available** → OPTIONAL(降级);evidence frontmatter 标 `_unavailable_reason: codex_plugin_unavailable`
 - **non-claude-code env**(Codex CLI / Cursor / Aider 等)→ OPTIONAL;由 agent 自决 review,不阻断 archive
+
+### B.6 subagent-driven-development 集成边界(自 `adopt-subagent-driven-development` change 起)
+
+**命令分流**:`/forgeue:change-apply` 拆为两条独立命令(沿 design.md D-Default,**不**走 env flag facade):
+
+- `/forgeue:change-apply-subagent <id>` — **default 路径**;invoke `superpowers:subagent-driven-development` skill;每 task 派 implementer + spec compliance reviewer + code quality reviewer subagent + 全 task 完成后 final reviewer subagent;落 4 类 per-task evidence;**REQUIRED** `superpowers:using-git-worktrees`(isolated worktree);ADR-008 token-budget tracker informational
+- `/forgeue:change-apply-direct <id>` — **fallback 路径**;沿原 `executing-plans + TDD` 编排;落 `tdd_log` / `debug_log`;不派 subagent;不需要 worktree isolation;轻量 change(< 3 micro-task)/ budget 紧张时使用
+
+**4 类 per-task evidence schema**(扁平命名;沿 `forgeue_finish_gate.py` frontmatter-indexed 范式):
+
+| 文件路径 | `evidence_type` | 来源 |
+|---|---|---|
+| `execution/task_<n>_implementer.md` | `subagent_implementer_report` | implementer subagent return(Status / 实施 / 测试 / commit SHAs) |
+| `execution/task_<n>_spec_review.md` | `subagent_spec_review` | spec compliance reviewer return |
+| `execution/task_<n>_code_quality_review.md` | `subagent_code_quality_review` | code quality reviewer return |
+| `review/subagent_final_review.md` | `subagent_final_review` | final code reviewer return(全 task 完成后) |
+
+**Dispatch mode 判定**(沿 design.md D-EvidenceSchema):evidence frontmatter 必含 audit 字段 `triggered_by_command: change-apply-subagent`;`forgeue_finish_gate.py` 从此字段判定 dispatch mode,**不依赖** helper marker file(防 marker 缺失绕过 gate)。
+
+**Token / cost audit**:tokens / model / usd 字段**不进** 12-key frontmatter,在 evidence body `## Token usage` 段记录(`data_source: task_tool_return` / `manual_estimate` 区分);`tools/forgeue_subagent_budget.py --record` 由 controller 直接传参,不读 frontmatter。ADR-008 budget tracker 仅 informational + soft WARNING(stdout `[WARN]` 行),始终 `exit 0`,**不**做 hard gate / auto fallback;用户保留 dispatch 中断判断权。
+
+**Skill invoke 协议**:`change-apply-subagent` 直接 invoke `superpowers:subagent-driven-development` skill,**不**重写 / 不复制 skill 内部 3 个 prompt 模板(`implementer-prompt.md` / `spec-reviewer-prompt.md` / `code-quality-reviewer-prompt.md`);ForgeUE 角色 = OpenSpec evidence wrapper。
+
+**Task 输入**:主 session Claude 从 `execution/micro_tasks.md` extract task list + `execution/execution_plan.md` 提取 per-task context,**完整文本作为 prompt 传 implementer subagent**(沿 SKILL.md Red Flag);subagent 不被授权读 plan 文件。
 
 ### B.5 禁用项
 

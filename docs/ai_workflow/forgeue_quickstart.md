@@ -32,9 +32,11 @@ S1 (scaffold)        proposal/design/tasks/specs 起草 + strict validate
   │ /forgeue:change-plan <id>                    ← S2→S3 关键 stage
   ▼
 S2-S3 (plan ready)   codex design hook + cross-check + writing-plans 产 plan
-  │ /forgeue:change-apply <id>                   ← 实施(bug 时 /forgeue:change-debug)
+  │ /forgeue:change-apply-subagent <id>          ← default;subagent-driven-development + 4 类 evidence
+  │ /forgeue:change-apply-direct <id>            ← fallback;executing-plans + TDD(轻量 change / budget 紧张)
+  │ /forgeue:change-debug <id>                   ← bug 时
   ▼
-S4 (impl in progress)  TDD + executing-plans + 越界检测
+S4 (impl in progress)  TDD + subagent-driven-development / executing-plans + 越界检测
   │ /forgeue:change-verify <id>                  ← Level 0/1/2
   ▼
 S5 (verify ready)    verify_report 落盘
@@ -106,31 +108,62 @@ S9 (archived)
 
 ---
 
-### 3.3 S3→S4-S5 实施
+### 3.3 S3→S4-S5 实施(自 `adopt-subagent-driven-development` change 起,拆为 default subagent + fallback direct)
 
-**命令**:
+**命令**(根据 change 复杂度显式选一,**不**走 env flag facade):
+
 ```bash
-/forgeue:change-apply <id>            # 主入口
-/forgeue:change-debug <id>            # bug 时显式调 systematic-debugging
+# default 路径:多 micro-task / 需要强 review checkpoint
+/forgeue:change-apply-subagent <id>
+
+# fallback 路径:小 change(< 3 micro-task)/ budget 紧张
+/forgeue:change-apply-direct <id>
+
+# bug 时显式调 systematic-debugging
+/forgeue:change-debug <id>
 ```
 
-**做什么**:
+**做什么(`change-apply-subagent` default 路径)**:
 - codex plan review hook → `review/codex_plan_review.md`
+- 主 session Claude 起 isolated worktree(REQUIRED `using-git-worktrees`;commit untracked artifacts → 起 worktree → cwd 切换;沿 design.md D-Worktree-Detail)
+- invoke Superpowers `subagent-driven-development` skill;每 task 派:
+  - implementer subagent(Task tool;prompt 含 task FULL TEXT + context;subagent **不**读 plan 文件)
+  - spec compliance reviewer subagent(独立验证 implementer 是否按 spec 做 + 不过度建造)
+  - code quality reviewer subagent(代码干净度 / 测试度 / 可维护度)
+- 全 task 完成后派 final reviewer subagent(整体 review 跨 task 一致性)
+- evidence 落盘:
+  - `execution/task_<n>_implementer.md`(`evidence_type: subagent_implementer_report`)
+  - `execution/task_<n>_spec_review.md`(`evidence_type: subagent_spec_review`)
+  - `execution/task_<n>_code_quality_review.md`(`evidence_type: subagent_code_quality_review`)
+  - `review/subagent_final_review.md`(`evidence_type: subagent_final_review`)
+- evidence frontmatter 必含 audit 字段 `triggered_by_command: change-apply-subagent`(沿 D-EvidenceSchema;`forgeue_finish_gate.py` 从此字段判定 dispatch mode)
+- token usage 写 evidence body `## Token usage` 段(`data_source: task_tool_return` / `manual_estimate`),由 `tools/forgeue_subagent_budget.py --record` 追踪
+- 越界检测 + writeback-check + 全 task done + Level 0 全绿 + finish_gate exit 0 后 squash merge / cherry-pick 回主分支 + `git worktree remove`
+
+**做什么(`change-apply-direct` fallback 路径)**:
+- 沿原 `executing-plans + TDD` 编排
 - Superpowers `executing-plans` 取 `execution/micro_tasks.md` 按部就班跑
 - Superpowers `test-driven-development` → `execution/tdd_log.md`(增量)
 - Superpowers `systematic-debugging`(bug 时)→ `execution/debug_log.md`
 - 越界检测:git diff 模块 vs design.md 接口字段
+- 不需要 worktree isolation;不派 subagent;不落 4 类 subagent evidence
 
 **关键检查**:
 - ✓ 每条 codex review / adversarial finding 修复 = **1 个新回归测试**(项目铁律)
 - ✓ 实施暴露 contract 漏洞 = 必须**回写**(design / tasks / proposal),evidence 不能成新规范源
 - ✓ 不调付费 provider 默认(env guard `{1,true,yes,on}`)
+- ✓ subagent path 每个 task 必有 spec_review + code_quality_review evidence;通过的 task 允许"frontmatter + 一行 summary"轻量化,未通过的 task MUST 完整 issues 列表
+- ✓ Token / cost 字段**不进** 12-key frontmatter,在 evidence body `## Token usage` 段记录
+- ✓ ADR-008 budget tracker 仅 informational + soft WARNING(`exit 0` 始终,**不**做 hard gate;用户保留判断权)
 
 **常见错误**:
 - ✗ 边写代码边改 design.md decisions(应当先回写 contract,确认 + commit 后再实施)
 - ✗ 修 codex finding 不补 fence test(下次回归没人守)
+- ✗ subagent path 跳过 step 6.5 commit untracked artifacts(`git worktree add` 不带 untracked 文件,subagent 看不到 contract;sequence 必须 commit → worktree → dispatch)
+- ✗ `change-apply-subagent` 命令文件复制 / 引用 Superpowers 内部 prompt 模板(沿 D-SkillInvoke;ForgeUE 仅做 evidence wrapper,不重写 skill 协议)
+- ✗ 使用 `FORGEUE_APPLY_MODE` env flag 切换路径(沿 D-Default 拒绝 env flag facade;两条命令独立显式声明)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.3 Superpowers 集成边界
+**深读**:`forgeue_integrated_ai_workflow.md` §B.3 Superpowers 集成边界 + §B.6 subagent-driven-development 集成边界
 
 ---
 
@@ -283,7 +316,8 @@ git commit -m "docs: backfill writeback_commit in P<N> review evidence"
 | 起新 change | `/opsx:propose <id> "<desc>"` |
 | 看哪个 change 卡哪个 stage | `/forgeue:change-status` |
 | 写完 design 想跑 codex review | `/forgeue:change-plan <id>` |
-| 实施代码 + TDD + plan review | `/forgeue:change-apply <id>` |
+| 实施(default subagent path) | `/forgeue:change-apply-subagent <id>`(多 micro-task / 需要 review checkpoint) |
+| 实施(fallback direct path) | `/forgeue:change-apply-direct <id>`(轻量 change / budget 紧张) |
 | 测试挂了找不出原因 | `/forgeue:change-debug <id>` |
 | 跑测试 + 产 verify_report | `/forgeue:change-verify <id>` |
 | 全套 review(self + codex) | `/forgeue:change-review <id>` |
