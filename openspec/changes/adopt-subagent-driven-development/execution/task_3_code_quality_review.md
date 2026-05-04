@@ -13,7 +13,7 @@ contract_refs:
   - design.md#D-EvidenceSchema
 aligned_with_contract: true
 drift_decision: written-back-to-tasks.md
-writeback_commit: PENDING_COMMIT_SHA
+writeback_commit: 0b59cc95283ed29039e57223306fb9081725d2ef
 drift_reason: "code_quality_reviewer 独立验证发现 task 2 引入的 fence count regression(16 errors 全量 pytest)**不是**简单 sed 8→10 — `change-apply.md` 现是 deprecated stub 没有 body sections,3 fixture 多个 assert 会对 stub fail;reviewer 推荐路径 (b):tasks.md §5.7 显式新加 task 写回 contract artifact,让此修复走完整 dogfood loop。Controller 接受 reviewer 推荐;tasks.md 已 amend §5.7;本 evidence drift_decision: written-back-to-tasks.md,writeback_commit 待 commit 后 amend。DRIFT taxonomy: evidence_exposes_contract_gap(沿 forgeue_integrated_ai_workflow.md §D.3)— task 3 reviewer 暴露 task 2 系统性 gap(dogfood reviewer 未跑全量 pytest 的 systematic miss)。"
 reasoning_notes_anchor: null
 detected_env: claude-code
