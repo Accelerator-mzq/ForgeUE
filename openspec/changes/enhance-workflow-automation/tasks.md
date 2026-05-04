@@ -149,8 +149,10 @@
 
 ## P10 — 后置(可选)
 
-- [ ] P10.1:更新 `MEMORY.md` 加 enhance-workflow-automation 摘要(沿 forgeue auto memory 协议)
+- [x] P10.1:更新 `MEMORY.md` 加 enhance-workflow-automation 摘要(沿 forgeue auto memory 协议)— 2026-05-05 已加 `feedback_autonomy_boundary_simplified.md` saved memory + MEMORY.md index entry(commit 47a58b2 同 batch)
 - [ ] P10.2:确认 D-CodexContextBridge bridge violation 率 < 30%(本 change 自身 dogfood 数据;若超出 → 后续 change 评估降级到 (a) paste 路径)
+- [ ] P10.3 (follow-on tracking):F6 codex command allowed-tools vs Polling Convention write capability mismatch — DEFERRED 到 follow-on change `enhance-workflow-automation-handoff-persistence`(P5 round 2 finding,scope 较大,涉及 allowed-tools 协议 vs controller 主 session 写状态架构选择;本 change 内 W4 Polling Convention 文档化已完成,实装 enforcement 留 follow-on)
+- [ ] P10.4 (follow-on tracking):D-AutonomyBoundary "Verdict Normalization" helper(`_check_verdict_normalization` + 8 row 表)— 2026-05-05 user feedback 简化后 deprecated 作 fence trigger,helper 保留作 controller 可选工具;**未来 change 评估**是否完全移除 helper 或 repurpose(`tools/forgeue_finish_gate.py:978-1030` + 8 row 表驱动 fence test)
 
 ---
 
