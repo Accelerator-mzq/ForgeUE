@@ -238,7 +238,19 @@ If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误
 
 ### §3.4 Post-Phase Quality Retrospect Protocol(Opus-only judgment;skill 增长触发)
 
-**Trigger**:每 phase 3-stage subagent dispatch 完成 + evidence committed 之后,**强制执行**(无论 phase 是否表面绿)。
+**Trigger**:每 phase **3-stage subagent dispatch** 完成 + evidence committed 之后,**强制执行**(无论 phase 是否表面绿)。
+
+**3-stage 定义**(沿 `superpowers:subagent-driven-development` upstream;per-task 串行):
+
+| Stage | Subagent 角色 | 任务 | 进入下 stage 条件 |
+|---|---|---|---|
+| Stage 1 | implementer | 写实现 code / fence test / commit | return status DONE / DONE_WITH_CONCERNS;若 BLOCKED / NEEDS_CONTEXT → controller 处理后 retry |
+| Stage 2 | spec_reviewer(spec compliance) | verify implementation 符合 spec(checklist 比对) | reviewer ✅ Spec compliant;若 ❌ Issues → SendMessage round 2 same implementer fix → re-review;直到 ✅ |
+| Stage 3 | code_quality_reviewer | verify code quality(clean / tested / maintainable / runtime correctness) | reviewer ✅ Approved 或 ⚠️ Approved with concerns(non-blocker);若 ❌ Issues → round 2 fix → re-review;直到 ✅/⚠️ |
+
+**Phase complete** = Stage 1 + Stage 2 + Stage 3 全 ✅(或 ⚠️ non-blocker)+ 3 类 evidence 文件落盘 + commit。**此时**触发 §3.4 retrospect。
+
+(注:**final_reviewer** 是 **per-change 末尾**额外 stage — 全 phase 完成后跑一次综合 review,不属于 per-phase 3-stage。final_reviewer 完成后做 change-level retrospect,不是 phase-level。)
 
 **Actor**:**Opus(MANDATORY)**。
 - 若 controller(主 session)是 Opus → controller 直接做
