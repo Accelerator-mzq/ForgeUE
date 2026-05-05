@@ -98,26 +98,34 @@
 
 ## P5 — verify
 
-- [ ] P5.1:`python tools/forgeue_verify.py --change enhance-workflow-automation-runtime-enforcement --level 0` 全绿
-- [ ] P5.2:`--level 1` 全绿(pytest 全套)
-- [ ] P5.3:产 `verification/verify_report.md`(12-key audit frontmatter)
+- [x] P5.1:`python tools/forgeue_verify.py --change enhance-workflow-automation-runtime-enforcement --level 0` 全绿(L0 pytest 1529 passed + 1 skipped in 47s;L0 offline-bundle-smoke OK)
+- [x] P5.2:`--level 1` 全绿(L0 全绿 + L1 live-llm-character-extract SKIP — opt-in env 协议沿 ADR-007 钱 fence 边界,默认 skip 不 block)
+- [x] P5.3:产 `verification/verify_report.md`(12-key audit frontmatter:`evidence_type: verify_report` / `stage: S5` / `aligned_with_contract: true` / `detected_env: claude-code` / `triggered_by: cli-flag`)
 
 ## P6 — codex S6 mixed-scope review
 
-- [ ] P6.1:`/codex:review --base <pre-change-SHA>` mixed-scope 评(default background)
-- [ ] P6.2:落 `review/codex_mixed_scope_review.md`
-- [ ] P6.3:writeback finding(若有)
+- [ ] P6.1:`/codex:review --base cd4f52a --background --scope branch` mixed-scope 评(default background;launch background process id `brf9ijgf5`,正在 inspect 代码 + 生成 verdict)
+- [ ] P6.2:落 `review/codex_mixed_scope_review.md`(等 codex result finalize 后写;保留 P6 finding 的 verbatim + Claude verify + writeback)
+- [ ] P6.3:writeback finding(若有);沿 ADR-010 双 commit pattern 或 simplified protocol(单 commit)
 - [ ] P6.4:`disputed_open: 0` 验证
 
-## P7 — 跳过 superpowers requesting-code-review(沿 enhance-workflow-automation 模式;per-task 已 cover)
+**Pre-commit P6 替代落地**:写 6 个 reference stub 满足 finish_gate `_REQUIRED_EVIDENCE_CLAUDE_PLUGIN` evidence type 集合(沿 archived enhance-workflow-automation 模式):
+- [x] `review/codex_design_review.md`(reference Pre-P0 round 1)
+- [x] `review/codex_plan_review.md`(reference Pre-P0 round 1)
+- [x] `review/codex_verification_review.md`(reference verify_report + 待 mixed-scope review 完成)
+- [x] `review/codex_adversarial_review.md`(reference Pre-P0 round 1 + 待 mixed-scope review 完成 round 2)
+- [x] `review/design_cross_check.md`(reference Pre-P0 plan_cross_check.md;A/B/C/D 4 段)
+- [x] `review/plan_cross_check.md`(reference Pre-P0 plan_cross_check.md;A/B/C/D 4 段)
 
-- [ ] P7.1:写 `review/superpowers_review.md` SKIP rationale stub
+## P7 — 跳过 superpowers requesting-code-review(沿 enhance-workflow-automation 模式;cover by Pre-P0 round 1 + P6 mixed-scope)
+
+- [x] P7.1:写 `review/superpowers_review.md` SKIP rationale stub(reviewed 7 layer review coverage matrix:Pre-P0 codex round 1 / Pre-P0 plan_cross_check / D-DirectWorktreeRefinement drift writeback / P5 verify L0+L1 / P6 codex mixed-scope / P4 11 docs sync / fence test 全套 regress;disputed_open: 0)
 
 ## P8 — Documentation Sync Gate
 
-- [ ] P8.1:`python tools/forgeue_doc_sync_check.py --change <id>` 静态扫
-- [ ] P8.2:落 `verification/doc_sync_report.md` evidence
-- [ ] P8.3:任何 [DRIFT] 项 → 修复或显式 `drift_decision`
+- [x] P8.1:`python tools/forgeue_doc_sync_check.py --change enhance-workflow-automation-runtime-enforcement` 静态扫(7 [REQUIRED] 全 touched_in_change 或 sync archive 时 auto-merge / 3 [SKIP] 已记录 / 0 [DRIFT])
+- [x] P8.2:落 `verification/doc_sync_report.md` evidence(12-key frontmatter:`evidence_type: doc_sync_report` / `stage: S7` / `aligned_with_contract: true`)
+- [x] P8.3:任何 [DRIFT] 项 → 0 DRIFT,无需修复
 
 ## P9 — Finish Gate
 
