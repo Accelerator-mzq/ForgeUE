@@ -67,16 +67,38 @@
 
 ### D-WorktreeEnforce:命令模板 step 1 强制 Preflight Worktree
 
-**Statement**:`/forgeue:change-apply-{subagent,direct,parallel}` 三个命令模板均加 `## Preflight Worktree` step:
+**Statement**:`/forgeue:change-apply-{subagent,parallel}` **两个**命令模板均加 `## Preflight Worktree` step:
 1. Controller MUST `Skill(superpowers:using-git-worktrees)` invoke
 2. SKILL 返回 worktree 路径(如 `.worktrees/<change-id>/`)
 3. 后续 subagent dispatch working directory 设到 worktree
 4. Preflight 失败(SKILL invoke 异常 / worktree 创建失败 / clean baseline test 不绿)→ 命令 abort + 错误信息
 
-**强制性**:
+`/forgeue:change-apply-direct` **沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项不强制 Preflight Worktree**(详见下方 D-DirectWorktreeRefinement)。
+
+**强制性**(subagent / parallel only):
 - 命令模板**显式步骤**(不是 declared dependency)— controller 必须先做这一步才进 subagent dispatch
-- fence test `test_change_apply_commands_have_preflight_worktree_step` 守门
-- evidence frontmatter 加 `worktree_path` 字段(non-null when 命令是 change-apply-* 类)
+- fence test `test_change_apply_commands_have_preflight_worktree_step` 守门 subagent + parallel(direct 不在 fence scope)
+- evidence frontmatter 加 `worktree_path` 字段(non-null when `triggered_by_command` ∈ `{change-apply-subagent, change-apply-parallel}`;direct evidence 不强制,`forgeue_finish_gate.py::_check_worktree_path` fence 在 `triggered_by_command != change-apply-{subagent,parallel}` 时 pass-through)
+
+### D-DirectWorktreeRefinement:direct 路径不走 isolated worktree(沿 archived 第 5 项)
+
+**Statement**:`/forgeue:change-apply-direct` 命令模板**不**加 `## Preflight Worktree` section,沿用 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项("`change-apply-direct` fallback 路径仍跑在主 worktree;无需 isolation,沿现 `executing-plans + TDD` 编排");archived 决策保留,本 change 不覆盖。
+
+**Why**:
+- direct 命令定位是 < 3 micro-task / budget 紧张场景的轻量 fallback(见 `change-apply-direct.md` description)
+- worktree 创建 + commit-before-worktree + squash merge / cherry-pick + worktree remove 收尾约 ~10-20s 开销
+- 单 task 微调付不起这一开销(命令选择决策树本就把 direct 划成 "no" 分支,见 D-ParallelDispatch L46-49)
+- archived D-Worktree-Detail 第 5 项是经 `adopt-subagent-driven-development` codex round 1 review(F1)沉淀的决策,本 change 不主动覆盖
+
+**Trigger origin**:本 D-decision 由 P2.2 实施时实证暴露 — 本 change propose 阶段 D-WorktreeEnforce statement 写"3 个命令"未与 archived D-Worktree-Detail 第 5 项对齐;P2.2 实装 change-apply-direct.md Preflight section 时 user 拍板沿 archived 不强制,spec.md / design.md 双向 writeback(D-DirectWorktreeRefinement 显式记录)。
+
+**实装影响**:
+- spec.md "Preflight Worktree runtime enforcement" Requirement 收窄到 subagent + parallel 两命令
+- design.md D-WorktreeEnforce statement 同款收窄
+- `forgeue_finish_gate.py::_check_worktree_path` fence 强制 set 改为 `{change-apply-subagent, change-apply-parallel}` frozenset(不用 startswith prefix)
+- `change-apply-direct.md` P2.2 仅加 2 段 Preflight(Skill Cascade + Task Granularity),不加 Preflight Worktree
+
+**Alternatives considered**:见 user 拍板时给出的 (A) Direct 也走 worktree / (B) Direct 不走 worktree(选用)/ (C) Hybrid env flag 控制,2026-05-05 user 拍板 (B)。
 
 **Alternatives considered:**
 - (a) 沿现状 `using-git-worktrees` 仅 declared(SKILL.md `Required workflow skills:`)— controller 自觉度不可靠;**拒绝**

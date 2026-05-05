@@ -153,9 +153,17 @@ _ISO_TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?$"
 )
 
-# 命令模板前缀 — implementation evidence 来自 change-apply-{subagent,direct,parallel}
-# 命令时触发 worktree_path 强校验(D-WorktreeEnforce)。
-_CHANGE_APPLY_COMMAND_PREFIX = "change-apply-"
+# D-WorktreeEnforce + D-DirectWorktreeRefinement(2026-05-05 user 拍板):
+# implementation evidence 来自 change-apply-subagent / change-apply-parallel
+# 时触发 worktree_path 强校验。change-apply-direct 沿 archived
+# 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail 第 5 项
+# **不强制** worktree(direct 是 < 3 micro-task 轻量 fallback,worktree 创建
+# + squash merge 收尾 ~10-20s 开销不划算);_check_worktree_path fence 在
+# direct evidence 上 pass-through。
+_WORKTREE_REQUIRED_COMMANDS: frozenset[str] = frozenset({
+    "change-apply-subagent",
+    "change-apply-parallel",
+})
 
 # Subdirectories that require strict 12-key evidence (helpers in notes/ are
 # allowed to omit frontmatter; per F3-adv ``notes/`` is the helper bucket
@@ -1243,16 +1251,20 @@ def _check_worktree_path(
 ) -> list[str]:
     """检查 implementation evidence 来自 change-apply-* 命令时含 ``worktree_path`` 字段。
 
-    D-WorktreeEnforce(spec.md L40):implementation evidence 由
-    ``change-apply-{subagent,direct,parallel}`` 命令 dispatch 时,evidence
-    frontmatter MUST 含 ``worktree_path`` 字段(non-null)— 双层守门:
-    命令模板 preflight(early abort)+ finish_gate audit(late catch),确保
-    controller 跳过 preflight 也会被后期 catch。
+    D-WorktreeEnforce(spec.md L40)+ D-DirectWorktreeRefinement(2026-05-05
+    user 拍板):implementation evidence 由 ``change-apply-subagent`` /
+    ``change-apply-parallel`` 命令 dispatch 时,evidence frontmatter MUST 含
+    ``worktree_path`` 字段(non-null)— 双层守门:命令模板 preflight(early
+    abort)+ finish_gate audit(late catch)。
+
+    ``change-apply-direct`` 沿 archived 2026-05-04-adopt-subagent-driven-development
+    D-Worktree-Detail 第 5 项不强制 worktree(direct 是 < 3 micro-task 轻量
+    fallback);direct evidence 在此 fence pass-through。
 
     Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
-    生效。仅对 implementation evidence + 来源命令 startswith
-    ``change-apply-`` 的强制(其他 stage evidence 如 verify_report 不强制
-    worktree)。
+    生效。仅对 implementation evidence + 来源命令在
+    ``_WORKTREE_REQUIRED_COMMANDS`` frozenset 内的强制(其他 stage evidence
+    如 verify_report 或 direct 命令的 tdd_log 不强制)。
     """
     errors: list[str] = []
     if not _runtime_enforcement_active(frontmatter):
@@ -1262,10 +1274,8 @@ def _check_worktree_path(
         return errors
 
     triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
-    if not isinstance(triggered, str) or not triggered.startswith(
-        _CHANGE_APPLY_COMMAND_PREFIX
-    ):
-        return errors  # 非 change-apply-* 命令(direct write / 手工 evidence)不强制
+    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
+        return errors  # change-apply-direct / 非 change-apply-* / 手工 evidence 不强制
 
     ev_name = evidence_path.name
     worktree = frontmatter.get("worktree_path")

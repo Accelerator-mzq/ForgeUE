@@ -2273,10 +2273,15 @@ def test_worktree_path_missing_for_change_apply_blocks(runtime_fence_evidence_se
 
 
 def test_worktree_path_empty_string_blocks(runtime_fence_evidence_setup):
-    """P1.7 fence:worktree_path 是空字符串 → block。"""
+    """P1.7 fence:worktree_path 是空字符串 → block。
+
+    沿 D-DirectWorktreeRefinement,worktree fence 仅对 subagent / parallel
+    强制(direct 沿 archived 第 5 项不强制),所以这里用 change-apply-subagent
+    构造 trigger,空字符串 worktree_path 仍应 block。
+    """
     change_dir, ev_path, fm = runtime_fence_evidence_setup(
         "fc-wt-empty",
-        triggered_by_command="change-apply-direct",
+        triggered_by_command="change-apply-subagent",
         worktree_path="   ",
     )
     errors = fg._check_worktree_path(ev_path, fm, change_dir)
@@ -2294,6 +2299,40 @@ def test_worktree_path_not_required_for_non_change_apply_command(
     )
     errors = fg._check_worktree_path(ev_path, fm, change_dir)
     assert errors == []
+
+
+def test_worktree_path_not_required_for_change_apply_direct(
+    runtime_fence_evidence_setup,
+):
+    """D-DirectWorktreeRefinement(2026-05-05 user 拍板):change-apply-direct
+    沿 archived 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail
+    第 5 项不强制 worktree。direct 命令产生的 implementation evidence 即使缺
+    worktree_path 字段也不应报错(fence pass-through)。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-wt-direct",
+        triggered_by_command="change-apply-direct",
+        # worktree_path 缺(direct 沿 archived 不强制)
+    )
+    errors = fg._check_worktree_path(ev_path, fm, change_dir)
+    assert errors == [], (
+        "change-apply-direct evidence MUST pass-through _check_worktree_path fence "
+        f"(D-DirectWorktreeRefinement); got: {errors}"
+    )
+
+
+def test_worktree_path_required_for_change_apply_parallel(
+    runtime_fence_evidence_setup,
+):
+    """D-WorktreeEnforce:change-apply-parallel 与 change-apply-subagent 同等
+    强制 worktree_path 字段。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-wt-parallel",
+        triggered_by_command="change-apply-parallel",
+        # worktree_path 缺 → 应触发 fence
+    )
+    errors = fg._check_worktree_path(ev_path, fm, change_dir)
+    assert errors
+    assert "worktree_path" in " ".join(errors)
 
 
 # ---- D-ProtocolVersionMigration:protocol v1 gate skips legacy evidence ----

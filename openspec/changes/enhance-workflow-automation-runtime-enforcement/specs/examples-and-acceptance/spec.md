@@ -29,15 +29,17 @@ evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `fal
 
 ### Requirement: Preflight Worktree runtime enforcement
 
-`/forgeue:change-apply-{subagent,direct,parallel}` 三个命令模板 SHALL 在 step 1 含 `## Preflight Worktree` section,要求 controller MUST 先 invoke `superpowers:using-git-worktrees` SKILL 才能进入 subagent dispatch 阶段。
+`/forgeue:change-apply-{subagent,parallel}` **两个**命令模板 SHALL 在 step 1 含 `## Preflight Worktree` section,要求 controller MUST 先 invoke `superpowers:using-git-worktrees` SKILL 才能进入 subagent dispatch 阶段。
 
-实装路径:
+`/forgeue:change-apply-direct` **沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项不强制** Preflight Worktree(direct 路径定位 < 3 micro-task / budget 紧张的轻量 fallback,worktree 创建 + commit-before-worktree + squash merge 收尾的 ~10-20s 开销对轻量 task 不划算;archived 决策保留,本 change 不覆盖)。详见 design.md D-WorktreeEnforce / D-DirectWorktreeRefinement。
+
+实装路径(subagent / parallel only):
 - 命令模板首段显式声明 "MUST `Skill(superpowers:using-git-worktrees)` invoke before any dispatch step"
 - Skill 返回的 worktree 路径 SHALL 作为后续 subagent dispatch working directory 输入
 - Preflight 失败(SKILL invoke 异常 / worktree 创建失败 / clean baseline test 不绿)→ 命令 abort + 详细错误信息
-- evidence frontmatter MUST 含 `worktree_path` 字段(non-null when 命令是 change-apply-* 类)
+- evidence frontmatter MUST 含 `worktree_path` 字段(non-null when `triggered_by_command` ∈ `{change-apply-subagent, change-apply-parallel}`;`change-apply-direct` evidence 不强制)
 
-`forgeue_finish_gate.py` SHALL 含 fence 守门 implementation evidence frontmatter `worktree_path` 字段(若 evidence_type 含 implementation 类型 + 来源命令是 change-apply-*,缺 `worktree_path` → exit 非 0)。
+`forgeue_finish_gate.py` SHALL 含 fence 守门 implementation evidence frontmatter `worktree_path` 字段(仅当 `triggered_by_command` 是 `change-apply-subagent` / `change-apply-parallel` 时强制;`change-apply-direct` evidence 跳过此 fence,沿 archived D-Worktree-Detail 第 5 项)。
 
 #### Scenario: change-apply-subagent 命令模板含 Preflight Worktree section
 
@@ -45,15 +47,27 @@ evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `fal
 - **THEN** 文件内含 `## Preflight Worktree` section(精确匹配)
 - **AND** section 内含 `Skill(superpowers:using-git-worktrees)` 字符串
 
-#### Scenario: change-apply-direct + change-apply-parallel 同款 Preflight Worktree section
+#### Scenario: change-apply-parallel 命令模板含 Preflight Worktree section
 
-- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-direct.md` + `change-apply-parallel.md`
-- **THEN** 两文件均含 `## Preflight Worktree` section(精确匹配)
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-parallel.md`
+- **THEN** 文件内含 `## Preflight Worktree` section(精确匹配)
+- **AND** section 内含 `Skill(superpowers:using-git-worktrees)` 字符串
 
-#### Scenario: implementation evidence 缺 worktree_path 字段 finish_gate 阻断
+#### Scenario: change-apply-direct 沿 archived 第 5 项不强制 Preflight Worktree
 
-- **WHEN** `forgeue_finish_gate.py` 扫描 implementation evidence(`subagent_implementer_report` 等)且来源命令是 change-apply-*
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-direct.md`
+- **THEN** 文件**不需要**含 `## Preflight Worktree` section(沿 archived 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail 第 5 项)
+- **AND** direct 命令产生的 implementation evidence(`tdd_log` / `debug_log`)不强制 `worktree_path` frontmatter 字段
+
+#### Scenario: subagent / parallel implementation evidence 缺 worktree_path 字段 finish_gate 阻断
+
+- **WHEN** `forgeue_finish_gate.py` 扫描 implementation evidence(`subagent_implementer_report` 等)且 `triggered_by_command` 是 `change-apply-subagent` 或 `change-apply-parallel`
 - **THEN** 缺 `worktree_path` 字段 → exit 非 0 + 错误指明缺字段的 evidence 文件
+
+#### Scenario: direct implementation evidence 缺 worktree_path 字段 finish_gate pass-through
+
+- **WHEN** `forgeue_finish_gate.py` 扫描 direct 命令产生的 implementation evidence(`tdd_log` / `debug_log`,`triggered_by_command: change-apply-direct`)
+- **THEN** 缺 `worktree_path` 字段不报错(沿 archived D-Worktree-Detail 第 5 项 fence pass-through)
 
 ### Requirement: SKILL cascade enforcement via `forgeue_skill_cascade_check.py`
 
