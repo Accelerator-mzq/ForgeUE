@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **TBD-009 编号 doc drift**(2026-05-05):`docs/acceptance/acceptance_report.md` v1.2(2026-04-23)引入 TBD-009 = RemoteControl HTTP bridge 占用编号在前;`docs/requirements/SRS.md` §7.3 v1.6(2026-05-02)引入 TBD-009 = ComfyUI mesh/audio/video 后占同号造成 doc drift。**resolution**:SRS 是权威基线(docs 五件套),保留 SRS TBD-009 = ComfyUI(已 closed);acceptance_report 的 RemoteControl HTTP bridge 重新编号 TBD-013(SRS 现有最大 TBD-012 之后第一个可用号)。改动范围:acceptance_report §7 TBD 表行 + §6.1 三通道分析行 + §8 ADR-008 兜底行三处 active reference 改 TBD-009 → TBD-013;v1.2 历史 changelog entry 保留原 TBD-009 文字作 historical record。新加 v1.9 changelog entry 描述 fix。本 fix 仅文档编号 metadata 变更,不影响代码 / 测试 / 行为契约。
+
 ### Changed
 - **Workflow runtime enforcement layer**(2026-05-05,OpenSpec change `enhance-workflow-automation-runtime-enforcement`):
   - **ADR-011**(`docs/requirements/SRS.md` + `docs/acceptance/acceptance_report.md` ADR table):D-WorktreeEnforce + D-DirectWorktreeRefinement + D-SkillCascadeCheck + D-RoundFixContinuity + D-TaskGranularityDeclaration + D-ParallelDispatch + D-PreflightProtocol + D-ProtocolVersionMigration 合记 ADR — runtime enforcement layer 把 declared-only Layer 6 cascade dependency / worktree isolation / round 2 continuity / task granularity 转为 advisory enforcement(命令模板显式步骤 + LLM 自报 frontmatter declaration + finish_gate audit)
