@@ -19,6 +19,8 @@ ADR-011 + ADR-012 累积引入 ForgeUE-level MANDATORY worktree enforcement(L2 +
 - G6(D-WrapperRetentionRationale):W3 ledger / W2 actual diff / v2 fence 其他部分 **保留**(与 worktree 解耦)
 - G7:8-10 fence test 调整(advisory 模式)+ subagent-driven-discipline sister skill v2.3 update + backbone skill update + 9 文档同步 + ADR-013 SRS + acceptance row
 - G8(D-CrossCheckUpstreamCascade):仍 honor Superpowers upstream `subagent-driven-development/SKILL.md` `## Integration` 段声明的 `using-git-worktrees` Required cascade(ForgeUE 不 override upstream;只 ForgeUE-level MANDATORY 协议层撤)
+- G9(D-ConsentOutcomeStateMachine;codex round 1 F2+F3 writeback):evidence frontmatter `worktree_consent_outcome` enum + `worktree_mode` enum 必填(替代 D-AdvisoryFenceMode 隐式 field-presence 推断);finish_gate 加 `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` fence 守门 cross-field invariants
+- G10(D-ParallelDeclineFallback;codex round 1 F1 writeback):`/forgeue:change-apply-parallel` user decline worktree → 自动降级 sequential(无 prompt);消除 main repo + multi-implementer + W2 attribution 漏洞
 
 **Non-Goals**:
 
@@ -129,6 +131,77 @@ archived `enhance-workflow-automation-runtime-enforcement` + `enhance-workflow-a
 只有 worktree-coupled fence(`_check_worktree_path` v1+v2)改 advisory 模式。
 
 **Why**:本 change scope 专注 worktree consent gate;不撤 ledger / overlap detection / cryptographic-style enforcement(它们与 W3 follow-on `enhance-workflow-automation-ledger-binding` 相关)。
+
+### D-ConsentOutcomeStateMachine:worktree_consent_outcome + worktree_mode 显式状态机(codex round 1 F2 + F3 writeback)
+
+**Statement**:替换原 D-AdvisoryFenceMode 的 field-presence-conditional 隐式状态推断,引入 2 个显式 enum 字段必填到 implementation evidence frontmatter:
+
+| 字段 | 取值 | 含义 |
+|---|---|---|
+| `worktree_consent_outcome` | `declined` | user 在 Step 0 consent gate decline → 沿 ADR-013 default 行为 |
+|  | `accepted` | user 显式 opt-in → worktree 创建(细分到 mode) |
+|  | `already_isolated` | session 已在 isolated workspace(e.g., 用户手工 git worktree 启动 session)→ skip Step 0 |
+|  | `sandbox_fallback` | upstream skill 的 sandbox fallback 路径(沿 Superpowers `using-git-worktrees` 同款) |
+| `worktree_mode` | `in_place` | main repo cwd(沿 declined 或 already_isolated 在 main 的情况) |
+|  | `skill_worktree` | Superpowers skill 创建的 worktree(无 W1 wrapper receipt) |
+|  | `wrapper_worktree` | W1 wrapper 创建的 worktree(强制 receipt JSON) |
+
+**Cross-field invariants**(`forgeue_finish_gate.py::_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 守门):
+
+- `worktree_consent_outcome: declined` ↔ `worktree_mode: in_place`
+- `worktree_consent_outcome: accepted` → `worktree_mode ∈ {skill_worktree, wrapper_worktree}`
+- `worktree_mode: in_place` → 禁写 `worktree_path`(防 F2 双歧义)
+- `worktree_mode: skill_worktree` → require `worktree_path` present + path exists;`worktree_receipt_path` absent
+- `worktree_mode: wrapper_worktree` → require `worktree_path` + `worktree_receipt_path` 都 present + receipt JSON valid + receipt path matches
+
+**Why**(codex F2 + F3 writeback):
+- F2 物理:原 D-AdvisoryFenceMode 把 `{worktree_path 写/不写}` × `{receipt_path 写/不写}` 4 cell 状态空间只 enforce 2 个 valid state,user 可写 worktree_path 但省略 receipt → fence 不区分 main repo / opt-in worktree but receipt forged
+- F3 narrative:原 spec.md `MAY invoke` + 字符串 fence 等价"实装可不真 invoke Step 0",cascade 实质 broken
+- explicit state machine 关闭 mode disambiguation 漏洞 + 让 fence 校验 outcome 而非字符串
+
+**Alternatives considered**:
+- (a) 沿 D-AdvisoryFenceMode field-presence-conditional advisory(原 ADR-013 设计)— 拒绝;codex F2 揭示 schema 漏洞
+- (b) 完全删 worktree-related fence(撤 W1 wrapper)— 拒绝;违 D-CrossCheckUpstreamCascade 上游 cascade 协议
+- (c) 显式 outcome + mode enum 状态机(本 D)— **选用**
+
+**Tradeoff**:
+- (+)关闭 F2 receipt provenance 漏洞 + F3 narrative-vs-implementation 矛盾
+- (+)evidence frontmatter schema 自描述,future reader 一眼看出 user 选哪个 mode
+- (-)evidence frontmatter 字段 +2(`worktree_consent_outcome` + `worktree_mode`)— 极小成本
+
+**Migration**:archived `enhance-workflow-automation-runtime-enforcement` + `enhance-workflow-automation-executable-enforcement` evidence 不含本 D 字段(legacy)→ `_check_worktree_consent_outcome` fence 入口加 "field present check":absent → return [](legacy pass-through,沿 D-AdvisoryFenceMode 兼容意图)。本 change 自身 evidence 必填(从 P0 命令模板更新起)。
+
+### D-ParallelDeclineFallback:`/forgeue:change-apply-parallel` user decline → 自动降级 sequential(codex round 1 F1 writeback)
+
+**Statement**:`/forgeue:change-apply-parallel` 命令模板 Step 0 consent gate 后:
+
+- `worktree_consent_outcome: declined` → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt;沿 ADR-012 自动降级模式 R-no-continue-prompts)
+- `worktree_consent_outcome: accepted` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}` → parallel 路径正常跑 + W2 actual diff 收集
+- `worktree_consent_outcome: already_isolated` → parallel 路径正常跑(假定 session 已在 isolated workspace 内,W2 仍跑)
+- `worktree_consent_outcome: sandbox_fallback` → 警告 + 降级 sequential(sandbox 路径与 parallel 不兼容)
+
+降级时 evidence frontmatter:
+```yaml
+degraded_to: change-apply-subagent
+degradation_reason: parallel_requires_isolated_workspace
+worktree_consent_outcome: declined
+worktree_mode: in_place
+```
+
+**Why**(codex F1 writeback):
+- 物理:多 implementer subagents 在 same main repo working tree 跑,`git status` / `git diff` / `git ls-files --others` 全是全局状态;commit 顺序 / staged / untracked 文件 attribution 不可分到单 implementer
+- ADR-012 W2 actual diff 设计前提是 implementer 各有独立 workspace boundary;在 main repo + multi-implementer 路径下 W2 即使事后发现 overlap,dev branch 已发生冲突或错误提交
+- 自动降级 vs ask user:沿 ForgeUE memory `feedback_no_continue_prompts_between_phases.md`(连续推 phase 不要 prompt)
+
+**Alternatives considered**:
+- (a) parallel + decline 仍跑(沿原 ADR-013 spec.md:96-101 设计)— 拒绝;codex F1 物理论证 W2 attribution 失效
+- (b) parallel + decline 时弹 user prompt 询问 "降级 sequential 还是 force opt-in worktree?" — 拒绝;违 R-no-continue-prompts;自动降级是稳定路径
+- (c) parallel + decline → 自动降级 sequential(无 prompt)— **选用**
+
+**Tradeoff**:
+- (+)关闭 F1 attribution 漏洞 + dev branch 污染风险
+- (+)用户 decline 后仍获得正确 implementation(走 sequential 稳定路径)
+- (-)用户失去 parallel wall-clock 优化(若用户真要 parallel,需 Step 0 opt-in worktree)— 接受;沿 user policy "implementation default decline"
 
 ### D-CrossCheckUpstreamCascade:Superpowers cascade 不 override
 

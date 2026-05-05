@@ -4,56 +4,82 @@
 
 ## Pre-P0(self-host bootstrap;沿 archived ADR-012 同款 sequential pattern)
 
-- [ ] Pre-P0.1:`/codex:adversarial-review` round 1 挑战 D-RestoreConsentGate / D-AdvisoryFenceMode / D-WrapperDeprecate / D-AllChangeApplyMainRepoDefault / D-CrossArchiveADRSupersede / D-WrapperRetentionRationale / D-CrossCheckUpstreamCascade 7 D-decision + Open Questions OQ-1/2/3
-- [ ] Pre-P0.2:落 `notes/pre_p0/codex_review_round1.md` evidence
-- [ ] Pre-P0.3:Claude 独立验证 codex finding(file:line)+ verdict 矩阵
-- [ ] Pre-P0.4:writeback finding 到 design.md / proposal.md / spec.md / tasks.md
-- [ ] Pre-P0.5:落 `notes/pre_p0/plan_cross_check.md`(plan-level cross-check)
-- [ ] Pre-P0.6:`disputed_open: 0` 验证
+- [x] Pre-P0.1:`/codex:adversarial-review` round 1 挑战 7 D-decision + 3 OQ + 5 Risks(verdict: needs-attention;3 finding F1/F2 high + F3 medium;raw output 落 `notes/codex_adversarial_review_review_round1.md`)
+- [x] Pre-P0.2:`notes/codex_adversarial_review_review_round1.md` evidence(沿 codex-plugin-cc default 路径,不需独立 `pre_p0/codex_review_round1.md` stub)
+- [x] Pre-P0.3:Claude 独立验证 codex finding file:line(F1 spec.md:96-101 / F2 spec.md:40-51 / F3 spec.md:5-33 全 verified;`review/design_cross_check.md` ## D 段)
+- [x] Pre-P0.4:writeback 3 finding 到 contract artifact(全 accepted-codex):
+  - **W1 design.md**:加 `D-ConsentOutcomeStateMachine` + `D-ParallelDeclineFallback` 2 新 D-decision(替换原 D-AdvisoryFenceMode 隐式状态推断 + 关闭 F1 W2 attribution 漏洞)
+  - **W2 proposal.md**:`## What Changes` 加 `worktree_consent_outcome` enum + `worktree_mode` enum 必填字段 + parallel decline 自动降级 sequential
+  - **W3 spec.md**:`Preflight Worktree runtime enforcement` Requirement 主文 `MAY invoke` → `MUST invoke` + outcome / mode 状态机 + 4 新 Scenario;`Implementation parallel dispatch` Requirement Scenario `ADR-013 default main repo cwd` → `parallel decline 自动降级 sequential`
+  - **W4 tasks.md**:本段 Pre-P0.4 + P0.2 / P0.3 / P0.5 / P1.2 / P1.3 / P1.4 sub-task 加 outcome / mode / decline auto-fallback writeback
+- [x] Pre-P0.5:`review/plan_cross_check.md`(plan-level cross-check;沿 archived ADR-012 同款 reference 模式 → 落到 P7 阶段一并写)
+- [x] Pre-P0.6:`disputed_open: 0` 验证(已确认:3 finding 全 accepted-codex,无 disputed)
 
 ## P0 — 命令模板更新(D-RestoreConsentGate)
 
 - [ ] P0.1:Read 现有 `.claude/commands/forgeue/change-apply-subagent.md` + `.claude/commands/forgeue/change-apply-parallel.md`(archived ADR-012 P3 mandatory 版)
-- [ ] P0.2:`change-apply-subagent.md` `## Preflight Worktree` section 重写:
-  - 仍 invoke `Skill(superpowers:using-git-worktrees)`(沿 upstream cascade)
-  - 显式 "default decline at Step 0 → work in main repo cwd"
-  - "opt-in for bug-fix iteration / explicit isolation"
-  - 撤 mandatory `python tools/forgeue_preflight_wrapper.py` invocation step
-  - evidence frontmatter `worktree_path` 字段标 OPTIONAL
-- [ ] P0.3:`change-apply-parallel.md` 同款重写:
-  - 同 P0.2 Preflight Worktree section
-  - W2 actual diff 段保留(与 worktree 解耦,沿 D-AllChangeApplyMainRepoDefault main repo path)
-  - W3 ledger append step 保留
+- [ ] P0.2:`change-apply-subagent.md` `## Preflight Worktree` section 重写(沿 codex round 1 F3 writeback):
+  - **MUST invoke** `Skill(superpowers:using-git-worktrees)`(沿 upstream Required cascade;不允许只放字符串)
+  - Step 0 consent gate outcome capture step → evidence frontmatter `worktree_consent_outcome` 字段(`declined` / `accepted` / `already_isolated` / `sandbox_fallback`)
+  - 显式 mode capture step → evidence frontmatter `worktree_mode` 字段(`in_place` / `skill_worktree` / `wrapper_worktree`)
+  - "default outcome = declined → work in main repo cwd"(`worktree_mode: in_place`)
+  - "opt-in outcome = accepted → worktree creation"(`worktree_mode: skill_worktree`;若 user 显式 invoke W1 wrapper → `worktree_mode: wrapper_worktree`)
+  - 撤 mandatory `python tools/forgeue_preflight_wrapper.py` invocation step(wrapper 仅 wrapper_worktree mode opt-in)
+- [ ] P0.3:`change-apply-parallel.md` 同款重写 + parallel-specific(沿 codex round 1 F1 writeback):
+  - 同 P0.2 Preflight Worktree section(MUST invoke + outcome / mode capture)
+  - **parallel decline 自动降级 sequential**:`worktree_consent_outcome: declined` → 命令 abort + 自动 fallback `/forgeue:change-apply-subagent` sequential(无 user prompt;沿 R-no-continue-prompts);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: parallel_requires_isolated_workspace`
+  - W2 actual diff 段保留 但仅在 `worktree_mode ∈ {skill_worktree, wrapper_worktree}` 时 trigger(与 worktree 隔离 attribution boundary)
+  - W3 ledger append step 保留(与 worktree 解耦)
 - [ ] P0.4:`change-apply-direct.md` 不动(沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项 + ADR-013 D-AllChangeApplyMainRepoDefault align)
-- [ ] P0.5:`tests/unit/test_forgeue_command_markdown.py` fence test 调整:
-  - `test_subagent_parallel_have_preflight_worktree_section` 仍 PASS(section 仍存在;只是内容改 OPT-IN)
-  - `test_change_apply_subagent_invokes_preflight_wrapper` + `test_change_apply_parallel_invokes_preflight_wrapper` 改 NEGATIVE fence(不再 mandatory invoke;模板**不强制**含 `python tools/forgeue_preflight_wrapper.py` 字符串)— 或改 advisory fence 校验 Skill invoke + decline-default narrative 出现
-  - 加新 fence `test_apply_subagent_parallel_preflight_worktree_decline_default`(校验 "default decline" 或 "opt-in" 字符串出现)
+- [ ] P0.5:`tests/unit/test_forgeue_command_markdown.py` fence test 调整(沿 codex round 1 F1+F3 writeback):
+  - `test_subagent_parallel_have_preflight_worktree_section` 仍 PASS(section 仍存在)
+  - `test_change_apply_subagent_invokes_preflight_wrapper` + `test_change_apply_parallel_invokes_preflight_wrapper` 改 NEGATIVE fence(不再 mandatory invoke wrapper)
+  - 加新 fence `test_apply_subagent_parallel_must_invoke_skill_using_git_worktrees`(校验 section 内含 `MUST invoke Skill(superpowers:using-git-worktrees)`,不再允许 MAY invoke 或字符串占位)
+  - 加新 fence `test_apply_subagent_parallel_preflight_outcome_capture_field`(校验 section 内含 `worktree_consent_outcome` 字段提示)
+  - 加新 fence `test_apply_parallel_decline_auto_fallback_sequential_narrative`(校验 parallel section 内含 "decline" → "降级 sequential" / "auto-fallback" 字符串)
 - [ ] P0.6:`pytest tests/unit/test_forgeue_command_markdown.py -v` 全绿
 - [ ] P0.7:`python -m pytest -q` 全套 regress 全绿(无回归)
 
 ## P1 — `forgeue_finish_gate.py` advisory fence(D-AdvisoryFenceMode)
 
 - [ ] P1.1:Read `tools/forgeue_finish_gate.py` `_check_worktree_path` v1 + `_check_worktree_path_v2` 现状
-- [ ] P1.2:`_check_worktree_path` v1 改 advisory:
-  - 入口加 "worktree_path field present check":若 absent → return [](pass-through)
-  - 若 present → 沿原 logic validate(non-empty + path 存在 if absolute)
-  - `_WORKTREE_REQUIRED_COMMANDS` frozenset retire(改空集合)or 移除 fence 入口的 "triggered_by_command in set" 检查
-- [ ] P1.3:`_check_worktree_path_v2` 改 advisory:
-  - 入口加 "worktree_receipt_path field present check":若 absent → return [](pass-through)
-  - 若 present → 沿原 logic validate(receipt 文件存在 + JSON well-formed + receipt path matches evidence path)
-- [ ] P1.4:`tests/unit/test_forgeue_finish_gate.py` 调整:
-  - `test_worktree_path_missing_for_change_apply_blocks` → 改 NEGATIVE / advisory(missing 不再 block;沿 ADR-013)
-  - `test_worktree_path_v2_missing_*` 同款
-  - 加新 fence `test_worktree_path_advisory_pass_through_when_field_absent`
-  - 加新 fence `test_worktree_path_v2_advisory_pass_through_when_receipt_absent`
-  - 保留:`test_worktree_path_validates_existing_path_when_provided`(写了就要真)+ v2 receipt cross-check 同款
-- [ ] P1.5:`pytest tests/unit/test_forgeue_finish_gate.py -v` 全绿
-- [ ] P1.6:`tests/integration/test_v2_e2e_synthetic_change.py` 11 test review:
-  - W1 wrapper test 仍 PASS(opt-in 路径仍 functional)
-  - finish_gate v2 fence test 仍 PASS(advisory 模式 — 显式 provide receipt 仍 cross-check)
-  - 若有 test 依赖 mandatory blocker 行为 → 调整(预计 1-2 test)
-- [ ] P1.7:`python -m pytest -q` 全套 regress 全绿
+- [ ] P1.2:`_check_worktree_path` v1 改 mode-conditional advisory(沿 codex round 1 F2 writeback):
+  - 入口加 `worktree_consent_outcome` field present check:absent(legacy archived)→ return [](pass-through)
+  - 入口加 `worktree_mode` field present check:absent → return [](legacy 兼容)
+  - `worktree_mode: in_place` → require `worktree_path` absent(违反 → Blocker,关闭 F2 双歧义);present → return []
+  - `worktree_mode: skill_worktree` → require `worktree_path` present + path exists
+  - `worktree_mode: wrapper_worktree` → require `worktree_path` + `worktree_receipt_path` 都 present(deferred 到 _check_worktree_path_v2 做 receipt cross-check)
+  - `_WORKTREE_REQUIRED_COMMANDS` frozenset retire(改空集合;沿 ADR-013 不强制 worktree)
+- [ ] P1.3:`_check_worktree_path_v2` 改 mode-conditional advisory:
+  - 入口加 `worktree_mode` field present check:absent → return [](legacy 兼容)
+  - `worktree_mode: wrapper_worktree` → require `worktree_receipt_path` present + receipt JSON well-formed + receipt `worktree_path` == evidence `worktree_path` + receipt `is_isolated_worktree: true`
+  - `worktree_mode ∈ {in_place, skill_worktree}` → 不要求 receipt;若写了 → Blocker(skill_worktree mode 禁写 receipt)
+- [ ] P1.4:加新 fence `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency`(沿 codex round 1 F2+F3 writeback):
+  - `_check_worktree_consent_outcome`:
+    - field absent(legacy archived)→ return []
+    - field present + `triggered_by_command ∈ {change-apply-subagent, change-apply-parallel}` → enum value validate(`{declined, accepted, already_isolated, sandbox_fallback}`);非法 → Blocker
+    - 校验 invariants:`declined ↔ in_place`;`accepted → mode ∈ {skill_worktree, wrapper_worktree}`;违 invariant → Blocker
+  - `_check_worktree_mode_consistency`:
+    - field absent(legacy archived)→ return []
+    - `mode: in_place` + `worktree_path` present → Blocker(关闭 F2 双歧义)
+    - `mode: wrapper_worktree` + `worktree_receipt_path` absent → Blocker(关闭 F2 receipt provenance)
+    - `mode: skill_worktree` + `worktree_receipt_path` present → Blocker(skill_worktree 禁写 receipt)
+- [ ] P1.5:`tests/unit/test_forgeue_finish_gate.py` 调整 + 加新 fence test:
+  - 改 NEGATIVE / advisory:`test_worktree_path_missing_for_change_apply_blocks` → `test_worktree_path_advisory_pass_through_when_mode_in_place`
+  - 加 `test_worktree_consent_outcome_invalid_blocks`(F3 enum validate)
+  - 加 `test_worktree_consent_outcome_declined_requires_mode_in_place`(F3 invariant)
+  - 加 `test_worktree_consent_outcome_accepted_requires_mode_worktree_or_wrapper`(F3 invariant)
+  - 加 `test_worktree_mode_in_place_rejects_worktree_path_field`(F2 disambiguation)
+  - 加 `test_worktree_mode_wrapper_requires_receipt_path`(F2 mode-conditional)
+  - 加 `test_worktree_mode_skill_rejects_receipt_path_field`(F2 mode-conditional)
+  - 加 `test_legacy_evidence_no_consent_outcome_field_pass_through`(legacy 兼容)
+  - 保留:`test_worktree_path_validates_existing_path_when_provided` + v2 receipt cross-check 同款
+- [ ] P1.6:`pytest tests/unit/test_forgeue_finish_gate.py -v` 全绿
+- [ ] P1.7:`tests/integration/test_v2_e2e_synthetic_change.py` 11 test review:
+  - W1 wrapper test 仍 PASS(opt-in 路径仍 functional;沿 wrapper_worktree mode)
+  - finish_gate v2 fence test 调整(加 `worktree_consent_outcome` + `worktree_mode` 字段到 evidence fixture)
+  - 若有 test 依赖 mandatory blocker 行为 → 调整(预计 2-3 test)
+- [ ] P1.8:`python -m pytest -q` 全套 regress 全绿
 
 ## P2 — wrapper deprecate(D-WrapperDeprecate)
 

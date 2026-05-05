@@ -11,18 +11,25 @@ ADR-011 `enhance-workflow-automation-runtime-enforcement`(2026-05-05 archived)+ 
 ## What Changes
 
 - **D-RestoreConsentGate**:命令模板 `change-apply-subagent` + `change-apply-parallel` `## Preflight Worktree` section 改写:
-  - 仍 invoke `Skill(superpowers:using-git-worktrees)`(沿 upstream `subagent-driven-development` SKILL.md `## Integration` 段声明的 Required dependency)
+  - **MUST invoke** `Skill(superpowers:using-git-worktrees)`(沿 upstream `subagent-driven-development` SKILL.md `## Integration` 段声明的 Required dependency;codex round 1 F3 writeback — 原 MAY invoke 改 MUST)
   - 但 default 行为 = **user 在 Step 0 consent gate decline**(implementation in main repo)
   - bug-fix iteration / 显式 isolation 需要时 user 在 Step 0 同意
-- **D-AdvisoryFenceMode**:`forgeue_finish_gate.py::_check_worktree_path`(v1)+ `_check_worktree_path_v2`(v2)改 advisory:
-  - 只在 evidence frontmatter 写 `worktree_path` 字段时 validate(non-empty + path 存在 + v2 receipt cross-check)
-  - **不再** require `worktree_path` 字段必填 even when `triggered_by_command ∈ {change-apply-subagent, change-apply-parallel}`
-  - 沿 ADR-011 `_WORKTREE_REQUIRED_COMMANDS` 集合 retire(改空集合或 deprecated)
+- **D-AdvisoryFenceMode**(已被 D-ConsentOutcomeStateMachine 替代;codex round 1 F2 writeback):原 field-presence-conditional advisory 设计有 schema 漏洞(user 写 worktree_path 但省略 receipt → fence 不区分),改为 D-ConsentOutcomeStateMachine 显式 enum 状态机
+- **D-ConsentOutcomeStateMachine**(codex round 1 F2+F3 writeback):evidence frontmatter 必填 2 个新 enum 字段:
+  - `worktree_consent_outcome`:`declined` / `accepted` / `already_isolated` / `sandbox_fallback`(显式记录 Step 0 outcome,沿 codex F3 verifiable invocation 推荐)
+  - `worktree_mode`:`in_place` / `skill_worktree` / `wrapper_worktree`(显式 mode disambiguation)
+  - cross-field invariants(`forgeue_finish_gate.py::_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` fence 守门):`declined ↔ in_place`;`accepted → {skill_worktree, wrapper_worktree}`;`in_place → 禁写 worktree_path`;`wrapper_worktree → 必写 worktree_path + worktree_receipt_path`;`skill_worktree → 必写 worktree_path,不写 worktree_receipt_path`
+  - legacy archived evidence 不含 `worktree_consent_outcome` 字段 → fence pass-through(不 false-block archived replay)
 - **D-WrapperDeprecate**:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional:
   - 留代码作 opt-in tool(user explicit 调用 for bug-fix isolation 时仍可用)
   - 命令模板**不再 mandatory invoke**(改 OPT-IN 段)
   - W1 receipt schema 不变,但 ForgeUE 不再 default-trigger
-- **D-AllChangeApplyMainRepoDefault**:`change-apply-subagent` + `change-apply-parallel` + `change-apply-direct` 三命令 default cwd = main repo;`change-apply-direct` 沿 ADR-011 D-DirectWorktreeRefinement 第 5 项原本就 main repo,本 change 把 subagent + parallel 也 align
+- **D-AllChangeApplyMainRepoDefault**:`change-apply-subagent` + `change-apply-direct` 默认 main repo cwd(沿 user policy "implementation default decline");`change-apply-parallel` 在 Step 0 user decline 时 **不能** 走 main repo + W2 路径(codex round 1 F1 writeback — multi-implementer same working tree git state 全局污染),改自动降级 sequential(见 D-ParallelDeclineFallback)
+- **D-ParallelDeclineFallback**(codex round 1 F1 writeback):`/forgeue:change-apply-parallel` Step 0 outcome 决策表:
+  - `declined` → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt;沿 R-no-continue-prompts);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: parallel_requires_isolated_workspace`
+  - `accepted` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}` → parallel 路径正常跑 + W2 actual diff
+  - `already_isolated` → parallel 路径正常跑(假定 session 已在 isolated workspace)
+  - `sandbox_fallback` → 警告 + 降级 sequential(sandbox 与 parallel 不兼容)
 - **D-CrossArchiveADRSupersede**:SRS ADR-013 显式标记 ADR-011 D-WorktreeEnforce + ADR-012 D-W1-ReceiptSchema "worktree mandatory" 部分 superseded;archived ADR-011/012 evidence 不动(沿"归档即冻结"),archived fixture replay 测试由 advisory fence 兼容
 - **D-WrapperRetentionRationale**:虽 wrapper 不再 default trigger,但 W3 ledger / W2 actual diff / v2 fence 其他部分 **保留**(它们与 worktree 解耦,与 subagent dispatch / parallel 协议本身相关)
 - 6 命令模板 Preflight Worktree section 重写(subagent / parallel 改 OPT-IN 表述;direct 不动)
