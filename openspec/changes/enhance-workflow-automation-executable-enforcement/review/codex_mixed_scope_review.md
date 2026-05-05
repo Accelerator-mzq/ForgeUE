@@ -8,7 +8,9 @@ contract_refs:
   - tools/_common.py
   - tools/forgeue_finish_gate.py
 aligned_with_contract: false
-drift_decision: pending
+drift_decision: accepted-codex-3-inline-2-deferred
+drift_reason: codex round 1 mixed-scope raised 5 finding(3 P1 critical + 2 P2 hygiene);F1+F2+F3 inline writeback(W2 actual diff git diff -z + ls-files 合集 / yaml parser list-of-mapping support / 命令模板 v2 protocol_version);F2 实施期 introduce 2 sub-bug(死循环漏 i += 1 + 递归传 string vs list[str]),controller PowerShell 实测发现 17GB 内存爆炸 process,kill + fix 后 regress 0.06s;F4+F5 deferred to follow-on enhance-workflow-automation-v2-fence-hardening
+writeback_commit: 5e879a8
 detected_env: claude-code
 triggered_by: cli-flag
 codex_plugin_available: true
@@ -16,7 +18,8 @@ triggered_by_command: change-review
 runtime_enforcement_protocol_version: v1
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_mixed_scope_review.md
-disputed_open: 5
+disputed_open: 0
+resolved_at: 2026-05-05T21:15:00+08:00
 created_at: 2026-05-05T20:45:00+08:00
 codex_job_id: bc0petm2z
 ---
