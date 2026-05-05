@@ -267,6 +267,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_ws_progress.py` | FR-OBS-003, FR-OBS-004 | WS endpoint 订阅 + 事件推送 + idle disconnect |
 | `test_example_bundles_smoke.py` | FR-WF-001 | `examples/*.json` 每份 loader + Orchestrator 不抛 |
 | `test_run_comparison_cli.py` | — | 4 用例;详见 §3.11A。FakeAdapter 双跑离线集成是 examples-and-acceptance delta spec Validation gate |
+| `test_v2_e2e_synthetic_change.py`(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05;ADR-012)| D-W4-IntegrationGate(P5.5);archive 必过 gate | 11 test 全 PASS;synthetic git repo + change → W1 wrapper(创建 worktree + 13-field receipt + wrong-cwd / dirty negative)+ W3 ledger(append + verify monotonic)+ W2 actual diff(disjoint pass + overlap detected + dirty implementer detected)+ finish_gate v2 fence(unit-style import 直接 call 4 v2 fence 函数 — pass on valid v2 evidence + block on missing receipt + v1 evidence 兼容 + legacy pass-through);沿 D-W4-IntegrationGate sister skill subagent-driven-discipline §6 catalog "black-box pipeline test vacuous PASS" 教训 — 用 unit-style import 而非 subprocess 黑盒调 finish_gate(避免 early-abort 时 fence skip 导致 vacuous PASS)|
 
 ---
 
