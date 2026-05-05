@@ -155,3 +155,15 @@
 - [ ] P12.1:更新 `MEMORY.md` 加 ADR-013 摘要(沿 forgeue auto memory 协议)
 - [ ] P12.2:实战 dogfood 验证 — 下一个 active change 按 ADR-013 default decline 流程跑(controller 默认 main repo cwd;不 invoke wrapper)
 - [ ] P12.3 (follow-on tracking 沿 archived ADR-012 P12.3-P12.8):**`enhance-workflow-automation-ledger-binding`** / **`enhance-workflow-automation-handoff-persistence`** / **`add-forgeue-brainstorm-stage`** / **`enhance-workflow-automation-finishing-branch`** / **`enhance-workflow-automation-final-review-fence-strictness`** / **`enhance-workflow-automation-v2-fence-hardening`** — 全保留 in tracking;本 change 不影响 these follow-ons(都与 worktree 解耦)
+- [ ] P12.4 (follow-on tracking;user 拍板 2026-05-05 retrospect):**`analyze-superpowers-skills-openspec-integration-gaps`** — 6 个 Superpowers 技能与 OpenSpec / ForgeUE workflow 体系**适配缺口**系统分析(brainstorming / explore stage,先 scope discovery 再 fix):
+  - **scope 的 6 技能**:
+    1. `superpowers:verification-before-completion` × 12-key audit frontmatter / cross-verify ritual — "声明 → 验证命令 → 观察输出 → 对比"仪式没显式 wire 入 forgeue 命令(本 change archived 期 ADR-012 P3 implementer "1547 PASS" 自我汇报幻觉根因之一)
+    2. `superpowers:receiving-code-review` × cross-check A/B/C/D 模板 — 技术 rigor 框架(claim 验证 / 不 blind implement)只在 cross-check ## D 段隐式;ADR-012 期 4 次 codex review 出 finding 时未显式 invoke,沿"informally cross-verify"路径
+    3. `superpowers:systematic-debugging` × debug_log evidence — hypothesize-test-narrow framework 只 mention 在 forgeue:change-debug 命令描述;ADR-012 P5.5 F2 修复时 17GB 死循环 incident 暴露 controller 没 systematically debug(没 reproduce in isolation / 没 hypothesis-driven test)
+    4. `superpowers:finishing-a-development-branch` × P11 archive + push — merge / PR / cleanup 决策框架未 wire 入 forgeue:change-finish;ADR-012 archive 期 controller improvised + 漏 git rm 致 duplicate bug + force push 修
+    5. `superpowers:test-driven-development` × tdd_log evidence — per-task TDD 4-step 节奏在 implementer prompt 隐式提示;无 explicit `Skill(superpowers:test-driven-development)` invocation 在 forgeue 命令模板;P3 markdown lint phase 完全没 TDD(implementer 直接 markdown edit)
+    6. `superpowers:dispatching-parallel-agents` × W2 actual diff — borrowed-pattern note 在 forgeue:change-apply-parallel 但 actual skill content 与 ForgeUE W2 actual diff 协议不对应(skill 是 debugging-focused dispatch;W2 是 implementation actual overlap detection)
+  - **scope 不属本 change**:这是 6 技能 × ForgeUE workflow 7 stage(S0-S9)+ 12-key audit frontmatter / cross-check matrix / fence / evidence type 的 **systematic 适配 audit**;不是单 change 能 fix
+  - **建议 stage 类型**:explore / brainstorming(scope discovery first;沿 `superpowers:explore` 或 `superpowers:brainstorming` skill 框架)→ 然后拆 N 个 sub-change(per-skill wiring)
+  - **触发条件**:本 change(restore-superpowers-worktree-consent-gate)ship 后,user 拍板启动;或在另一 change 实施期再次 incident 暴露同款 gap → 启动 priority bump
+  - **依据**:本会话 retrospect 实证 — ADR-012 P3 implementer 自我汇报幻觉 / P5.5 F2 死循环 / archive duplicate / inline fix vs round 2 决策 ad-hoc / TDD 隐式 等 5+ incident 都 attributable to "Superpowers thinking discipline 没显式 wire 入 ForgeUE process discipline"。**ForgeUE process thick / Superpowers thinking thin** 是 systemic gap,不是单 incident
