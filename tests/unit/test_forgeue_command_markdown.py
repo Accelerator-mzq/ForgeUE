@@ -471,3 +471,34 @@ def test_change_finish_status_skip_preflight_skill_cascade(cmd_files):
             f"{cmd_name} MUST NOT contain '## Preflight Skill Cascade' section "
             "(本命令不 invoke SKILL,沿 P2.4 task 描述跳过)"
         )
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-executable-enforcement P3+ fence:Subagent Discipline
+# (subagent-driven-discipline skill wiring;Layer 2 命令模板 invoke step)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_subagent_parallel_invoke_subagent_discipline_skill(cmd_files):
+    """P3+ fence:change-apply-subagent + change-apply-parallel 必含 Preflight
+    Subagent Discipline section;invoke Skill(subagent-driven-discipline)
+    在 dispatch 第一个 subagent 之前(Layer 2 wiring;沿 §3.4 Trigger Type Matrix)。"""
+    apply_cmds = ("change-apply-subagent.md", "change-apply-parallel.md")
+    for cmd_name in apply_cmds:
+        path = next((f for f in cmd_files if f.name == cmd_name), None)
+        assert path is not None, f"{cmd_name} must exist"
+        body = path.read_text(encoding="utf-8")
+        # 必含 Preflight Subagent Discipline section
+        assert "### Preflight Subagent Discipline" in body, (
+            f"{cmd_name} MUST contain '### Preflight Subagent Discipline' section "
+            "(沿 subagent-driven-discipline skill Layer 2 wiring)"
+        )
+        # 必含 Skill(subagent-driven-discipline) invoke 引用
+        assert "Skill(subagent-driven-discipline)" in body, (
+            f"{cmd_name} MUST reference 'Skill(subagent-driven-discipline)' invoke "
+            "(controller 必须 invoke 加载 skill 内容到 working context)"
+        )
+        # 必含 Trigger Type 引用(Type 1 for subagent / Type 2 for parallel)
+        assert "Type 1" in body or "Type 2" in body, (
+            f"{cmd_name} MUST reference §3.4.0 Trigger Type(Type 1 3-stage 或 Type 2 Parallel)"
+        )

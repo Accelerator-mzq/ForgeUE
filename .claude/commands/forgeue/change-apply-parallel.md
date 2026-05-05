@@ -91,6 +91,26 @@ for i, set_a in enumerate(task_files_disjoint):
 
 evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段。此字段触发 4 fence(`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`)生效;无此字段的 evidence 视为 legacy,fence pass-through。
 
+### Preflight Subagent Discipline(MANDATORY before any Skill(Task) dispatch)
+
+Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**显式 invoke `Skill(subagent-driven-discipline)`,加载 skill 内容到 working context。
+
+**Skill content 应用点**(controller 自检):
+
+| Phase | 应用 skill 段 | 强制性 |
+|---|---|---|
+| **Dispatch 前** | §1 scenario taxonomy 选 model(显式传 `model:` 参数;不让 subagent inherit 父 session model)| MANDATORY |
+| **Dispatch 前** | §2 cheap-model reliability prompt 元素(STRICT cwd verify + pre-verified data + specific verification list + phase boundary 显式 — 全 4 元素必含 reviewer prompt) | MANDATORY |
+| **Dispatch 前** | §3.1 STRICT cwd verify section 必含 dispatch prompt | MANDATORY |
+| **Dispatch 后(每 subagent return)** | §3.2 controller cross-verify(测试 count / commit SHA / branch / spec strings — 不接受 subagent self-report)| MANDATORY |
+| **Phase complete(parallel implementers + W2 actual diff verify + reviewers all ✅)** | §3.4.0 判定 Trigger Type → 跑 Type 2 Parallel retrospect(MANDATORY Opus full Q1-Q6 + Q7a-d parallel-specific)| MANDATORY |
+| **Retrospect 任一 Yes** | §8 update protocol 加 case study + 视情况 §6 catalog + §1 subtype | MANDATORY |
+| **Retrospect 全 No** | SKIP skill update — phase silent pass | OK |
+
+**Trigger** 时机(沿 §3.4.0 matrix):
+- 本命令(`/forgeue:change-apply-parallel`)= **Type 2 Parallel dispatch**(多 implementer 并行 + W2 actual diff + reviewer 串行)
+- Q7 parallel-specific:Q7a actual file overlap detected post-dispatch / Q7b race condition / Q7c IMPL_FILES_JSON 序列化或 W2 Bash glue 错(silent overlap detection failure)/ Q7d parallel implementer 数 vs degradation 实际比例(若 ≥30% 降级 → 该 phase 不该选 parallel)
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`(同 change-plan 步骤 1)。

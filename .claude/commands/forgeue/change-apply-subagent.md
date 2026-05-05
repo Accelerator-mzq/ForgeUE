@@ -69,6 +69,32 @@ evidence frontmatter MUST 加 `task_granularity: <value>` 字段;`forgeue_finish
 
 evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段。此字段触发 4 fence(`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`)生效;无此字段的 evidence 视为 legacy,fence pass-through(archived enhance-workflow-automation 等历史 change replay 兼容)。
 
+### Preflight Subagent Discipline(MANDATORY before any Skill(Task) dispatch)
+
+Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**显式 invoke `Skill(subagent-driven-discipline)`,加载 skill 内容到 working context。
+
+**Skill content 应用点**(controller 自检):
+
+| Phase | 应用 skill 段 | 强制性 |
+|---|---|---|
+| **Dispatch 前** | §1 scenario taxonomy 选 model(显式传 `model:` 参数;不让 subagent inherit 父 session model)| MANDATORY |
+| **Dispatch 前** | §2 cheap-model reliability prompt 元素(STRICT cwd verify + pre-verified data + specific verification list + phase boundary 显式 — 全 4 元素必含 reviewer prompt) | MANDATORY |
+| **Dispatch 前** | §3.1 STRICT cwd verify section 必含 dispatch prompt | MANDATORY |
+| **Dispatch 后(每 subagent return)** | §3.2 controller cross-verify(测试 count / commit SHA / branch / spec strings — 不接受 subagent self-report)| MANDATORY |
+| **Phase complete(3-stage all ✅)** | §3.4.0 判定 Trigger Type → 跑对应 retrospect:Type 1 = 3-stage full(MANDATORY Opus full Q1-Q6) | MANDATORY |
+| **Retrospect 任一 Yes** | §8 update protocol 加 case study + 视情况 §6 catalog + §1 subtype | MANDATORY |
+| **Retrospect 全 No** | SKIP skill update — phase silent pass | OK |
+
+**Discipline 缺失后果**(若 controller 漏 invoke 本 skill):
+- Subagent inherit 父 session model(往往 Opus over-cost,如 Case 1 P0 的 6.7x cost over-budget 教训)
+- Reviewer prompt open-ended → cheap model scope-bleed / 幻觉(如 Case 1 P1/P2 教训)
+- Worktree-scope leak 无 detection(如 Case 1 P3 cwd 漂移到 dev branch 教训)
+- Skill 不 auto-grow → 后续 change 重蹈覆辙
+
+**Trigger** 时机(沿 §3.4.0 matrix):
+- 本命令(`/forgeue:change-apply-subagent`)= **Type 1 3-stage full**(implementer + spec_reviewer + code_quality_reviewer 串行)
+- Phase complete 后 controller MUST 跑 Type 1 retrospect(Opus actor;Q1-Q6 full)
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`(同 change-plan 步骤 1)。
