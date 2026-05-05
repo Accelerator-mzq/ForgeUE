@@ -187,6 +187,8 @@ S9 (archived)
 
 **深读**:`forgeue_integrated_ai_workflow.md` §B.3 Superpowers 集成边界 + §B.6 subagent-driven-development 集成边界
 
+**v2 wrapper 协议(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05)**:`/forgeue:change-apply-{subagent,parallel}` Preflight Worktree section 自动跑 `python tools/forgeue_preflight_wrapper.py`(wrapper 自管 isolated worktree + 写 13-field receipt;LLM 复制 worktree_path / receipt_path 到 evidence frontmatter,不直接写)+ post-dispatch ledger append(Skill(Task) 之后 capture 真实 agent_id → `python tools/forgeue_dispatch_ledger.py append`);**用户视角无需手工 invoke 工具,命令模板自动跑**。Parallel 命令额外跑 W2 actual diff(`git status --porcelain` precondition + `git diff -z` + `git ls-files --others -z` 合集,overlap 自动降级 sequential)。详见 `forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2。
+
 ---
 
 ### 3.4 S5 Verification

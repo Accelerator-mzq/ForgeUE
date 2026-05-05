@@ -221,6 +221,20 @@ ForgeUE workflow 在 D-AutonomyBoundary 简化协议之上引入 **runtime enfor
 
 完整规则见 [`forgeue_integrated_ai_workflow.md` §C.7 Runtime Enforcement Protocol](forgeue_integrated_ai_workflow.md) + ADR-011。
 
+### 4.4-ter Executable Enforcement v2(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05)
+
+ADR-011 v1 是 advisory not deterministic(R6 限制)。本 change 升级 v2 为 **executable enforcement layer**:
+
+- **W1 wrapper**(`tools/forgeue_preflight_wrapper.py`):wrapper 自管 isolated worktree(`git worktree` subprocess + cwd realpath 校验)+ 13-field receipt JSON(含 `is_isolated_worktree` + `worktree_action`)+ exit codes 0/5/6/7
+- **W2 actual diff**:`/forgeue:change-apply-parallel` 主 session 自动跑 `git status --porcelain=v1` precondition + `git diff -z` + `git ls-files --others --exclude-standard -z` 合集(含 untracked)+ overlap 自动降级 sequential;abort log 沿 ForgeUE 产物路径不 `/tmp/`
+- **W3 ledger**(`tools/forgeue_dispatch_ledger.py`):JSONL append-only + `append`/`verify` 子命令 + post-dispatch capture 真实 agent_id(关闭 round 1 synthetic UUID 漏洞)
+- **protocol_version v2 + 4 fence**:`forgeue_finish_gate.py` 加 `_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`;v2 = v1 + additional checks(向后兼容)
+- **DogfoodGap**:本 change 实施时 W1 wrapper 还没 ship → 本 change evidence 仍 v1;P5.5 v2 e2e fixture(`tests/integration/test_v2_e2e_synthetic_change.py`)= archive 必过 gate
+- **F2/F3 deferred to follow-on `enhance-workflow-automation-ledger-binding`**:wrapper-bound dispatch + cryptographic ledger signing(advisory limitation 暴露在 evidence frontmatter `pre_dispatch_metadata: advisory` + `ledger_forgery_resistance: advisory` 字段)
+- **Subagent Discipline Layer 2 wiring**:`/forgeue:change-apply-{subagent,parallel}` MANDATORY invoke `Skill(subagent-driven-discipline)` sister skill(controller-side scenario judgment)
+
+完整规则见 [`forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2](forgeue_integrated_ai_workflow.md) + ADR-012。
+
 ### 4.5 tasks.md 必含段模板
 
 每个 change 的 `tasks.md` 末尾必须含:

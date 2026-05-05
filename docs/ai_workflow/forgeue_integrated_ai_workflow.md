@@ -347,6 +347,30 @@ Codex round N 输出顶层 `verdict ∈ {approve, needs-attention}`,Claude cross
 
 完整规则见 OpenSpec change `enhance-workflow-automation-runtime-enforcement/design.md` D-WorktreeEnforce / D-DirectWorktreeRefinement / D-SkillCascadeCheck / D-RoundFixContinuity / D-TaskGranularityDeclaration / D-ParallelDispatch / D-PreflightProtocol / D-ProtocolVersionMigration 决策。
 
+### C.8 Executable Enforcement Layer v2(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05)
+
+ADR-011 v1 Runtime Enforcement Protocol 是 **advisory not deterministic**(R6 限制):controller 跳过 markdown step 时 subagent 已修改 / finish_gate 是 archive 时才扫,无法 abort dispatch。本 change 升级 v2 为 **executable enforcement layer**(W1 wrapper + W2 actual diff + W3 ledger),关闭 v1 F1/F2/F3 deferred gap。
+
+**W1 — `tools/forgeue_preflight_wrapper.py`**(F1 round 1 + F2 round 2 inline writeback):wrapper 自管 isolated worktree(`git worktree add/list --porcelain` subprocess + cwd realpath 校验,不依赖 SKILL invoke);写 13-field receipt JSON(含 `is_isolated_worktree: true` + `worktree_action ∈ {created, reused}`)到 `<change>/preflight_receipts/<receipt_id>.json`;exit codes 0/5/6/7。命令模板**只能消费 receipt path**(LLM 复制 worktree_path + receipt path 到 evidence frontmatter,不直接写)。
+
+**W2 — Parallel actual diff overlap detection**(F4 round 1 + F3 round 2 inline writeback):`/forgeue:change-apply-parallel` 在 implementer commit 完成后主 session 跑:Step 0 dirty precondition `git status --porcelain=v1` 非空 → 自动降级 sequential;Step 1 actual changed-files 收集(`git diff --name-only -z` + `git ls-files --others --exclude-standard -z` 合集,含 untracked + Bash dict→JSON `IMPL_FILES_JSON` env var 序列化);Step 2 cross-implementer set intersection inline python3 → 非空 → abort + 自动降级。abort log 沿 ForgeUE 产物路径 `<change>/parallel_abort_*`(**不**用 `/tmp/`)。
+
+**W3 — `tools/forgeue_dispatch_ledger.py`**(F2 round 1 + F1 round 2 inline writeback):append-only JSONL ledger(`<change>/dispatch_ledger.jsonl`)+ `append`/`verify` 子命令;7 字段(agent_id / round / role / task_subject_hash / dispatched_at ISO8601 / parent_session_id / wrapper_version);6 VALID_ROLES enum。**post-dispatch capture 真实 agent_id**:Skill(Task) 之后从 return parse → Bash wrapper append ledger(关闭 round 1 synthetic UUID 漏洞)。
+
+**protocol_version dispatch matrix**(`forgeue_finish_gate.py` v2 升级):缺字段 → legacy pass-through;`v1` → v1 fence;`v2` → v1 + v2 fence(v2 = v1 + additional checks,严格于 v1)。
+
+**v2 新 / 升级 4 fence**:`_check_worktree_path_v2`(receipt cross-check + `is_isolated_worktree: true`)/ `_check_round_fix_continuity_v2`(ledger agent_id 集合 cross-check)/ `_check_file_overlap_actual`(parallel only;actual ⊆ declared + disjoint unless degraded)/ `_check_dispatch_ledger`(inline ledger verify:JSON well-formed + wrapper_version + timestamp 单调)。
+
+**v2 evidence frontmatter 7 v2 字段**:`runtime_enforcement_protocol_version: v2` + `worktree_receipt_path` + `worktree_path` + `dispatch_ledger_path: dispatch_ledger.jsonl`(固定值)+ `task_files_actual`(parallel only)+ `degraded_to` / `degradation_reason` + `pre_dispatch_metadata: advisory` + `ledger_forgery_resistance: advisory`(F2/F3 round 1 inline writeback advisory 标注 — 诚实暴露当前 limitation)。
+
+**DogfoodGap**:本 change 实施时 W1 wrapper 还没 ship,本 change evidence 全部 v1 advisory。**第一个真 v2 dogfood 是下一 follow-on change**;P5.5 v2 e2e fixture(`tests/integration/test_v2_e2e_synthetic_change.py`)= archive 必过 gate(P10.0 二次确认),mock 完成 v2 协议端到端实跑。
+
+**F2/F3 deferred 到 follow-on `enhance-workflow-automation-ledger-binding`**:wrapper-bound dispatch(F2;Hook system 或 Skill 协议扩展)+ cryptographic ledger signing(F3;HMAC + LLM 不可见 key)— 触发条件:本 change ship 后实测 advisory 不足以挡 controller drift。
+
+**Subagent Discipline Layer 2 wiring**:`/forgeue:change-apply-{subagent,parallel}` Preflight 段 MANDATORY invoke `Skill(subagent-driven-discipline)`(sister skill 沉淀 controller-side 40% scenario judgment;§3.4 Trigger Type Matrix:Type 1 = 3-stage / Type 2 = parallel / Type 3 = standalone Task / Type 4 = ad-hoc / Type 5 = codex CLI 各自 retrospect intensity)。
+
+完整规则见 OpenSpec change `enhance-workflow-automation-executable-enforcement/design.md` D-W1-ReceiptSchema / D-W2-OverlapDetection / D-W3-LedgerFormat / D-W3-WrapperImpl / D-DispatchWrapperBoundary / D-DegradationPath / D-FrontmatterSchemaExtension / D-W4-IntegrationGate / D-DogfoodGap 决策。
+
 ---
 
 ## D. Documentation Sync Gate
