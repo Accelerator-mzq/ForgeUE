@@ -21,7 +21,7 @@ ADR-011 + ADR-012 累积引入 ForgeUE-level MANDATORY worktree enforcement(L2 +
 - G8(D-CrossCheckUpstreamCascade):仍 honor Superpowers upstream `subagent-driven-development/SKILL.md` `## Integration` 段声明的 `using-git-worktrees` Required cascade(ForgeUE 不 override upstream;只 ForgeUE-level MANDATORY 协议层撤)
 - G9(D-ConsentOutcomeStateMachine;codex round 1 F2+F3 writeback):evidence frontmatter `worktree_consent_outcome` enum + `worktree_mode` enum 必填(替代 D-AdvisoryFenceMode 隐式 field-presence 推断);finish_gate 加 `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` fence 守门 cross-field invariants
 - G10(D-ParallelDeclineFallback;codex round 1 F1 writeback):`/forgeue:change-apply-parallel` user decline worktree → 自动降级 sequential(无 prompt);消除 main repo + multi-implementer + W2 attribution 漏洞
-- G11(D-DogfoodSelfHostMode;user 拍板路径 (A) literal compliance):本 change 实施期字面遵循当前命令模板旧 ADR-011/012 mandatory worktree + W1 wrapper + receipt 协议(沿 archived ADR-012 self-DogfoodGap 同款);self evidence 沿 v2 + worktree_path / receipt_path 必填;ADR-013 新 schema(consent_outcome / mode + v1 advisory)在 archive 后才作为下一个 active change 的 first dogfood 生效
+- G11(D-DogfoodSelfHostMode;user 2026-05-05 session 实测后改 path B 拍板):本 change 实施期走 main repo cwd + ADR-013 新 schema 自指 dogfood(沿 D-AllChangeApplyMainRepoDefault;wrapper bug 实测阻断 path A literal compliance);self evidence convention:`runtime_enforcement_protocol_version` 字段不写(legacy fence pass-through)+ `worktree_consent_outcome: declined` + `worktree_mode: in_place`(self-evidence ADR-013 协议);本 change 自己即 first ADR-013 dogfood
 
 **Non-Goals**:
 
@@ -236,20 +236,35 @@ ForgeUE 不 override upstream cascade — 命令模板仍 invoke `Skill(using-gi
 
 **Phase 1 - propose / design / specs / tasks 落 contract**(本次)
 
-**Phase 2 - 实装**(apply stage,沿 sequential dispatch — **literal compliance dogfood mode**):
+**Phase 2 - 实装**(apply stage,沿 sequential dispatch — **D-DogfoodSelfHostMode self-host ADR-013 dogfood**;**user 拍板路径 (3) 切换记录**):
 
-**D-DogfoodSelfHostMode**(本 change 实施期 worktree mode 决议;沿 archived ADR-012 self-DogfoodGap 同款模式):本 change implementation phase MUST 字面遵循当前命令模板 `/forgeue:change-apply-subagent` `## Preflight Worktree` section 协议(即旧 ADR-011/012 mandatory worktree + W1 wrapper + 13-field receipt),理由:
+**Path A literal compliance 失败回顾**(本 session 实测 2026-05-05):
+- 试图沿 path A `python tools/forgeue_preflight_wrapper.py --change <id>` 创 isolated worktree(沿命令模板字面 v2 mandatory 要求)
+- wrapper exit 6 第二次调用失败 — 从 worktree 内调用时 `_git_repo_root` 走 `git rev-parse --show-toplevel` 返回 worktree 自己路径(非 main repo),`_resolve_target_worktree` 计算出 nested target 触发 `git worktree add` 在已有 worktree 内创建第二个 worktree → "Filename too long" 链锁失败
+- archived ADR-012 follow-on `enhance-workflow-automation-v2-fence-hardening` tracking 已记录此 wrapper bug;本 change 不 fix(out of scope;另起 follow-on)
+- worktree 已被 cleanup(`git worktree remove --force` + branch 删除)
 
-1. P1 finish_gate advisory 升级 ship 之前,`_check_worktree_path` v1 fence 仍阻断 evidence 缺 `worktree_path`;不创 worktree 直接违 fence,需暂时 bypass 工具开关(violate audit)
-2. 沿 archived ADR-012 dogfood 同款模式(ADR-012 ship v2 时 self evidence 仍 v1):本 change ship ADR-013 时 self evidence 仍 v2 + 沿旧 wrapper 路径 — archived 后才生效新 ADR-013 协议
-3. worktree isolation 在 implementation 期仍有 boundary 价值(subagent dispatch 不污染 main repo dev branch);self-DogfoodGap 接受这一价值
+**D-DogfoodSelfHostMode**(本 change 实施期 worktree mode 决议;**实质就是 ADR-013 自指 dogfood**):本 change implementation phase 走 main repo cwd + ADR-013 新 schema evidence 模式,理由:
 
-**实施期 evidence frontmatter convention**(per-task implementer / spec_review / code_quality_review / final_review):
-- `runtime_enforcement_protocol_version: v2`(沿命令模板字面要求)
-- `worktree_path: <wrapper-managed absolute path>`(必填)
-- `worktree_receipt_path: <relative path to receipt JSON>`(必填)
-- `worktree_consent_outcome` / `worktree_mode` 字段 **不写**(沿 self-DogfoodGap;ADR-013 新字段在 archive 后才生效;本 change 自身 evidence 沿 ADR-012 v2 schema)
-- archived 后,**下一个 active change** 才作为 first dogfood:走 ADR-013 default decline / in_place mode 路径,evidence 含 `worktree_consent_outcome` + `worktree_mode` + `runtime_enforcement_protocol_version: v1`(per ADR-013 fence 兼容)
+1. wrapper bug 阻断 path A literal compliance 路径;not 本 change scope 修
+2. 本 change 协议本身就是 revert worktree mandatory → "implementation 默认 main repo cwd" 是 ADR-013 default 行为;self-host 等于真 dogfood ADR-013
+3. 本 change 自身 evidence 不写 `runtime_enforcement_protocol_version` 字段(legacy pass-through 行为;沿 spec.md "legacy archived evidence 不含 worktree_consent_outcome 字段 → pass-through" 同款 fence 兼容意图)
+4. evidence **含** ADR-013 新字段(`worktree_consent_outcome: declined` + `worktree_mode: in_place`)— 这是 self-evidence ADR-013 协议的真 dogfood;P1 ship 新 fence 后,future replay 校验通过(consent_outcome ↔ mode invariant 满足)
+5. subagent sequential dispatch 在 main repo dev branch 顺序 commit 完成 → 不污染(每 subagent 完成 commit 后下一个开始;符合 D-AllChangeApplyMainRepoDefault 协议)
+
+**实施期 evidence frontmatter convention**(per-task implementer / spec_review / code_quality_review / final_review;**path B self-host 模式**):
+- `runtime_enforcement_protocol_version` 字段 **不写**(legacy pass-through;current finish_gate v1 + v2 fence `_runtime_enforcement_active` 返 False → 全 pass-through;P11 archive 时无需 bypass)
+- `worktree_path` 字段 **不写**(沿 ADR-013 D-ConsentOutcomeStateMachine `mode: in_place` 禁写 worktree_path)
+- `worktree_receipt_path` 字段 **不写**(in_place mode 不要求 receipt)
+- `worktree_consent_outcome: declined`(沿 ADR-013 default;controller 在 main repo cwd 即 user implicit decline 模拟)
+- `worktree_mode: in_place`(沿 declined ↔ in_place invariant)
+- `triggered_by_command: change-apply-subagent`(沿 finish_gate dispatch mode 判定;f2 修复字段)
+- `task_granularity: phase`(沿 D-TaskGranularityDeclaration;各 phase 整体 dispatch)
+- `skill_cascade_audit` dict(沿 D-SkillCascadeCheck;invoked_skills + cascade_check_pass_at)
+- `task_independence_assertion: false`(sequential dispatch;非 parallel)
+- `autonomy_decision: claude_codex_concurred`(常规;含 codex_review_ref)
+
+archived 后,**任意下一个 active change** 都自然走本 change ship 后的 ADR-013 default 协议(命令模板 OPT-IN narrative + finish_gate advisory + outcome / mode state machine);本 change 自己已经是 first dogfood。
 
 **Phase 2 sub-phase**:
 - P0:命令模板更新(subagent + parallel `## Preflight Worktree` section 改 OPT-IN + MUST invoke `Skill(superpowers:using-git-worktrees)` + outcome / mode capture narrative)
