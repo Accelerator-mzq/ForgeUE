@@ -57,14 +57,12 @@ def _run(args: list[str], *, cwd: Path, timeout: int = 60) -> subprocess.Complet
     )
 
 
-def _mock_agent_id() -> str:
-    """产生 17 字符 hex agent_id([a-f0-9]{17}+);模拟 Claude Code 真实格式。
+_AGENT_ID_LENGTH = 17  # D-DispatchWrapperBoundary 合约 "[a-f0-9]{17}+"(round 1 code_quality M-3 fix:抽 module-level 常量)
 
-    tasks.md P5.5.2 hint:``secrets.token_hex(8) + secrets.token_hex(1)``给 17 chars。
-    token_hex(8) = 16 chars;token_hex(1) = 2 chars → 共 18 chars;
-    按合约 D-DispatchWrapperBoundary 注释 "[a-f0-9]{17}+" 取 17 chars。
-    """
-    return (secrets.token_hex(8) + secrets.token_hex(1))[:17]
+
+def _mock_agent_id() -> str:
+    """产生 17 字符 hex agent_id([a-f0-9]{17}+);模拟 Claude Code 真实格式。"""
+    return secrets.token_hex(9)[:_AGENT_ID_LENGTH]  # token_hex(9) = 18 chars,slice 到 17
 
 
 def _git(args: list[str], *, cwd: Path) -> subprocess.CompletedProcess:
@@ -354,7 +352,7 @@ class TestW1WrapperWorktree:
         receipt_path = wt_change_dir / receipt_rel
         assert receipt_path.is_file(), f"receipt file should exist: {receipt_path}"
 
-        # 校验 receipt JSON 13 字段(含 wrapper 新增的 is_isolated_worktree + worktree_action)
+        # 校验 receipt JSON 12 顶层字段 + 1 nested(skill_cascade_check 嵌套)= 设计 "13 字段" naming(含 wrapper 新增的 is_isolated_worktree + worktree_action)
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         required_fields = [
             "receipt_id", "change_id", "protocol_version", "worktree_path",
@@ -373,7 +371,7 @@ class TestW1WrapperWorktree:
         )
 
     def test_e2e_w1_wrapper_rejects_wrong_cwd(self, tmp_path: Path) -> None:
-        """test case 3:invoke from main repo cwd → exit 6 + stderr 含 isolated worktree 提示。
+        """test case 2:invoke from main repo cwd → exit 6 + stderr 含 isolated worktree 提示。
 
         Spec scenario:wrapper 拒绝 wrong-cwd(F1 round 1 inline negative test)。
         """
@@ -614,15 +612,10 @@ class TestW2ParallelActualDiff:
             f"src/shared.py should be in intersection, got: {intersection}"
         )
 
-        # 模拟 overlap 时写 abort log
-        abort_log = tmp_path / "parallel_abort_overlap.log"
-        abort_log.write_text(
-            f"overlap detected: {sorted(intersection)}\n"
-            f"implementer_a files: {sorted(files_a)}\n"
-            f"implementer_b files: {sorted(files_b)}\n",
-            encoding="utf-8",
-        )
-        assert abort_log.is_file(), "abort log should be written on overlap detection"
+        # 实际 abort log 由命令模板 Bash step 写(P3 ship 在 change-apply-parallel.md);
+        # 本 e2e fixture 验证 overlap detection logic(intersection 非空)— 命令模板 Bash 写 log 行为
+        # 沿 fence test_change_apply_parallel_actual_diff_uses_git_status_porcelain_and_ls_files_others 守门
+        # (round 1 code_quality I-2 fix:删除 self-fulfilling abort log assertion)
 
     def test_e2e_w2_dirty_implementer_worktree_detected(self, tmp_path: Path) -> None:
         """test case 8:implementer worktree 含 untracked dirty file → git status --porcelain=v1 非空。
@@ -776,35 +769,49 @@ class TestFinishGateV2:
         )
         _write_evidence(change_dir, frontmatter=fm)
 
-        # 在 REPO_ROOT 视角运行 finish_gate(--change 相对 openspec/changes/)
-        # finish_gate main() 用 _common.find_repo_root() → 需要 cwd 在 git repo 内
-        # 使用真实仓库根以便 find_repo_root() 能工作
-        # 但 synthetic change 在 tmp_path 下,不在真实仓库内
-        # finish_gate 内部 change_path 是 repo/openspec/changes/<id>
-        # 需要把 synthetic change_dir 放在真实仓库可识别的路径下
-        # → 改用 --change 指向实际 openspec/changes 内的路径:
-        # 注:因为 finish_gate 依赖 _common.find_repo_root()(git rev-parse),
-        # 而 tmp_path 是独立 git repo,这里直接在 tmp_path/synthetic_repo 下跑。
-        # finish_gate 需要 change_dir 在 repo 的 openspec/changes/ 下。
-        # 我们的 synthetic repo 已经有这个结构(_synthetic_change_dir 创建的)。
-        r = _run_finish_gate(change_id, repo_cwd=repo)
+        # round 1 code_quality I-1 fix: 直接 import + 调 v2 fence 函数(unit-style integration)
+        # 而非 subprocess invoke finish_gate 全流程。
+        # WHY:finish_gate full pipeline 需要 14+ evidence files(verify_report / doc_sync_report
+        # / superpowers_review / 6 codex review stub / per-task triple / etc.)— synthetic 全 14 文件
+        # 工程量过大;且 finish_gate early-abort on missing evidence 会 skip v2 fence 评估,导致
+        # subprocess 黑盒测试 vacuous PASS(reviewer I-1 的真问题)。
+        # 直接 call fence 函数验证"v2 fence 实现 in valid v2 evidence 上 returns no errors"
+        # — 这才是 fence 实现 correctness 的真正断言。
+        sys.path.insert(0, str(_REPO_ROOT))
+        try:
+            from tools import forgeue_finish_gate as fg
+        finally:
+            sys.path.pop(0)
 
-        # v2 finish_gate 6 fence 全部 pass → exit 0
-        # 注:finish_gate 也检查其他 blockers(如 evidence completeness / tasks unchecked)
-        # synthetic change 没有 verify_report / doc_sync_report 等 → 会有 blockers
-        # 我们关注 v2 fence blocker 没有触发(仅检查输出中无 v2 fence 相关 FAIL)
-        stdout = r.stdout
-        v2_fence_fail_patterns = [
-            "worktree_path_v2_violation",
-            "round_fix_continuity_v2_violation",
-            "file_overlap_actual_violation",
-            "dispatch_ledger_violation",
-        ]
-        for pattern in v2_fence_fail_patterns:
-            assert pattern not in stdout, (
-                f"v2 fence {pattern!r} should NOT trigger for valid v2 evidence. "
-                f"finish_gate stdout:\n{stdout}"
-            )
+        evidence_path = change_dir / "execution" / "task_1_implementer.md"  # _write_evidence default filename
+        assert evidence_path.is_file(), f"synthetic v2 evidence missing: {evidence_path}"
+
+        # 直接调每个 v2 fence,断言无 error
+        worktree_errors = fg._check_worktree_path_v2(evidence_path, fm, change_dir)
+        assert worktree_errors == [], (
+            f"_check_worktree_path_v2 should return empty errors for valid v2 evidence;"
+            f" got {worktree_errors!r}"
+        )
+
+        continuity_errors = fg._check_round_fix_continuity_v2(evidence_path, fm, change_dir)
+        assert continuity_errors == [], (
+            f"_check_round_fix_continuity_v2 should return empty errors for valid v2 evidence;"
+            f" got {continuity_errors!r}"
+        )
+
+        ledger_errors = fg._check_dispatch_ledger(evidence_path, fm, change_dir)
+        assert ledger_errors == [], (
+            f"_check_dispatch_ledger should return empty errors for valid v2 evidence;"
+            f" got {ledger_errors!r}"
+        )
+
+        # _check_file_overlap_actual 仅 parallel evidence 触发(triggered_by_command:
+        # change-apply-parallel);本 evidence 是 subagent triggered,fence 应直接 pass-through
+        overlap_errors = fg._check_file_overlap_actual(evidence_path, fm, change_dir)
+        assert overlap_errors == [], (
+            f"_check_file_overlap_actual should pass-through for non-parallel evidence;"
+            f" got {overlap_errors!r}"
+        )
 
     def test_e2e_finish_gate_v2_blocks_missing_receipt(self, tmp_path: Path) -> None:
         """test case 10:synthetic v2 evidence worktree_receipt_path 字段指向不存在的文件

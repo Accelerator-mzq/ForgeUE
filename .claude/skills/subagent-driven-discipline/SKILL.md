@@ -7,7 +7,7 @@ metadata:
   author: forgeue (initial seed)
   version: "2.2"
   scenario_subtype_count: 28
-  case_study_count: 1
+  case_study_count: 2
   retrospect_protocol: trigger-type-matrix(5 types × per-type intensity)
 ---
 
@@ -447,6 +447,42 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 
 **Cost vs all-Opus alternative**:实际 $X vs Opus 估 $Y → 节省 ratio
 ```
+
+### Case 2: ForgeUE / enhance-workflow-automation-executable-enforcement / P5.5
+
+**Date**:2026-05-05
+**Project context**:Workflow tooling change — v2 e2e integration test fixture(`tests/integration/test_v2_e2e_synthetic_change.py` 946 LOC + 11 tests);archive 必过 gate(D-W4-IntegrationGate)
+
+**Subagent dispatch**(Type 1 3-stage,model 矩阵 P5.5 — Sonnet × 3):
+
+| Subagent | Scenario subtype(§1.X.Y)| Model | $cost | Verdict |
+|---|---|---|---|---|
+| implementer | §1.4.2 integration test(cross-module mock + edge case + multi-tool integration)| Sonnet | $0.80 | ✅ DONE |
+| spec_reviewer | §1.2.1 string matching(11 test names + W1/W2/W3/finish_gate coverage matrix)| Sonnet | $0.40 | ✅ Spec compliant |
+| code_quality_reviewer | §1.3.4 runtime correctness + §1.3.3 maintainability | Sonnet | $0.30 | ⚠️ Approved with concerns(2 Important + 3 Minor — 全 controller inline fix) |
+
+**Real issues caught / failed**:
+
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+| **`test_e2e_finish_gate_v2_fences_pass_synthetic_evidence` vacuous PASS**:assertion 用 `assert pattern not in stdout`,但 finish_gate early-abort on missing required evidence(verify_report / doc_sync_report / 14+ blockers),v2 fence 永远不被评估,vacuous PASS | **Important(silent failure pattern)** | Sonnet code_quality(§1.3.4 runtime correctness)| 验证 §1.3.4 Sonnet 不可省 — 抓 silent vacuous 类 bug;Haiku 看不出 |
+| `test_e2e_w2_parallel_actual_overlap_detected` self-fulfilling abort log assertion(test 自己写 file 然后 assert file 存在)| Important(test design anti-pattern)| Sonnet code_quality | 同上 |
+| 3 Minor:13 字段 comment 错(实际 12 顶层)/ test case 番号 skip / `_mock_agent_id` 18→17 chars 自相矛盾 + magic number | Minor | Sonnet code_quality | 沿 §3.3 inline fix |
+
+**Lesson reinforcement / new patterns surfaced**:
+
+- **Pattern 1 + Pattern 4 reinforced**:Sonnet 矩阵 P5.5 model 选择正确(implementer + reviewer 全 Sonnet,§1.4.2 integration test 复杂度匹配);Sonnet code_quality 抓的 vacuous PASS 是 Haiku 看不见的(§1.3.4 必须 Sonnet)。
+- **NEW pattern surfaced — Black-box pipeline test vacuous PASS**:integration test subprocess invoke 完整 pipeline 工具(如 finish_gate),工具 early-abort 时 fence 评估被 skip,导致 negative assertion("pattern absent")vacuous PASS。**Mitigation**:integration test 应用 unit-style import + 直接 call 目标 fence 函数(而非 subprocess 黑盒),或合成 ALL required evidence 让 pipeline 全跑(成本高)。本 case 选 unit-style import recovery;同款 fix 适用任何 pipeline-level integration test design。
+- **Pattern 2 验证有效**:STRICT cwd verify section 在 prompt 中,implementer commit 落 worktree branch ✅(对比 Case 1 P3 leak);说明 prompt cwd verify section + 强语气("STOP report NEEDS_CONTEXT")在 Sonnet implementer 上表现可靠(Haiku P3 leak 是 model 因素,非 prompt 因素)。
+- **Pattern 6 reinforced**:5 issues 全 controller inline fix(2 Important + 3 Minor)— 包括 I-1 的复杂重构(从 subprocess 黑盒 → unit-style import)~30 LOC change cost ~5 min controller token vs round 2 Sonnet dispatch ~$0.50 + ~5 min wall-clock + 风险新错误。**Inline fix ROI 高于 round 2 dispatch when fix is mechanical / well-scoped**。
+
+**Cost vs all-Opus alternative**:P5.5 实际 $1.50(Sonnet × 3 + retrospect Opus $0.50)vs 全 Opus 估 $8-12 → 节省 ~$6-10。
+
+**§6 catalog new row**(沿 Q4 + new pattern surfaced):
+
+| Subagent failure mode | Pattern that prevents | Case studies reproducing |
+|---|---|---|
+| **black-box pipeline test vacuous PASS**(integration test 用 subprocess 黑盒调 pipeline 工具,工具 early-abort 时 fence 评估 skip,negative assertion vacuous PASS) | §1.3.4 mandatory Sonnet code_quality + §3.2 cross-verify(不只看 returncode 也看 stdout 内容)+ test design 优先 unit-style import vs black-box subprocess(若合成全 dependency 不可行) | Case 2 P5.5 |
 
 ### Case 1: ForgeUE / enhance-workflow-automation-executable-enforcement / P0-P3
 
