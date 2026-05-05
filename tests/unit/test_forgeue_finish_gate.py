@@ -2088,3 +2088,285 @@ def test_verdict_normalization_unknown_verdict_defaults_to_no_conflict():
     assert result_empty is True, (
         "empty codex verdict MUST default to no-conflict (True)"
     )
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-runtime-enforcement P1:4 runtime fence
+# (D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity /
+# D-TaskGranularityDeclaration)+ D-ProtocolVersionMigration gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def runtime_fence_evidence_setup(tmp_path):
+    """构造 implementation evidence 路径 + 默认 frontmatter dict 公共 fixture。
+
+    返回 callable `setup(change_id, **fm_overrides)` -> (change_dir, evidence_path, fm)。
+    默认 frontmatter 含 `runtime_enforcement_protocol_version: v1` + 必填的
+    `evidence_type: subagent_implementer_report`(implementation evidence 类型),
+    各测试只需传入 fm_overrides 或字段差量。
+    """
+    def _setup(change_id: str = "fc-rt-fixture", **fm_overrides):
+        change_dir = tmp_path / "openspec" / "changes" / change_id
+        change_dir.mkdir(parents=True, exist_ok=True)
+        evidence_path = change_dir / "execution" / "task_1_implementer.md"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+        fm = {
+            "change_id": change_id,
+            "stage": "S4",
+            "evidence_type": "subagent_implementer_report",
+            "aligned_with_contract": True,
+            "runtime_enforcement_protocol_version": "v1",
+        }
+        fm.update(fm_overrides)
+        return change_dir, evidence_path, fm
+    return _setup
+
+
+# ---- D-SkillCascadeCheck _check_skill_cascade ----
+
+
+def test_skill_cascade_audit_missing_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:protocol v1 implementation evidence 缺 skill_cascade_audit
+    字段时 _check_skill_cascade 必须返回错误。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup("fc-sc-missing")
+    # fm 默认无 skill_cascade_audit
+    errors = fg._check_skill_cascade(ev_path, fm, change_dir)
+    assert errors, "missing skill_cascade_audit MUST produce an error"
+    assert "skill_cascade_audit" in " ".join(errors)
+
+
+def test_skill_cascade_audit_invalid_structure_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:skill_cascade_audit 不是 dict(string)→ block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-sc-invalid",
+        skill_cascade_audit="not-a-dict",
+    )
+    errors = fg._check_skill_cascade(ev_path, fm, change_dir)
+    assert errors
+    assert "not a mapping" in " ".join(errors)
+
+
+def test_skill_cascade_audit_invalid_iso_timestamp_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:cascade_check_pass_at 非 ISO 8601 格式 → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-sc-iso",
+        skill_cascade_audit={
+            "invoked_skills": ["superpowers:subagent-driven-development"],
+            "cascade_check_pass_at": "yesterday",  # 非 ISO 格式
+        },
+    )
+    errors = fg._check_skill_cascade(ev_path, fm, change_dir)
+    assert errors
+    assert "ISO 8601" in " ".join(errors)
+
+
+def test_skill_cascade_audit_valid_passes(runtime_fence_evidence_setup):
+    """P1.7 fence(positive):合法 skill_cascade_audit → 无错误。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-sc-valid",
+        skill_cascade_audit={
+            "invoked_skills": [
+                "superpowers:subagent-driven-development",
+                "superpowers:using-git-worktrees",
+            ],
+            "cascade_check_pass_at": "2026-05-05T12:34:56Z",
+        },
+    )
+    errors = fg._check_skill_cascade(ev_path, fm, change_dir)
+    assert errors == [], f"valid audit MUST pass; got: {errors}"
+
+
+# ---- D-RoundFixContinuity _check_round_fix_continuity ----
+
+
+def test_round_fix_continuity_implementer_mismatch_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:round_2_fix_implementer_id != round_1_implementer_id → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-rf-impl",
+        subagent_continuity={
+            "round_1_implementer_id": "agent-aaa",
+            "round_2_fix_implementer_id": "agent-bbb",  # 不一致
+        },
+    )
+    errors = fg._check_round_fix_continuity(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "round_1_implementer_id" in joined and "round_2_fix_implementer_id" in joined
+
+
+def test_round_fix_continuity_reviewer_mismatch_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:round_2_review_reviewer_id != round_1_reviewer_id → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-rf-rev",
+        subagent_continuity={
+            "round_1_reviewer_id": "rev-ccc",
+            "round_2_review_reviewer_id": "rev-ddd",  # 不一致
+        },
+    )
+    errors = fg._check_round_fix_continuity(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "round_1_reviewer_id" in joined and "round_2_review_reviewer_id" in joined
+
+
+def test_round_fix_continuity_round_1_only_passes(runtime_fence_evidence_setup):
+    """P1.7 fence(positive):仅含 round_1 字段(无 round_2 数据)→ 不报错。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-rf-r1only",
+        subagent_continuity={
+            "round_1_implementer_id": "agent-aaa",
+        },
+    )
+    errors = fg._check_round_fix_continuity(ev_path, fm, change_dir)
+    assert errors == []
+
+
+# ---- D-TaskGranularityDeclaration _check_task_granularity ----
+
+
+def test_task_granularity_missing_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:protocol v1 implementation evidence 缺 task_granularity → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup("fc-tg-missing")
+    errors = fg._check_task_granularity(ev_path, fm, change_dir)
+    assert errors
+    assert "task_granularity" in " ".join(errors)
+
+
+def test_task_granularity_invalid_value_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:task_granularity 值不在枚举 → block,错误指明合法枚举。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-tg-invalid",
+        task_granularity="batch",  # 非枚举
+    )
+    errors = fg._check_task_granularity(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "phase" in joined and "per-file" in joined and "sub-task" in joined
+
+
+def test_task_granularity_valid_phase_passes(runtime_fence_evidence_setup):
+    """P1.7 fence(positive):合法枚举 phase → 无错误。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-tg-valid",
+        task_granularity="phase",
+    )
+    errors = fg._check_task_granularity(ev_path, fm, change_dir)
+    assert errors == []
+
+
+# ---- D-WorktreeEnforce _check_worktree_path ----
+
+
+def test_worktree_path_missing_for_change_apply_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:implementation evidence 来自 change-apply-* 命令但缺
+    worktree_path → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-wt-missing",
+        triggered_by_command="change-apply-subagent",
+        # worktree_path 缺
+    )
+    errors = fg._check_worktree_path(ev_path, fm, change_dir)
+    assert errors
+    assert "worktree_path" in " ".join(errors)
+
+
+def test_worktree_path_empty_string_blocks(runtime_fence_evidence_setup):
+    """P1.7 fence:worktree_path 是空字符串 → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-wt-empty",
+        triggered_by_command="change-apply-direct",
+        worktree_path="   ",
+    )
+    errors = fg._check_worktree_path(ev_path, fm, change_dir)
+    assert errors
+
+
+def test_worktree_path_not_required_for_non_change_apply_command(
+    runtime_fence_evidence_setup,
+):
+    """P1.7 fence:非 change-apply-* 命令(直接产生 evidence)不强制
+    worktree_path,即使缺也不报错。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-wt-nonapply",
+        triggered_by_command="manual-edit",
+    )
+    errors = fg._check_worktree_path(ev_path, fm, change_dir)
+    assert errors == []
+
+
+# ---- D-ProtocolVersionMigration:protocol v1 gate skips legacy evidence ----
+
+
+def test_runtime_fences_skip_legacy_evidence_without_protocol_version(
+    runtime_fence_evidence_setup,
+):
+    """P1.7 守门:legacy evidence(无 runtime_enforcement_protocol_version 字段)
+    缺所有新字段也 pass-through 4 fence — 确保 archived enhance-workflow-automation
+    等历史 change replay 不被 false-block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup("fc-legacy")
+    # 移除 protocol version 字段模拟 legacy evidence
+    fm.pop("runtime_enforcement_protocol_version")
+    # 4 fence 全 pass-through(legacy 无新字段也不报错)
+    assert fg._check_skill_cascade(ev_path, fm, change_dir) == []
+    assert fg._check_round_fix_continuity(ev_path, fm, change_dir) == []
+    assert fg._check_task_granularity(ev_path, fm, change_dir) == []
+    assert fg._check_worktree_path(ev_path, fm, change_dir) == []
+
+
+def test_runtime_fences_skip_non_implementation_evidence_under_protocol_v1(
+    runtime_fence_evidence_setup,
+):
+    """P1.7 守门:非 implementation evidence(如 verify_report)即使含 protocol v1
+    标记也不被 skill_cascade / task_granularity / worktree_path fence 触发(这些
+    fence 仅对 implementation evidence 类型强制)。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-nonimpl",
+        evidence_type="verify_report",  # 非 implementation 类型
+    )
+    # 缺 skill_cascade_audit / task_granularity / worktree_path 都不应报错
+    assert fg._check_skill_cascade(ev_path, fm, change_dir) == []
+    assert fg._check_task_granularity(ev_path, fm, change_dir) == []
+    # worktree_path fence 即便有 triggered_by_command 也跳过(非 impl ev)
+    fm["triggered_by_command"] = "change-apply-subagent"
+    assert fg._check_worktree_path(ev_path, fm, change_dir) == []
+
+
+# ---- e2e CLI wiring 验证(P1.6) ----
+
+
+def test_runtime_fences_wired_into_check_frontmatter_protocol(tmp_path):
+    """P1.7 e2e:4 fence 接到 check_frontmatter_protocol 主循环 — 用 builders 写一
+    份违反 4 fence 的 implementation evidence,跑 finish_gate CLI,期待 4 类
+    Blocker.type 全出现。"""
+    b = make_complete_change(tmp_path, "fc-rt-e2e")
+    # 写一份实施 evidence(protocol v1)— 故意缺 skill_cascade_audit + task_granularity
+    # + worktree_path,且 subagent_continuity round_1/2 implementer 不一致 → 4 fence 全触发
+    b.write_evidence(
+        "execution",
+        "task_1_implementer.md",
+        evidence_type="subagent_implementer_report",
+        stage="S4",
+        body="impl notes\n",
+        extra_frontmatter={
+            "runtime_enforcement_protocol_version": "v1",
+            "triggered_by_command": "change-apply-subagent",
+            "autonomy_decision": "claude_autonomous",  # 满足 autonomy fence
+            "subagent_continuity": {
+                "round_1_implementer_id": "ag-aaa",
+                "round_2_fix_implementer_id": "ag-bbb",  # 不一致 → fence 触发
+            },
+            # skill_cascade_audit 缺 → fence 触发
+            # task_granularity 缺 → fence 触发
+            # worktree_path 缺 → fence 触发
+        },
+    )
+    proc = _run_cli(tmp_path, ["--change", "fc-rt-e2e", "--no-validate", "--json"])
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    payload = json.loads(proc.stdout)
+    blocker_types = {b["type"] for b in payload["blockers"]}
+    assert "skill_cascade_violation" in blocker_types, blocker_types
+    assert "round_fix_continuity_violation" in blocker_types, blocker_types
+    assert "task_granularity_violation" in blocker_types, blocker_types
+    assert "worktree_path_violation" in blocker_types, blocker_types

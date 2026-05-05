@@ -170,23 +170,63 @@ def _parse_yaml_subset(lines: list[str]) -> dict[str, Any]:
             continue
 
         if rstrip_val == "":
-            items: list[Any] = []
+            # 空值 — 决定是 list、nested mapping 还是 empty mapping。
+            # 前看下一非空缩进行:`- item` 头 → list;`subkey: ...` → nested
+            # mapping(enhance-workflow-automation-runtime-enforcement 加;
+            # 支持 subagent_continuity / skill_cascade_audit 等 dict 字段)
+            j = i + 1
+            while j < n and not lines[j].strip():
+                j += 1
+            is_list = (
+                j < n
+                and lines[j].startswith((" ", "\t"))
+                and lines[j].lstrip(" \t").startswith("- ")
+            )
+            if is_list:
+                items: list[Any] = []
+                i += 1
+                while i < n:
+                    line2 = lines[i]
+                    if not line2.strip():
+                        i += 1
+                        continue
+                    stripped = line2.lstrip(" ")
+                    indent = len(line2) - len(stripped)
+                    if indent == 0:
+                        break
+                    if stripped.startswith("- "):
+                        items.append(_parse_scalar(stripped[2:]))
+                        i += 1
+                    else:
+                        i += 1
+                result[key] = items
+                continue
+            # Nested mapping:收集所有缩进行 + dedent + 递归解析
+            sub_lines: list[str] = []
+            base_indent: int | None = None
             i += 1
             while i < n:
                 line2 = lines[i]
                 if not line2.strip():
+                    sub_lines.append("")
                     i += 1
                     continue
-                stripped = line2.lstrip(" ")
-                indent = len(line2) - len(stripped)
+                indent = len(line2) - len(line2.lstrip(" "))
                 if indent == 0:
                     break
-                if stripped.startswith("- "):
-                    items.append(_parse_scalar(stripped[2:]))
-                    i += 1
-                else:
-                    i += 1
-            result[key] = items
+                if base_indent is None:
+                    base_indent = indent
+                if indent < base_indent:
+                    break
+                sub_lines.append(line2[base_indent:])
+                i += 1
+            if sub_lines:
+                # 移除末尾空行避免误判
+                while sub_lines and not sub_lines[-1].strip():
+                    sub_lines.pop()
+                result[key] = _parse_yaml_subset(sub_lines) if sub_lines else {}
+            else:
+                result[key] = {}
             continue
 
         result[key] = _parse_scalar(rstrip_val)

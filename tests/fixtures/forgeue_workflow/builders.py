@@ -78,6 +78,22 @@ def _render_frontmatter(fm: dict[str, Any]) -> str:
             lines.append(f"{k}:")
             for item in v:
                 lines.append(f"  - {_yaml_scalar(item)}")
+        elif isinstance(v, dict):
+            # enhance-workflow-automation-runtime-enforcement:支持 nested
+            # mapping(subagent_continuity / skill_cascade_audit 等 dict 字段)。
+            # 仅支持 2 层嵌套(dict 内值是 scalar / list / 嵌套 dict)。
+            lines.append(f"{k}:")
+            for sk, sv in v.items():
+                if isinstance(sv, list):
+                    lines.append(f"  {sk}:")
+                    for item in sv:
+                        lines.append(f"    - {_yaml_scalar(item)}")
+                elif isinstance(sv, dict):
+                    lines.append(f"  {sk}:")
+                    for ssk, ssv in sv.items():
+                        lines.append(f"    {ssk}: {_yaml_scalar(ssv)}")
+                else:
+                    lines.append(f"  {sk}: {_yaml_scalar(sv)}")
         elif isinstance(v, str) and "\n" in v:
             lines.append(f"{k}: |")
             for ln in v.split("\n"):

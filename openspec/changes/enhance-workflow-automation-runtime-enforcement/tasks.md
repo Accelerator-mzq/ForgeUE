@@ -25,33 +25,31 @@
 - [x] P0.4:`pytest -q tests/unit/test_skill_cascade_check.py` 全绿(18 passed in 0.54s)
 - [x] P0.5:`pytest -q` 全套 regress(1503 passed + 1 skipped(Windows symlink) in 60.64s)
 
-## P1 — `forgeue_finish_gate.py` 加 3 fence + 测试
+## P1 — `forgeue_finish_gate.py` 加 4 fence + 测试
 
-- [ ] P1.1:Read `tools/forgeue_finish_gate.py` 现状(P5/F5/F7 simplified protocol 之后版)
-- [ ] P1.2:加 `_check_skill_cascade(evidence_path: Path, frontmatter: dict, change_root: Path) -> list[str]` fence:
+- [x] P1.1:Read `tools/forgeue_finish_gate.py` 现状(P5/F5/F7 simplified protocol 之后版)
+- [x] P1.2:加 `_check_skill_cascade(evidence_path: Path, frontmatter: dict, change_root: Path) -> list[str]` fence:
   - `skill_cascade_audit` 字段存在
   - 字段是 dict + 含 `invoked_skills` (list) + `cascade_check_pass_at` (ISO timestamp)
   - implementation evidence(`_IMPLEMENTATION_EV_TYPES`)缺该字段 → 错误
-- [ ] P1.3:加 `_check_round_fix_continuity` fence:
+- [x] P1.3:加 `_check_round_fix_continuity` fence:
   - `subagent_continuity` 字段存在(若 evidence_type 含 round 2 round 标识 / 或 evidence 内含 round 2 append 段)
   - `round_2_fix_implementer_id == round_1_implementer_id`
   - `round_2_review_reviewer_id == round_1_reviewer_id`
-- [ ] P1.4:加 `_check_task_granularity` fence:
+- [x] P1.4:加 `_check_task_granularity` fence:
   - `task_granularity` 字段存在(implementation evidence)
   - 值 ∈ `{phase, per-file, sub-task}`
-- [ ] P1.5:加 `_check_worktree_path` fence(D-WorktreeEnforce 配套):
+- [x] P1.5:加 `_check_worktree_path` fence(D-WorktreeEnforce 配套):
   - implementation evidence 来自 change-apply-* 命令 → MUST 含 `worktree_path` 字段(non-null)
-- [ ] P1.6:在 `check_frontmatter_protocol` 调用链插入 4 个新 fence
-- [ ] P1.7:加 `tests/unit/test_forgeue_finish_gate.py` fence:
-  - `test_skill_cascade_audit_missing_blocks`
-  - `test_skill_cascade_audit_invalid_structure_blocks`
-  - `test_round_fix_continuity_implementer_mismatch_blocks`
-  - `test_round_fix_continuity_reviewer_mismatch_blocks`
-  - `test_task_granularity_missing_blocks`
-  - `test_task_granularity_invalid_value_blocks`
-  - `test_worktree_path_missing_for_change_apply_blocks`
-- [ ] P1.8:`pytest -q tests/unit/test_forgeue_finish_gate.py` 全绿
-- [ ] P1.9:`pytest -q` 全套 regress
+- [x] P1.6:在 `check_frontmatter_protocol` 调用链插入 4 个新 fence(各独立 Blocker.type:`skill_cascade_violation` / `round_fix_continuity_violation` / `task_granularity_violation` / `worktree_path_violation`)
+- [x] P1.7:加 `tests/unit/test_forgeue_finish_gate.py` 16 个 fence 测试:
+  - 7 必需(`test_skill_cascade_audit_missing_blocks` / `..._invalid_structure_blocks` / `test_round_fix_continuity_implementer_mismatch_blocks` / `..._reviewer_mismatch_blocks` / `test_task_granularity_missing_blocks` / `..._invalid_value_blocks` / `test_worktree_path_missing_for_change_apply_blocks`)
+  - 5 positive / negative 守门(`..._invalid_iso_timestamp_blocks` / `..._valid_passes` × 3 / `..._round_1_only_passes` / `..._empty_string_blocks` / `..._not_required_for_non_change_apply_command`)
+  - 2 protocol gate 守门(`test_runtime_fences_skip_legacy_evidence_without_protocol_version` / `..._skip_non_implementation_evidence_under_protocol_v1`)
+  - 1 e2e wiring(`test_runtime_fences_wired_into_check_frontmatter_protocol`)
+  - 配套基建:扩 `tools/_common.py::_parse_yaml_subset` 支持 nested mapping(subagent_continuity / skill_cascade_audit dict 字段);扩 `tests/fixtures/forgeue_workflow/builders.py::_render_frontmatter` 支持 dict 值
+- [x] P1.8:`pytest -q tests/unit/test_forgeue_finish_gate.py` 全绿(99 passed)
+- [x] P1.9:`pytest -q` 全套 regress(1519 passed + 1 skipped Windows symlink in 68.38s)
 
 ## P2 — 9 + 1 forgeue 命令模板加 Preflight section
 

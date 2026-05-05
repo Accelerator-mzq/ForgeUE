@@ -137,6 +137,26 @@ _IMPLEMENTATION_EV_TYPES: frozenset[str] = frozenset({
 _DISPATCH_MODE_FIELD = "triggered_by_command"
 _DISPATCH_MODE_SUBAGENT_VALUE = "change-apply-subagent"
 
+# enhance-workflow-automation-runtime-enforcement(D-ProtocolVersionMigration):
+# 4 fence(skill_cascade / round_fix_continuity / task_granularity /
+# worktree_path)仅对 frontmatter 含 `runtime_enforcement_protocol_version: v1`
+# 的 evidence 生效。legacy archived evidence(无此字段)→ fence pass-through,
+# 确保历史 change(enhance-workflow-automation 等)evidence audit replay 兼容。
+_RUNTIME_ENFORCEMENT_VERSION_FIELD = "runtime_enforcement_protocol_version"
+_RUNTIME_ENFORCEMENT_VERSION_VALUE = "v1"
+
+# task_granularity 字段合法枚举值(design.md D-TaskGranularityDeclaration)
+_TASK_GRANULARITY_VALUES: frozenset[str] = frozenset({"phase", "per-file", "sub-task"})
+
+# ISO 8601 timestamp 简化匹配:YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM|+HHMM]
+_ISO_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?$"
+)
+
+# 命令模板前缀 — implementation evidence 来自 change-apply-{subagent,direct,parallel}
+# 命令时触发 worktree_path 强校验(D-WorktreeEnforce)。
+_CHANGE_APPLY_COMMAND_PREFIX = "change-apply-"
+
 # Subdirectories that require strict 12-key evidence (helpers in notes/ are
 # allowed to omit frontmatter; per F3-adv ``notes/`` is the helper bucket
 # and the other three are formal evidence buckets).
@@ -756,6 +776,28 @@ def check_frontmatter_protocol(
                     )
                 )
 
+        # enhance-workflow-automation-runtime-enforcement:4 runtime fence
+        # (D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity /
+        # D-TaskGranularityDeclaration)。每 fence 内部 protocol gate
+        # `runtime_enforcement_protocol_version: v1`,legacy evidence 全
+        # pass-through。
+        for err in _check_skill_cascade(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="skill_cascade_violation", detail=err, file=rel)
+            )
+        for err in _check_round_fix_continuity(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="round_fix_continuity_violation", detail=err, file=rel)
+            )
+        for err in _check_task_granularity(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="task_granularity_violation", detail=err, file=rel)
+            )
+        for err in _check_worktree_path(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="worktree_path_violation", detail=err, file=rel)
+            )
+
     return blockers, len(formal)
 
 
@@ -984,6 +1026,260 @@ def _check_autonomy_boundary(
             f"codex_review_ref={ref_rel!r} in {ev_name} has disputed_open={disputed_count} "
             "(not 0) — review must be finalized (disputed_open: 0) before evidence can "
             "claim autonomy_decision: claude_codex_concurred"
+        )
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-runtime-enforcement:4 runtime fence
+# (D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity /
+# D-TaskGranularityDeclaration)
+#
+# 调用结构:check_frontmatter_protocol 主循环遍历每份 formal evidence 时,在
+# autonomy_boundary fence 之后顺序调用以下 4 个 fence。每个 fence 返回 list[str]
+# 错误消息,主循环以独立 Blocker.type 包装(便于测试断言定位):
+#  - skill_cascade_violation
+#  - round_fix_continuity_violation
+#  - task_granularity_violation
+#  - worktree_path_violation
+#
+# Protocol gating(D-ProtocolVersionMigration F5 inline writeback):4 fence 仅
+# 对 frontmatter 含 `runtime_enforcement_protocol_version: v1` 的 evidence
+# 生效;legacy archived evidence 全 pass-through,确保 archived audit replay
+# 不被 false-block。
+# ---------------------------------------------------------------------------
+
+
+def _runtime_enforcement_active(frontmatter: dict) -> bool:
+    """检查 evidence 是否声明加载 runtime enforcement protocol v1。
+
+    D-ProtocolVersionMigration:本 change 的 4 个新 fence 仅对 frontmatter 含
+    ``runtime_enforcement_protocol_version: v1`` 的 evidence 生效;legacy
+    evidence(无此字段或值非 v1)→ 全 fence pass-through。
+    """
+    return frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD) == _RUNTIME_ENFORCEMENT_VERSION_VALUE
+
+
+def _check_skill_cascade(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 implementation evidence frontmatter ``skill_cascade_audit`` 字段完整性。
+
+    D-SkillCascadeCheck(spec.md L66 + design.md L96):implementation evidence
+    必须含 ``skill_cascade_audit`` dict 字段(``invoked_skills`` list +
+    ``cascade_check_pass_at`` ISO timestamp);finish_gate 守门此协议确保
+    controller 已跑过 ``forgeue_skill_cascade_check.py`` 验证 SKILL dependency
+    全 invoke。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。仅对 implementation evidence 类型(_IMPLEMENTATION_EV_TYPES)强制。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+    ev_name = evidence_path.name
+
+    audit = frontmatter.get("skill_cascade_audit")
+    if audit is None:
+        errors.append(
+            f"skill_cascade_audit field missing from {ev_name} "
+            "(D-SkillCascadeCheck: implementation evidence MUST carry this field "
+            "after running tools/forgeue_skill_cascade_check.py)"
+        )
+        return errors
+    if not isinstance(audit, dict):
+        errors.append(
+            f"skill_cascade_audit in {ev_name} is not a mapping "
+            f"(got {type(audit).__name__})"
+        )
+        return errors
+
+    invoked = audit.get("invoked_skills")
+    if not isinstance(invoked, list):
+        errors.append(
+            f"skill_cascade_audit.invoked_skills in {ev_name} is missing or not a list "
+            f"(got {type(invoked).__name__})"
+        )
+
+    pass_at = audit.get("cascade_check_pass_at")
+    if not isinstance(pass_at, str) or not pass_at.strip():
+        errors.append(
+            f"skill_cascade_audit.cascade_check_pass_at in {ev_name} is missing or empty "
+            "(MUST be ISO 8601 timestamp string)"
+        )
+    elif not _ISO_TIMESTAMP_RE.match(pass_at.strip()):
+        errors.append(
+            f"skill_cascade_audit.cascade_check_pass_at={pass_at!r} in {ev_name} "
+            "is not a valid ISO 8601 timestamp (e.g. 2026-05-05T00:00:00Z)"
+        )
+
+    return errors
+
+
+def _check_round_fix_continuity(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 round 2 fix subagent ID 与 round 1 一致(同 implementer / 同 reviewer)。
+
+    D-RoundFixContinuity(spec.md L98):subagent-driven-development 协议中
+    round 1 reviewer 找问题后 round 2 fix MUST 通过 SendMessage 给 same
+    implementer subagent;round 2 reviewer re-review MUST 给 same reviewer
+    subagent。evidence frontmatter ``subagent_continuity`` dict 字段记录
+    round 1/2 agent ID,finish_gate 守门一致性。
+
+    字段缺失不作为错误(round 1 only 的 evidence 没有 round 2 数据);仅当
+    ``subagent_continuity`` 含 round_2_* 字段时才校验一致性。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_name = evidence_path.name
+
+    cont = frontmatter.get("subagent_continuity")
+    if cont is None:
+        return errors  # round 1 only evidence,无连续性数据,不算错误
+    if not isinstance(cont, dict):
+        errors.append(
+            f"subagent_continuity in {ev_name} is not a mapping "
+            f"(got {type(cont).__name__})"
+        )
+        return errors
+
+    round_1_impl = cont.get("round_1_implementer_id")
+    round_2_impl = cont.get("round_2_fix_implementer_id")
+    round_1_rev = cont.get("round_1_reviewer_id")
+    round_2_rev = cont.get("round_2_review_reviewer_id")
+
+    if round_2_impl is not None:
+        if not round_1_impl:
+            errors.append(
+                f"subagent_continuity in {ev_name} has round_2_fix_implementer_id "
+                "but round_1_implementer_id is missing"
+            )
+        elif round_1_impl != round_2_impl:
+            errors.append(
+                f"subagent_continuity in {ev_name}: round_1_implementer_id="
+                f"{round_1_impl!r} != round_2_fix_implementer_id={round_2_impl!r} "
+                "(D-RoundFixContinuity: round 2 fix MUST go to same implementer subagent)"
+            )
+
+    if round_2_rev is not None:
+        if not round_1_rev:
+            errors.append(
+                f"subagent_continuity in {ev_name} has round_2_review_reviewer_id "
+                "but round_1_reviewer_id is missing"
+            )
+        elif round_1_rev != round_2_rev:
+            errors.append(
+                f"subagent_continuity in {ev_name}: round_1_reviewer_id="
+                f"{round_1_rev!r} != round_2_review_reviewer_id={round_2_rev!r} "
+                "(D-RoundFixContinuity: round 2 re-review MUST go to same reviewer subagent)"
+            )
+
+    return errors
+
+
+def _check_task_granularity(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 implementation evidence frontmatter ``task_granularity`` 字段。
+
+    D-TaskGranularityDeclaration(spec.md L114):controller 调用
+    ``/forgeue:change-apply-*`` 时 MUST 显式声明 task 粒度,evidence frontmatter
+    加 ``task_granularity`` 字段,枚举 ``phase`` / ``per-file`` / ``sub-task``。
+    Declaration 让 task 粒度选择透明,后续 audit 可见。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。仅对 implementation evidence 类型强制。
+
+    本函数只校验字段必填 + 枚举合法性;evidence 数量与粒度一致性的 cross-file
+    校验留 cross-evidence layer(spec.md L138 Scenario,本 change 不接 —
+    follow-on 处理)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+    ev_name = evidence_path.name
+
+    granularity = frontmatter.get("task_granularity")
+    if granularity is None or (isinstance(granularity, str) and not granularity.strip()):
+        errors.append(
+            f"task_granularity field missing from {ev_name} "
+            "(D-TaskGranularityDeclaration: implementation evidence MUST declare "
+            "granularity as one of phase / per-file / sub-task)"
+        )
+        return errors
+
+    if granularity not in _TASK_GRANULARITY_VALUES:
+        valid = ", ".join(sorted(_TASK_GRANULARITY_VALUES))
+        errors.append(
+            f"task_granularity={granularity!r} in {ev_name} is not a valid enum value "
+            f"(valid: {valid})"
+        )
+
+    return errors
+
+
+def _check_worktree_path(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 implementation evidence 来自 change-apply-* 命令时含 ``worktree_path`` 字段。
+
+    D-WorktreeEnforce(spec.md L40):implementation evidence 由
+    ``change-apply-{subagent,direct,parallel}`` 命令 dispatch 时,evidence
+    frontmatter MUST 含 ``worktree_path`` 字段(non-null)— 双层守门:
+    命令模板 preflight(early abort)+ finish_gate audit(late catch),确保
+    controller 跳过 preflight 也会被后期 catch。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。仅对 implementation evidence + 来源命令 startswith
+    ``change-apply-`` 的强制(其他 stage evidence 如 verify_report 不强制
+    worktree)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+
+    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
+    if not isinstance(triggered, str) or not triggered.startswith(
+        _CHANGE_APPLY_COMMAND_PREFIX
+    ):
+        return errors  # 非 change-apply-* 命令(direct write / 手工 evidence)不强制
+
+    ev_name = evidence_path.name
+    worktree = frontmatter.get("worktree_path")
+    if worktree is None:
+        errors.append(
+            f"worktree_path field missing from {ev_name} "
+            f"(D-WorktreeEnforce: implementation evidence triggered by {triggered!r} "
+            "MUST carry worktree_path field non-null)"
+        )
+        return errors
+    if not isinstance(worktree, str) or not worktree.strip():
+        errors.append(
+            f"worktree_path in {ev_name} is empty or non-string "
+            f"(got {worktree!r})"
         )
 
     return errors
