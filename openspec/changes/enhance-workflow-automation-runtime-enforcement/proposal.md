@@ -72,3 +72,4 @@
 - 不引入 finishing-a-development-branch 接入(留 follow-on `enhance-workflow-automation-finishing-branch`)
 - 不修改 D-AutonomyBoundary 6 fence list(本 change 是 framework modification 的实施,不重写 D-AutonomyBoundary 自身)
 - 不实现 F6 Polling Convention 持久化(留 follow-on `enhance-workflow-automation-handoff-persistence`)
+- **不实现 deterministic enforcement layer(W1/W2/W3 from codex round 1 finding F1/F2/F3)** — 本 change scope 是 **markdown advisory protocol** + Skill cascade check + protocol version migration;Codex 揭示 markdown 命令模板 + LLM 自报 frontmatter 是 advisory not deterministic enforcement(controller drift 类风险仍存在)。真 deterministic enforcement(executable preflight wrapper + dispatch ledger + actual diff overlap detection)scope 大需独立 design,**留 follow-on `enhance-workflow-automation-executable-enforcement`**(详见 design.md R6 + tasks.md P11 follow-on tracking 段)

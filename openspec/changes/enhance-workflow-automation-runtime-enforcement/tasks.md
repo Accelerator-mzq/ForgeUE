@@ -132,7 +132,16 @@
 - [ ] P10.5:archive stub 加 cross_check fence-required frontmatter(沿 enhance-workflow-automation 模式)
 - [ ] P10.6:commit + push(用户授权 fence #1)
 
-## P11 — 后置(可选)
+## P11 — 后置(可选)+ Follow-on tracking(2026-05-05 codex round 1 F1/F2/F3 deferred)
 
 - [ ] P11.1:更新 `MEMORY.md` 加 enhance-workflow-automation-runtime-enforcement 摘要
-- [ ] P11.2:实测验证 — 下次 change 应用本 change 协议跑一次,验证 wall-clock 节省 + protocol enforce
+- [ ] P11.2:实测验证 — 下次 change 应用本 change 协议跑一次,验证 wall-clock 节省 + protocol advisory(注:advisory not deterministic;follow-on change 实施 deterministic enforcement 后才能真验证 enforce 严格性)
+- [ ] P11.3 (follow-on tracking):**`enhance-workflow-automation-executable-enforcement`** — 接 F1/F2/F3 deferred 的 deterministic enforcement layer:
+  - **W1**(F1):`tools/forgeue_preflight_wrapper.py`(executable script) — 脚本创建 worktree + 写 machine-generated receipt JSON(含 base SHA / cwd / worktree path / cascade check status)+ 命令模板**只能消费** receipt path,不允许 LLM 直接写 worktree_path 字段;finish_gate 校验 receipt 文件存在 + receipt content 与 evidence frontmatter 一致
+  - **W2**(F2):parallel dispatch 前主 session 自动跑每个 subagent worktree 内 `git diff --name-only` 获取**实际** changed-files set + cross-check disjoint;阻断 undeclared / actual overlap / 共享 fixture 修改;无法机器证明时自动降级 `/forgeue:change-apply-subagent` sequential
+  - **W3**(F3):`<change>/dispatch_ledger.jsonl`(append-only) — 命令层 wrapper(executable script)记录每次 Task / SendMessage 调用的真实 agent ID / round / role / timestamp;LLM 不能直接写 ledger;finish_gate 比较 ledger 与 evidence `subagent_continuity` 字段一致性
+  - **依据**:本 change `notes/pre_p0/codex_review_round1.md` F1 / F2 / F3 finding(全 accepted-codex,deferred to executable enforcement layer)
+  - **触发条件**:本 change ship 后,实测 controller drift 类风险持续(若 advisory protocol + finish_gate audit 已经足够,可 cancel follow-on);否则按 F1/F2/F3 推荐方案启动新 change
+- [ ] P11.4 (follow-on tracking):**`enhance-workflow-automation-handoff-persistence`**(沿 enhance-workflow-automation P5 round 2 F6 deferred)— codex 命令 allowed-tools vs Polling Convention 写文件能力 mismatch 的 architectural 选择
+- [ ] P11.5 (follow-on tracking):**`add-forgeue-brainstorm-stage`**(沿 adopt-subagent-driven-development 已 deferred)— Superpowers brainstorming skill 接入 S0/S1 stage
+- [ ] P11.6 (follow-on tracking):**`enhance-workflow-automation-finishing-branch`**(本 change 标识)— `superpowers:finishing-a-development-branch` skill 接入 `/forgeue:change-finish` 命令(team scale 协作时 PR / squash merge 路径)

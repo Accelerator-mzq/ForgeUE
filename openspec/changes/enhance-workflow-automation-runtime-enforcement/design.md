@@ -171,6 +171,48 @@ phase 之间 cohesion 高(同 file / 强 coupling)?
 - 值在 enum 内
 - 与 evidence 数量一致性检查(若 declared `phase`,evidence 数量 = phase 数;若 `sub-task`,evidence 数量 = sub-task 数)
 
+### D-ProtocolVersionMigration(2026-05-05 codex round 1 F5 inline writeback)
+
+**Statement**:本 change 加的 4 个新 frontmatter 字段(`worktree_path` / `skill_cascade_audit` / `subagent_continuity` / `task_granularity`)及 follow-on change 后续加的 receipt path / ledger path / overlap detection 字段,通过新字段 `runtime_enforcement_protocol_version: v1` 标记加载 protocol 的 evidence。
+
+`forgeue_finish_gate.py` 新 fence(`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity`)**仅对 evidence frontmatter 含 `runtime_enforcement_protocol_version: v1` 的文件生效**;legacy evidence(archived enhance-workflow-automation 类不含此字段)**fence skip pass-through**。
+
+**Why**:F5 finding 揭示 archived 已 ship change(enhance-workflow-automation 等)evidence 没有这 4 字段 — 若 finish_gate replay archived 会全 fail。Protocol version field + skip 逻辑允许新 evidence enforce 严格协议同时保留 archived audit replay 兼容。
+
+**Migration**:
+- 本 change 实施期间 evidence 全部加 `runtime_enforcement_protocol_version: v1`
+- 后续 change 推荐继续加该字段
+- archived evidence 不 backfill(沿"归档即冻结"原则,沿 fuse-openspec-superpowers 模式)
+- fence test 加 archived fixture replay 回归确认 archived evidence 不 false-block
+
+### D-SkillRootMultiSource(2026-05-05 codex round 1 F4 inline writeback)
+
+**Statement**:`tools/forgeue_skill_cascade_check.py` 工具的 SKILL root 路径推断改为**多 root 探测 + 显式 override**:
+
+```
+优先级:
+1. CLI flag --skill-root <path> (显式 override)
+2. Env var FORGEUE_SKILL_ROOT (env override)
+3. .claude/skills (repo-local)
+4. ~/.claude/plugins/cache/claude-plugins-official/superpowers/<latest-version>/skills/(Anthropic Claude Code default)
+5. ~/.claude/plugins/cache/<plugin-name>/<version>/skills/(其他 Claude plugin)
+6. ~/.codex/skills (Codex CLI)
+7. ${CODEX_HOME}/skills (Codex 自定义)
+8. .agents/skills (Anthropic agents 自定义)
+```
+
+工具按顺序 probe;首个含 `<skill-name>/SKILL.md` 的 root 命中即返回;全部未命中 → exit 5 (unknown skill)。
+
+**Why**:F4 finding — 单一 plugin cache 路径在 repo-local / Codex / 自定义 plugin 安装下会误报 unknown skill / 漏检 dependency / preflight 卡死。
+
+**测试覆盖**(tasks.md P0.3 加):
+- `test_skill_root_via_cli_flag`
+- `test_skill_root_via_env_var`
+- `test_skill_root_repo_local_fallback`
+- `test_skill_root_anthropic_plugin_default`
+- `test_skill_root_codex_fallback`
+- `test_skill_root_unknown_skill_exit_5`
+
 ### D-PreflightProtocol:整合 Preflight 三段为统一协议
 
 **Statement**:三个 D-decision(D-WorktreeEnforce / D-SkillCascadeCheck / D-TaskGranularityDeclaration)在命令模板中合为单一 `## Preflight` section,顺序:
@@ -183,6 +225,7 @@ phase 之间 cohesion 高(同 file / 强 coupling)?
 
 ## Risks / Trade-offs
 
+- **R6(2026-05-05 codex round 1 F1/F2/F3 揭示)Markdown enforcement is advisory not deterministic** — 本 change 实装是 markdown 命令模板 step + LLM 自报 frontmatter declaration + finish_gate audit;**全部 advisory** 不是真 runtime enforcement。Codex 揭示 worktree preflight / parallel file disjoint / round 2 continuity 三处都无法在实际 dispatch 前形成确定性阻断 — controller 跳过 markdown step 时 subagent 已修改 + finish_gate 是 archive 时才扫,无法 abort。**本 change 接受这个 limitation**(标注 advisory not deterministic),**真 deterministic enforcement layer 留 follow-on** `enhance-workflow-automation-executable-enforcement`(W1 executable preflight wrapper + machine-generated receipt JSON / W2 actual changed-files diff overlap detection / W3 dispatch ledger 命令层 wrapper 写)。详见 `notes/pre_p0/codex_review_round1.md` F1/F2/F3 + tasks.md P11 follow-on tracking
 - **R1 Task independence 误判 race condition** → controller 显式声明独立但实际 task 之间隐性 coupling(import / global state)→ parallel implementer 改 same file race。**Mitigation**:fence test 加 cross-subagent file overlap 检测(diff 分析 implementer 改 files set 是否相交);命令模板要求 controller 列出每 task 改文件 list 作为输入参数,parallel dispatch 前自动 verify 文件 set 不交
 - **R2 Preflight 性能开销** → 每命令多 ~5-10 sec git worktree 创建 + skill cascade check;首次 baseline test 可能更长。**Mitigation**:接受 — wall-clock 节省 + 协议严格性 > 一次性开销
 - **R3 SKILL.md 格式假设** → `forgeue_skill_cascade_check.py` 依赖 `## Integration` 段 + `Required workflow skills:` 格式;Superpowers 上游改格式后 break。**Mitigation**:fence test 加 sample SKILL.md fixture 验证 parser robustness;sync 上游 SKILL.md 改动时 regression test
