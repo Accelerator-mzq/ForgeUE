@@ -87,9 +87,15 @@ for i, set_a in enumerate(task_files_disjoint):
 
 任一 file set 相交 → 命令 abort + 错误提示交集文件,controller MUST 改 task 划分 OR 切换到 `/forgeue:change-apply-subagent` sequential。
 
-### Preflight 协议版本标记(D-ProtocolVersionMigration)
+### Preflight 协议版本标记(D-ProtocolVersionMigration;ADR-012 v2 升级)
 
-evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段。此字段触发 4 fence(`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`)生效;无此字段的 evidence 视为 legacy,fence pass-through。
+evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v2` 字段(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05;F3 round 1 codex mixed-scope inline writeback)。此字段触发 v1 + v2 fence 全套生效:
+- v1 fence(沿 ADR-011):`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity` / `_check_worktree_path`
+- v2 fence(沿 ADR-012):`_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`
+
+**legacy `v1` 仅用 archived runtime-enforcement 等历史 change replay**(本 change ship 后新 evidence MUST `v2`);无 `runtime_enforcement_protocol_version` 字段的 evidence 视为 pre-v1 legacy(全 fence pass-through;archived `enhance-workflow-automation` 等更早 change replay 兼容)。
+
+**自 dogfood 边界**(本 change 实施期 evidence 仍 v1):本 change 实施时 W1 wrapper 尚未实际 dispatch 给 subagent(沿 D-DogfoodGap),本 change 自身 evidence 沿 v1 advisory 协议;**本 model template 写 v2 是给后续 change 用**(后续 change 实施时 W1 wrapper 已 ship,自动跑 v2 fence)。
 
 ### Preflight Subagent Discipline(MANDATORY before any Skill(Task) dispatch)
 
@@ -171,11 +177,16 @@ done
 declare -A IMPL_FILES
 for IMPL_WORKTREE in "${IMPL_WORKTREES[@]}"; do
     AGENT_ID="${IMPL_WORKTREE_TO_AGENT[$IMPL_WORKTREE]}"
-    # committed + staged(via git status --porcelain=v1)
-    COMMITTED=$(git -C "$IMPL_WORKTREE" status --porcelain=v1 | grep -E '^(M |A |D |MM|AD|DD)' | awk '{print $2}')
+    BASE_SHA="${IMPL_WORKTREE_TO_BASE_SHA[$IMPL_WORKTREE]}"  # 自 wrapper receipt 取(沿 D-W1-ReceiptSchema base_sha 字段)
+    # F1 round 1 codex mixed-scope inline writeback:
+    # 用 base SHA vs HEAD diff 而非 git status —— Step 0 dirty precondition 通过后 working tree clean,
+    # status --porcelain 对已 commit 改动为空,会漏 implementer 的实际 commit。沿 D-W2-OverlapDetection
+    # spec 原意:actual changed-files 收集 = committed diff + untracked 合集。
+    # committed diff(-z NUL-separated 防文件名含空格)
+    mapfile -d $'\0' COMMITTED < <(git -C "$IMPL_WORKTREE" diff --name-only -z "$BASE_SHA"..HEAD)
     # untracked(exclude .gitignore-matched)
     mapfile -d $'\0' UNTRACKED < <(git -C "$IMPL_WORKTREE" ls-files --others --exclude-standard -z)
-    IMPL_FILES["$AGENT_ID"]="$(printf '%s\n' $COMMITTED "${UNTRACKED[@]}" | sort -u)"
+    IMPL_FILES["$AGENT_ID"]="$(printf '%s\n' "${COMMITTED[@]}" "${UNTRACKED[@]}" | grep -v '^$' | sort -u)"
 done
 
 # Step 1.5: Bash dict → JSON 序列化(P3 round 1 code_quality_review Minor 1 fix:

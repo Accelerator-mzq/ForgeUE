@@ -2728,6 +2728,88 @@ def test_file_overlap_actual_not_subset_of_declared_blocks(v2_fence_evidence_set
     assert "extra_undeclared.py" in joined or "subset" in joined
 
 
+def test_yaml_parser_list_of_mapping_e2e_overlap_blocks(tmp_path):
+    """F2 round 1 codex mixed-scope inline writeback regression — list-of-mapping YAML
+    parser support。Spec / 模板写 task_files_actual 为 list-of-map(`- implementer_agent_id: ...`
+    + `files: [...]`),原 _parse_yaml_subset 把每个 list item 当 scalar,后续缩进 sub-key 被跳过,
+    `_check_file_overlap_actual` 看不到 files 字段就 silent pass。本 test 端到端 verify
+    yaml parser → fence 链路 catch overlap。"""
+    from tools import _common
+
+    # 手写 v2 evidence frontmatter list-of-map YAML(builder 不支持嵌套 dict→list-of-map)
+    body = """\
+---
+change_id: test-yaml-list-of-map
+stage: S4
+evidence_type: subagent_implementer_report
+contract_refs:
+  - tasks.md#P0
+aligned_with_contract: true
+detected_env: claude-code
+triggered_by: cli-flag
+codex_plugin_available: true
+triggered_by_command: change-apply-parallel
+runtime_enforcement_protocol_version: v2
+worktree_path: /tmp/test-wt-stub
+worktree_receipt_path: preflight_receipts/stub.json
+dispatch_ledger_path: dispatch_ledger.jsonl
+task_granularity: phase
+skill_cascade_audit:
+  invoked_skills:
+    - superpowers:subagent-driven-development
+  cascade_check_pass_at: 2026-05-05T00:00:00+00:00
+task_files_disjoint:
+  - implementer_agent_id: agent-a
+    files:
+      - src/a.py
+  - implementer_agent_id: agent-b
+    files:
+      - src/b.py
+task_files_actual:
+  - implementer_agent_id: agent-a
+    files:
+      - src/a.py
+      - src/shared.py
+  - implementer_agent_id: agent-b
+    files:
+      - src/b.py
+      - src/shared.py
+degraded_to: null
+degradation_reason: null
+---
+
+# Task P0 implementer (synthetic stub)
+"""
+
+    change_dir = tmp_path / "openspec" / "changes" / "test-yaml-list-of-map"
+    (change_dir / "execution").mkdir(parents=True)
+    ev_path = change_dir / "execution" / "task_p0_implementer.md"
+    ev_path.write_text(body, encoding="utf-8")
+
+    # Phase 1:verify yaml parser correctly parses list-of-mapping(F2 root cause)
+    parsed_fm, _body = _common.parse_frontmatter(ev_path.read_text(encoding="utf-8"))
+    assert isinstance(parsed_fm.get("task_files_actual"), list), \
+        f"task_files_actual MUST be parsed as list, got {type(parsed_fm.get('task_files_actual')).__name__}"
+    assert len(parsed_fm["task_files_actual"]) == 2, \
+        f"task_files_actual MUST have 2 entries; got {len(parsed_fm['task_files_actual'])}"
+    first_entry = parsed_fm["task_files_actual"][0]
+    assert isinstance(first_entry, dict), \
+        f"each list item MUST be parsed as dict, got {type(first_entry).__name__}"
+    assert first_entry.get("implementer_agent_id") == "agent-a", \
+        f"first entry implementer_agent_id MUST be 'agent-a', got {first_entry!r}"
+    assert isinstance(first_entry.get("files"), list), \
+        f"first entry files MUST be list, got {first_entry.get('files')!r}"
+    assert "src/shared.py" in first_entry["files"], \
+        f"first entry files MUST include src/shared.py, got {first_entry['files']!r}"
+
+    # Phase 2:end-to-end fence catches overlap(without F2 fix,fence would silent pass)
+    errors = fg._check_file_overlap_actual(ev_path, parsed_fm, change_dir)
+    assert errors, "F2 fix:overlap MUST be caught after parser supports list-of-mapping"
+    joined = " ".join(errors)
+    assert "shared.py" in joined or "overlap" in joined.lower(), \
+        f"error MUST mention overlap or shared file;got: {joined}"
+
+
 # ---- P2.6 _check_dispatch_ledger: 2 tests ----
 
 

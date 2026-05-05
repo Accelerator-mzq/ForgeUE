@@ -67,7 +67,7 @@ evidence frontmatter MUST 加 `task_granularity: <value>` 字段;`forgeue_finish
 
 ### Preflight 协议版本标记(D-ProtocolVersionMigration)
 
-evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段。此字段触发 4 fence(`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`)生效;无此字段的 evidence 视为 legacy,fence pass-through(archived enhance-workflow-automation 等历史 change replay 兼容)。
+evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v2` 字段(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05;F3 round 1 codex mixed-scope inline writeback)。此字段触发 v1 + v2 fence 全套生效(v1 fence:`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`;v2 fence:`_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`)。**legacy `v1` 仅用 archived runtime-enforcement 等历史 change replay**(本 change ship 后新 evidence MUST `v2`);无字段视为 pre-v1 legacy(全 fence pass-through;archived `enhance-workflow-automation` 等更早 change replay 兼容)。**自 dogfood 边界**:本 change 实施时 W1 wrapper 尚未实际 dispatch 给 subagent(沿 D-DogfoodGap),本 change 自身 evidence 沿 v1 advisory 协议;model template 写 v2 是给后续 change 用。
 
 ### Preflight Subagent Discipline(MANDATORY before any Skill(Task) dispatch)
 
