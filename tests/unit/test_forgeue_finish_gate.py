@@ -2468,3 +2468,434 @@ def test_runtime_fences_wired_into_check_frontmatter_protocol(tmp_path):
     assert "round_fix_continuity_violation" in blocker_types, blocker_types
     assert "task_granularity_violation" in blocker_types, blocker_types
     assert "worktree_path_violation" in blocker_types, blocker_types
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-executable-enforcement P2:v2 fence tests
+# (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def v2_fence_evidence_setup(tmp_path):
+    """v2 evidence fixture:默认 frontmatter 含 runtime_enforcement_protocol_version: v2
+    + implementation evidence 类型(subagent_implementer_report)。
+
+    返回 callable `setup(change_id, **fm_overrides)` -> (change_dir, evidence_path, fm)。
+    """
+    def _setup(change_id: str = "fc-v2-fixture", **fm_overrides):
+        change_dir = tmp_path / "openspec" / "changes" / change_id
+        change_dir.mkdir(parents=True, exist_ok=True)
+        evidence_path = change_dir / "execution" / "task_1_implementer.md"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+        fm = {
+            "change_id": change_id,
+            "stage": "S4",
+            "evidence_type": "subagent_implementer_report",
+            "aligned_with_contract": True,
+            "runtime_enforcement_protocol_version": "v2",
+            # v1 fence 也需要满足:
+            "triggered_by_command": "change-apply-subagent",
+            "skill_cascade_audit": {
+                "invoked_skills": ["superpowers:subagent-driven-development"],
+                "cascade_check_pass_at": "2026-05-05T00:00:00Z",
+            },
+            "task_granularity": "per-file",
+            "worktree_path": str(change_dir),
+        }
+        fm.update(fm_overrides)
+        return change_dir, evidence_path, fm
+    return _setup
+
+
+# ---- P2.3 _check_worktree_path_v2: 4 tests ----
+
+
+def test_worktree_path_v2_receipt_ok_passes(v2_fence_evidence_setup):
+    """P2.3 v2 fence(positive):receipt 存在 + JSON well-formed + worktree_path 一致
+    + is_isolated_worktree: true → 无错误。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-wt-v2-ok")
+    # 创建合法 receipt 文件
+    receipts_dir = change_dir / "preflight_receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    receipt_file = receipts_dir / "preflight-test.json"
+    receipt_file.write_text(
+        json.dumps({
+            "worktree_path": str(change_dir),
+            "is_isolated_worktree": True,
+            "base_sha": "abc123",
+        }),
+        encoding="utf-8",
+    )
+    fm["worktree_receipt_path"] = "preflight_receipts/preflight-test.json"
+
+    errors = fg._check_worktree_path_v2(ev_path, fm, change_dir)
+    assert errors == [], f"expected no errors for valid receipt, got: {errors}"
+
+
+def test_worktree_path_v2_receipt_missing_blocks(v2_fence_evidence_setup):
+    """P2.3 v2 fence:worktree_receipt_path 指向不存在文件 → block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-wt-v2-missing")
+    fm["worktree_receipt_path"] = "preflight_receipts/nonexistent.json"
+
+    errors = fg._check_worktree_path_v2(ev_path, fm, change_dir)
+    assert errors, "missing receipt file MUST produce an error"
+    joined = " ".join(errors)
+    assert "does not exist" in joined or "nonexistent" in joined
+
+
+def test_worktree_path_v2_receipt_path_mismatch_blocks(v2_fence_evidence_setup):
+    """P2.3 v2 fence:receipt.worktree_path != evidence frontmatter worktree_path → block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-wt-v2-mismatch")
+    # receipt 有不同的 worktree_path
+    receipts_dir = change_dir / "preflight_receipts"
+    receipts_dir.mkdir(parents=True, exist_ok=True)
+    receipt_file = receipts_dir / "preflight-mismatch.json"
+    receipt_file.write_text(
+        json.dumps({
+            "worktree_path": "/some/other/path",  # 与 fm["worktree_path"] 不一致
+            "is_isolated_worktree": True,
+        }),
+        encoding="utf-8",
+    )
+    fm["worktree_receipt_path"] = "preflight_receipts/preflight-mismatch.json"
+    fm["worktree_path"] = "/expected/worktree/path"
+
+    errors = fg._check_worktree_path_v2(ev_path, fm, change_dir)
+    assert errors, "worktree_path mismatch MUST produce an error"
+    joined = " ".join(errors)
+    assert "mismatch" in joined or "worktree_path" in joined
+
+
+def test_worktree_path_v2_receipt_path_field_missing_blocks(v2_fence_evidence_setup):
+    """P2.3 v2 fence:v2 evidence 缺 worktree_receipt_path 字段 → block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-wt-v2-nofield")
+    # 不设置 worktree_receipt_path 字段
+    fm.pop("worktree_receipt_path", None)
+
+    errors = fg._check_worktree_path_v2(ev_path, fm, change_dir)
+    assert errors, "missing worktree_receipt_path field MUST produce an error"
+    joined = " ".join(errors)
+    assert "worktree_receipt_path" in joined
+
+
+# ---- P2.4 _check_round_fix_continuity_v2: 3 tests ----
+
+
+def test_round_fix_continuity_v2_ledger_ok_passes(v2_fence_evidence_setup):
+    """P2.4 v2 fence(positive):ledger 存在 + 引用的 agent_id 在 ledger 中 → 无错误。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-rfc-v2-ok")
+    # 创建 ledger 含 agent-aaa + agent-bbb
+    ledger_path = change_dir / "dispatch_ledger.jsonl"
+    ledger_path.write_text(
+        json.dumps({
+            "agent_id": "agent-aaa",
+            "round": 1,
+            "role": "implementer",
+            "dispatched_at": "2026-05-05T00:00:00+00:00",
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n" +
+        json.dumps({
+            "agent_id": "agent-bbb",
+            "round": 1,
+            "role": "spec_reviewer",
+            "dispatched_at": "2026-05-05T00:01:00+00:00",
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    fm["dispatch_ledger_path"] = "dispatch_ledger.jsonl"
+    fm["subagent_continuity"] = {
+        "round_1_implementer_id": "agent-aaa",
+        "round_1_reviewer_id": "agent-bbb",
+    }
+
+    errors = fg._check_round_fix_continuity_v2(ev_path, fm, change_dir)
+    assert errors == [], f"expected no errors for valid ledger, got: {errors}"
+
+
+def test_round_fix_continuity_v2_ledger_missing_blocks(v2_fence_evidence_setup):
+    """P2.4 v2 fence:dispatch_ledger_path 指向不存在文件 → block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-rfc-v2-missing")
+    fm["dispatch_ledger_path"] = "dispatch_ledger.jsonl"
+    fm["subagent_continuity"] = {
+        "round_1_implementer_id": "agent-aaa",
+    }
+    # 不创建 ledger 文件
+
+    errors = fg._check_round_fix_continuity_v2(ev_path, fm, change_dir)
+    assert errors, "missing ledger file MUST produce an error"
+    joined = " ".join(errors)
+    assert "does not exist" in joined or "dispatch_ledger" in joined
+
+
+def test_round_fix_continuity_v2_agent_id_not_in_ledger_blocks(v2_fence_evidence_setup):
+    """P2.4 v2 fence:subagent_continuity 引用的 agent_id 不在 ledger 中 → block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-rfc-v2-noid")
+    # ledger 只含 agent-aaa,但 continuity 引用 agent-zzz
+    ledger_path = change_dir / "dispatch_ledger.jsonl"
+    ledger_path.write_text(
+        json.dumps({
+            "agent_id": "agent-aaa",
+            "round": 1,
+            "role": "implementer",
+            "dispatched_at": "2026-05-05T00:00:00+00:00",
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    fm["dispatch_ledger_path"] = "dispatch_ledger.jsonl"
+    fm["subagent_continuity"] = {
+        "round_1_implementer_id": "agent-zzz",  # 不在 ledger
+    }
+
+    errors = fg._check_round_fix_continuity_v2(ev_path, fm, change_dir)
+    assert errors, "agent_id not in ledger MUST produce an error"
+    joined = " ".join(errors)
+    assert "agent-zzz" in joined
+
+
+# ---- P2.5 _check_file_overlap_actual: 3 tests ----
+
+
+def test_file_overlap_actual_disjoint_passes(v2_fence_evidence_setup):
+    """P2.5 W2 fence(positive):parallel evidence + task_files_actual disjoint
+    + actual ⊆ declared → 无错误。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup(
+        "fc-foa-ok",
+        triggered_by_command="change-apply-parallel",
+    )
+    fm["task_files_disjoint"] = [
+        {"implementer_agent_id": "agent-a", "files": ["src/a.py", "src/b.py"]},
+        {"implementer_agent_id": "agent-b", "files": ["src/c.py", "src/d.py"]},
+    ]
+    fm["task_files_actual"] = [
+        {"implementer_agent_id": "agent-a", "files": ["src/a.py"]},
+        {"implementer_agent_id": "agent-b", "files": ["src/c.py"]},
+    ]
+    fm["degraded_to"] = None
+
+    errors = fg._check_file_overlap_actual(ev_path, fm, change_dir)
+    assert errors == [], f"expected no errors for disjoint actual files, got: {errors}"
+
+
+def test_file_overlap_actual_overlap_blocks(v2_fence_evidence_setup):
+    """P2.5 W2 fence:actual changed-files 之间有重叠(且未降级)→ block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup(
+        "fc-foa-overlap",
+        triggered_by_command="change-apply-parallel",
+    )
+    fm["task_files_disjoint"] = [
+        {"implementer_agent_id": "agent-a", "files": ["src/a.py", "shared.py"]},
+        {"implementer_agent_id": "agent-b", "files": ["src/b.py", "shared.py"]},
+    ]
+    fm["task_files_actual"] = [
+        {"implementer_agent_id": "agent-a", "files": ["src/a.py", "shared.py"]},
+        {"implementer_agent_id": "agent-b", "files": ["src/b.py", "shared.py"]},  # overlap on shared.py
+    ]
+    fm["degraded_to"] = None
+
+    errors = fg._check_file_overlap_actual(ev_path, fm, change_dir)
+    assert errors, "actual file overlap MUST produce an error"
+    joined = " ".join(errors)
+    assert "shared.py" in joined or "overlap" in joined
+
+
+def test_file_overlap_actual_not_subset_of_declared_blocks(v2_fence_evidence_setup):
+    """P2.5 W2 fence:actual 含 declared 中未声明的文件(actual ⊄ declared)→ block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup(
+        "fc-foa-extra",
+        triggered_by_command="change-apply-parallel",
+    )
+    fm["task_files_disjoint"] = [
+        {"implementer_agent_id": "agent-a", "files": ["src/a.py"]},
+    ]
+    fm["task_files_actual"] = [
+        {"implementer_agent_id": "agent-a", "files": ["src/a.py", "src/extra_undeclared.py"]},  # extra
+    ]
+    fm["degraded_to"] = None
+
+    errors = fg._check_file_overlap_actual(ev_path, fm, change_dir)
+    assert errors, "actual not subset of declared MUST produce an error"
+    joined = " ".join(errors)
+    assert "extra_undeclared.py" in joined or "subset" in joined
+
+
+# ---- P2.6 _check_dispatch_ledger: 2 tests ----
+
+
+def test_dispatch_ledger_ok_passes(v2_fence_evidence_setup):
+    """P2.6 W3 fence(positive):ledger 存在 + JSON well-formed + timestamps 单调 → 无错误。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-dl-ok")
+    ledger_path = change_dir / "dispatch_ledger.jsonl"
+    ledger_path.write_text(
+        json.dumps({
+            "agent_id": "agent-aaa",
+            "round": 1,
+            "role": "implementer",
+            "dispatched_at": "2026-05-05T00:00:00+00:00",
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n" +
+        json.dumps({
+            "agent_id": "agent-bbb",
+            "round": 1,
+            "role": "spec_reviewer",
+            "dispatched_at": "2026-05-05T00:01:00+00:00",  # monotonic
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    fm["dispatch_ledger_path"] = "dispatch_ledger.jsonl"
+
+    errors = fg._check_dispatch_ledger(ev_path, fm, change_dir)
+    assert errors == [], f"expected no errors for valid ledger, got: {errors}"
+
+
+def test_dispatch_ledger_timestamp_not_monotonic_blocks(v2_fence_evidence_setup):
+    """P2.6 W3 fence:timestamps 倒流 → block。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-dl-ts-bad")
+    ledger_path = change_dir / "dispatch_ledger.jsonl"
+    # 第 2 行 timestamp 早于第 1 行
+    ledger_path.write_text(
+        json.dumps({
+            "agent_id": "agent-aaa",
+            "round": 1,
+            "role": "implementer",
+            "dispatched_at": "2026-05-05T00:10:00+00:00",
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n" +
+        json.dumps({
+            "agent_id": "agent-bbb",
+            "round": 1,
+            "role": "spec_reviewer",
+            "dispatched_at": "2026-05-05T00:01:00+00:00",  # earlier than prev
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    fm["dispatch_ledger_path"] = "dispatch_ledger.jsonl"
+
+    errors = fg._check_dispatch_ledger(ev_path, fm, change_dir)
+    assert errors, "non-monotonic timestamps MUST produce an error"
+    joined = " ".join(errors)
+    assert "monoton" in joined or "timestamp" in joined or "earlier" in joined
+
+
+# ---- P2.9 protocol_version dispatch: 4 tests ----
+
+
+def test_protocol_v1_evidence_triggers_only_v1_fences(v2_fence_evidence_setup, tmp_path):
+    """P2.9:v1 evidence(`runtime_enforcement_protocol_version: v1`)仅触发 v1 fence;
+    v2 fence(_check_worktree_path_v2 / _check_round_fix_continuity_v2 /
+    _check_file_overlap_actual / _check_dispatch_ledger)不触发。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-prot-v1")
+    # 降级为 v1
+    fm["runtime_enforcement_protocol_version"] = "v1"
+    # v2 fields 缺失:worktree_receipt_path / dispatch_ledger_path / task_files_actual
+
+    # v2 fence 应全 pass-through
+    assert fg._check_worktree_path_v2(ev_path, fm, change_dir) == [], \
+        "v1 evidence MUST pass-through _check_worktree_path_v2"
+    assert fg._check_round_fix_continuity_v2(ev_path, fm, change_dir) == [], \
+        "v1 evidence MUST pass-through _check_round_fix_continuity_v2"
+    assert fg._check_file_overlap_actual(ev_path, fm, change_dir) == [], \
+        "v1 evidence MUST pass-through _check_file_overlap_actual (not parallel)"
+    assert fg._check_dispatch_ledger(ev_path, fm, change_dir) == [], \
+        "v1 evidence MUST pass-through _check_dispatch_ledger"
+
+
+def test_protocol_v2_evidence_triggers_v1_and_v2_fences(v2_fence_evidence_setup):
+    """P2.9:v2 evidence 触发 v1 fence + v2 fence(v2 ⊇ v1)。
+
+    验证方法:创建违反 v1 fence(缺 skill_cascade_audit)且违反 v2 fence
+    (缺 worktree_receipt_path)的 v2 evidence;确认两类 Blocker 都出现。
+    """
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-prot-v2-both")
+    # 故意移除 v1 需要的字段 + v2 需要的字段
+    fm.pop("skill_cascade_audit", None)   # v1 fence 会报错
+    fm.pop("worktree_receipt_path", None)  # v2 fence 会报错(worktree_path_v2)
+
+    v1_errors = fg._check_skill_cascade(ev_path, fm, change_dir)
+    v2_errors = fg._check_worktree_path_v2(ev_path, fm, change_dir)
+
+    assert v1_errors, "v2 evidence MUST trigger v1 fence (skill_cascade)"
+    assert v2_errors, "v2 evidence MUST trigger v2 fence (worktree_path_v2)"
+
+
+def test_legacy_evidence_passes_through_all_v1_v2_fences(v2_fence_evidence_setup):
+    """P2.9:legacy evidence(无 runtime_enforcement_protocol_version 字段)
+    pass-through 全部 v1 + v2 fence — 确保 archived change replay 兼容。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-prot-legacy")
+    # 移除 protocol_version 字段模拟 legacy evidence
+    fm.pop("runtime_enforcement_protocol_version", None)
+
+    # v1 fence 全 pass-through
+    assert fg._check_skill_cascade(ev_path, fm, change_dir) == []
+    assert fg._check_round_fix_continuity(ev_path, fm, change_dir) == []
+    assert fg._check_task_granularity(ev_path, fm, change_dir) == []
+    assert fg._check_worktree_path(ev_path, fm, change_dir) == []
+    # v2 fence 全 pass-through
+    assert fg._check_worktree_path_v2(ev_path, fm, change_dir) == []
+    assert fg._check_round_fix_continuity_v2(ev_path, fm, change_dir) == []
+    assert fg._check_file_overlap_actual(ev_path, fm, change_dir) == []
+    assert fg._check_dispatch_ledger(ev_path, fm, change_dir) == []
+
+
+def test_archived_v1_evidence_replay_not_killed_by_v2_fences(tmp_path):
+    """P2.9:archived enhance-workflow-automation-runtime-enforcement evidence
+    (v1)在本 change ship 后 replay finish_gate 不被 v2 fence 误杀。
+
+    用 tmp_path 构造模拟 archived v1 evidence(沿 archived change pattern)。
+    """
+    # 构造一份 archived v1 evidence — 只有 v1 所需字段,无 v2 字段
+    archived_change_id = "2026-05-05-enhance-workflow-automation-runtime-enforcement"
+    change_dir = tmp_path / "openspec" / "changes" / "archive" / archived_change_id
+    change_dir.mkdir(parents=True, exist_ok=True)
+    ev_path = change_dir / "execution" / "task_1_implementer.md"
+    ev_path.parent.mkdir(parents=True, exist_ok=True)
+    ev_path.write_text("---\n---\nbody\n", encoding="utf-8")
+
+    # v1 evidence frontmatter:有 v1 字段,无 v2 字段
+    fm = {
+        "change_id": archived_change_id,
+        "stage": "S4",
+        "evidence_type": "subagent_implementer_report",
+        "aligned_with_contract": True,
+        "runtime_enforcement_protocol_version": "v1",
+        "triggered_by_command": "change-apply-subagent",
+        "skill_cascade_audit": {
+            "invoked_skills": ["superpowers:subagent-driven-development"],
+            "cascade_check_pass_at": "2026-05-05T10:00:00Z",
+        },
+        "task_granularity": "per-file",
+        "worktree_path": str(change_dir),
+        # 无 worktree_receipt_path / dispatch_ledger_path / task_files_actual
+    }
+
+    # v2 fence 全 pass-through(v1 protocol)
+    assert fg._check_worktree_path_v2(ev_path, fm, change_dir) == [], \
+        "archived v1 evidence MUST pass-through _check_worktree_path_v2"
+    assert fg._check_round_fix_continuity_v2(ev_path, fm, change_dir) == [], \
+        "archived v1 evidence MUST pass-through _check_round_fix_continuity_v2"
+    assert fg._check_file_overlap_actual(ev_path, fm, change_dir) == [], \
+        "archived v1 evidence MUST pass-through _check_file_overlap_actual"
+    assert fg._check_dispatch_ledger(ev_path, fm, change_dir) == [], \
+        "archived v1 evidence MUST pass-through _check_dispatch_ledger"
+    # v1 fence 仍应正常工作(无 regression)
+    assert fg._check_skill_cascade(ev_path, fm, change_dir) == [], \
+        "archived v1 evidence with valid skill_cascade_audit MUST pass v1 fence"

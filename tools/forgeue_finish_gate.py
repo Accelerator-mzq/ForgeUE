@@ -157,8 +157,16 @@ _SUBAGENT_STYLE_DISPATCH_VALUES: frozenset[str] = frozenset({
 # worktree_path)仅对 frontmatter 含 `runtime_enforcement_protocol_version: v1`
 # 的 evidence 生效。legacy archived evidence(无此字段)→ fence pass-through,
 # 确保历史 change(enhance-workflow-automation 等)evidence audit replay 兼容。
+#
+# enhance-workflow-automation-executable-enforcement(D-FrontmatterSchemaExtension):
+# v2 协议在 v1 基础上严格增强:
+# - v2 fence(_check_worktree_path v2 / _check_round_fix_continuity v2 /
+#   _check_file_overlap_actual / _check_dispatch_ledger)仅对 v2 evidence 生效
+# - v1 fence 对 v1 + v2 evidence 都生效(v2 ⊇ v1,不是替换)
+# - legacy evidence(无字段)全 fence pass-through
 _RUNTIME_ENFORCEMENT_VERSION_FIELD = "runtime_enforcement_protocol_version"
 _RUNTIME_ENFORCEMENT_VERSION_VALUE = "v1"
+_RUNTIME_ENFORCEMENT_VERSION_VALUE_V2 = "v2"
 
 # task_granularity 字段合法枚举值(design.md D-TaskGranularityDeclaration)
 _TASK_GRANULARITY_VALUES: frozenset[str] = frozenset({"phase", "per-file", "sub-task"})
@@ -806,11 +814,11 @@ def check_frontmatter_protocol(
                     )
                 )
 
-        # enhance-workflow-automation-runtime-enforcement:4 runtime fence
+        # enhance-workflow-automation-runtime-enforcement:v1 runtime fence
         # (D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity /
         # D-TaskGranularityDeclaration)。每 fence 内部 protocol gate
         # `runtime_enforcement_protocol_version: v1`,legacy evidence 全
-        # pass-through。
+        # pass-through。v2 evidence 同样触发 v1 fence(v2 ⊇ v1)。
         for err in _check_skill_cascade(ev, fm, change_dir):
             blockers.append(
                 Blocker(type="skill_cascade_violation", detail=err, file=rel)
@@ -827,6 +835,28 @@ def check_frontmatter_protocol(
             blockers.append(
                 Blocker(type="worktree_path_violation", detail=err, file=rel)
             )
+
+        # enhance-workflow-automation-executable-enforcement:v2 runtime fence
+        # (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
+        # v2 fence 仅对 `runtime_enforcement_protocol_version: v2` evidence 生效;
+        # v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
+        if _runtime_enforcement_v2_active(fm):
+            for err in _check_worktree_path_v2(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="worktree_path_v2_violation", detail=err, file=rel)
+                )
+            for err in _check_round_fix_continuity_v2(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="round_fix_continuity_v2_violation", detail=err, file=rel)
+                )
+            for err in _check_file_overlap_actual(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="file_overlap_actual_violation", detail=err, file=rel)
+                )
+            for err in _check_dispatch_ledger(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
+                )
 
     return blockers, len(formal)
 
@@ -1082,13 +1112,25 @@ def _check_autonomy_boundary(
 
 
 def _runtime_enforcement_active(frontmatter: dict) -> bool:
-    """检查 evidence 是否声明加载 runtime enforcement protocol v1。
+    """检查 evidence 是否声明加载 runtime enforcement protocol v1 或 v2。
 
-    D-ProtocolVersionMigration:本 change 的 4 个新 fence 仅对 frontmatter 含
-    ``runtime_enforcement_protocol_version: v1`` 的 evidence 生效;legacy
-    evidence(无此字段或值非 v1)→ 全 fence pass-through。
+    D-ProtocolVersionMigration:v1 fence(skill_cascade / round_fix_continuity /
+    task_granularity / worktree_path)对 v1 + v2 evidence 都生效(v2 ⊇ v1);
+    legacy evidence(无此字段)→ 全 fence pass-through。
     """
-    return frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD) == _RUNTIME_ENFORCEMENT_VERSION_VALUE
+    version = frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD)
+    return version in (_RUNTIME_ENFORCEMENT_VERSION_VALUE, _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2)
+
+
+def _runtime_enforcement_v2_active(frontmatter: dict) -> bool:
+    """检查 evidence 是否声明加载 runtime enforcement protocol v2。
+
+    D-FrontmatterSchemaExtension(enhance-workflow-automation-executable-enforcement):
+    v2 fence(worktree_path v2 / round_fix_continuity v2 / file_overlap_actual /
+    dispatch_ledger)仅对 frontmatter 含 ``runtime_enforcement_protocol_version: v2``
+    的 evidence 生效;v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
+    """
+    return frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD) == _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2
 
 
 def _check_skill_cascade(
@@ -1313,6 +1355,417 @@ def _check_worktree_path(
             f"worktree_path in {ev_name} is empty or non-string "
             f"(got {worktree!r})"
         )
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-executable-enforcement:v2 runtime fence
+# (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
+#
+# 4 v2 fence,仅对 `runtime_enforcement_protocol_version: v2` evidence 生效:
+#  1. _check_worktree_path_v2  → Blocker.type: worktree_path_v2_violation
+#  2. _check_round_fix_continuity_v2 → Blocker.type: round_fix_continuity_v2_violation
+#  3. _check_file_overlap_actual → Blocker.type: file_overlap_actual_violation
+#  4. _check_dispatch_ledger   → Blocker.type: dispatch_ledger_violation
+#
+# Protocol gating(_runtime_enforcement_v2_active):仅 v2 evidence 触发;
+# v1 evidence pass-through;legacy(无字段)pass-through。
+# ---------------------------------------------------------------------------
+
+
+def _normalize_path_str(p: str) -> str:
+    """路径字符串标准化:替换反斜杠为正斜杠,去掉尾部分隔符,casefold(Windows 兼容)。
+
+    用于 receipt.worktree_path vs evidence frontmatter worktree_path 比较时
+    消除 Windows / POSIX 路径格式差异。
+    """
+    return p.replace("\\", "/").rstrip("/")
+
+
+def _check_worktree_path_v2(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """v2 worktree_path 升级校验:跨检 receipt JSON。
+
+    D-W1-ReceiptSchema(enhance-workflow-automation-executable-enforcement):
+    v2 evidence MUST 含 `worktree_receipt_path` 字段(non-null),finish_gate 读
+    receipt JSON 校验:
+    - receipt 文件存在(missing → error)
+    - receipt JSON well-formed(JSONDecodeError → error)
+    - receipt `worktree_path` == evidence frontmatter `worktree_path`(路径标准化后)
+    - receipt `is_isolated_worktree: true`(false 或缺失 → error)
+
+    本 fence 在 v1 fence(_check_worktree_path)通过之后执行额外 v2 校验。
+    仅对 implementation evidence + triggered 在 _WORKTREE_REQUIRED_COMMANDS 内有效。
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+
+    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
+    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
+        return errors  # direct / 非 change-apply-* 不强制
+
+    ev_name = evidence_path.name
+
+    # v2 evidence MUST 含 worktree_receipt_path 字段
+    receipt_rel = frontmatter.get("worktree_receipt_path")
+    if receipt_rel is None or (isinstance(receipt_rel, str) and not receipt_rel.strip()):
+        errors.append(
+            f"worktree_receipt_path field missing from {ev_name} "
+            "(D-W1-ReceiptSchema v2: implementation evidence triggered by "
+            f"{triggered!r} MUST carry worktree_receipt_path field non-null)"
+        )
+        return errors
+
+    # 读 receipt 文件(<change>/<receipt_rel>)
+    receipt_path = change_root / str(receipt_rel).strip()
+    if not receipt_path.is_file():
+        errors.append(
+            f"worktree_receipt_path={receipt_rel!r} in {ev_name} does not exist "
+            f"(expected at {receipt_path})"
+        )
+        return errors
+
+    try:
+        receipt_text = receipt_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(
+            f"worktree_receipt_path={receipt_rel!r} in {ev_name} cannot be read: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    try:
+        receipt = json.loads(receipt_text)
+    except json.JSONDecodeError as exc:
+        errors.append(
+            f"worktree_receipt_path={receipt_rel!r} in {ev_name} is not valid JSON: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    # 校验 receipt.worktree_path == evidence frontmatter.worktree_path
+    receipt_wt = receipt.get("worktree_path") or ""
+    fm_wt = frontmatter.get("worktree_path") or ""
+    if _normalize_path_str(str(receipt_wt)) != _normalize_path_str(str(fm_wt)):
+        errors.append(
+            f"worktree_path mismatch for {ev_name}: receipt.worktree_path="
+            f"{receipt_wt!r} != evidence frontmatter worktree_path={fm_wt!r} "
+            "(D-W1-ReceiptSchema: receipt and evidence MUST agree on worktree path)"
+        )
+
+    # 校验 receipt.is_isolated_worktree == true
+    is_isolated = receipt.get("is_isolated_worktree")
+    if is_isolated is not True:
+        errors.append(
+            f"receipt is_isolated_worktree={is_isolated!r} for {ev_name} "
+            "(D-W1-ReceiptSchema: is_isolated_worktree MUST be true in receipt)"
+        )
+
+    return errors
+
+
+def _check_round_fix_continuity_v2(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """v2 round_fix_continuity 升级校验:cross-check 对 dispatch ledger。
+
+    D-W3-LedgerFormat + D-RoundFixContinuity(v2 升级):
+    v2 evidence MUST 含 `dispatch_ledger_path` 字段(non-null);
+    finish_gate 读 ledger JSONL 校验 evidence frontmatter `subagent_continuity`
+    中引用的所有 agent_id 都在 ledger 中有真实记录(agent_id 集合 ⊆ ledger agent_id 集合)。
+
+    缺失 `subagent_continuity` 字段时不报错(round 1 only evidence;沿 v1 语义)。
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_name = evidence_path.name
+
+    # v2 evidence MUST 含 dispatch_ledger_path 字段
+    ledger_rel = frontmatter.get("dispatch_ledger_path")
+    if ledger_rel is None or (isinstance(ledger_rel, str) and not ledger_rel.strip()):
+        errors.append(
+            f"dispatch_ledger_path field missing from {ev_name} "
+            "(D-W3-LedgerFormat v2: v2 evidence MUST carry dispatch_ledger_path field)"
+        )
+        return errors
+
+    # subagent_continuity 缺失时不做后续校验(round 1 only evidence pass-through)
+    cont = frontmatter.get("subagent_continuity")
+    if cont is None:
+        return errors
+    if not isinstance(cont, dict):
+        return errors  # v1 fence 已报错,v2 不重复
+
+    # 收集 subagent_continuity 中所有 agent_id(非 None / 非空)
+    continuity_agent_ids: set[str] = set()
+    for key in (
+        "round_1_implementer_id",
+        "round_2_fix_implementer_id",
+        "round_1_reviewer_id",
+        "round_2_review_reviewer_id",
+    ):
+        val = cont.get(key)
+        if val and isinstance(val, str) and val.strip():
+            continuity_agent_ids.add(val.strip())
+
+    if not continuity_agent_ids:
+        return errors  # 没有 agent_id 引用,不做 ledger 校验
+
+    # 读 ledger 文件
+    ledger_path = change_root / str(ledger_rel).strip()
+    if not ledger_path.is_file():
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} does not exist "
+            f"(expected at {ledger_path}; "
+            "D-W3-LedgerFormat: ledger MUST exist to cross-check agent_id)"
+        )
+        return errors
+
+    try:
+        ledger_text = ledger_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} cannot be read: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    # 收集 ledger 中所有 agent_id
+    ledger_agent_ids: set[str] = set()
+    for line_no, raw in enumerate(ledger_text.splitlines(), 1):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue  # dispatch_ledger fence 会独立报 JSON 错误
+        aid = row.get("agent_id")
+        if aid and isinstance(aid, str) and aid.strip():
+            ledger_agent_ids.add(aid.strip())
+
+    # 校验引用的 agent_id 集合 ⊆ ledger agent_id 集合
+    missing_ids = continuity_agent_ids - ledger_agent_ids
+    if missing_ids:
+        sorted_missing = sorted(missing_ids)
+        errors.append(
+            f"subagent_continuity in {ev_name} references agent_id(s) "
+            f"{sorted_missing} that are NOT in dispatch ledger "
+            f"{ledger_rel!r} (D-RoundFixContinuity v2: all referenced agent_ids "
+            "MUST have real ledger records)"
+        )
+
+    return errors
+
+
+def _check_file_overlap_actual(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """W2 file overlap actual 校验:parallel 路径 actual diff ⊆ declared 且 disjoint。
+
+    D-W2-OverlapDetection(enhance-workflow-automation-executable-enforcement):
+    parallel evidence(triggered_by_command: change-apply-parallel)MUST 含
+    `task_files_actual` 字段(list of {implementer_agent_id, files: [...]})。
+
+    校验:
+    1. actual ⊆ declared(`task_files_actual` 中每个 implementer 的 files 集合
+       ⊆ `task_files_disjoint` 中对应 implementer 的 files 集合)
+    2. actual changed-files set 之间 disjoint(若 `degraded_to: null` — 未降级)
+       `degraded_to: change-apply-subagent` 时跳过 disjoint 校验(已降级 sequential 路径)
+
+    仅对 triggered_by_command: change-apply-parallel evidence 生效;sequential pass-through。
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_name = evidence_path.name
+
+    # 仅 parallel evidence 强制
+    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
+    if triggered != "change-apply-parallel":
+        return errors
+
+    # task_files_actual 字段必须存在(list)
+    actual_raw = frontmatter.get("task_files_actual")
+    if actual_raw is None:
+        errors.append(
+            f"task_files_actual field missing from {ev_name} "
+            "(D-W2-OverlapDetection: change-apply-parallel v2 evidence MUST carry "
+            "task_files_actual field)"
+        )
+        return errors
+
+    if not isinstance(actual_raw, list):
+        errors.append(
+            f"task_files_actual in {ev_name} is not a list "
+            f"(got {type(actual_raw).__name__})"
+        )
+        return errors
+
+    # 构建 actual: {agent_id -> set[file]}
+    actual_by_agent: dict[str, set[str]] = {}
+    for entry in actual_raw:
+        if not isinstance(entry, dict):
+            continue
+        agent_id = entry.get("implementer_agent_id") or ""
+        files = entry.get("files") or []
+        if not isinstance(files, list):
+            files = []
+        actual_by_agent[str(agent_id)] = set(str(f) for f in files)
+
+    # 构建 declared: {agent_id -> set[file]} from task_files_disjoint
+    declared_raw = frontmatter.get("task_files_disjoint") or []
+    declared_by_agent: dict[str, set[str]] = {}
+    if isinstance(declared_raw, list):
+        for entry in declared_raw:
+            if not isinstance(entry, dict):
+                continue
+            agent_id = entry.get("implementer_agent_id") or ""
+            files = entry.get("files") or []
+            if not isinstance(files, list):
+                files = []
+            declared_by_agent[str(agent_id)] = set(str(f) for f in files)
+
+    # 校验 actual ⊆ declared
+    for agent_id, actual_files in actual_by_agent.items():
+        declared_files = declared_by_agent.get(agent_id, set())
+        extra = actual_files - declared_files
+        if extra:
+            errors.append(
+                f"task_files_actual for agent {agent_id!r} in {ev_name} contains "
+                f"files not in task_files_disjoint declaration: {sorted(extra)} "
+                "(D-W2-OverlapDetection: actual changed files MUST be subset of "
+                "declared disjoint files)"
+            )
+
+    # 降级路径跳过 disjoint 校验
+    degraded_to = frontmatter.get("degraded_to")
+    if degraded_to == "change-apply-subagent":
+        return errors  # 已降级 sequential,不再校验 disjoint
+
+    # 校验 actual changed-files set 之间 disjoint
+    agents = sorted(actual_by_agent.keys())
+    for i, agent_a in enumerate(agents):
+        for agent_b in agents[i + 1:]:
+            overlap = actual_by_agent[agent_a] & actual_by_agent[agent_b]
+            if overlap:
+                errors.append(
+                    f"actual file overlap between agent {agent_a!r} and {agent_b!r} "
+                    f"in {ev_name}: overlapping files {sorted(overlap)} "
+                    "(D-W2-OverlapDetection: actual changed-files sets MUST be "
+                    "disjoint when degraded_to is null)"
+                )
+
+    return errors
+
+
+def _check_dispatch_ledger(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """W3 dispatch ledger 完整性校验。
+
+    D-W3-LedgerFormat(enhance-workflow-automation-executable-enforcement):
+    v2 evidence MUST 含 `dispatch_ledger_path` 字段;finish_gate inline 实施
+    ledger 校验(等价于 forgeue_dispatch_ledger.py verify 逻辑):
+    - ledger 文件存在
+    - 每行是合法 JSON
+    - 每行含 wrapper_version 字段(非空)
+    - dispatched_at 时间戳单调递增
+
+    新 Blocker.type: `dispatch_ledger_violation`
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+
+    Inline 实施原因:import forgeue_dispatch_ledger 作为 module 易于测试,
+    无 subprocess 开销;forgeue_dispatch_ledger.py 无模块级副作用(只有
+    `if __name__ == "__main__": raise SystemExit(main())`)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_name = evidence_path.name
+
+    # dispatch_ledger_path 字段必须存在
+    ledger_rel = frontmatter.get("dispatch_ledger_path")
+    if ledger_rel is None or (isinstance(ledger_rel, str) and not ledger_rel.strip()):
+        errors.append(
+            f"dispatch_ledger_path field missing from {ev_name} "
+            "(D-W3-LedgerFormat: v2 evidence MUST carry dispatch_ledger_path field)"
+        )
+        return errors
+
+    ledger_path = change_root / str(ledger_rel).strip()
+    if not ledger_path.is_file():
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} does not exist "
+            f"(expected at {ledger_path})"
+        )
+        return errors
+
+    try:
+        ledger_text = ledger_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} cannot be read: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    # inline verify(等价于 forgeue_dispatch_ledger.cmd_verify 逻辑)
+    prev_ts = ""
+    for line_no, raw in enumerate(ledger_text.splitlines(), 1):
+        raw_stripped = raw.strip()
+        if not raw_stripped:
+            continue  # 空行跳过
+        try:
+            payload = json.loads(raw_stripped)
+        except json.JSONDecodeError as exc:
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name} "
+                f"is not valid JSON: {_common.console_safe(exc)}"
+            )
+            return errors  # 无法继续解析后续行
+
+        # wrapper_version 字段必须存在且非空
+        wv = payload.get("wrapper_version")
+        if not wv:
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name} "
+                "is missing wrapper_version field "
+                "(D-W3-LedgerFormat: every ledger line MUST carry wrapper_version)"
+            )
+
+        # dispatched_at 时间戳必须单调递增
+        ts = payload.get("dispatched_at", "")
+        if prev_ts and ts < prev_ts:
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name}: "
+                f"timestamp {ts!r} is earlier than previous {prev_ts!r} "
+                "(D-W3-LedgerFormat: timestamps MUST be monotonically increasing)"
+            )
+        if ts:
+            prev_ts = ts
 
     return errors
 
