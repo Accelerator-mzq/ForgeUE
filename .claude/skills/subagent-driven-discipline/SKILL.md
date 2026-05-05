@@ -1,13 +1,14 @@
 ---
 name: subagent-driven-discipline
-description: Subagent task type taxonomy + cheap-model reliability playbook for subagent-driven-development workflows。**重场景轻业务**:按 subagent 任务类型(implementation 5 子类 / spec review 4 子类 / code quality review 5 子类 / test creation / doc / debug / verification)细分 model tier + WHY + 让 cheap model 高质量的具体 prompt patterns。Cross-scenario discipline(cwd verify / cross-verify / cherry-pick recovery / cost framework)作为 supporting infrastructure。Living catalog:scenario taxonomy 稳定,case studies 随项目实证增长。Companion to `superpowers:subagent-driven-development`。
+description: Subagent task type taxonomy + cheap-model reliability playbook + Opus-mandatory post-phase quality retrospect for subagent-driven-development workflows。**重场景轻业务**:按 subagent 任务类型(implementation 5 子类 / spec review 4 子类 / code quality review 5 子类 / test creation / doc / debug / verification)细分 model tier + WHY + 让 cheap model 高质量的具体 prompt patterns。**Design 任务(algorithmic / architectural / arch doc rewrite / complex root cause)绝对原则 Opus only,无 exception**。Cross-scenario discipline(cwd verify / cross-verify / cherry-pick recovery / cost framework)作为 supporting infrastructure。**Living catalog 增长由 §3.4 Opus-only Post-Phase Retrospect 强制**:每 phase 完成 Opus 跑 Question Matrix Q1-Q6,任一 Yes 才加 case study;全 No 不加(避免噪声)。Companion to `superpowers:subagent-driven-development`。
 license: MIT
 compatibility: Claude Code Agent tool + python -m pytest;sister to superpowers:subagent-driven-development(generic 3-stage process)
 metadata:
   author: forgeue (initial seed)
-  version: "2.0"
+  version: "2.1"
   scenario_subtype_count: 28
   case_study_count: 1
+  retrospect_protocol: opus-only mandatory per-phase
 ---
 
 Universal controller-side discipline for `superpowers:subagent-driven-development` workflows。
@@ -30,8 +31,8 @@ Universal controller-side discipline for `superpowers:subagent-driven-developmen
 | **§1.1.1 Mechanical(完整代码样例)** | Plan 含完整 code block + 全 fence test 名 + 完整测试模板 + commit message 模板 | `haiku` | implementer 只需 transcribe + 微调;无 design judgment | 1) Plan 内含 inline 完整代码(不让 implementer 自由 design)<br>2) 每个 fence test 给具体 name + assertion 描述<br>3) Commit message 模板 inline<br>4) Pre-condition / Pre-state(git status clean / pytest baseline N)<br>5) Self-review 7 项检查清单 |
 | **§1.1.2 Pattern-matching(用既有模式)** | 改 / 新建文件,需照既有 sister files 风格;Plan 给 file:line 锚点但不全 inline | `haiku` 或 `sonnet`(borderline)| Pattern lookup + 套用是 pattern matching 任务;若需理解 pattern semantic 升 Sonnet | 1) **必给 sister file 路径**(让 implementer Read 参考)<br>2) Pattern 元素 enumerated(e.g. "沿 `tools/forgeue_skill_cascade_check.py` argparse + multi-mode CLI 风格")<br>3) Style constraint(stdlib only / 中文 docstring)<br>4) Anti-pattern 显式列(e.g. "不引入外部 dep") |
 | **§1.1.3 Multi-file integration** | 改既有 module + cross-fence wiring + 多文件 coordinate | `sonnet` | 需保持 cross-file consistency;Haiku 易 miss interaction | 1) 列全部涉及 file paths<br>2) 显式 dependency graph(file A change 影响 file B 哪段)<br>3) Defense-in-depth dispatch logic 描述 |
-| **§1.1.4 Algorithmic design** | Plan 描述需求但不给具体算法 / data structure | `sonnet`(or `opus` if novel) | Design judgment 必须;Haiku 默认选简单方案可能错 | 1) 显式列**已考虑的方案 alternatives**(避免 implementer 选错路径)<br>2) Performance / memory 约束<br>3) Trade-off priority(speed vs 内存 vs 可维护) |
-| **§1.1.5 Architectural(跨子系统)** | 引入 new ABC / 新子系统 / cross-boundary refactor | `opus`(rare;大多 controller 自己做更稳) | 需全局视角 + 长期演进考虑;subagent context 不够 | **不推荐外包给 subagent** — controller(主 session)做架构决策;subagent 只 implement 已确定的设计 |
+| **§1.1.4 Algorithmic design** | Plan 描述需求但不给具体算法 / data structure | **`opus` MANDATORY**(不允许 Sonnet 替代) | **设计任务的判断错误下游修复成本极高** — 错算法 → 全 implementation 重写 + 全 test 重写 + 可能影响 contract;Opus 的 reasoning depth 对设计决策必要;Sonnet 在 design 任务下选 "first reasonable solution" 可能跳过更优 alternative | 1) 显式列**已考虑的方案 alternatives**(让 Opus evaluate)<br>2) Performance / memory / 可维护性约束<br>3) Trade-off priority<br>4) Cross-impact 范围(影响哪些 module / future 演进) |
+| **§1.1.5 Architectural(跨子系统)** | 引入 new ABC / 新子系统 / cross-boundary refactor / new ADR drafting | **`opus` MANDATORY** | 需全局视角 + 长期演进考虑 + adversarial review;**任何 design 任务都不能降级 cheap model** | **首选 controller 自己做(若 controller 是 Opus)— 不外包给 subagent**;若 controller 非 Opus 必须 dispatch Opus subagent;subagent 只 implement 已 finalized design |
 
 ### §1.2 Spec / Compliance Review Tasks(检查 implementation 符合 spec)
 
@@ -53,6 +54,8 @@ Universal controller-side discipline for `superpowers:subagent-driven-developmen
 | **§1.3.5 Security review** | 注入 / 敏感信息 / 权限 / 加密 / 边界 | `sonnet` 或 `opus` | 需要 adversarial thinking + 安全 domain 知识 | 显式 threat model + ASVS / OWASP class refs + 项目 security context |
 
 **核心 takeaway**:**Code Quality 阶段 §1.3.4 Runtime correctness 不可 skip + 不可降级 Haiku**。Case 1 实证:Haiku implementer + Haiku spec_reviewer 漏的 2 个 runtime bug(f-string / IMPL_FILES_JSON silent fail)只有 Sonnet code_quality 抓到。
+
+**任何 Design 任务必须 Opus**(§1.1.4 + §1.1.5 + §1.5.4 architecture doc 重写 + §1.6.3 root cause analysis 复杂场景):design 错误的下游 impact 远大于 dispatch cost differential;Opus reasoning depth 对 design 必要。Cheap model 在 design 任务下倾向"选 first reasonable solution"漏 alternative。这是**绝对原则,无 exception**。
 
 ### §1.4 Test Creation Tasks(写新 test)
 
@@ -233,6 +236,51 @@ If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误
 | Logic 错误(算法 / 数据流 / 控制流)| Round 2 SendMessage 同 implementer subagent(~$0.20-0.50)|
 | Architectural 错误(违 design decision) | 升级 user(controller-only) |
 
+### §3.4 Post-Phase Quality Retrospect Protocol(Opus-only judgment;skill 增长触发)
+
+**Trigger**:每 phase 3-stage subagent dispatch 完成 + evidence committed 之后,**强制执行**(无论 phase 是否表面绿)。
+
+**Actor**:**Opus(MANDATORY)**。
+- 若 controller(主 session)是 Opus → controller 直接做
+- 若 controller 是 Sonnet/Haiku → controller MUST dispatch Opus subagent for retrospect
+- **不允许 Sonnet/Haiku 做 retrospect** — retrospect 是 meta-judgment 任务,需:
+  - Adversarial perspective on subagent self-reports(critical thinking)
+  - Pattern recognition across 多 evidence files(broad context)
+  - Evaluate against §1 28 subtypes(scenario knowledge)
+  - 决定是否扩 §1 / §5 / §6(meta-skill update judgment)
+  - 这些都是 Opus-tier 任务
+
+**Inputs**(retrospect actor 必读):
+1. 全 phase 3 类 subagent evidence files(implementer + spec_reviewer + code_quality_reviewer)
+2. Phase commit diff(`git diff <phase-base>..HEAD`)
+3. 任何 controller intervention 记录(inline fix / round 2 / cherry-pick recovery)
+4. 本 skill 当前版本(对照 §1 / §5 / §6)
+
+**Question Matrix**(retrospect actor 逐项问):
+
+| Q | 问题 | Yes 后果 |
+|---|---|---|
+| Q1 | 任一 subagent fail in ways outside §1.X.Y expected behavior? | → 加 §5 case + §6 catalog |
+| Q2 | 任一 subagent hallucinate / scope-bleed / 自我汇报错? | → 加 §5 case |
+| Q3 | Controller 需 intervention(inline fix / round 2 / cherry-pick)? | → 加 §5 case |
+| Q4 | NEW failure mode 不在 §6 catalog? | → 加 §6 catalog row + §5 case |
+| Q5 | NEW scenario subtype 不在 §1 28 子类? | → 加 §1.X.Y row + §2 playbook + §5 case |
+| Q6 | Cheap model 在某 scenario 表现远低于预期(应升 Sonnet)? | → 调 §1 model 列 + §5 case |
+
+**Decision Tree**:
+- **All Q1-Q6 答 No**(subagents 表现 within §1 expectation + 无 controller intervention)→ **SKIP skill update**;phase passes silently
+- **任一 Yes** → **MUST update skill**:
+  - 至少加 §5 Case <NN+1>(retrospect 沿模板;含 retrospect verdict 段)
+  - 视具体 Yes 情况追加 §1 / §6(沿 §8 update 协议)
+- **不允许"觉得没必要就 skip"** — Opus retrospect 找到任何 issue 都必须沉淀 skill 增长
+
+**Cost**:Opus retrospect ~$0.30-1.00 per phase(读 evidence + diff;judgment-heavy reasoning)。看似贵 — 但**这是 skill 增长的唯一 dependable mechanism**。Skip retrospect = skill 不长 = 后续 change 重蹈覆辙。
+
+**Why mandatory**:
+- 若每 phase 不 retrospect → skill 只在 controller 主动 "想到要更新" 时长 → unreliable feedback loop
+- Mandatory retrospect = skill 自动从实证增长(只在真有 issue 时更新,无问题不污染)
+- Opus-only = retrospect verdict 可信(cheap model retrospect 自己就是 unreliable)
+
 ---
 
 ## §4 Failure Recovery
@@ -327,6 +375,20 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 
 **New scenario subtype surfaced**:无 — 28 子类(§1)在 P0-P3 实证全覆盖。
 
+**§3.4 Retrospect verdict per phase**(retroactively applied;若当时跑 retrospect 会触发 skill update 哪些):
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P0 | No | No | No | No | No | **Yes**(全 Opus 应 Sonnet)| **Add case** — Q6 触发 |
+| P1 | No | No(implementer 干净)| **Yes**(spec_reviewer override)| No | No | **Yes**(spec_reviewer §1.2.3 误用 Haiku)| **Add case** — Q3 + Q6 |
+| P2 | No | **Yes**(spec_reviewer 幻觉 URL)| **Yes**(controller cross-verify override)| No | No | **Yes**(spec_reviewer §1.2.1 缺 §2.6 floor 元素)| **Add case** — Q2 + Q3 + Q6 |
+| P3 | No | **Yes**(implementer 自我汇报错)| **Yes**(cherry-pick + 2 inline fix)| **Yes**(worktree leak first time observed in this skill's history)| No | **Yes**(implementer §1.1.2 cwd discipline 不够)| **Add case** — Q2 + Q3 + Q4 + Q6 |
+
+**结论**:**4/4 phase 全 trigger skill update**(P0-P3 都有 issue) — 这就是 Case 1 存在的原因。若任一 phase 全干净,该 phase 不需要单独 case 段(只在 lessons 段一笔带过)。
+
+**反例**(若 retrospect 全 No 会怎样):
+- 假设 P3 spec_reviewer 表现完全 within §1.2.1 expectation + 无 hallucination + 无 controller intervention → §3.4 Q1-Q6 全 No → **不加这一行 case study**;只在 lesson 段写 "P3 spec_reviewer 验证 §2.2 strict prompt 有效,无新观察"。这避免 skill 被无 issue 的 phase 噪声充斥。
+
 ---
 
 ## §6 Pattern Catalog(failure mode → scenario subtype + recovery)
@@ -355,21 +417,32 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 2. **若 reviewer 出 issues** → §3.3 inline fix vs round 2 决策
 3. **若 worktree leak detected** → §4.1 cherry-pick recovery
 
-### Phase / change 完成后:
-1. **加 §5 Case <NN+1> 条目**(沿模板)
-2. **Update §6 catalog**(若新 failure mode)
-3. **若 §1 28 子类不覆盖** → §8 update 协议
+### Phase 完成后(MANDATORY):
+1. **跑 §3.4 Post-Phase Quality Retrospect**(Opus actor;Question Matrix Q1-Q6)
+2. **若 retrospect 全 No** → SKIP skill update,phase silent pass
+3. **若 retrospect 任一 Yes** → §3.4 Decision Tree 触发 skill update:
+   - 加 §5 Case <NN+1>(MANDATORY)
+   - 视情况追加 §6 catalog row(若 new failure mode)
+   - 视情况追加 §1.X.Y row + §2 playbook(若 new scenario subtype)
+   - Update frontmatter `case_study_count` / `scenario_subtype_count`
 
 ---
 
 ## §8 How to Update This Skill(growing 协议)
 
-本 skill 设计为**living document**:§1 scenario taxonomy + §2 playbook 是 stable 上层;§5 case studies + §6 catalog 是 growing 下层。
+本 skill 设计为**living document**:§1 scenario taxonomy + §2 playbook 是 stable 上层;§5 case studies + §6 catalog 是 growing 下层。**增长触发由 §3.4 Post-Phase Quality Retrospect 强制**(Opus retrospect 找到 issue 才加;无 issue 不加,避免噪声)。
 
-### 新 case study 添加(每项目 / change / phase 用本 skill 后)
+### 新 case study 添加(MANDATORY 当 §3.4 retrospect 任一 Yes)
 1. Append §5 用 Case <NN+1> 模板
 2. Update frontmatter `case_study_count`(N → N+1)
 3. 若新 failure mode → §6 catalog 加 row
+
+### Case study 不加(SKIP — §3.4 retrospect 全 No)
+1. **不**加 §5 — phase 表现 within §1 expectation,加 case 是噪声
+2. **不**改 frontmatter
+3. Phase silent pass — skill 不变
+
+**Anti-pattern**:看到 phase 完成就反射式加 case study(无论质量)→ 信号噪声 ratio 降低;case studies 失去 "real failure 沉淀" 价值
 
 ### 新 scenario subtype 添加(rare;只在 §1 28 子类不覆盖 new task type 时)
 1. 决定加在 §1.X 哪类下(implementation / spec review / code quality / test / doc / debug / verification / 新类)
