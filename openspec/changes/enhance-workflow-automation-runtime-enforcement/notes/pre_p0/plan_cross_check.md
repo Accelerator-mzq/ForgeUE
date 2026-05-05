@@ -10,7 +10,7 @@ contract_refs:
   - notes/pre_p0/codex_review_round1.md
 aligned_with_contract: true
 drift_decision: written-back-to-design+proposal+tasks (F4+F5 inline) + deferred-to-follow-on (F1+F2+F3)
-writeback_commit: pending
+writeback_commit: 73001734fd73b65a9894df834ece30716f020ef3
 drift_reason: codex round 1 raised 5 findings (3 high + 2 medium); F4 + F5 inline writeback (skill root multi-source via D-SkillRootMultiSource + protocol version migration via D-ProtocolVersionMigration);F1 + F2 + F3 deferred 到 follow-on `enhance-workflow-automation-executable-enforcement`(W1 executable preflight wrapper / W2 actual diff overlap detection / W3 dispatch ledger 命令层 wrapper);本 change scope 调整为 markdown advisory protocol + skill cascade check + protocol version migration(诚实标注 advisory not deterministic)
 reasoning_notes_anchor: notes/pre_p0/codex_review_round1.md
 detected_env: claude-code

@@ -9,7 +9,7 @@ contract_refs:
   - specs/examples-and-acceptance/spec.md
 aligned_with_contract: false
 drift_decision: accepted-codex-2-deferred-3
-writeback_commit: pending
+writeback_commit: 73001734fd73b65a9894df834ece30716f020ef3
 drift_reason: codex round 1 raised 5 findings (3 high + 2 medium); F4/F5 inline writeback (skill root multi-source + protocol version migration); F1/F2/F3 揭示 markdown enforcement 不够 deterministic,scope 太大单独 follow-on change `enhance-workflow-automation-executable-enforcement`(executable preflight wrapper + dispatch ledger + actual diff overlap detection);本 change scope 缩为 advisory protocol + skill cascade check + protocol version migration
 reasoning_notes_anchor: notes/pre_p0/plan_cross_check.md
 detected_env: claude-code
