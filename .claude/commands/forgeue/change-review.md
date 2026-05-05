@@ -9,6 +9,23 @@ S5→S6 transition:Superpowers `requesting-code-review` skill + `code-reviewer` 
 
 **Input**: 必须指定 change name(`/forgeue:change-review <id>`)。
 
+## Preflight Skill Cascade(D-SkillCascadeCheck)
+
+本命令 invoke `superpowers:requesting-code-review` SKILL(沿 Step 4);实施前 controller MUST 验证主 SKILL declared dependency 全 invoke。
+
+强制项(在 Step 4 invoke `requesting-code-review` 之前执行):
+
+```bash
+python tools/forgeue_skill_cascade_check.py \
+    --skill superpowers:requesting-code-review \
+    --invoked superpowers:receiving-code-review
+```
+
+- exit 0 → cascade OK
+- exit 5 → missing dependency → 命令 abort + 提示主动 invoke 缺失 SKILL 后 retry
+
+evidence frontmatter(`superpowers_review.md`)MUST 加 `skill_cascade_audit` 字段 + `runtime_enforcement_protocol_version: v1`。
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`。

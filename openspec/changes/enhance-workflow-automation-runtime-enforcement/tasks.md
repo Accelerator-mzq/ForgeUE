@@ -51,20 +51,30 @@
 - [x] P1.8:`pytest -q tests/unit/test_forgeue_finish_gate.py` 全绿(99 passed)
 - [x] P1.9:`pytest -q` 全套 regress(1519 passed + 1 skipped Windows symlink in 68.38s)
 
-## P2 — 9 + 1 forgeue 命令模板加 Preflight section
+## P2 — 10 forgeue 命令模板加 Preflight section + drift writeback D-DirectWorktreeRefinement
 
-- [ ] P2.1:`.claude/commands/forgeue/change-apply-subagent.md` 加 `## Preflight Worktree` + `## Preflight Skill Cascade` + `## Preflight Task Granularity` 三段
-- [ ] P2.2:`.claude/commands/forgeue/change-apply-direct.md` 同款 3 段
-- [ ] P2.3:**新建** `.claude/commands/forgeue/change-apply-parallel.md`(invoke `superpowers:dispatching-parallel-agents` SKILL)+ 3 段 Preflight + 借用模式 disclaimer + task independence assertion 协议
-- [ ] P2.4:`.claude/commands/forgeue/{change-status,change-plan,change-debug,change-verify,change-review,change-doc-sync,change-finish}.md`(7 个命令)加 `## Preflight Skill Cascade` 段(若命令 invoke SKILL;若纯只读如 change-status 跳过)
-- [ ] P2.5:`.claude/commands/forgeue/change-apply.md`(deprecated stub)— 加 deprecation 提示 update,引用 change-apply-parallel 作为新选项
-- [ ] P2.6:`tests/unit/test_forgeue_command_markdown.py` 加 fence:
-  - `test_each_apply_cmd_has_preflight_worktree_section`(3 个 apply 命令)
-  - `test_each_apply_cmd_has_preflight_skill_cascade_section`(3 个 apply 命令)
-  - `test_each_apply_cmd_has_preflight_task_granularity_section`(3 个 apply 命令)
-  - `test_change_apply_parallel_command_exists`(新文件存在 + 含 dispatching-parallel-agents skill 引用)
-  - `test_skill_invoking_cmds_have_preflight_skill_cascade`(7 个 + 3 个 = 10 个 SKILL-invoking 命令)
-- [ ] P2.7:`pytest -q tests/unit/test_forgeue_command_markdown.py` 全绿
+- [x] **Drift writeback**(P2.2 实施前发现 spec.md / design.md / archived D-Worktree-Detail 第 5 项三方契约冲突;按 `feedback_autonomy_boundary_simplified.md` framework / design 不匹配 fence 升级 user 拍板;2026-05-05 user 拍板 (B):direct 不走 worktree,沿 archived 第 5 项):
+  - 落 `notes/p2/d_direct_worktree_refinement.md` evidence(三方冲突来源 + user 拍板裁决 + 双向 writeback 摘要)
+  - 写回 `specs/examples-and-acceptance/spec.md` Preflight Worktree Requirement 收窄到 subagent + parallel + 加 direct pass-through scenarios
+  - 写回 `design.md` D-WorktreeEnforce statement 同款收窄 + 新增 D-DirectWorktreeRefinement decision(含 Why / Trigger origin / Alternatives considered + user 拍板)
+  - 改 `tools/forgeue_finish_gate.py::_check_worktree_path` fence:`_CHANGE_APPLY_COMMAND_PREFIX` prefix 改为 `_WORKTREE_REQUIRED_COMMANDS = {change-apply-subagent, change-apply-parallel}` frozenset
+  - 加 fence test:`test_worktree_path_not_required_for_change_apply_direct` + `test_worktree_path_required_for_change_apply_parallel`(锁住 direct pass-through + parallel 与 subagent 同等强制)
+  - commit `15ae851`(单 commit 双向 writeback + 测试 + evidence)
+- [x] P2.1:`.claude/commands/forgeue/change-apply-subagent.md` 加 `## Preflight Worktree` + `## Preflight Skill Cascade` + `## Preflight Task Granularity` 三段 + 协议版本标记说明
+- [x] P2.2:`.claude/commands/forgeue/change-apply-direct.md` 加 **2 段** Preflight(Skill Cascade + Task Granularity);**沿 D-DirectWorktreeRefinement 不加 Preflight Worktree**;disclaimer 段引 archived 第 5 项 + fence pass-through 说明
+- [x] P2.3:**新建** `.claude/commands/forgeue/change-apply-parallel.md`(invoke `superpowers:dispatching-parallel-agents` SKILL)+ 3 段 Preflight + 借用模式 disclaimer + task independence assertion 协议(`task_independence_assertion: true` + `task_files_disjoint: [<file-set>...]` 字段 + 命令前自动 verify file overlap → 任一交集 abort)
+- [x] P2.4:5 个 SKILL-invoke 命令加 `## Preflight Skill Cascade` 段:`change-plan` / `change-debug` / `change-verify` / `change-review` / `change-doc-sync`;**`change-finish` + `change-status` 不 invoke SKILL,沿 task 描述跳过**(纯工具调用 / 只读)
+- [x] P2.5:`.claude/commands/forgeue/change-apply.md`(deprecated stub)— deprecation 提示 update 加 `change-apply-parallel` 选项 + 完整 D-ParallelDispatch 路由决策树
+- [x] P2.6:`tests/unit/test_forgeue_command_markdown.py` 加 7 个 fence:
+  - `test_apply_cmds_have_preflight_skill_cascade_section`(3 apply 命令必含)
+  - `test_apply_cmds_have_preflight_task_granularity_section`(3 apply 命令必含)
+  - `test_subagent_parallel_have_preflight_worktree_section`(2 命令必含,direct 排除)
+  - `test_change_apply_direct_does_not_have_preflight_worktree_section`(D-DirectWorktreeRefinement negative fence,锁住 direct 不含 Preflight Worktree section)
+  - `test_change_apply_parallel_command_exists`(新文件存在 + 含 dispatching-parallel-agents 引用 + 借用 disclaimer + task_independence_assertion)
+  - `test_skill_invoking_cmds_have_preflight_skill_cascade`(8 个 SKILL-invoking 命令 = 3 apply + 5 SKILL-invoke;`forgeue_skill_cascade_check` 工具引用)
+  - `test_change_finish_status_skip_preflight_skill_cascade`(negative fence,锁住 change-finish + change-status 不含 Preflight Skill Cascade section)
+  - 配套 fixture 更新:`tests/unit/test_forgeue_command_markdown.py` + `tests/unit/test_forgeue_workflow_plugin_invocation.py` + `tests/unit/test_forgeue_workflow_no_paid_default.py` 中 active 命令计数 9 → 10
+- [x] P2.7:`pytest -q tests/unit/test_forgeue_command_markdown.py` 全绿(16 passed,原 9 + 新加 7 P2 fence);`pytest -q` 全套 regress 全绿(1528 passed + 1 skipped Windows symlink in 45.02s)
 
 ## P3 — codex 命令模板 同款 preflight skill cascade
 

@@ -9,6 +9,23 @@ S2→S3 transition:把 OpenSpec contract artifact 转为 execution plan + micro 
 
 **Input**: 必须指定 change name(`/forgeue:change-plan <id>`)。
 
+## Preflight Skill Cascade(D-SkillCascadeCheck)
+
+本命令 invoke `superpowers:writing-plans` SKILL(沿 Step 7);实施前 controller MUST 验证主 SKILL declared dependency 全 invoke。
+
+强制项(在 Step 7 invoke `writing-plans` 之前执行):
+
+```bash
+python tools/forgeue_skill_cascade_check.py \
+    --skill superpowers:writing-plans \
+    --invoked superpowers:brainstorming
+```
+
+- exit 0 → cascade OK
+- exit 5 → missing dependency → 命令 abort + 提示主动 invoke 缺失 SKILL 后 retry
+
+evidence frontmatter MUST 加 `skill_cascade_audit` 字段(对象,含 `invoked_skills` list + `cascade_check_pass_at` ISO 8601 timestamp)+ `runtime_enforcement_protocol_version: v1`;`forgeue_finish_gate.py::_check_skill_cascade` fence 守门 audit。
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`;读 `auto_codex_review` / `codex_plugin_available`;non-claude-code env 时 codex hook 降级 OPTIONAL,不阻断 archive。

@@ -11,6 +11,51 @@ S3→S4-S5 transition(default 路径,自 `adopt-subagent-driven-development` cha
 
 **适用场景**: 多 micro-task / 需要强 review checkpoint;轻量 change(< 3 micro-task)/ budget 紧张时改走 `/forgeue:change-apply-direct`。
 
+## Preflight(D-PreflightProtocol)
+
+实施 Steps 之前 controller MUST 顺序完成以下 3 个 preflight 检查;任一 fail → 命令 abort + 详细错误,不进入 Steps 主流程。每项均要求在 evidence frontmatter 留 audit 字段。
+
+### Preflight Worktree(D-WorktreeEnforce)
+
+实施前 isolated worktree 必须存在(本命令 Step 7-9 落实 — commit 快照 + worktree 创建 + cwd 切换)。
+
+- 必须 invoke `Skill(superpowers:using-git-worktrees)`(沿本命令 Step 8;不可跳过)
+- 必须 cwd 切换到 isolated worktree(沿 Step 9);后续 dispatch / evidence 落盘 / writeback 检测全部以该 worktree 为 cwd
+- evidence frontmatter MUST 加 `worktree_path: <path>` 字段(non-null);`forgeue_finish_gate.py::_check_worktree_path` fence 守门(`triggered_by_command: change-apply-subagent` 触发强制)
+
+Preflight 失败(SKILL invoke 异常 / worktree 创建失败 / clean baseline test 不绿)→ 命令 abort。
+
+### Preflight Skill Cascade(D-SkillCascadeCheck)
+
+实施前 controller MUST 验证主 SKILL(`superpowers:subagent-driven-development`)所有 declared dependency 已被 invoke;漏 invoke 立即 abort。
+
+强制项(在 Step 8 invoke `using-git-worktrees` 之后、Step 10 invoke `subagent-driven-development` 之前执行):
+
+```bash
+python tools/forgeue_skill_cascade_check.py \
+    --skill superpowers:subagent-driven-development \
+    --invoked superpowers:using-git-worktrees,superpowers:test-driven-development,superpowers:requesting-code-review,superpowers:finishing-a-development-branch
+```
+
+- exit 0 → cascade OK,记录 invoked skill 列表
+- exit 5 → missing dependency → 命令 abort + 提示主动 invoke 缺失 SKILL 后 retry
+
+evidence frontmatter MUST 加 `skill_cascade_audit` 字段(对象,含 `invoked_skills` list + `cascade_check_pass_at` ISO 8601 timestamp);`forgeue_finish_gate.py::_check_skill_cascade` fence 守门 audit。
+
+### Preflight Task Granularity(D-TaskGranularityDeclaration)
+
+Controller MUST 在 dispatch 前显式声明本次 task 粒度,枚举值 `phase` / `per-file` / `sub-task`:
+
+- `phase` — 整个 phase(如 P0/P1/P2)整体作为 1 implementer dispatch(本命令常用模式)
+- `per-file` — 每个修改文件 1 implementer dispatch(独立 file scope 时改走 `/forgeue:change-apply-parallel`)
+- `sub-task` — tasks.md 每个 `- [ ] X.Y` 1 implementer dispatch(细粒度 fresh context)
+
+evidence frontmatter MUST 加 `task_granularity: <value>` 字段;`forgeue_finish_gate.py::_check_task_granularity` fence 守门。
+
+### Preflight 协议版本标记(D-ProtocolVersionMigration)
+
+evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段。此字段触发 4 fence(`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`)生效;无此字段的 evidence 视为 legacy,fence pass-through(archived enhance-workflow-automation 等历史 change replay 兼容)。
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`(同 change-plan 步骤 1)。

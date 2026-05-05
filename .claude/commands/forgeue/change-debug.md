@@ -9,6 +9,23 @@ S4 实施过程中遇到 bug / 测试失败 / 意外行为时显式调用 Superp
 
 **Input**: 必须指定 change name(`/forgeue:change-debug <id>`);可选附加 bug 描述。
 
+## Preflight Skill Cascade(D-SkillCascadeCheck)
+
+本命令 invoke `superpowers:systematic-debugging` SKILL(沿 Step 4);实施前 controller MUST 验证主 SKILL declared dependency 全 invoke。
+
+强制项(在 Step 4 invoke `systematic-debugging` 之前执行):
+
+```bash
+python tools/forgeue_skill_cascade_check.py \
+    --skill superpowers:systematic-debugging \
+    --invoked superpowers:test-driven-development,superpowers:verification-before-completion
+```
+
+- exit 0 → cascade OK
+- exit 5 → missing dependency → 命令 abort + 提示主动 invoke 缺失 SKILL 后 retry
+
+evidence frontmatter MUST 加 `skill_cascade_audit` 字段(对象,含 `invoked_skills` list + `cascade_check_pass_at` ISO 8601 timestamp)+ `runtime_enforcement_protocol_version: v1`;`forgeue_finish_gate.py::_check_skill_cascade` fence 守门 audit。
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`;debug 不强依赖 codex,non-claude-code env 仍可跑(无 codex hook)。

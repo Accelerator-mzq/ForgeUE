@@ -9,6 +9,25 @@ S6→S7 transition:Documentation Sync Gate(沿 `docs/ai_workflow/README.md` §4 
 
 **Input**: 必须指定 change name(`/forgeue:change-doc-sync <id>`)。
 
+## Preflight Skill Cascade(D-SkillCascadeCheck)
+
+本命令 invoke `forgeue-doc-sync-gate` SKILL(ForgeUE 自家 SKILL,backbone 是 `forgeue-integrated-change-workflow`);实施前 controller MUST 验证主 SKILL declared dependency 全 invoke。
+
+强制项(在 Step 主流程 invoke `forgeue-doc-sync-gate` 之前执行):
+
+```bash
+python tools/forgeue_skill_cascade_check.py \
+    --skill forgeue-doc-sync-gate \
+    --invoked forgeue-integrated-change-workflow
+```
+
+- exit 0 → cascade OK
+- exit 5 → missing dependency → 命令 abort + 提示主动 invoke 缺失 SKILL 后 retry
+
+evidence frontmatter(`doc_sync_report.md`)MUST 加 `skill_cascade_audit` 字段 + `runtime_enforcement_protocol_version: v1`。
+
+> **跨 plugin 兼容**:`forgeue_skill_cascade_check.py` 多 root probe 链(D-SkillRootMultiSource)在 `.claude/skills` repo-local + Anthropic plugin cache + Codex 自定义路径之间自动 fallback;本命令在不同 IDE / agent 环境跑都能命中正确 SKILL.md。
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`。

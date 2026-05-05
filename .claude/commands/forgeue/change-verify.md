@@ -9,6 +9,23 @@ S4→S5 transition:跑 Level 0/1/2 验证(`forgeue_verify` 编排 pytest / live 
 
 **Input**: 必须指定 change name(`/forgeue:change-verify <id> --level 0|1|2`);默认 `--level 0`。
 
+## Preflight Skill Cascade(D-SkillCascadeCheck)
+
+本命令 invoke `superpowers:verification-before-completion` SKILL(沿 Step 4);实施前 controller MUST 验证主 SKILL declared dependency 全 invoke。
+
+强制项(在 Step 4 invoke `verification-before-completion` 之前执行):
+
+```bash
+python tools/forgeue_skill_cascade_check.py \
+    --skill superpowers:verification-before-completion \
+    --invoked superpowers:test-driven-development
+```
+
+- exit 0 → cascade OK
+- exit 5 → missing dependency → 命令 abort + 提示主动 invoke 缺失 SKILL 后 retry
+
+evidence frontmatter(`verify_report.md` 等)MUST 加 `skill_cascade_audit` 字段 + `runtime_enforcement_protocol_version: v1`;`forgeue_finish_gate.py::_check_skill_cascade` fence 守门 audit(仅对 implementation evidence 类型强制;`verify_report` 类型 fence pass-through,但本 Preflight 仍要求字段填写以保留 audit trail)。
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`;读 `auto_codex_review` / `codex_plugin_available`。

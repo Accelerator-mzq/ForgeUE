@@ -98,11 +98,11 @@ _NEG_OR_GUARD_MARKERS = (
 
 @pytest.fixture(scope="module")
 def cmd_files() -> list[Path]:
-    # Active 命令文件 = 9(post-task 2 split:change-apply-subagent +
-    # change-apply-direct;旧 change-apply.md frontmatter ``tags`` 标
-    # ``deprecated``,通过 tags-aware skip 排除)。
+    # Active 命令文件 = 10(post enhance-workflow-automation-runtime-enforcement P2.3:
+    # change-apply-subagent + change-apply-direct + change-apply-parallel;旧
+    # change-apply.md frontmatter ``tags`` 标 ``deprecated``,通过 tags-aware skip 排除)。
     files = sorted(p for p in CMD_DIR.glob("change-*.md") if not _is_deprecated(p))
-    assert len(files) == 9
+    assert len(files) == 10
     return files
 
 
