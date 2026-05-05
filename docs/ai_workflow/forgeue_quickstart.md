@@ -32,8 +32,9 @@ S1 (scaffold)        proposal/design/tasks/specs 起草 + strict validate
   │ /forgeue:change-plan <id>                    ← S2→S3 关键 stage
   ▼
 S2-S3 (plan ready)   codex design hook + cross-check + writing-plans 产 plan
-  │ /forgeue:change-apply-subagent <id>          ← default;subagent-driven-development + 4 类 evidence
-  │ /forgeue:change-apply-direct <id>            ← fallback;executing-plans + TDD(轻量 change / budget 紧张)
+  │ /forgeue:change-apply-subagent <id>          ← default;subagent-driven-development + 4 类 evidence + sequential dispatch
+  │ /forgeue:change-apply-parallel <id>          ← 并行(自 enhance-workflow-automation-runtime-enforcement);dispatching-parallel-agents;独立 task / file scope 不交叉时使用
+  │ /forgeue:change-apply-direct <id>            ← fallback;executing-plans + TDD(轻量 change / budget 紧张;主 worktree)
   │ /forgeue:change-debug <id>                   ← bug 时
   ▼
 S4 (impl in progress)  TDD + subagent-driven-development / executing-plans + 越界检测
@@ -108,20 +109,41 @@ S9 (archived)
 
 ---
 
-### 3.3 S3→S4-S5 实施(自 `adopt-subagent-driven-development` change 起,拆为 default subagent + fallback direct)
+### 3.3 S3→S4-S5 实施(自 `adopt-subagent-driven-development` change 起拆 subagent + direct;自 `enhance-workflow-automation-runtime-enforcement` change 起加 parallel — 三选一显式路由)
 
-**命令**(根据 change 复杂度显式选一,**不**走 env flag facade):
+**命令**(根据 change 复杂度 + task 独立性显式选一,**不**走 env flag facade):
 
 ```bash
-# default 路径:多 micro-task / 需要强 review checkpoint
+# default sequential 路径:多 micro-task / 需要强 review checkpoint
 /forgeue:change-apply-subagent <id>
 
-# fallback 路径:小 change(< 3 micro-task)/ budget 紧张
+# 并行 dispatch 路径:多独立 task / file scope 不交叉 / 无 sequential dep
+/forgeue:change-apply-parallel <id>
+
+# fallback 路径:小 change(< 3 micro-task)/ budget 紧张(主 worktree)
 /forgeue:change-apply-direct <id>
 
 # bug 时显式调 systematic-debugging
 /forgeue:change-debug <id>
 ```
+
+**路由决策树**(沿 design.md D-ParallelDispatch / D-DirectWorktreeRefinement):
+
+```
+是否多 task?
+  yes → 是否独立 file scope + 无 sequential dependency?
+    yes → /forgeue:change-apply-parallel(并行 dispatch;借用 dispatching-parallel-agents SKILL)
+    no  → /forgeue:change-apply-subagent(sequential per-task,fresh subagent;subagent-driven-development SKILL)
+  no(单 task / 微调)→ /forgeue:change-apply-direct(executing-plans + TDD;主 worktree)
+```
+
+> **Preflight 三项**(自 `enhance-workflow-automation-runtime-enforcement` change 起,D-PreflightProtocol;subagent + parallel 命令 3 段,direct 命令 2 段):
+>
+> 1. **Preflight Worktree**(D-WorktreeEnforce):invoke `Skill(superpowers:using-git-worktrees)` + cwd 切换 + `worktree_path` frontmatter 字段;**direct 沿 D-DirectWorktreeRefinement 不强制**
+> 2. **Preflight Skill Cascade**(D-SkillCascadeCheck):跑 `tools/forgeue_skill_cascade_check.py` 验证主 SKILL declared dependency 全 invoke + `skill_cascade_audit` frontmatter 字段
+> 3. **Preflight Task Granularity**(D-TaskGranularityDeclaration):controller 显式声明 `task_granularity: phase|per-file|sub-task` + frontmatter 字段
+>
+> 任一 preflight fail → 命令 abort + 详细错误。evidence frontmatter 必加 `runtime_enforcement_protocol_version: v1` 标记触发 4 fence 生效;无此字段视为 legacy(fence pass-through)。
 
 **做什么(`change-apply-subagent` default 路径)**:
 - codex plan review hook → `review/codex_plan_review.md`

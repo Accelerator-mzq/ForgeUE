@@ -305,6 +305,48 @@ Codex round N 输出顶层 `verdict ∈ {approve, needs-attention}`,Claude cross
 - **Self-host bootstrap 豁免** — 本 change 实施期间 fence 命令模板还没落地时,controller 临时在 planning layer 自检 6 类 trigger(沿 D-SelfHost 模式);archive 后走命令模板
 - **`claude_codex_concurred` 必须先拿 codex result** — controller MUST 先 `/codex:status --wait <job>` 确认 done + `/codex:result <job>` 拿完整 output,否则改 `user_required`
 
+### C.7 Runtime Enforcement Protocol(自 `enhance-workflow-automation-runtime-enforcement` change 起,2026-05-05)
+
+本 change 引入 4 个 runtime fence + 1 个新命令 + 8 个 Preflight section,把原本 declared-only 的 Layer 6 cascade dependency / worktree isolation / round 2 continuity / task granularity 转为 advisory enforcement(命令模板显式步骤 + LLM 自报 frontmatter declaration + finish_gate audit;详见 design.md R6 advisory not deterministic limitation,真 deterministic enforcement 留 follow-on `enhance-workflow-automation-executable-enforcement`)。
+
+**4 fence**(`tools/forgeue_finish_gate.py`):
+
+| Fence | D-decision | 检查 evidence frontmatter |
+|---|---|---|
+| `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp) |
+| `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict(round_1/2 implementer_id + reviewer_id 一致) |
+| `_check_task_granularity` | D-TaskGranularityDeclaration | `task_granularity` ∈ {phase, per-file, sub-task} |
+| `_check_worktree_path` | D-WorktreeEnforce | `worktree_path` non-null(仅当 `triggered_by_command` ∈ {change-apply-subagent, change-apply-parallel}) |
+
+**Protocol gating**(D-ProtocolVersionMigration):4 fence 仅对含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效;legacy archived evidence 全 pass-through,确保 archived `enhance-workflow-automation` 等历史 change replay 不被 false-block。
+
+**新命令 `/forgeue:change-apply-parallel`**(D-ParallelDispatch):invoke `superpowers:dispatching-parallel-agents` SKILL,暴露**并行 dispatch 路径**;controller 显式判定 task 独立(`task_independence_assertion: true` + `task_files_disjoint: [<file-set>...]`,命令前自动 verify file overlap → 任一交集 abort)后路由。借用模式 disclaimer:SKILL 描述 debugging-focused,implementation 借用同款"独立 domain → parallel"模式。
+
+**8 个 Preflight section**(D-PreflightProtocol):
+
+| 命令 | Preflight Worktree | Preflight Skill Cascade | Preflight Task Granularity |
+|---|---|---|---|
+| `change-apply-subagent` | ✓ | ✓ | ✓ |
+| `change-apply-parallel` | ✓ | ✓ | ✓ |
+| `change-apply-direct` | **N/A**(D-DirectWorktreeRefinement)| ✓ | ✓ |
+| `change-plan` / `change-debug` / `change-verify` / `change-review` / `change-doc-sync` | — | ✓ | — |
+| `change-finish` / `change-status` | — | **N/A**(纯工具 / 只读)| — |
+| codex `/review` / `/adversarial-review` | — | **N/A**(纯 codex CLI dispatch,disclaimer)| — |
+
+**D-DirectWorktreeRefinement**(2026-05-05 user 拍板):`change-apply-direct` 沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项**仍跑在主 worktree**(direct 是 < 3 micro-task 轻量 fallback,worktree 创建 + commit-before-worktree + squash merge 收尾的 ~10-20s 开销不划算)。`forgeue_finish_gate.py::_check_worktree_path` fence 在 direct evidence 上 pass-through。
+
+**状态机**(B.1):S2→S3 / S3→S4-S5 / S4 stage 进入命令时多了 **Preflight phase**,任一 preflight fail → 命令 abort + 详细错误,不进入 Steps 主流程。Preflight 失败不算 stage 推进;controller 修 SKILL invoke / worktree / task granularity declaration 后 retry。
+
+**新 evidence frontmatter 字段**(本 change 引入):
+- `runtime_enforcement_protocol_version: v1`(协议版本标记;触发 4 fence 生效)
+- `worktree_path`(D-WorktreeEnforce)
+- `skill_cascade_audit`(D-SkillCascadeCheck;dict)
+- `subagent_continuity`(D-RoundFixContinuity;dict)
+- `task_granularity`(D-TaskGranularityDeclaration)
+- `task_independence_assertion` + `task_files_disjoint`(仅 `change-apply-parallel`)
+
+完整规则见 OpenSpec change `enhance-workflow-automation-runtime-enforcement/design.md` D-WorktreeEnforce / D-DirectWorktreeRefinement / D-SkillCascadeCheck / D-RoundFixContinuity / D-TaskGranularityDeclaration / D-ParallelDispatch / D-PreflightProtocol / D-ProtocolVersionMigration 决策。
+
 ---
 
 ## D. Documentation Sync Gate

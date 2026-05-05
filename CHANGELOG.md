@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Workflow runtime enforcement layer**(2026-05-05,OpenSpec change `enhance-workflow-automation-runtime-enforcement`):
+  - **ADR-011**(`docs/requirements/SRS.md` + `docs/acceptance/acceptance_report.md` ADR table):D-WorktreeEnforce + D-DirectWorktreeRefinement + D-SkillCascadeCheck + D-RoundFixContinuity + D-TaskGranularityDeclaration + D-ParallelDispatch + D-PreflightProtocol + D-ProtocolVersionMigration 合记 ADR — runtime enforcement layer 把 declared-only Layer 6 cascade dependency / worktree isolation / round 2 continuity / task granularity 转为 advisory enforcement(命令模板显式步骤 + LLM 自报 frontmatter declaration + finish_gate audit)
+  - **新命令 `/forgeue:change-apply-parallel`**(D-ParallelDispatch):invoke Superpowers `dispatching-parallel-agents` SKILL(借用 pattern;debugging-focused → implementation 借用),controller 显式判定 task 独立(`task_independence_assertion: true` + `task_files_disjoint: [<file-set>...]`,命令前自动 verify file overlap → 任一交集 abort)后路由;Active forgeue 命令数从 9 → 10
+  - **D-DirectWorktreeRefinement**(2026-05-05 user 拍板):`change-apply-direct` 沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项**仍跑在主 worktree**(direct 是 < 3 micro-task 轻量 fallback,worktree 创建 ~10-20s 开销不划算);drift writeback commit `15ae851`(双向 spec.md / design.md / finish_gate fence / 测试一并落账)
+  - **新工具 `tools/forgeue_skill_cascade_check.py`**(stdlib only,384 lines):静态扫 SKILL.md `## Integration` 段验证 dependency 全 invoke;8 root probe 链(CLI flag / env var / repo-local / Anthropic plugin cache 最新 version / 其他 plugin / Codex / `${CODEX_HOME}` / `.agents/skills`)
+  - **新增 4 runtime fence**(`tools/forgeue_finish_gate.py`):`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity` / `_check_worktree_path`;protocol gate `runtime_enforcement_protocol_version: v1`,无此字段视为 legacy(fence pass-through;archived `enhance-workflow-automation` 等历史 change replay 兼容)
+  - **8 个 SKILL-invoke 命令 Preflight section**(D-PreflightProtocol):subagent + parallel 含 3 段(Worktree + Skill Cascade + Task Granularity);direct 含 2 段(Skill Cascade + Task Granularity;沿 D-DirectWorktreeRefinement 不含 Worktree);plan/debug/verify/review/doc-sync 含 1 段(Skill Cascade);change-finish + change-status + codex /review + /adversarial-review 不含(纯工具 / 只读 / 纯 codex CLI dispatch,disclaimer 路径)
+  - **新增 evidence frontmatter 字段**:`runtime_enforcement_protocol_version: v1`(协议版本标记)/ `worktree_path`(D-WorktreeEnforce + D-DirectWorktreeRefinement)/ `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp)/ `subagent_continuity` dict(round 1/2 implementer + reviewer ID)/ `task_granularity` ∈ {phase, per-file, sub-task} / `task_independence_assertion` + `task_files_disjoint`(仅 parallel)
+  - **`_common.py::_parse_yaml_subset`**:扩 nested mapping 解析支持 `subagent_continuity` / `skill_cascade_audit` dict 字段(纯加性 — 仅当 raw 空 + 下一非空缩进行非 `- item` 时进 nested 分支;不破坏现有解析路径)
+  - **真 deterministic enforcement 留 follow-on `enhance-workflow-automation-executable-enforcement`**:R6(advisory not deterministic limitation;codex round 1 F1/F2/F3 揭示 markdown enforcement is advisory not deterministic — controller 跳过 markdown step 时 subagent 已修改 + finish_gate 是 archive 时才扫,无法 abort)— W1 executable preflight wrapper + machine-generated receipt JSON / W2 actual changed-files diff overlap detection / W3 dispatch ledger 命令层 wrapper 写
+  - **11 处文档同步**:
+    - `docs/ai_workflow/forgeue_integrated_ai_workflow.md` 加 §C.7 "Runtime Enforcement Protocol"(4 fence 表 + protocol gating + 新命令 + 8 Preflight section 表 + D-DirectWorktreeRefinement)
+    - `docs/ai_workflow/README.md` §4 加 §4.4-bis "Runtime Enforcement"
+    - `docs/ai_workflow/forgeue_quickstart.md` S2/S3/S4-S5 加 路由决策树 + Preflight 三项摘要 + change-apply-parallel 命令引用
+    - `CLAUDE.md` `## OpenSpec 工作流` 命令清单从 9 → 10(加 `/forgeue:change-apply-parallel` 行 + D-DirectWorktreeRefinement 修订 direct 行);工具清单从 6 → 7(加 `forgeue_skill_cascade_check.py`);finish_gate 描述加 4 runtime fence + protocol gate;新增 "Runtime enforcement frontmatter 字段" 段
+    - `README.md` ForgeUE Workflow 表 9 → 10 命令(加 `/forgeue:change-apply-parallel` + D-DirectWorktreeRefinement direct 修订);6 → 7 工具(加 cascade check);新增 ADR-011 摘要段
+    - `AGENTS.md` 加 4 条 runtime enforcement 摘要(parallel 命令 / 8 SKILL-invoke 命令 Preflight section / 4 runtime fence / cascade check 工具)
+    - `CHANGELOG.md` [Unreleased] 加本 change entry(当前条目)
+    - `.claude/skills/forgeue-integrated-change-workflow/SKILL.md` 加 runtime enforcement + 新命令 + 4 fence 段
+    - `docs/requirements/SRS.md` 加 ADR-011 行(沿 ADR-007/008/009/010 格式)
+    - `docs/acceptance/acceptance_report.md` 加 ADR-011 status 行
+    - `openspec/specs/examples-and-acceptance/spec.md` 留 archive 时 openspec 自动 sync(P10 archive 协议)
+  - **主要 commit SHA**:3b7728e(P0 forgeue_skill_cascade_check + 18 fence)/ 6157752(P1 4 runtime fence + 16 fence test)/ 15ae851(D-DirectWorktreeRefinement drift writeback)/ c23f638(P2 Preflight sections + change-apply-parallel + 7 fence test)/ 0dc400d(P3 codex disclaimer + 1 fence test)
+  - **测试覆盖**:以 `python -m pytest -q` 实测为准(skill_cascade_check 18 fence + finish_gate 16 runtime fence + command_markdown 7 P2 fence + codex_command_markdown 1 P3 fence,全套 1529+ passed)
+
 - **Workflow autonomy boundary + default background codex review**(2026-05-05,OpenSpec change `enhance-workflow-automation`):
   - **ADR-010**(`docs/requirements/SRS.md` + `docs/acceptance/acceptance_report.md` ADR table):D-AutonomyBoundary "Workflow autonomy boundary fence" — Claude 默认拍板 + 自动 codex 二次验证 + 6 类 fence 升级用户(不可逆 / 跨 change / Claude+Codex 冲突 / 用户约束 / 钱 / 安全)
   - **D-DefaultBackground**:`/codex:review` / `/codex:adversarial-review` 默认 background 分发;仅全部 3 条满足(≤2 files / ≤50 lines / 非 adversarial / 下一步必须等结果)才前台 wait;命令模板保留 `--wait` / `--background` 显式 flag;background 启动 job id 写 `notes/<review_type>_active_jobs.txt`;**移除 "Do not call BashOutput" 矛盾文本**,替换为 "Main session MUST poll job before consuming verdict via /codex:status --wait + /codex:result"

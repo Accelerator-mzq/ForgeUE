@@ -8,7 +8,7 @@ metadata:
   version: "1.0"
 ---
 
-ForgeUE Integrated AI Change Workflow 的中心化编排器。本 skill 是 9 个 `/forgeue:change-*` command(`change-{status,plan,apply-subagent,apply-direct,debug,verify,review,doc-sync,finish}`;自 `adopt-subagent-driven-development` change 起,`change-apply` 拆为 subagent default + direct fallback 两条路径)的共享 backbone:统一架构 + 状态机 + 协议,每个 command 只引用本 skill,不重复定义。
+ForgeUE Integrated AI Change Workflow 的中心化编排器。本 skill 是 10 个 `/forgeue:change-*` command(`change-{status,plan,apply-subagent,apply-parallel,apply-direct,debug,verify,review,doc-sync,finish}`;自 `adopt-subagent-driven-development` change 起拆 subagent + direct;自 `enhance-workflow-automation-runtime-enforcement` change 起加 parallel,共 10)的共享 backbone:统一架构 + 状态机 + 协议,每个 command 只引用本 skill,不重复定义。
 
 **真源**:`openspec/changes/fuse-openspec-superpowers-workflow/design.md` §1-§11 + Reasoning Notes;`docs/ai_workflow/forgeue_integrated_ai_workflow.md`(本 skill 的 user-facing 详表 + 阅读引导)。
 
@@ -42,8 +42,9 @@ OpenSpec contract artifact 是项目唯一规范锚点;Superpowers / codex / For
 | `requesting-code-review` | S5-S6 | superpowers_review 增量 + finalize |
 | `verification-before-completion` | S5 | verify_report 输入 |
 | `finishing-a-development-branch` | S9 后 | git 层 merge / PR / discard;不进 evidence |
-| `using-git-worktrees` | **REQUIRED for `/forgeue:change-apply-subagent`**(自 `adopt-subagent-driven-development` change 起) | 起 isolated worktree;详 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支) |
-| `subagent-driven-development` | **default for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational) | 4× LLM 调用;per-task 4 类 evidence + `subagent_budget.log`;ADR-009 与 ADR-007 vendor API 双扣边界**根本不同** |
+| `using-git-worktrees` | **REQUIRED for `/forgeue:change-apply-subagent` + `/forgeue:change-apply-parallel`**(`change-apply-direct` 沿 D-DirectWorktreeRefinement 不强制) | 起 isolated worktree;详 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支) |
+| `subagent-driven-development` | **default sequential for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational) | 4× LLM 调用;per-task 4 类 evidence + `subagent_budget.log`;ADR-009 与 ADR-007 vendor API 双扣边界**根本不同** |
+| `dispatching-parallel-agents` | **for `/forgeue:change-apply-parallel`**(自 `enhance-workflow-automation-runtime-enforcement` change 起;借用 pattern,debugging-focused → implementation 借用) | 并行 dispatch implementer subagents;controller 显式判定 task 独立后路由(`task_independence_assertion: true` + `task_files_disjoint`,命令前自动 verify file overlap)|
 
 ## Autonomy Boundary Protocol(ADR-010,自 `enhance-workflow-automation` change 起)
 
@@ -71,6 +72,37 @@ Claude 默认拍板执行 + 同步 invoke codex 二次验证。**6 类 fence 无
 **Codex 多轮 context bridge(D-CodexContextBridge)**:同 change_id + 同 review_type round N→N+1 prompt 首段自动注入 round N evidence reference;round counter 落 `notes/codex_<review_type>_round_counter.txt`;跨 change / 跨 review_type 绝不共享。
 
 完整协议见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C Autonomy Boundary Protocol。
+
+## Runtime Enforcement Protocol(ADR-011,自 `enhance-workflow-automation-runtime-enforcement` change 起)
+
+**4 fence**(`tools/forgeue_finish_gate.py`):
+
+| Fence | D-decision | evidence frontmatter 检查 |
+|---|---|---|
+| `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp)|
+| `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict(round 1/2 implementer + reviewer ID 一致)|
+| `_check_task_granularity` | D-TaskGranularityDeclaration | `task_granularity` ∈ {phase, per-file, sub-task} |
+| `_check_worktree_path` | D-WorktreeEnforce + D-DirectWorktreeRefinement | `worktree_path` non-null(仅 subagent + parallel 强制;direct 沿 archived 第 5 项 pass-through)|
+
+**Protocol gating**(D-ProtocolVersionMigration):4 fence 仅对含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效;legacy archived evidence 全 pass-through。
+
+**8 个 SKILL-invoke 命令 Preflight section**(D-PreflightProtocol):
+
+| 命令 | Preflight Worktree | Preflight Skill Cascade | Preflight Task Granularity |
+|---|---|---|---|
+| `change-apply-subagent` / `change-apply-parallel` | ✓ | ✓ | ✓ |
+| `change-apply-direct` | **N/A**(D-DirectWorktreeRefinement)| ✓ | ✓ |
+| `change-plan` / `change-debug` / `change-verify` / `change-review` / `change-doc-sync` | — | ✓ | — |
+| `change-finish` / `change-status` | — | **N/A**(纯工具 / 只读)| — |
+| codex `/review` / `/adversarial-review` | — | **N/A**(纯 codex CLI dispatch,disclaimer)| — |
+
+**新增 evidence frontmatter 字段**:`runtime_enforcement_protocol_version: v1`(协议版本标记)/ `worktree_path` / `skill_cascade_audit` / `subagent_continuity` / `task_granularity` / `task_independence_assertion` + `task_files_disjoint`(仅 parallel)。
+
+**新增工具 `tools/forgeue_skill_cascade_check.py`**:静态扫 SKILL.md `## Integration` 段验证 dependency 全 invoke;8 root probe 链 fallback。
+
+**真 deterministic enforcement** 留 follow-on `enhance-workflow-automation-executable-enforcement`(W1 executable preflight wrapper / W2 changed-files diff overlap detection / W3 dispatch ledger);本 change 实装是 advisory not deterministic(R6 limitation)。
+
+完整规则见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C.7 Runtime Enforcement Protocol。
 
 ## codex stage hook(design.md §3 / §4 / forgeue_integrated_ai_workflow.md §B.4)
 

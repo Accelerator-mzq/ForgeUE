@@ -196,6 +196,31 @@ D. 建议 patch
 
 完整协议见 [`forgeue_integrated_ai_workflow.md` §C Autonomy Boundary Protocol](forgeue_integrated_ai_workflow.md)。
 
+### 4.4-bis Runtime Enforcement(自 `enhance-workflow-automation-runtime-enforcement` change 起,2026-05-05)
+
+ForgeUE workflow 在 D-AutonomyBoundary 简化协议之上引入 **runtime enforcement layer**(advisory not deterministic — 命令模板显式步骤 + LLM 自报 frontmatter declaration + finish_gate audit),涵盖 4 维 fence + 1 个新命令 + 8 个 Preflight section:
+
+**4 fence**(`tools/forgeue_finish_gate.py`):
+
+- `_check_skill_cascade` — implementation evidence MUST 含 `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp);`tools/forgeue_skill_cascade_check.py` 工具静态扫 SKILL.md `## Integration` 段验证 dependency 全 invoke
+- `_check_round_fix_continuity` — `subagent-driven-development` 协议 round 2 fix MUST `SendMessage` to same implementer;round 2 reviewer re-review MUST 给 same reviewer;evidence frontmatter `subagent_continuity` dict 记录 round 1/2 agent ID
+- `_check_task_granularity` — Controller MUST 在 `/forgeue:change-apply-*` 命令调用时显式声明 task 粒度(`phase` / `per-file` / `sub-task`)
+- `_check_worktree_path` — implementation evidence by `change-apply-{subagent,parallel}` MUST 含 `worktree_path` 字段(non-null);`change-apply-direct` 沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项不强制(D-DirectWorktreeRefinement)
+
+**Protocol gating**(D-ProtocolVersionMigration):4 fence 仅对含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效;legacy archived evidence 全 pass-through。
+
+**新命令 `/forgeue:change-apply-parallel`**(D-ParallelDispatch):invoke `superpowers:dispatching-parallel-agents` SKILL,暴露并行 dispatch 路径;controller 显式判定 task 独立后路由(`task_independence_assertion: true` + `task_files_disjoint: [<file-set>...]` 字段;命令前自动 verify file overlap)。Active forgeue 命令数从 9 → 10。
+
+**8 Preflight section**(D-PreflightProtocol;命令模板首段强制):
+- `change-apply-subagent` / `change-apply-parallel` 含 3 段(Worktree + Skill Cascade + Task Granularity)
+- `change-apply-direct` 含 2 段(Skill Cascade + Task Granularity;沿 D-DirectWorktreeRefinement 不含 Worktree)
+- `change-plan` / `change-debug` / `change-verify` / `change-review` / `change-doc-sync` 含 1 段(Skill Cascade)
+- `change-finish` / `change-status` / codex `/review` / `/adversarial-review` 不含(纯工具 / 只读 / 纯 codex CLI dispatch,disclaimer 路径)
+
+**真 deterministic enforcement** 留 follow-on `enhance-workflow-automation-executable-enforcement`(W1 executable preflight wrapper + machine-generated receipt JSON / W2 actual changed-files diff overlap detection / W3 dispatch ledger 命令层 wrapper)。
+
+完整规则见 [`forgeue_integrated_ai_workflow.md` §C.7 Runtime Enforcement Protocol](forgeue_integrated_ai_workflow.md) + ADR-011。
+
 ### 4.5 tasks.md 必含段模板
 
 每个 change 的 `tasks.md` 末尾必须含:

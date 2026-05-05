@@ -84,17 +84,17 @@
 
 ## P4 — 11 处文档同步(沿 enhance-workflow-automation P3 模式)
 
-- [ ] P4.1:`docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C 加 D-ParallelDispatch / D-WorktreeEnforce / D-SkillCascadeCheck 描述;状态机加 preflight phase
-- [ ] P4.2:`docs/ai_workflow/README.md` §4 加 runtime enforcement 摘要
-- [ ] P4.3:`docs/ai_workflow/forgeue_quickstart.md` S2/S3/S4-S5 stage 加 preflight 说明
-- [ ] P4.4:`CLAUDE.md` `## OpenSpec 工作流` § 加 runtime enforcement 摘要 + change-apply-parallel 命令引用
-- [ ] P4.5:`README.md` 工作流概述加并行 / worktree 说明
-- [ ] P4.6:`AGENTS.md` 同步 runtime enforcement
-- [ ] P4.7:`CHANGELOG.md` `[Unreleased]` 加本 change entry
-- [ ] P4.8:`.claude/skills/forgeue-integrated-change-workflow/SKILL.md` 同步
-- [ ] P4.9:`docs/requirements/SRS.md` 加 ADR-011 行(沿 ADR-007/008/009/010 格式)
-- [ ] P4.10:`docs/acceptance/acceptance_report.md` 加 ADR-011 status 行
-- [ ] P4.11:`openspec/specs/examples-and-acceptance/spec.md` — sync archive 时 auto-sync(本 task 不动)
+- [x] P4.1:`docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C 加 §C.7 "Runtime Enforcement Protocol"(4 fence 表 + protocol gating + 新命令 `/forgeue:change-apply-parallel` + 8 Preflight section 表 + D-DirectWorktreeRefinement 摘要 + advisory not deterministic R6 limitation)
+- [x] P4.2:`docs/ai_workflow/README.md` §4 加 §4.4-bis "Runtime Enforcement"(4 fence 列表 + protocol gating + 新命令 + 8 Preflight section + follow-on `enhance-workflow-automation-executable-enforcement` 引用)
+- [x] P4.3:`docs/ai_workflow/forgeue_quickstart.md` S3→S4-S5 stage 加 路由决策树(parallel / subagent / direct 三选一)+ Preflight 三项摘要 + change-apply-parallel 命令引用;§2 全景图加 parallel 命令行
+- [x] P4.4:`CLAUDE.md` `## OpenSpec 工作流` 段:命令清单 9→10(加 `/forgeue:change-apply-parallel` 行 + D-DirectWorktreeRefinement 修订 direct 行);工具清单 6→7(加 `forgeue_skill_cascade_check.py`);finish_gate 描述加 4 runtime fence + protocol gate;新增 "Runtime enforcement frontmatter 字段" 段
+- [x] P4.5:`README.md` ForgeUE Workflow 表 9→10 命令(加 `/forgeue:change-apply-parallel` + D-DirectWorktreeRefinement direct 修订);6→7 工具(加 cascade check);新增 ADR-011 摘要段
+- [x] P4.6:`AGENTS.md` 加 4 条 runtime enforcement 摘要(parallel 命令 / 8 SKILL-invoke 命令 Preflight section / 4 runtime fence / cascade check 工具)
+- [x] P4.7:`CHANGELOG.md` `[Unreleased]` 加本 change entry(完整覆盖 ADR-011 + 4 fence + 新命令 + 8 Preflight + 5 commit SHA + 测试覆盖)
+- [x] P4.8:`.claude/skills/forgeue-integrated-change-workflow/SKILL.md` 同步:命令清单 9→10;Superpowers 集成边界表加 `dispatching-parallel-agents` 行 + 改 `using-git-worktrees` 行说明 direct 不强制;新增 "Runtime Enforcement Protocol(ADR-011)" 段
+- [x] P4.9:`docs/requirements/SRS.md` 加 ADR-011 行(沿 ADR-007/008/009/010 格式;含 8 D-decision 摘要 + advisory not deterministic R6 + follow-on 引用 + D-DirectWorktreeRefinement drift writeback commit `15ae851` 标记)
+- [x] P4.10:`docs/acceptance/acceptance_report.md` 加 ADR-011 status 行(✅ 已实装,全条目对应 SRS ADR-011)
+- [x] P4.11:`openspec/specs/examples-and-acceptance/spec.md` — sync archive 时 auto-sync(本 task 不动;P10 archive 协议处理)
 
 ## P5 — verify
 
