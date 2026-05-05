@@ -1,0 +1,138 @@
+# Tasks — enhance-workflow-automation-runtime-enforcement
+
+## Pre-P0(self-host bootstrap;沿 D-SelfHost 模式;**本 change 实施期间 sequential dispatch**因为 parallel 协议未 land)
+
+- [ ] Pre-P0.1:`/codex:adversarial-review` round 1 挑战 D-ParallelDispatch / D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity / D-TaskGranularityDeclaration / D-PreflightProtocol 6 个 D-decision + Open Questions OQ-1/2/3
+- [ ] Pre-P0.2:落 `notes/pre_p0/codex_review_round1.md` evidence
+- [ ] Pre-P0.3:Claude 独立验证 codex finding(file:line 引用)+ verdict 矩阵
+- [ ] Pre-P0.4:writeback finding 到 design.md / proposal.md / spec.md / tasks.md(double-commit)
+- [ ] Pre-P0.5:落 `notes/pre_p0/plan_cross_check.md`(plan-level cross-check 覆盖 design + plan + spec + tasks 四 scope)
+- [ ] Pre-P0.6:`disputed_open: 0` 验证
+
+## P0 — `tools/forgeue_skill_cascade_check.py` 新建 + 测试 fence
+
+- [ ] P0.1:Read 一个 sample SKILL.md(`subagent-driven-development` / `using-git-worktrees`)了解 `## Integration` 段格式
+- [ ] P0.2:加 `tools/forgeue_skill_cascade_check.py`(stdlib only):
+  - argparse:`--skill <name>` + `--invoked <comma-separated-skill-list>`
+  - SKILL.md 路径推断:`~/.claude/plugins/cache/claude-plugins-official/superpowers/<version>/skills/<skill-name>/SKILL.md`(version 拿最新)
+  - 解析 `## Integration` 段 / `**Required workflow skills:**` 子段 / `**Required:**` 标记
+  - 输出 missing dependency 列表 + exit 0 / 5
+- [ ] P0.3:加 `tests/unit/test_skill_cascade_check.py`(新建)fence:
+  - `test_cascade_check_invokes_dependencies_resolves` — sample SKILL with deps + all invoked → exit 0
+  - `test_cascade_check_missing_dependency_blocks` — sample SKILL with deps + partial invoked → exit 5 + 列出 missing
+  - `test_cascade_check_no_integration_section_skip` — sample SKILL 无 `## Integration` 段 → exit 0(无 dependency)
+  - `test_cascade_check_unknown_skill_error` — `--skill` 不存在 → exit 非 0
+  - `test_cascade_check_robust_to_section_format_drift` — sample SKILL `## Integration` 段格式略变(空格 / 大小写) → 仍能解析
+- [ ] P0.4:`pytest -q tests/unit/test_skill_cascade_check.py` 全绿
+- [ ] P0.5:`pytest -q` 全套 regress
+
+## P1 — `forgeue_finish_gate.py` 加 3 fence + 测试
+
+- [ ] P1.1:Read `tools/forgeue_finish_gate.py` 现状(P5/F5/F7 simplified protocol 之后版)
+- [ ] P1.2:加 `_check_skill_cascade(evidence_path: Path, frontmatter: dict, change_root: Path) -> list[str]` fence:
+  - `skill_cascade_audit` 字段存在
+  - 字段是 dict + 含 `invoked_skills` (list) + `cascade_check_pass_at` (ISO timestamp)
+  - implementation evidence(`_IMPLEMENTATION_EV_TYPES`)缺该字段 → 错误
+- [ ] P1.3:加 `_check_round_fix_continuity` fence:
+  - `subagent_continuity` 字段存在(若 evidence_type 含 round 2 round 标识 / 或 evidence 内含 round 2 append 段)
+  - `round_2_fix_implementer_id == round_1_implementer_id`
+  - `round_2_review_reviewer_id == round_1_reviewer_id`
+- [ ] P1.4:加 `_check_task_granularity` fence:
+  - `task_granularity` 字段存在(implementation evidence)
+  - 值 ∈ `{phase, per-file, sub-task}`
+- [ ] P1.5:加 `_check_worktree_path` fence(D-WorktreeEnforce 配套):
+  - implementation evidence 来自 change-apply-* 命令 → MUST 含 `worktree_path` 字段(non-null)
+- [ ] P1.6:在 `check_frontmatter_protocol` 调用链插入 4 个新 fence
+- [ ] P1.7:加 `tests/unit/test_forgeue_finish_gate.py` fence:
+  - `test_skill_cascade_audit_missing_blocks`
+  - `test_skill_cascade_audit_invalid_structure_blocks`
+  - `test_round_fix_continuity_implementer_mismatch_blocks`
+  - `test_round_fix_continuity_reviewer_mismatch_blocks`
+  - `test_task_granularity_missing_blocks`
+  - `test_task_granularity_invalid_value_blocks`
+  - `test_worktree_path_missing_for_change_apply_blocks`
+- [ ] P1.8:`pytest -q tests/unit/test_forgeue_finish_gate.py` 全绿
+- [ ] P1.9:`pytest -q` 全套 regress
+
+## P2 — 9 + 1 forgeue 命令模板加 Preflight section
+
+- [ ] P2.1:`.claude/commands/forgeue/change-apply-subagent.md` 加 `## Preflight Worktree` + `## Preflight Skill Cascade` + `## Preflight Task Granularity` 三段
+- [ ] P2.2:`.claude/commands/forgeue/change-apply-direct.md` 同款 3 段
+- [ ] P2.3:**新建** `.claude/commands/forgeue/change-apply-parallel.md`(invoke `superpowers:dispatching-parallel-agents` SKILL)+ 3 段 Preflight + 借用模式 disclaimer + task independence assertion 协议
+- [ ] P2.4:`.claude/commands/forgeue/{change-status,change-plan,change-debug,change-verify,change-review,change-doc-sync,change-finish}.md`(7 个命令)加 `## Preflight Skill Cascade` 段(若命令 invoke SKILL;若纯只读如 change-status 跳过)
+- [ ] P2.5:`.claude/commands/forgeue/change-apply.md`(deprecated stub)— 加 deprecation 提示 update,引用 change-apply-parallel 作为新选项
+- [ ] P2.6:`tests/unit/test_forgeue_command_markdown.py` 加 fence:
+  - `test_each_apply_cmd_has_preflight_worktree_section`(3 个 apply 命令)
+  - `test_each_apply_cmd_has_preflight_skill_cascade_section`(3 个 apply 命令)
+  - `test_each_apply_cmd_has_preflight_task_granularity_section`(3 个 apply 命令)
+  - `test_change_apply_parallel_command_exists`(新文件存在 + 含 dispatching-parallel-agents skill 引用)
+  - `test_skill_invoking_cmds_have_preflight_skill_cascade`(7 个 + 3 个 = 10 个 SKILL-invoking 命令)
+- [ ] P2.7:`pytest -q tests/unit/test_forgeue_command_markdown.py` 全绿
+
+## P3 — codex 命令模板 同款 preflight skill cascade
+
+- [ ] P3.1:`.claude/commands/codex/review.md` + `adversarial-review.md` 加 `## Preflight Skill Cascade` 段(若有 SKILL invoke;若纯 codex CLI dispatch 则 N/A 但加 doc disclaimer)
+- [ ] P3.2:`tests/unit/test_codex_command_markdown.py` 加 fence(若适用)
+- [ ] P3.3:`pytest -q tests/unit/test_codex_command_markdown.py` 全绿
+
+## P4 — 11 处文档同步(沿 enhance-workflow-automation P3 模式)
+
+- [ ] P4.1:`docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C 加 D-ParallelDispatch / D-WorktreeEnforce / D-SkillCascadeCheck 描述;状态机加 preflight phase
+- [ ] P4.2:`docs/ai_workflow/README.md` §4 加 runtime enforcement 摘要
+- [ ] P4.3:`docs/ai_workflow/forgeue_quickstart.md` S2/S3/S4-S5 stage 加 preflight 说明
+- [ ] P4.4:`CLAUDE.md` `## OpenSpec 工作流` § 加 runtime enforcement 摘要 + change-apply-parallel 命令引用
+- [ ] P4.5:`README.md` 工作流概述加并行 / worktree 说明
+- [ ] P4.6:`AGENTS.md` 同步 runtime enforcement
+- [ ] P4.7:`CHANGELOG.md` `[Unreleased]` 加本 change entry
+- [ ] P4.8:`.claude/skills/forgeue-integrated-change-workflow/SKILL.md` 同步
+- [ ] P4.9:`docs/requirements/SRS.md` 加 ADR-011 行(沿 ADR-007/008/009/010 格式)
+- [ ] P4.10:`docs/acceptance/acceptance_report.md` 加 ADR-011 status 行
+- [ ] P4.11:`openspec/specs/examples-and-acceptance/spec.md` — sync archive 时 auto-sync(本 task 不动)
+
+## P5 — verify
+
+- [ ] P5.1:`python tools/forgeue_verify.py --change enhance-workflow-automation-runtime-enforcement --level 0` 全绿
+- [ ] P5.2:`--level 1` 全绿(pytest 全套)
+- [ ] P5.3:产 `verification/verify_report.md`(12-key audit frontmatter)
+
+## P6 — codex S6 mixed-scope review
+
+- [ ] P6.1:`/codex:review --base <pre-change-SHA>` mixed-scope 评(default background)
+- [ ] P6.2:落 `review/codex_mixed_scope_review.md`
+- [ ] P6.3:writeback finding(若有)
+- [ ] P6.4:`disputed_open: 0` 验证
+
+## P7 — 跳过 superpowers requesting-code-review(沿 enhance-workflow-automation 模式;per-task 已 cover)
+
+- [ ] P7.1:写 `review/superpowers_review.md` SKIP rationale stub
+
+## P8 — Documentation Sync Gate
+
+- [ ] P8.1:`python tools/forgeue_doc_sync_check.py --change <id>` 静态扫
+- [ ] P8.2:落 `verification/doc_sync_report.md` evidence
+- [ ] P8.3:任何 [DRIFT] 项 → 修复或显式 `drift_decision`
+
+## P9 — Finish Gate
+
+- [ ] P9.1:`python tools/forgeue_finish_gate.py --change <id>` 全检
+- [ ] P9.2:验证 12-key frontmatter 全填
+- [ ] P9.3:验证 cross-check `disputed_open: 0`
+- [ ] P9.4:验证 worktree_path / skill_cascade_audit / subagent_continuity / task_granularity 字段全填
+- [ ] P9.5:验证 writeback_commit 真实性
+- [ ] P9.6:验证 tasks.md 全 [x] 勾选(P11 follow-on 除外)
+- [ ] P9.7:`openspec validate <id> --strict` 全绿
+- [ ] P9.8:落 `verification/finish_gate_report.md`
+
+## P10 — Archive(用户授权)
+
+- [ ] P10.1:**用户授权确认**(D-AutonomyBoundary fence #1 不可逆)
+- [ ] P10.2:`openspec archive enhance-workflow-automation-runtime-enforcement --skip-specs --yes`
+- [ ] P10.3:手工 sync 5 ADDED Requirement 到 `openspec/specs/examples-and-acceptance/spec.md`(29 → 34 Requirements)
+- [ ] P10.4:`openspec validate examples-and-acceptance --strict` 全绿
+- [ ] P10.5:archive stub 加 cross_check fence-required frontmatter(沿 enhance-workflow-automation 模式)
+- [ ] P10.6:commit + push(用户授权 fence #1)
+
+## P11 — 后置(可选)
+
+- [ ] P11.1:更新 `MEMORY.md` 加 enhance-workflow-automation-runtime-enforcement 摘要
+- [ ] P11.2:实测验证 — 下次 change 应用本 change 协议跑一次,验证 wall-clock 节省 + protocol enforce
