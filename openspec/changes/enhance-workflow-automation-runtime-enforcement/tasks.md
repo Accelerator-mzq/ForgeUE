@@ -76,11 +76,11 @@
   - 配套 fixture 更新:`tests/unit/test_forgeue_command_markdown.py` + `tests/unit/test_forgeue_workflow_plugin_invocation.py` + `tests/unit/test_forgeue_workflow_no_paid_default.py` 中 active 命令计数 9 → 10
 - [x] P2.7:`pytest -q tests/unit/test_forgeue_command_markdown.py` 全绿(16 passed,原 9 + 新加 7 P2 fence);`pytest -q` 全套 regress 全绿(1528 passed + 1 skipped Windows symlink in 45.02s)
 
-## P3 — codex 命令模板 同款 preflight skill cascade
+## P3 — codex 命令模板 同款 preflight skill cascade(disclaimer 路径)
 
-- [ ] P3.1:`.claude/commands/codex/review.md` + `adversarial-review.md` 加 `## Preflight Skill Cascade` 段(若有 SKILL invoke;若纯 codex CLI dispatch 则 N/A 但加 doc disclaimer)
-- [ ] P3.2:`tests/unit/test_codex_command_markdown.py` 加 fence(若适用)
-- [ ] P3.3:`pytest -q tests/unit/test_codex_command_markdown.py` 全绿
+- [x] P3.1:`.claude/commands/codex/review.md` + `adversarial-review.md` 加 `## Preflight Skill Cascade — N/A` disclaimer section — codex 命令是纯 codex CLI dispatch(codex-companion broker 跑 GPT-5.4 review),**不 invoke Superpowers SKILL**,沿 D-SkillCascadeCheck disclaimer 协议 N/A;转移 cascade check 责任到 caller forgeue 命令
+- [x] P3.2:`tests/unit/test_codex_command_markdown.py` 加 `test_codex_cmds_have_preflight_skill_cascade_disclaimer` fence(锁住 disclaimer section 存在 + N/A 原因关键词 + caller 责任转移关键词)
+- [x] P3.3:`pytest -q tests/unit/test_codex_command_markdown.py` 全绿(11 passed,原 10 + 新 1);`pytest -q` 全套 regress 全绿(1529 passed + 1 skipped Windows symlink in 45.02s)
 
 ## P4 — 11 处文档同步(沿 enhance-workflow-automation P3 模式)
 

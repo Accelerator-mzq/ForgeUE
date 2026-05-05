@@ -17,6 +17,23 @@ Core constraint:
 - Your only job is to run the review and return Codex's output verbatim to the user.
 - Keep the framing focused on whether the current approach is the right one, what assumptions it depends on, and where the design could fail under real-world conditions.
 
+## Preflight Skill Cascade — N/A (D-SkillCascadeCheck disclaimer)
+
+This command is a **pure codex CLI dispatch** (codex-companion broker subprocess
+runs GPT-5.4 adversarial review), **invokes no Superpowers SKILL**, so the
+`## Preflight Skill Cascade` section is N/A — `tools/forgeue_skill_cascade_check.py`
+does not apply to this command.
+
+When ForgeUE controllers dispatch this command from
+`/forgeue:change-{plan,review}` etc., the Preflight Skill Cascade check is the
+**caller's** responsibility (verifying Superpowers SKILL dependencies of the
+caller command), and is not duplicated at this codex CLI layer.
+
+Evidence frontmatter MAY still carry `runtime_enforcement_protocol_version: v1`
+when the caller command is on the protocol v1 path; `forgeue_finish_gate.py::_check_skill_cascade`
+fence applies only to implementation evidence types (`codex_adversarial_review`
+type is fence pass-through and does not require the `skill_cascade_audit` field).
+
 ## review_type Enumeration
 
 <!-- P2.3 F1 writeback：5 类 review_type 独立 counter，防止不同 review subject 串用同一路径 -->

@@ -234,3 +234,49 @@ def test_active_jobs_capture_documented():
             f"{path.name} 缺少 `_active_jobs.txt` capture 指令"
             f"（background job id 必须 sticky 落到该文件）"
         )
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-runtime-enforcement P3.2 fence:
+# codex 命令 Preflight Skill Cascade disclaimer(D-SkillCascadeCheck)
+# ---------------------------------------------------------------------------
+
+
+def test_codex_cmds_have_preflight_skill_cascade_disclaimer():
+    """P3.2 fence:codex review + adversarial-review 是纯 codex CLI dispatch
+    (不 invoke Superpowers SKILL),沿 D-SkillCascadeCheck disclaimer 协议
+    必含 ``## Preflight Skill Cascade — N/A`` section + 显式说明 N/A 原因
+    + 转移 cascade check 责任到 caller forgeue 命令。
+
+    锁住此 disclaimer 行为防止后续 change 误把 codex 命令当作 Superpowers
+    SKILL invoke 路径处理(实际是 codex-companion broker 跑 GPT-5.4 review,
+    不走 Superpowers SKILL system)。
+    """
+    bad: list[str] = []
+    for path in (REVIEW_MD, ADVERSARIAL_MD):
+        body = _read(path)
+        # disclaimer section heading 存在(英文 em dash 与 ASCII 双连字符两种写法都接受)
+        if (
+            "## Preflight Skill Cascade — N/A" not in body
+            and "## Preflight Skill Cascade -- N/A" not in body
+        ):
+            bad.append(
+                f"{path.name}: missing '## Preflight Skill Cascade — N/A' disclaimer section"
+            )
+            continue
+        # 显式说明本命令是纯 CLI dispatch + 不 invoke SKILL
+        if "codex CLI dispatch" not in body and "codex-companion" not in body:
+            bad.append(
+                f"{path.name}: Preflight Skill Cascade disclaimer 缺 'codex CLI dispatch' "
+                "或 'codex-companion' 关键词解释为何 N/A"
+            )
+        # 转移责任到 caller 命令
+        if "caller" not in body.lower():
+            bad.append(
+                f"{path.name}: Preflight Skill Cascade disclaimer 缺 'caller' 关键词转移"
+                "Preflight Skill Cascade 责任到 caller forgeue 命令"
+            )
+    assert not bad, (
+        "codex command Preflight Skill Cascade disclaimer fence:\n  "
+        + "\n  ".join(bad)
+    )
