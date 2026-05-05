@@ -386,8 +386,8 @@ def test_change_apply_ledger_append_after_skill_task_dispatch(cmd_files):
     assert skill_task_idx >= 0, "change-apply-subagent.md missing 'Skill(Task)' reference"
     assert ledger_idx >= 0, "change-apply-subagent.md missing 'forgeue_dispatch_ledger.py append'"
     assert ledger_idx > skill_task_idx, (
-        "dispatch_ledger append MUST appear AFTER Skill(Task) dispatch "
-        "(post-dispatch order requirement; found ledger at {ledger_idx}, Skill at {skill_task_idx})"
+        f"dispatch_ledger append MUST appear AFTER Skill(Task) dispatch "
+        f"(post-dispatch order requirement; found ledger at {ledger_idx}, Skill at {skill_task_idx})"
     )
 
 

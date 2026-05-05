@@ -157,6 +157,19 @@ for IMPL_WORKTREE in "${IMPL_WORKTREES[@]}"; do
     mapfile -d $'\0' UNTRACKED < <(git -C "$IMPL_WORKTREE" ls-files --others --exclude-standard -z)
     IMPL_FILES["$AGENT_ID"]="$(printf '%s\n' $COMMITTED "${UNTRACKED[@]}" | sort -u)"
 done
+
+# Step 1.5: Bash dict → JSON 序列化(P3 round 1 code_quality_review Minor 1 fix:
+# Step 2 inline python 读 $IMPL_FILES_JSON 环境变量;不序列化则 overlap 检测静默失效)
+JSON_BUILD='{'
+FIRST=1
+for AGENT_ID in "${!IMPL_FILES[@]}"; do
+    if [ $FIRST -eq 0 ]; then JSON_BUILD+=","; fi
+    FILES_JSON=$(printf '%s\n' "${IMPL_FILES[$AGENT_ID]}" | python3 -c "import sys, json; print(json.dumps([l for l in sys.stdin.read().split('\n') if l]))")
+    JSON_BUILD+="\"$AGENT_ID\":$FILES_JSON"
+    FIRST=0
+done
+JSON_BUILD+='}'
+export IMPL_FILES_JSON="$JSON_BUILD"
 ```
 
 **Step 2:cross-implementer set intersection 检测 + abort**
