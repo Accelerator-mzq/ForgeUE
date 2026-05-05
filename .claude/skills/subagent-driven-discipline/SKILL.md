@@ -1,14 +1,14 @@
 ---
 name: subagent-driven-discipline
-description: Subagent task type taxonomy + cheap-model reliability playbook + Opus-mandatory post-phase quality retrospect for subagent-driven-development workflows。**重场景轻业务**:按 subagent 任务类型(implementation 5 子类 / spec review 4 子类 / code quality review 5 子类 / test creation / doc / debug / verification)细分 model tier + WHY + 让 cheap model 高质量的具体 prompt patterns。**Design 任务(algorithmic / architectural / arch doc rewrite / complex root cause)绝对原则 Opus only,无 exception**。Cross-scenario discipline(cwd verify / cross-verify / cherry-pick recovery / cost framework)作为 supporting infrastructure。**Living catalog 增长由 §3.4 Opus-only Post-Phase Retrospect 强制**:每 phase 完成 Opus 跑 Question Matrix Q1-Q6,任一 Yes 才加 case study;全 No 不加(避免噪声)。Companion to `superpowers:subagent-driven-development`。
+description: Subagent task type taxonomy + cheap-model reliability playbook + Trigger Type Matrix retrospect for subagent-driven-development workflows。**重场景轻业务**:按 subagent 任务类型(implementation 5 子类 / spec review 4 子类 / code quality review 5 子类 / test creation / doc / debug / verification)细分 model tier + WHY + 让 cheap model 高质量的具体 prompt patterns。**Design 任务(algorithmic / architectural / arch doc rewrite / complex root cause)绝对原则 Opus only,无 exception**。Cross-scenario discipline(cwd verify / cross-verify / cherry-pick recovery / cost framework)作为 supporting infrastructure。**Living catalog 增长由 §3.4 Trigger Type Matrix retrospect 强制**:5 trigger types(3-stage / parallel / standalone / ad-hoc / codex CLI)各自 retrospect intensity;Type 1+2 Opus mandatory full;Type 3 light;Type 4 skip retrospect 仅 cross-verify;任一 Yes 才加 case study;全 No 不加(避免噪声)。Companion to `superpowers:subagent-driven-development`。
 license: MIT
 compatibility: Claude Code Agent tool + python -m pytest;sister to superpowers:subagent-driven-development(generic 3-stage process)
 metadata:
   author: forgeue (initial seed)
-  version: "2.1"
+  version: "2.2"
   scenario_subtype_count: 28
   case_study_count: 1
-  retrospect_protocol: opus-only mandatory per-phase
+  retrospect_protocol: trigger-type-matrix(5 types × per-type intensity)
 ---
 
 Universal controller-side discipline for `superpowers:subagent-driven-development` workflows。
@@ -238,7 +238,21 @@ If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误
 
 ### §3.4 Post-Phase Quality Retrospect Protocol(Opus-only judgment;skill 增长触发)
 
-**Trigger**:每 phase **3-stage subagent dispatch** 完成 + evidence committed 之后,**强制执行**(无论 phase 是否表面绿)。
+**核心原则**:任何 subagent dispatch 完成都需 controller-side 质量分析 — 但 dispatch 类型不同,retrospect intensity 不同。本节定义 **5 Trigger Type × 不同 retrospect intensity**。
+
+#### §3.4.0 Trigger Type Matrix(总览)
+
+| Trigger Type | 何时 fires | Retrospect Intensity | Actor | Cost |
+|---|---|---|---|---|
+| **Type 1: 3-stage full**(canonical;§1.1 + §1.2 + §1.3)| per-task implementer + spec_reviewer + code_quality_reviewer 全 ✅/⚠️ + 3 evidence committed | **MANDATORY full Q1-Q6** | **Opus**(MANDATORY)| $0.30-1.00 |
+| **Type 2: Parallel dispatch**(`superpowers:dispatching-parallel-agents`)| 多 implementer 并行全 commit + W2 actual diff 验证 + 后续 spec / code_quality reviewer 全 ✅ | **MANDATORY full Q1-Q6 + Q7**(parallel-specific) | **Opus**(MANDATORY)| $0.40-1.20 |
+| **Type 3: Standalone Task**(§1.4/§1.5/§1.6/§1.7 单 subagent dispatch,无 3-stage review)| Single Task return DONE / DONE_WITH_CONCERNS | **Light:Q2 + Q3 + Q4**(skip Q1/Q5/Q6 — 单 task scope 不够 trigger broader pattern) | **Opus or Sonnet** | $0.10-0.30 |
+| **Type 4: Ad-hoc research Task**(无 evidence committed;e.g. "summarize files" / "find X usage")| Task return | **Skip full retrospect;仅 §3.2 cross-verify** | Controller(any tier) | ~$0(cross-verify only) |
+| **Type 5: Codex CLI subprocess**(`/codex:adversarial-review` / `/codex:review`)| Codex CLI return | **本 skill 不 cover**(Codex 自家 protocol — 沿 codex-plugin/codex-companion) | N/A | N/A |
+
+**判定 trigger type**:看 dispatch 用哪 upstream skill / 哪 dispatch pattern,不看 task 内容本身。
+
+#### §3.4.1 Type 1: 3-stage Full Retrospect(canonical)
 
 **3-stage 定义**(沿 `superpowers:subagent-driven-development` upstream;per-task 串行):
 
@@ -248,9 +262,101 @@ If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误
 | Stage 2 | spec_reviewer(spec compliance) | verify implementation 符合 spec(checklist 比对) | reviewer ✅ Spec compliant;若 ❌ Issues → SendMessage round 2 same implementer fix → re-review;直到 ✅ |
 | Stage 3 | code_quality_reviewer | verify code quality(clean / tested / maintainable / runtime correctness) | reviewer ✅ Approved 或 ⚠️ Approved with concerns(non-blocker);若 ❌ Issues → round 2 fix → re-review;直到 ✅/⚠️ |
 
-**Phase complete** = Stage 1 + Stage 2 + Stage 3 全 ✅(或 ⚠️ non-blocker)+ 3 类 evidence 文件落盘 + commit。**此时**触发 §3.4 retrospect。
+**Phase complete** = Stage 1 + Stage 2 + Stage 3 全 ✅(或 ⚠️ non-blocker)+ 3 类 evidence 文件落盘 + commit。**此时**触发 Type 1 retrospect。
 
 (注:**final_reviewer** 是 **per-change 末尾**额外 stage — 全 phase 完成后跑一次综合 review,不属于 per-phase 3-stage。final_reviewer 完成后做 change-level retrospect,不是 phase-level。)
+
+#### §3.4.2 Type 2: Parallel Dispatch Retrospect
+
+**Trigger**:`superpowers:dispatching-parallel-agents`(或 `/forgeue:change-apply-parallel`)派多 implementer 并行 → 全 commit → W2 actual diff verified disjoint(若 overlap 检测自动降级 sequential → 改走 Type 1 retrospect)→ 后续 spec / code_quality reviewer 全 ✅。
+
+**Inputs(controller 必读)**:
+1. 全 N implementer evidence files
+2. spec_reviewer + code_quality_reviewer evidence
+3. W2 actual diff result(`task_files_actual` declared vs detected)
+4. parallel-specific log(若有 abort log:`<change>/parallel_abort_*`)
+5. Phase commit diff
+6. 本 skill 当前版本
+
+**Question Matrix Q1-Q6 + Type 2 加 Q7**(parallel-specific):
+
+| Q | 问题 | Yes 后果 |
+|---|---|---|
+| Q1-Q6 | 沿 Type 1 同款 | 同 Type 1 |
+| **Q7a** | Actual file overlap detected post-dispatch?(implementer 间 diff 实际有交) | 必加 §5 case 标 controller declaration vs reality drift |
+| **Q7b** | Race condition / shared state 影响?(implementer 改 shared fixture / global config / import hub)| 必加 §5 case + §6 catalog "parallel race condition" |
+| **Q7c** | IMPL_FILES_JSON 序列化缺 / W2 actual diff Bash glue 错?(silent overlap detection failure)| 必加 §5 case + §1.1.3 multi-file integration playbook 加 prompt 元素 |
+| **Q7d** | parallel implementer 数 vs degradation 实际比例?(若 ≥30% 降级 → 该 phase 不该选 parallel)| 必加 §5 case + §1.1.x 加 "适合 parallel vs sequential" 判定准则 |
+
+#### §3.4.3 Type 3: Standalone Task Retrospect(Light)
+
+**Trigger**:任何 §1.4 / §1.5 / §1.6 / §1.7 单 subagent dispatch(非 3-stage 包装)return DONE / DONE_WITH_CONCERNS。
+
+**例**:
+- §1.4.1 unit test from spec — implementer 写一组 test
+- §1.5.1 doc sync — implementer 跨 N file mechanical 替换
+- §1.5.2 doc rewrite — implementer 重写一段 doc
+- §1.6.1 bisect / §1.6.2 reproduce — debug subagent
+- §1.7.2 cross-check evidence vs spec — verification subagent
+
+**Inputs**:
+1. Task return content(no committed evidence file unless writing one)
+2. 涉及 file diff(若 implementer 写了 commit)
+3. §1.X.Y 对应的 subtype 行(check 是否表现 within expected)
+
+**Question Matrix Light(skip Q1 / Q5 / Q6 — 单 task scope 不够 trigger broader pattern)**:
+
+| Q | 问题 | Yes 后果 |
+|---|---|---|
+| **Q2** | Subagent hallucinate / scope-bleed / 自我汇报错? | 加 §5 case |
+| **Q3** | Controller 需 intervention(re-run / inline fix)? | 加 §5 case |
+| **Q4** | NEW failure mode 不在 §6 catalog? | 加 §6 + §5 case |
+
+**Decision**:
+- 全 No → SKIP skill update
+- 任一 Yes → MUST add §5 case(标记 Trigger Type 3 + scenario §1.X.Y)
+
+#### §3.4.4 Type 4: Ad-hoc Research Task(Skip retrospect)
+
+**Trigger**:Agent tool / Explore subagent / general-purpose research dispatch — **无 committed evidence**(纯 information gathering / one-off lookup)。
+
+**例**:
+- "Summarize these N files for me"
+- "Find where function X is used"
+- "Investigate why test Y fails"(without writing fix)
+- Codebase navigation queries
+
+**Inputs**:Task return(text only,no file changes)。
+
+**Retrospect**:**SKIP full retrospect** — 仅跑 §3.2 cross-verify 关键 claim(若 subagent 引用了 file path / commit SHA / function 名 / URL → controller 验证存在)。
+
+**WHY skip**:
+- Ad-hoc 无 committed evidence — case study 无 anchor
+- One-off 性质 — pattern 难提炼
+- Cost too high vs value(retrospect $0.30+ for $0.05 task)
+
+**Exception**:若 ad-hoc Task return 含明显 hallucination / 错信息 → controller spot-add 一个 light §5 case(Trigger Type 4),记录该 task 的失败模式 + 防后续重蹈。
+
+#### §3.4.5 Type 5: Codex CLI Subprocess(out of scope)
+
+**Trigger**:`/codex:adversarial-review` / `/codex:review` / `/codex:rescue` 等 codex-plugin 派的 CLI subprocess。
+
+**为什么不 cover**:
+- Codex CLI 不是 Claude Code subagent — 是外部 CLI subprocess(`codex-companion.mjs` broker)
+- Codex 走自家 protocol(Round Counter + Polling Convention + verbatim-first output)
+- Codex 自家有 review 协议(`codex_review_round1.md` / cross-check matrix)
+
+**Controller 责任**(本 skill 不规约,但提醒):
+- Codex return 后仍需 §3.2 cross-verify(测试 count / file path / commit SHA / URL)
+- 若 codex hallucinate → 是 codex-plugin / codex-companion bug,不是本 skill 范围
+
+#### §3.4.6 Trigger Type 共通约束(all types)
+
+无论 Trigger Type N:
+1. **§3.2 controller cross-verify 永远 mandatory**(Type 1-4 都要;Type 5 也建议)
+2. **Opus actor 决定**:Type 1 + Type 2 MANDATORY Opus;Type 3 Opus 或 Sonnet 都可;Type 4 controller 任意 tier;Type 5 N/A
+3. **Skill update 触发条件**:任一 trigger type retrospect 出 Yes → 加 §5 case + 视情况 §6 / §1
+4. **Anti-pattern**:跳过任何 trigger type 的最低 retrospect(即使是 Type 4 的 cross-verify)→ 失去 controller-side 质量防线
 
 **Actor**:**Opus(MANDATORY)**。
 - 若 controller(主 session)是 Opus → controller 直接做
@@ -429,11 +535,16 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 2. **若 reviewer 出 issues** → §3.3 inline fix vs round 2 决策
 3. **若 worktree leak detected** → §4.1 cherry-pick recovery
 
-### Phase 完成后(MANDATORY):
-1. **跑 §3.4 Post-Phase Quality Retrospect**(Opus actor;Question Matrix Q1-Q6)
-2. **若 retrospect 全 No** → SKIP skill update,phase silent pass
-3. **若 retrospect 任一 Yes** → §3.4 Decision Tree 触发 skill update:
-   - 加 §5 Case <NN+1>(MANDATORY)
+### Subagent dispatch 完成后(MANDATORY by Trigger Type):
+1. **判定 Trigger Type**(§3.4.0 matrix:1 = 3-stage / 2 = parallel / 3 = standalone Task / 4 = ad-hoc research / 5 = codex CLI)
+2. **跑对应 retrospect**:
+   - Type 1 / 2 → MANDATORY full Q1-Q6(Type 2 加 Q7);Opus actor
+   - Type 3 → Light Q2 + Q3 + Q4;Opus 或 Sonnet
+   - Type 4 → Skip retrospect;仅 §3.2 cross-verify
+   - Type 5 → 不在本 skill scope;沿 codex 自家 protocol + §3.2 cross-verify
+3. **若 retrospect 全 No** → SKIP skill update,silent pass
+4. **若 retrospect 任一 Yes** → §3.4 Decision Tree 触发 skill update:
+   - 加 §5 Case <NN+1>(MANDATORY;标 Trigger Type + scenario §1.X.Y)
    - 视情况追加 §6 catalog row(若 new failure mode)
    - 视情况追加 §1.X.Y row + §2 playbook(若 new scenario subtype)
    - Update frontmatter `case_study_count` / `scenario_subtype_count`
