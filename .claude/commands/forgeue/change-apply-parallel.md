@@ -19,13 +19,26 @@ S3→S4-S5 transition(并行路径,自 `enhance-workflow-automation-runtime-enfo
 
 ### Preflight Worktree(D-WorktreeEnforce)
 
-实施前 isolated worktree 必须存在(本命令 Step 7-9 落实 — commit 快照 + worktree 创建 + cwd 切换):
+实施前 isolated worktree 必须存在。此 preflight 通过 `python tools/forgeue_preflight_wrapper.py` 自管 worktree(不再 invoke `Skill(superpowers:using-git-worktrees)` 直接):
 
-- 必须 invoke `Skill(superpowers:using-git-worktrees)`(沿本命令 Step 8;不可跳过)
-- 必须 cwd 切换到 isolated worktree(沿 Step 9);后续 dispatch / evidence 落盘 / writeback 检测全部以该 worktree 为 cwd
-- evidence frontmatter MUST 加 `worktree_path: <path>` 字段(non-null);`forgeue_finish_gate.py::_check_worktree_path` fence 守门(`triggered_by_command: change-apply-parallel` 触发强制,与 subagent 命令同等)
+- **Bash 调用 wrapper**:
+  ```bash
+  python tools/forgeue_preflight_wrapper.py --change <change-id>
+  ```
+  - wrapper 创建 isolated worktree(git worktree subprocess)
+  - stdout 返回 13-field receipt JSON(relative path)
+  - 失败:exit 5 (env error) / exit 6 (path resolution error,需 cd 到 wrapper-managed worktree 后重试) / exit 7 (other)
 
-Preflight 失败(SKILL invoke 异常 / worktree 创建失败 / clean baseline test 不绿)→ 命令 abort。
+- **capture receipt 和 worktree path**:
+  - LLM 从 receipt JSON 复制 `worktree_path` 字段(绝对路径)到 evidence frontmatter
+  - LLM 从 receipt JSON 复制 `receipt_path` 字段(相对路径)到 evidence frontmatter `worktree_receipt_path`
+  - 若 exit 6:stderr 含 path resolution 提示;cd 到 wrapper-managed worktree 后重新调用 wrapper
+
+- **cwd 切换到 isolated worktree**(沿 Step 9);后续 dispatch / evidence 落盘 / writeback 检测全部以该 worktree 为 cwd
+
+- evidence frontmatter MUST 加 `worktree_path: <path>` + `worktree_receipt_path: <relative_path>` 字段(non-null);`forgeue_finish_gate.py::_check_worktree_path_v2` fence 守门(`triggered_by_command: change-apply-parallel` 触发强制,与 subagent 命令同等)
+
+Preflight 失败(wrapper exit != 0 / receipt JSON malformed / clean baseline test 不绿)→ 命令 abort。
 
 ### Preflight Skill Cascade(D-SkillCascadeCheck)
 
@@ -103,6 +116,79 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
     - **并行 dispatch implementer subagents**(单条消息内多个 Task tool call,沿 SKILL.md "Dispatch in Parallel" 模式)
     - 每个 implementer 接收主 session Claude 提取的完整 prompt 文本(沿 SKILL.md Red Flag "Make subagent read plan file (provide full text instead)");subagent **不被授权**读 `execution/micro_tasks.md` / `execution/execution_plan.md`
     - **并行 dispatch spec compliance reviewer + code quality reviewer subagents**(每 implementer return 后立即 dispatch 该 task 的 reviewer;不等其他 task 完成)
+
+10a. **dispatch implementer subagent 后立即 append dispatch ledger**(F1 round 2 inline writeback,post-dispatch capture):
+     - 每个 Skill(Task) dispatch implementer subagent → capture return metadata → parse 真实 `agent_id`
+     - Bash(对每个 implementer):
+       ```bash
+       python tools/forgeue_dispatch_ledger.py append \
+           --change <change-id> \
+           --agent-id <真实_agent_id_from_Skill_return> \
+           --round 1 \
+           --role implementer \
+           --task-subject-hash $(echo -n "$TASK_SUBJECT" | sha256sum | cut -d' ' -f1)
+       ```
+     - 此步必须在每个 Skill dispatch **之后** 执行(post-dispatch order;capture 真实 agent_id)
+
+10b. **并行 implementer 实施完成后 W2 actual diff 收集**(F3 round 2 + F4 round 1 inline writeback;沿 design.md D-W2-OverlapDetection):
+
+**Step 0:implementer worktree clean precondition fail-closed(F4 round 1)**
+```bash
+for IMPL_WORKTREE in "${IMPL_WORKTREES[@]}"; do
+    DIRTY=$(git -C "$IMPL_WORKTREE" status --porcelain=v1)
+    if [ -n "$DIRTY" ]; then
+        ABORT_LOG="<change>/parallel_abort_dirty_$(date +%Y%m%dT%H%M%S).log"
+        echo "[ABORT] dirty implementer worktree: $IMPL_WORKTREE" > "$ABORT_LOG"
+        echo "$DIRTY" >> "$ABORT_LOG"
+        # evidence: degradation_reason=dirty_implementer_worktree → degrade to change-apply-subagent
+        exec /forgeue:change-apply-subagent <change-id>
+    fi
+done
+```
+
+**Step 1:actual changed-files 收集(committed + untracked,NUL-separated;F3 round 2)**
+```bash
+declare -A IMPL_FILES
+for IMPL_WORKTREE in "${IMPL_WORKTREES[@]}"; do
+    AGENT_ID="${IMPL_WORKTREE_TO_AGENT[$IMPL_WORKTREE]}"
+    # committed + staged(via git status --porcelain=v1)
+    COMMITTED=$(git -C "$IMPL_WORKTREE" status --porcelain=v1 | grep -E '^(M |A |D |MM|AD|DD)' | awk '{print $2}')
+    # untracked(exclude .gitignore-matched)
+    mapfile -d $'\0' UNTRACKED < <(git -C "$IMPL_WORKTREE" ls-files --others --exclude-standard -z)
+    IMPL_FILES["$AGENT_ID"]="$(printf '%s\n' $COMMITTED "${UNTRACKED[@]}" | sort -u)"
+done
+```
+
+**Step 2:cross-implementer set intersection 检测 + abort**
+```bash
+python3 -c "
+import sys, os, json
+files_by_agent = json.loads(os.environ.get('IMPL_FILES_JSON', '{}'))
+agents = list(files_by_agent.keys())
+overlaps = []
+for i in range(len(agents)):
+    for j in range(i+1, len(agents)):
+        intersect = set(files_by_agent[agents[i]]) & set(files_by_agent[agents[j]])
+        if intersect:
+            overlaps.append({'a': agents[i], 'b': agents[j], 'files': sorted(intersect)})
+if overlaps:
+    print(json.dumps(overlaps), file=sys.stderr)
+    sys.exit(1)
+sys.exit(0)
+"
+if [ $? -ne 0 ]; then
+    ABORT_LOG="<change>/parallel_abort_overlap_$(date +%Y%m%dT%H%M%S).log"
+    echo "[ABORT] actual file overlap detected" > "$ABORT_LOG"
+    # evidence: degradation_reason=actual_file_overlap_detected → degrade to change-apply-subagent
+    exec /forgeue:change-apply-subagent <change-id>
+fi
+```
+
+**evidence 字段**:
+     - `task_files_actual: [{implementer_agent_id: X, files: [...]}, ...]`(含 untracked)
+     - `degraded_to: null` 或 `change-apply-subagent`
+     - `degradation_reason: null` / `actual_file_overlap_detected` / `dirty_implementer_worktree`
+
 11. **每 task 完成后 evidence 收口**(D-EvidenceSchema 4 类 evidence,与 change-apply-subagent 同协议):
     - 主 session Claude 把每个 subagent return 落盘为 4 类 per-task evidence 文件(全部 12-key frontmatter):
       - `execution/task_<n>_implementer.md` — `evidence_type: subagent_implementer_report`
@@ -160,6 +246,43 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
 ### Writeback check
 - DRIFT count: <N>; types: <list>
 - next: <S5 ready | blocked + reason>
+```
+
+**Evidence Frontmatter Template (v2)**
+
+每个 per-task evidence 和 final reviewer evidence MUST 含以下 12-key frontmatter + 9 个 runtime enforcement audit 字段(parallel 命令加 1 个字段):
+
+```yaml
+---
+change_id: <change-id>
+stage: S4-S5
+evidence_type: subagent_implementer_report | subagent_spec_review | subagent_code_quality_review | subagent_final_review
+contract_refs: ["openspec/changes/<id>/tasks.md#X.Y", ...]
+aligned_with_contract: true | false
+detected_env: <env_detect_result>
+triggered_by: /forgeue:change-apply-parallel
+codex_plugin_available: true | false
+# --- 4 个 conditional key(仅 aligned_with_contract: false 时必填) ---
+drift_decision: written-back-to-design | written-back-to-tasks | written-back-to-proposal | unresolved-permanent-drift
+writeback_commit: <sha>(若 drift_decision != unresolved-permanent-drift)
+drift_reason: <reason>
+reasoning_notes_anchor: <file>:<line>
+# --- 9 个 runtime enforcement audit 字段(v2,parallel 命令专用) ---
+runtime_enforcement_protocol_version: v2
+triggered_by_command: change-apply-parallel
+worktree_path: <absolute-path-from-receipt>
+worktree_receipt_path: <relative-path-to-receipt.json>
+dispatch_ledger_path: dispatch_ledger.jsonl
+task_independence_assertion: true
+task_files_disjoint: [<file-set-1>, <file-set-2>, ...]
+task_files_actual: [{implementer_agent_id: <id>, files: [...]}, ...]
+degraded_to: null | change-apply-subagent
+degradation_reason: null | actual_file_overlap_detected | dirty_implementer_worktree
+pre_dispatch_metadata: advisory
+ledger_forgery_resistance: advisory
+autonomy_decision: claude_codex_concurred | claude_autonomous | user_required | user_overrode
+codex_review_ref: <reference>(若 autonomy_decision == claude_codex_concurred)
+---
 ```
 
 **Guardrails**

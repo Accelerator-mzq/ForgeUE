@@ -17,13 +17,26 @@ S3→S4-S5 transition(default 路径,自 `adopt-subagent-driven-development` cha
 
 ### Preflight Worktree(D-WorktreeEnforce)
 
-实施前 isolated worktree 必须存在(本命令 Step 7-9 落实 — commit 快照 + worktree 创建 + cwd 切换)。
+实施前 isolated worktree 必须存在。此 preflight 通过 `python tools/forgeue_preflight_wrapper.py` 自管 worktree(不再 invoke `Skill(superpowers:using-git-worktrees)` 直接):
 
-- 必须 invoke `Skill(superpowers:using-git-worktrees)`(沿本命令 Step 8;不可跳过)
-- 必须 cwd 切换到 isolated worktree(沿 Step 9);后续 dispatch / evidence 落盘 / writeback 检测全部以该 worktree 为 cwd
-- evidence frontmatter MUST 加 `worktree_path: <path>` 字段(non-null);`forgeue_finish_gate.py::_check_worktree_path` fence 守门(`triggered_by_command: change-apply-subagent` 触发强制)
+- **Bash 调用 wrapper**:
+  ```bash
+  python tools/forgeue_preflight_wrapper.py --change <change-id>
+  ```
+  - wrapper 创建 isolated worktree(git worktree subprocess)
+  - stdout 返回 13-field receipt JSON(relative path)
+  - 失败:exit 5 (env error) / exit 6 (path resolution error,需 cd 到 wrapper-managed worktree 后重试) / exit 7 (other)
 
-Preflight 失败(SKILL invoke 异常 / worktree 创建失败 / clean baseline test 不绿)→ 命令 abort。
+- **capture receipt 和 worktree path**:
+  - LLM 从 receipt JSON 复制 `worktree_path` 字段(绝对路径)到 evidence frontmatter
+  - LLM 从 receipt JSON 复制 `receipt_path` 字段(相对路径)到 evidence frontmatter `worktree_receipt_path`
+  - 若 exit 6:stderr 含 path resolution 提示;cd 到 wrapper-managed worktree 后重新调用 wrapper
+
+- **cwd 切换到 isolated worktree**(沿 Step 9);后续 dispatch / evidence 落盘 / writeback 检测全部以该 worktree 为 cwd
+
+- evidence frontmatter MUST 加 `worktree_path: <path>` + `worktree_receipt_path: <relative_path>` 字段(non-null);`forgeue_finish_gate.py::_check_worktree_path_v2` fence 守门(`triggered_by_command: change-apply-subagent` 触发强制)
+
+Preflight 失败(wrapper exit != 0 / receipt JSON malformed / clean baseline test 不绿)→ 命令 abort。
 
 ### Preflight Skill Cascade(D-SkillCascadeCheck)
 
@@ -84,6 +97,19 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
     - subagent **不被授权**读 `execution/micro_tasks.md` / `execution/execution_plan.md` 任何 plan 文件 — 仅接收主 session 提取后的完整 prompt 文本
     - `tasks.md#X.Y` 锚点引用作 audit trail 进 evidence frontmatter `contract_refs`,**不**直接进入 subagent prompt(subagent 不知道 tasks.md 存在)
     - skill 内部协议(implementer / spec reviewer / code quality reviewer prompt 模板)由 Superpowers 自管,ForgeUE 不复制 / 不引用
+
+10a. **dispatch implementer subagent 后立即 append dispatch ledger**(F1 round 2 inline writeback,post-dispatch capture):
+     - Skill(Task) dispatch implementer subagent → capture return metadata → parse 真实 `agent_id`
+     - Bash:
+       ```bash
+       python tools/forgeue_dispatch_ledger.py append \
+           --change <change-id> \
+           --agent-id <真实_agent_id_from_Skill_return> \
+           --round 1 \
+           --role implementer \
+           --task-subject-hash $(echo -n "$TASK_SUBJECT" | sha256sum | cut -d' ' -f1)
+       ```
+     - 此步必须在 Skill dispatch **之后** 执行(post-dispatch order;capture 真实 agent_id 而非 synthetic UUID)
 11. **每 task 完成后 evidence 收口**(D-EvidenceSchema 4 类 evidence):
     - 主 session Claude 把每个 subagent return 落盘为 4 类 per-task evidence 文件(全部 12-key frontmatter):
       - `execution/task_<n>_implementer.md` — `evidence_type: subagent_implementer_report`
@@ -141,6 +167,38 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
 ### Writeback check
 - DRIFT count: <N>; types: <list>
 - next: <S5 ready | blocked + reason>
+```
+
+**Evidence Frontmatter Template (v2)**
+
+每个 per-task evidence 和 final reviewer evidence MUST 含以下 12-key frontmatter + 8 个 runtime enforcement audit 字段:
+
+```yaml
+---
+change_id: <change-id>
+stage: S4-S5
+evidence_type: subagent_implementer_report | subagent_spec_review | subagent_code_quality_review | subagent_final_review
+contract_refs: ["openspec/changes/<id>/tasks.md#X.Y", ...]
+aligned_with_contract: true | false
+detected_env: <env_detect_result>
+triggered_by: /forgeue:change-apply-subagent
+codex_plugin_available: true | false
+# --- 4 个 conditional key(仅 aligned_with_contract: false 时必填) ---
+drift_decision: written-back-to-design | written-back-to-tasks | written-back-to-proposal | unresolved-permanent-drift
+writeback_commit: <sha>(若 drift_decision != unresolved-permanent-drift)
+drift_reason: <reason>
+reasoning_notes_anchor: <file>:<line>
+# --- 8 个 runtime enforcement audit 字段(v2) ---
+runtime_enforcement_protocol_version: v2
+triggered_by_command: change-apply-subagent
+worktree_path: <absolute-path-from-receipt>
+worktree_receipt_path: <relative-path-to-receipt.json>
+dispatch_ledger_path: dispatch_ledger.jsonl
+pre_dispatch_metadata: advisory
+ledger_forgery_resistance: advisory
+autonomy_decision: claude_codex_concurred | claude_autonomous | user_required | user_overrode
+codex_review_ref: <reference>(若 autonomy_decision == claude_codex_concurred)
+---
 ```
 
 **Guardrails**

@@ -286,6 +286,154 @@ def test_change_apply_parallel_command_exists(cmd_files):
     )
 
 
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-executable-enforcement P3 fence:Wrapper + Ledger
+# (F1 round 1/2 + F3 round 2 + F4 round 1 inline writeback)
+# ---------------------------------------------------------------------------
+
+
+def test_change_apply_subagent_invokes_preflight_wrapper(cmd_files):
+    """P3.2 fence(F1 round 1):change-apply-subagent.md 内含
+    `python tools/forgeue_preflight_wrapper.py` 字符串(Preflight Worktree section)。"""
+    subagent_path = next(
+        (f for f in cmd_files if f.name == "change-apply-subagent.md"), None
+    )
+    assert subagent_path is not None
+    body = subagent_path.read_text(encoding="utf-8")
+    assert "python tools/forgeue_preflight_wrapper.py" in body, (
+        "change-apply-subagent.md MUST invoke preflight wrapper in Preflight Worktree section"
+    )
+
+
+def test_change_apply_parallel_invokes_preflight_wrapper(cmd_files):
+    """P3.3 fence(F1 round 1):change-apply-parallel.md 内含
+    `python tools/forgeue_preflight_wrapper.py` 字符串(Preflight Worktree section)。"""
+    parallel_path = next(
+        (f for f in cmd_files if f.name == "change-apply-parallel.md"), None
+    )
+    assert parallel_path is not None
+    body = parallel_path.read_text(encoding="utf-8")
+    assert "python tools/forgeue_preflight_wrapper.py" in body, (
+        "change-apply-parallel.md MUST invoke preflight wrapper in Preflight Worktree section"
+    )
+
+
+def test_change_apply_subagent_invokes_dispatch_ledger_append(cmd_files):
+    """P3.2 fence(F1 round 2):change-apply-subagent.md 内含
+    `python tools/forgeue_dispatch_ledger.py append` 字符串(Step 10a post-dispatch)。"""
+    subagent_path = next(
+        (f for f in cmd_files if f.name == "change-apply-subagent.md"), None
+    )
+    assert subagent_path is not None
+    body = subagent_path.read_text(encoding="utf-8")
+    assert "python tools/forgeue_dispatch_ledger.py append" in body, (
+        "change-apply-subagent.md MUST invoke dispatch ledger append in Step 10a"
+    )
+
+
+def test_change_apply_parallel_invokes_dispatch_ledger_append(cmd_files):
+    """P3.3 fence(F1 round 2):change-apply-parallel.md 内含
+    `python tools/forgeue_dispatch_ledger.py append` 字符串(Step 10a post-dispatch)。"""
+    parallel_path = next(
+        (f for f in cmd_files if f.name == "change-apply-parallel.md"), None
+    )
+    assert parallel_path is not None
+    body = parallel_path.read_text(encoding="utf-8")
+    assert "python tools/forgeue_dispatch_ledger.py append" in body, (
+        "change-apply-parallel.md MUST invoke dispatch ledger append in Step 10a"
+    )
+
+
+def test_change_apply_subagent_protocol_version_v2_in_evidence_template(cmd_files):
+    """P3.2 fence(F1 round 1):change-apply-subagent.md evidence frontmatter 模板
+    含 `runtime_enforcement_protocol_version: v2` 字符串。"""
+    subagent_path = next(
+        (f for f in cmd_files if f.name == "change-apply-subagent.md"), None
+    )
+    assert subagent_path is not None
+    body = subagent_path.read_text(encoding="utf-8")
+    assert "runtime_enforcement_protocol_version: v2" in body, (
+        "change-apply-subagent.md evidence template MUST specify runtime_enforcement_protocol_version: v2"
+    )
+
+
+def test_change_apply_parallel_protocol_version_v2_in_evidence_template(cmd_files):
+    """P3.3 fence(F1 round 1):change-apply-parallel.md evidence frontmatter 模板
+    含 `runtime_enforcement_protocol_version: v2` 字符串。"""
+    parallel_path = next(
+        (f for f in cmd_files if f.name == "change-apply-parallel.md"), None
+    )
+    assert parallel_path is not None
+    body = parallel_path.read_text(encoding="utf-8")
+    assert "runtime_enforcement_protocol_version: v2" in body, (
+        "change-apply-parallel.md evidence template MUST specify runtime_enforcement_protocol_version: v2"
+    )
+
+
+def test_change_apply_ledger_append_after_skill_task_dispatch(cmd_files):
+    """P3.2 fence(F1 round 2 inline):change-apply-subagent.md 中
+    dispatch_ledger.py append Bash 步骤必须出现在 Skill(Task) dispatch 之后
+    (post-dispatch order validation)。"""
+    subagent_path = next(
+        (f for f in cmd_files if f.name == "change-apply-subagent.md"), None
+    )
+    assert subagent_path is not None
+    body = subagent_path.read_text(encoding="utf-8")
+    # 简单检查:find "Skill(Task)" index + find "dispatch_ledger.py append" index
+    # ledger 下标应 > Skill(Task) 下标(same section Step 10)
+    skill_task_idx = body.find("Skill(Task)")
+    ledger_idx = body.find("forgeue_dispatch_ledger.py append")
+    assert skill_task_idx >= 0, "change-apply-subagent.md missing 'Skill(Task)' reference"
+    assert ledger_idx >= 0, "change-apply-subagent.md missing 'forgeue_dispatch_ledger.py append'"
+    assert ledger_idx > skill_task_idx, (
+        "dispatch_ledger append MUST appear AFTER Skill(Task) dispatch "
+        "(post-dispatch order requirement; found ledger at {ledger_idx}, Skill at {skill_task_idx})"
+    )
+
+
+def test_change_apply_parallel_actual_diff_uses_git_status_porcelain_and_ls_files_others(cmd_files):
+    """P3.3 fence(F3 round 2 inline):change-apply-parallel.md Step 0/1/2 W2 actual diff
+    包含:
+    1. Step 0 dirty precondition check(git status --porcelain=v1)
+    2. Step 1 changed-files collection(git status + git ls-files)
+    3. Step 2 intersection detection(Python set operation)
+    4. abort log 落 <change>/ 目录(不落 /tmp/)
+    """
+    parallel_path = next(
+        (f for f in cmd_files if f.name == "change-apply-parallel.md"), None
+    )
+    assert parallel_path is not None
+    # Use binary mode and decode to UTF-8 to avoid locale issues on Windows
+    with open(parallel_path, "rb") as f:
+        content_bytes = f.read()
+    body = content_bytes.decode("utf-8")
+
+    # Check for W2 section 10b
+    assert "10b. **并行 implementer 实施完成后 W2 actual diff 收集**" in body or "W2 actual diff" in body, (
+        "change-apply-parallel.md MUST contain W2 actual diff section (Step 0/1/2)"
+    )
+
+    # Check for Step 0, Step 1, Step 2 substeps
+    assert "**Step 0:" in body and "implementer worktree clean" in body, (
+        "change-apply-parallel.md Step 0 must check dirty implementer worktree precondition"
+    )
+    assert "**Step 1:" in body and "actual changed-files 收集" in body, (
+        "change-apply-parallel.md Step 1 must collect actual changed files"
+    )
+    assert "**Step 2:" in body and "cross-implementer set intersection" in body, (
+        "change-apply-parallel.md Step 2 must detect file overlap"
+    )
+
+    # Critical constraints:abort log location
+    assert "/tmp/" not in body, (
+        "change-apply-parallel.md MUST NOT use /tmp/ paths for abort log "
+        "(沿 ForgeUE 产物路径约定:abort log 落 <change>/ 目录,不落 /tmp)"
+    )
+    assert "parallel_abort" in body, (
+        "change-apply-parallel.md abort log MUST use parallel_abort_* naming"
+    )
+
+
 def test_skill_invoking_cmds_have_preflight_skill_cascade(cmd_files):
     """P2.6 fence:8 个 SKILL-invoke 命令(3 apply + plan / debug / verify /
     review / doc-sync)均含 ## Preflight Skill Cascade section + 引用
