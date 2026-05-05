@@ -81,11 +81,18 @@ _REQUIRED_EVIDENCE_CLAUDE_PLUGIN: list[tuple[str, str]] = [
 ]
 
 
-# Conditional REQUIRED only when dispatch mode == change-apply-subagent
-# (per design.md D-EvidenceSchema "Dispatch mode 判定" + adopt-subagent-driven-development
-# round 1 F2 fix). Triggered when ANY evidence file under the change carries
-# frontmatter ``triggered_by_command: change-apply-subagent``. The default
-# paths use globs because per-task evidence is named ``task_<n>_*.md``.
+# Conditional REQUIRED only when dispatch mode triggers subagent-style 4-class
+# evidence schema. Two commands trigger this mode:
+#   - ``change-apply-subagent``(default sequential per-task dispatch;
+#     adopt-subagent-driven-development round 1 F2 fix)
+#   - ``change-apply-parallel``(并行 dispatch,P6 codex round 1 F1 fix:
+#     enhance-workflow-automation-runtime-enforcement;parallel 命令模板
+#     `change-apply-parallel.md` L101-105 明确声明 dispatch implementer +
+#     spec_review + code_quality_review + final_review,与 subagent 同款 4
+#     类 evidence 协议;detector 必须把 parallel 也纳入)
+# Triggered when ANY evidence file under the change carries frontmatter
+# ``triggered_by_command`` with a value in ``_SUBAGENT_STYLE_DISPATCH_VALUES``.
+# The default paths use globs because per-task evidence is named ``task_<n>_*.md``.
 _REQUIRED_EVIDENCE_SUBAGENT: list[tuple[str, str]] = [
     ("subagent_implementer_report", "execution/task_*_implementer.md"),
     ("subagent_spec_review", "execution/task_*_spec_review.md"),
@@ -135,7 +142,15 @@ _IMPLEMENTATION_EV_TYPES: frozenset[str] = frozenset({
 # round 1 F2 fix mandate the value be carried as a top-level audit field
 # beyond the standard 12-key schema.
 _DISPATCH_MODE_FIELD = "triggered_by_command"
+# Backward-compat alias(legacy 引用;archived enhance-workflow-automation 等
+# evidence frontmatter 使用 change-apply-subagent 单值)
 _DISPATCH_MODE_SUBAGENT_VALUE = "change-apply-subagent"
+# P6 codex round 1 F1 fix:dispatch detector 必须识别 subagent + parallel 双值
+# (parallel 命令模板声明同款 4 类 subagent_* evidence 协议)
+_SUBAGENT_STYLE_DISPATCH_VALUES: frozenset[str] = frozenset({
+    "change-apply-subagent",
+    "change-apply-parallel",
+})
 
 # enhance-workflow-automation-runtime-enforcement(D-ProtocolVersionMigration):
 # 4 fence(skill_cascade / round_fix_continuity / task_granularity /
@@ -327,20 +342,27 @@ def _validate_evidence_file(
 
 
 def _detect_subagent_dispatch_mode(change_dir: Path) -> bool:
-    """True iff any formal-evidence file carries ``triggered_by_command: change-apply-subagent``.
+    """True iff any formal-evidence file carries ``triggered_by_command`` ∈ ``_SUBAGENT_STYLE_DISPATCH_VALUES``.
 
     Per design.md D-EvidenceSchema "Dispatch mode 判定" segment + round 1
     F2 fix (codex review): finish_gate must NOT depend on a separate marker
     file (``notes/pre_p0/dispatch_mode.txt``) — that file is helper-tier and
     silently absent on legitimate subagent runs would have bypassed the
     gate. Instead the per-task evidence files emitted by
-    ``change-apply-subagent`` MUST carry the ``triggered_by_command``
-    frontmatter field, and finish_gate scans for that signal directly.
+    ``change-apply-subagent`` / ``change-apply-parallel`` MUST carry the
+    ``triggered_by_command`` frontmatter field, and finish_gate scans for
+    that signal directly.
+
+    P6 codex round 1 F1 fix(enhance-workflow-automation-runtime-enforcement):
+    detector 扩到 ``change-apply-parallel``(parallel 命令模板声明同款 4 类
+    subagent_* evidence 协议;原 detector 仅识别单字符串 ``change-apply-subagent``,
+    parallel run 即使缺 spec_review / code_quality_review / final_review 也
+    bypass REQUIRED check,与 parallel 命令 Guardrail 不一致)。
 
     Scope: only formal evidence subdirs (notes/ helpers excluded — they may
     quote the field in body prose as documentation example without
     intending to dispatch). Single hit anywhere flips the change to
-    subagent-mode.
+    subagent-style mode.
     """
     for sub in _FORMAL_EVIDENCE_SUBDIRS:
         sd = change_dir / sub
@@ -354,7 +376,7 @@ def _detect_subagent_dispatch_mode(change_dir: Path) -> bool:
             except OSError:
                 continue
             fm, _ = _common.parse_frontmatter(text)
-            if fm.get(_DISPATCH_MODE_FIELD) == _DISPATCH_MODE_SUBAGENT_VALUE:
+            if fm.get(_DISPATCH_MODE_FIELD) in _SUBAGENT_STYLE_DISPATCH_VALUES:
                 return True
     return False
 

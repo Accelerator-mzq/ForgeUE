@@ -104,10 +104,10 @@
 
 ## P6 — codex S6 mixed-scope review
 
-- [ ] P6.1:`/codex:review --base cd4f52a --background --scope branch` mixed-scope 评(default background;launch background process id `brf9ijgf5`,正在 inspect 代码 + 生成 verdict)
-- [ ] P6.2:落 `review/codex_mixed_scope_review.md`(等 codex result finalize 后写;保留 P6 finding 的 verbatim + Claude verify + writeback)
-- [ ] P6.3:writeback finding(若有);沿 ADR-010 双 commit pattern 或 simplified protocol(单 commit)
-- [ ] P6.4:`disputed_open: 0` 验证
+- [x] P6.1:`/codex:review --base cd4f52a --background --scope branch` mixed-scope 评(default background;launch background process id `brf9ijgf5`,exit 0;3 个 [P2] finding 落)
+- [x] P6.2:落 `review/codex_mixed_scope_review.md`(verdict: needs-attention;3 finding F1/F2/F3 verbatim + Claude file:line verify + B Cross-check Matrix + Resolution Plan)
+- [x] P6.3:writeback finding(F1: finish_gate dispatch_mode 扩到 parallel / F2: skill_cascade plugin cache 优先级 / F3: semver 排序);沿 ADR-010 simplified protocol 单 commit pattern;writeback_commit 见 fix commit 落账
+- [x] P6.4:`disputed_open: 0` 验证(3/3 accepted-codex,Claude 独立 verify file:line,无 disputed)
 
 **Pre-commit P6 替代落地**:写 6 个 reference stub 满足 finish_gate `_REQUIRED_EVIDENCE_CLAUDE_PLUGIN` evidence type 集合(沿 archived enhance-workflow-automation 模式):
 - [x] `review/codex_design_review.md`(reference Pre-P0 round 1)

@@ -521,3 +521,132 @@ def test_cli_invoked_comma_separated(tmp_path):
         text=True,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+# ---------------------------------------------------------------------------
+# P6 codex round 1 fix:F2(plugin cache 优先级)+ F3(semver 排序)
+# ---------------------------------------------------------------------------
+
+
+def test_plugin_cache_resolves_above_codex_fallback(tmp_path, monkeypatch):
+    """P6 codex round 1 F2 fix:plugin cache 优先级 4-5 应在 Codex 6-8 之前
+    probe(D-SkillRootMultiSource design.md L189-202 声明)。同名 skill 同时
+    在 plugin cache 与 ``~/.codex/skills`` 时,resolve_skill_md 必须返回
+    plugin cache 路径,而不是 Codex 路径。
+    """
+    fake_home = tmp_path / "fake-home"
+
+    # 1. Codex fallback root 写一份 SKILL.md
+    codex_skills = fake_home / ".codex" / "skills"
+    _write_skill(codex_skills, "shared-skill", "codex version")
+
+    # 2. plugin cache 同名 skill(应优先返回)
+    plugin_root = (
+        fake_home
+        / ".claude"
+        / "plugins"
+        / "cache"
+        / "claude-plugins-official"
+        / "superpowers"
+        / "5.1.0"
+        / "skills"
+    )
+    _write_skill(plugin_root, "shared-skill", "plugin version")
+
+    empty_cwd = tmp_path / "empty-cwd"
+    empty_cwd.mkdir()
+    monkeypatch.delenv("FORGEUE_SKILL_ROOT", raising=False)
+    monkeypatch.delenv("CODEX_HOME", raising=False)
+    monkeypatch.chdir(empty_cwd)
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    md = fscc.resolve_skill_md(
+        skill_name="superpowers:shared-skill",
+        override_root=None,
+    )
+    assert md is not None
+    body = md.read_text(encoding="utf-8")
+    assert body == "plugin version", (
+        f"plugin cache MUST resolve above Codex fallback (D-SkillRootMultiSource "
+        f"priority 4-5 vs 6-8); got body={body!r}"
+    )
+    assert "claude" in str(md).lower() and ".codex" not in str(md)
+
+
+def test_plugin_cache_semver_picks_5_0_10_over_5_0_9(tmp_path, monkeypatch):
+    """P6 codex round 1 F3 fix:plugin version 排序按 semver tuple 不是 lex sort。
+    5.0.9 vs 5.0.10:lex 比较 "5.0.9" > "5.0.10"(因 "9" > "1");semver
+    tuple 比较 (5,0,10,0) > (5,0,9,0) 返回 5.0.10 ✓。
+    """
+    fake_home = tmp_path / "fake-home"
+    base = (
+        fake_home
+        / ".claude"
+        / "plugins"
+        / "cache"
+        / "claude-plugins-official"
+        / "superpowers"
+    )
+    # 注意:5.0.9 和 5.0.10 — lex sort 会把 5.0.9 排在 5.0.10 前(错的)
+    _write_skill(base / "5.0.9" / "skills", "semver-skill", "old version 5.0.9")
+    _write_skill(base / "5.0.10" / "skills", "semver-skill", "new version 5.0.10")
+
+    empty_cwd = tmp_path / "empty-cwd"
+    empty_cwd.mkdir()
+    monkeypatch.delenv("FORGEUE_SKILL_ROOT", raising=False)
+    monkeypatch.chdir(empty_cwd)
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    md = fscc.resolve_skill_md(
+        skill_name="superpowers:semver-skill",
+        override_root=None,
+    )
+    assert md is not None
+    assert "5.0.10" in str(md), (
+        f"semver sort MUST pick 5.0.10 over 5.0.9; got {md}"
+    )
+    assert md.read_text(encoding="utf-8") == "new version 5.0.10"
+
+
+def test_plugin_cache_semver_picks_minor_upgrade(tmp_path, monkeypatch):
+    """P6 F3 fix 同样应处理 5.1.0 vs 5.0.99(minor / patch 跨段比较)。"""
+    fake_home = tmp_path / "fake-home"
+    base = (
+        fake_home
+        / ".claude"
+        / "plugins"
+        / "cache"
+        / "claude-plugins-official"
+        / "superpowers"
+    )
+    # 5.0.99(patch 99)vs 5.1.0(minor 1):semver 5.1.0 > 5.0.99
+    _write_skill(base / "5.0.99" / "skills", "minor-skill", "old 5.0.99")
+    _write_skill(base / "5.1.0" / "skills", "minor-skill", "new 5.1.0")
+
+    empty_cwd = tmp_path / "empty-cwd"
+    empty_cwd.mkdir()
+    monkeypatch.delenv("FORGEUE_SKILL_ROOT", raising=False)
+    monkeypatch.chdir(empty_cwd)
+    monkeypatch.setattr(Path, "home", lambda: fake_home)
+
+    md = fscc.resolve_skill_md(
+        skill_name="superpowers:minor-skill",
+        override_root=None,
+    )
+    assert md is not None
+    assert "5.1.0" in str(md)
+    assert md.read_text(encoding="utf-8") == "new 5.1.0"
+
+
+def test_semver_key_for_path_handles_non_version_parts():
+    """P6 F3 fix:_semver_key_for_path 对非 version 路径段 graceful fallback
+    到 (0,0,0,0)。"""
+    # 路径无任何符合 N.N.N 格式的段 → 返回 (0,0,0,0)
+    p = Path("/tmp/some-path/skills/foo/SKILL.md")
+    assert fscc._semver_key_for_path(p) == (0, 0, 0, 0)
+    # 含 5 段的 path 取第一个匹配
+    p2 = Path("/cache/plugin/5.0.10/skills/foo/SKILL.md")
+    assert fscc._semver_key_for_path(p2) == (5, 0, 10, 0)
+    # 单段数字
+    p3 = Path("/cache/plugin/7/skills/foo/SKILL.md")
+    assert fscc._semver_key_for_path(p3) == (7, 0, 0, 0)

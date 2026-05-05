@@ -103,8 +103,14 @@ def _bare_name(skill_name: str) -> str:
     return skill_name.split(":")[-1].strip()
 
 
-def _direct_roots(override_root: str | None) -> list[Path]:
-    """直接 root(无需 version glob)— 按 D-SkillRootMultiSource 优先级链。"""
+def _high_priority_direct_roots(override_root: str | None) -> list[Path]:
+    """优先级 1-3 direct root(plugin cache 之前)— D-SkillRootMultiSource。
+
+    P6 codex round 1 F2 fix:原 ``_direct_roots`` 把 Codex / CODEX_HOME / .agents
+    全混在一起,plugin cache 在所有 direct root 之后才探,与 design.md L189-202
+    声明的优先级不一致(plugin cache 优先级 4-5 应在 Codex 6-7 之前)。
+    本函数只返回优先级 1-3(CLI flag / env var / repo-local)。
+    """
     roots: list[Path] = []
     if override_root:
         roots.append(Path(override_root))
@@ -112,6 +118,17 @@ def _direct_roots(override_root: str | None) -> list[Path]:
     if env_val:
         roots.append(Path(env_val))
     roots.append(Path.cwd() / ".claude" / "skills")  # repo-local
+    return roots
+
+
+def _low_priority_direct_roots() -> list[Path]:
+    """优先级 6-8 direct root(plugin cache 之后)— D-SkillRootMultiSource。
+
+    P6 codex round 1 F2 fix:Codex / CODEX_HOME / .agents 应在 plugin cache
+    之后探(plugin cache 是 Anthropic Claude Code default 优先;Codex 是
+    fallback)。
+    """
+    roots: list[Path] = []
     roots.append(Path.home() / ".codex" / "skills")
     codex_home = os.environ.get(CODEX_HOME_ENV)
     if codex_home:
@@ -120,11 +137,20 @@ def _direct_roots(override_root: str | None) -> list[Path]:
     return roots
 
 
+# ---- legacy alias(保旧 API surface;P6 F2 fix 后实际不用)----
+def _direct_roots(override_root: str | None) -> list[Path]:
+    """legacy alias(P6 codex round 1 F2 fix 之前的合并 API);现 caller 应使用
+    `_high_priority_direct_roots` + `_low_priority_direct_roots` 分段调用以
+    确保 plugin cache 在 Codex / .agents 之前 probe。保留以防外部 import。"""
+    return _high_priority_direct_roots(override_root) + _low_priority_direct_roots()
+
+
 def _probe_plugin_cache(bare_name: str) -> Path | None:
     """探 ``~/.claude/plugins/cache/<plugin>/<version>/skills/<bare_name>/SKILL.md``。
 
     Anthropic-official plugin(``claude-plugins-official``)优先;然后其他 plugin。
-    多 version 时取 lex-largest(对 semver lex sort 即 latest)。
+    多 version 时取 latest(P6 codex round 1 F3 fix:按 semver 解析 + tuple 比较,
+    不是 lex sort — 否则 5.0.9 排在 5.0.10 前)。
     """
     plugin_cache = Path.home() / ".claude" / "plugins" / "cache"
     if not plugin_cache.is_dir():
@@ -141,14 +167,50 @@ def _probe_plugin_cache(bare_name: str) -> Path | None:
     return _latest_version_match(plugin_cache, bare_name)
 
 
+# semver 数字段提取:支持 N / N.N / N.N.N / N.N.N.N(多于 3 段则取前 4 段);
+# 非数字 / 缺位以 0 padding(P6 F3 fix)
+_SEMVER_DIGITS_RE = re.compile(r"\d+")
+
+
+def _semver_key_for_path(p: Path) -> tuple[int, ...]:
+    """从路径中抽取 semver 数字段作 tuple 排序 key。
+
+    P6 codex round 1 F3 fix:`sorted(..., key=str(p), reverse=True)` 对 5.0.9 vs
+    5.0.10 lex 比较返回 5.0.9 first(因 "9" > "1"),错读旧版 SKILL.md。改用
+    数字段 tuple 比较:5.0.9 → (5,0,9,0) / 5.0.10 → (5,0,10,0),tuple 比较
+    返回 5.0.10 > 5.0.9 ✓。
+
+    路径形态约定:plugin cache 路径含一段形如 ``<plugin>/<version>/skills/...``,
+    我们抽 path.parts 中第一个匹配纯数字段(`re.fullmatch(r"\\d+(?:\\.\\d+){0,3}", part)`)
+    的部分作为 version;若都不匹配,fallback 到 (0,0,0,0)(全部相等 → 后续按
+    str 序作 tie-breaker)。
+    """
+    for part in p.parts:
+        # 容忍 dotted version(如 ``5.0.10``)+ 容忍纯数字(``5``)+ 拒绝 hash 段
+        if re.fullmatch(r"\d+(?:\.\d+){0,3}", part):
+            digits = [int(x) for x in part.split(".")]
+            # pad 到 4 段(major.minor.patch.build)便于比较
+            while len(digits) < 4:
+                digits.append(0)
+            return tuple(digits[:4])
+    return (0, 0, 0, 0)
+
+
 def _latest_version_match(root: Path, bare_name: str) -> Path | None:
-    """在 ``root`` 下 rglob ``skills/<bare_name>/SKILL.md``,取 lex-largest 路径。"""
-    candidates = sorted(
-        root.rglob(f"skills/{bare_name}/SKILL.md"),
-        key=lambda p: str(p),
-        reverse=True,  # 高版本在前
+    """在 ``root`` 下 rglob ``skills/<bare_name>/SKILL.md``,按 semver tuple 取 latest。
+
+    P6 codex round 1 F3 fix:原 lex sort 对 5.0.9 vs 5.0.10 错排;改 semver tuple
+    排序确保 plugin major upgrade 后命中 latest version 的 SKILL.md。tie-breaker
+    用 str(p) lex sort 保稳定性(同 semver 多路径罕见,但保证 deterministic)。
+    """
+    candidates = list(root.rglob(f"skills/{bare_name}/SKILL.md"))
+    if not candidates:
+        return None
+    candidates.sort(
+        key=lambda p: (_semver_key_for_path(p), str(p)),
+        reverse=True,  # 最高 semver 在前
     )
-    return candidates[0] if candidates else None
+    return candidates[0]
 
 
 def resolve_skill_md(
@@ -157,33 +219,40 @@ def resolve_skill_md(
 ) -> Path | None:
     """按 D-SkillRootMultiSource 优先级链探 SKILL.md;首个命中即返回。
 
+    优先级链(P6 codex round 1 F2 fix:plugin cache 在 Codex / .agents 之前):
+        1. CLI flag --skill-root
+        2. env var FORGEUE_SKILL_ROOT
+        3. .claude/skills(repo-local)
+        4-5. plugin cache(claude-plugins-official 优先,然后其他 plugin)
+        6. ~/.codex/skills
+        7. CODEX_HOME/skills
+        8. .agents/skills
+
     返回 ``None`` 当所有 root 都没找到 — 调用方决定是否当 unknown skill 处理。
     """
     bare = _bare_name(skill_name)
     if not bare:
         return None
 
-    # 优先级 1-3、6-8:直接 root(<root>/<bare>/SKILL.md)
-    for root in _direct_roots(override_root):
-        if not _is_above_priority_for_plugin_cache(root):
-            continue  # placeholder — 始终 True;留给 future override 重排
+    # 优先级 1-3:high-priority direct root
+    for root in _high_priority_direct_roots(override_root):
         md = root / bare / "SKILL.md"
         if md.is_file():
             return md
 
-    # 优先级 4-5:plugin cache(version glob 后取 latest)
+    # 优先级 4-5:plugin cache(P6 F2 fix:在 Codex / .agents 之前)
     plugin_match = _probe_plugin_cache(bare)
     if plugin_match is not None:
         return plugin_match
 
+    # 优先级 6-8:low-priority direct root(Codex / CODEX_HOME / .agents)
+    for root in _low_priority_direct_roots():
+        md = root / bare / "SKILL.md"
+        if md.is_file():
+            return md
+
     # 全 miss
     return None
-
-
-def _is_above_priority_for_plugin_cache(_root: Path) -> bool:
-    # 当前所有 direct root 都比 plugin cache 优先级高/低关系按 _direct_roots 顺序处理;
-    # 这个 hook 留给 future scenario(如 plugin cache 之后再加 fallback)。
-    return True
 
 
 # ---------------------------------------------------------------------------
