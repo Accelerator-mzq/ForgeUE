@@ -1699,6 +1699,19 @@ def _check_dispatch_ledger(
     Inline 实施原因:import forgeue_dispatch_ledger 作为 module 易于测试,
     无 subprocess 开销;forgeue_dispatch_ledger.py 无模块级副作用(只有
     `if __name__ == "__main__": raise SystemExit(main())`)。
+
+    **Sync drift 警告**(P2 round 1 codex code_quality_review 提出):本 inline 实施
+    与 `forgeue_dispatch_ledger.cmd_verify` 有 2 处**有意差异**:
+    1. **空行处理**:本 inline 跳过空行(`raw_stripped` 后 `continue`);
+       `cmd_verify` 对空行调 `json.loads("")` 抛 `JSONDecodeError` 返回 EXIT_VERIFY_FAIL。
+       本 inline 更宽松 — 接受 ledger 文件尾部多余空行(append 工具写入后常见)。
+    2. **prev_ts 更新条件**:本 inline 仅当 `ts` non-empty 时更新 `prev_ts = ts`;
+       `cmd_verify` 无条件 `prev_ts = ts`(哪怕 `ts == ""`)。
+       本 inline 更严格 — `dispatched_at` 缺失行不会重置 prev_ts,后续单调性检查仍生效。
+
+    **若 forgeue_dispatch_ledger.cmd_verify 校验规则未来变更**(如加 `schema_version`
+    字段、改 timestamp 格式)→ 本 inline 实施**不会自动同步**,需手工 update。
+    Maintenance contract:每次改 `cmd_verify` MUST 同步 review 本函数。
     """
     errors: list[str] = []
     if not _runtime_enforcement_v2_active(frontmatter):
