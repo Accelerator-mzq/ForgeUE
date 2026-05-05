@@ -21,6 +21,7 @@ ADR-011 + ADR-012 累积引入 ForgeUE-level MANDATORY worktree enforcement(L2 +
 - G8(D-CrossCheckUpstreamCascade):仍 honor Superpowers upstream `subagent-driven-development/SKILL.md` `## Integration` 段声明的 `using-git-worktrees` Required cascade(ForgeUE 不 override upstream;只 ForgeUE-level MANDATORY 协议层撤)
 - G9(D-ConsentOutcomeStateMachine;codex round 1 F2+F3 writeback):evidence frontmatter `worktree_consent_outcome` enum + `worktree_mode` enum 必填(替代 D-AdvisoryFenceMode 隐式 field-presence 推断);finish_gate 加 `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` fence 守门 cross-field invariants
 - G10(D-ParallelDeclineFallback;codex round 1 F1 writeback):`/forgeue:change-apply-parallel` user decline worktree → 自动降级 sequential(无 prompt);消除 main repo + multi-implementer + W2 attribution 漏洞
+- G11(D-DogfoodSelfHostMode;user 拍板路径 (A) literal compliance):本 change 实施期字面遵循当前命令模板旧 ADR-011/012 mandatory worktree + W1 wrapper + receipt 协议(沿 archived ADR-012 self-DogfoodGap 同款);self evidence 沿 v2 + worktree_path / receipt_path 必填;ADR-013 新 schema(consent_outcome / mode + v1 advisory)在 archive 后才作为下一个 active change 的 first dogfood 生效
 
 **Non-Goals**:
 
@@ -235,9 +236,24 @@ ForgeUE 不 override upstream cascade — 命令模板仍 invoke `Skill(using-gi
 
 **Phase 1 - propose / design / specs / tasks 落 contract**(本次)
 
-**Phase 2 - 实装**(apply stage,沿 sequential dispatch — main repo cwd default per ADR-013):
-- P0:命令模板更新(subagent + parallel `## Preflight Worktree` section 改 OPT-IN + decline-default narrative)
-- P1:`forgeue_finish_gate.py` `_check_worktree_path` v1 + `_check_worktree_path_v2` 改 advisory + fence test 调整
+**Phase 2 - 实装**(apply stage,沿 sequential dispatch — **literal compliance dogfood mode**):
+
+**D-DogfoodSelfHostMode**(本 change 实施期 worktree mode 决议;沿 archived ADR-012 self-DogfoodGap 同款模式):本 change implementation phase MUST 字面遵循当前命令模板 `/forgeue:change-apply-subagent` `## Preflight Worktree` section 协议(即旧 ADR-011/012 mandatory worktree + W1 wrapper + 13-field receipt),理由:
+
+1. P1 finish_gate advisory 升级 ship 之前,`_check_worktree_path` v1 fence 仍阻断 evidence 缺 `worktree_path`;不创 worktree 直接违 fence,需暂时 bypass 工具开关(violate audit)
+2. 沿 archived ADR-012 dogfood 同款模式(ADR-012 ship v2 时 self evidence 仍 v1):本 change ship ADR-013 时 self evidence 仍 v2 + 沿旧 wrapper 路径 — archived 后才生效新 ADR-013 协议
+3. worktree isolation 在 implementation 期仍有 boundary 价值(subagent dispatch 不污染 main repo dev branch);self-DogfoodGap 接受这一价值
+
+**实施期 evidence frontmatter convention**(per-task implementer / spec_review / code_quality_review / final_review):
+- `runtime_enforcement_protocol_version: v2`(沿命令模板字面要求)
+- `worktree_path: <wrapper-managed absolute path>`(必填)
+- `worktree_receipt_path: <relative path to receipt JSON>`(必填)
+- `worktree_consent_outcome` / `worktree_mode` 字段 **不写**(沿 self-DogfoodGap;ADR-013 新字段在 archive 后才生效;本 change 自身 evidence 沿 ADR-012 v2 schema)
+- archived 后,**下一个 active change** 才作为 first dogfood:走 ADR-013 default decline / in_place mode 路径,evidence 含 `worktree_consent_outcome` + `worktree_mode` + `runtime_enforcement_protocol_version: v1`(per ADR-013 fence 兼容)
+
+**Phase 2 sub-phase**:
+- P0:命令模板更新(subagent + parallel `## Preflight Worktree` section 改 OPT-IN + MUST invoke `Skill(superpowers:using-git-worktrees)` + outcome / mode capture narrative)
+- P1:`forgeue_finish_gate.py` `_check_worktree_path` v1 + `_check_worktree_path_v2` 改 advisory + 加 `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 2 新 fence + fence test 调整
 - P2:`forgeue_preflight_wrapper.py` 加 deprecation notice(模块 + `--help`)
 - P3:sister skill `subagent-driven-discipline/SKILL.md` v2.3 update — Pattern 2 narrative + 加 §3.5 Worktree Consent Policy
 - P4:backbone skill `forgeue-integrated-change-workflow/SKILL.md` Superpowers 集成边界表 + Runtime Enforcement Protocol v1/v2 段 supersede note
