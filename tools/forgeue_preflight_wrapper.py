@@ -107,14 +107,31 @@ def _run_git(args: list[str], *, cwd: Path) -> tuple[int, str, str]:
 
 
 def _git_repo_root(cwd: Path) -> Path | None:
-    """``git rev-parse --show-toplevel`` 取仓库根;非 git 仓库 → None。"""
-    rc, out, _ = _run_git(["rev-parse", "--show-toplevel"], cwd=cwd)
+    """resolve main repo root, even when called from inside a worktree.
+
+    ADR-013 codex round 2 plan review F3 writeback(W7-a wrapper bug fix):
+    原 ``git rev-parse --show-toplevel`` 在 worktree 内返 worktree 自身路径,
+    `_resolve_target_worktree` 算出 nested target → ``git worktree add`` 在
+    nested 路径试图创建第二 worktree → "Filename too long" 链锁失败。
+
+    Fix:用 ``git rev-parse --git-common-dir`` 取共享 ``.git`` directory
+    (worktree 内返 main repo 的 ``.git`` 绝对路径;main repo 内返相对 ``.git``
+    或 absolute 视 git 版本/config),parent 即 main repo root。统一两种调用
+    上下文(main repo / worktree)→ 不再 nested。
+    """
+    rc, out, _ = _run_git(["rev-parse", "--git-common-dir"], cwd=cwd)
     if rc != 0:
         return None
     out = out.strip()
     if not out:
         return None
-    return Path(out).resolve()
+    common_dir = Path(out)
+    if not common_dir.is_absolute():
+        # main repo 内 git-common-dir 返相对 ``.git`` → 拼到 cwd 算 main repo root
+        common_dir = (cwd / common_dir).resolve()
+    else:
+        common_dir = common_dir.resolve()
+    return common_dir.parent
 
 
 def _git_status_clean(cwd: Path, *, ignore_paths: tuple[str, ...] = ()) -> bool:

@@ -15,6 +15,14 @@
 - [x] Pre-P0.5:`review/plan_cross_check.md`(plan-level cross-check;沿 archived ADR-012 同款 reference 模式 → 落到 P7 阶段一并写)
 - [x] Pre-P0.6:`disputed_open: 0` 验证(已确认:3 finding 全 accepted-codex,无 disputed)
 
+## P-pre0 — W7-a wrapper bug fix(D-WrapperBugFixInScope;codex round 2 plan review F3 writeback)
+
+- [x] P-pre0.1:`tools/forgeue_preflight_wrapper.py` `_git_repo_root` 改用 `git rev-parse --git-common-dir`(关闭 worktree 内调用返 worktree 自身 → nested target → "Filename too long" 链锁失败漏洞)
+- [x] P-pre0.2:加 unit fence test `tests/unit/test_preflight_wrapper.py::test_git_repo_root_from_inside_worktree_returns_main_repo`(校验 main repo / worktree 两调用上下文返同一 main repo path)
+- [x] P-pre0.3:加 unit fence test `tests/unit/test_preflight_wrapper.py::test_wrapper_reuse_path_works_when_invoked_from_existing_worktree`(端到端 regression:从已有 worktree 内调 wrapper → exit 0 + receipt worktree_action="reused")
+- [x] P-pre0.4:`pytest tests/unit/test_preflight_wrapper.py -v` 全绿(20 fence;原 18 + W7-a 2)
+- [x] P-pre0.5:`python -m pytest -q` 全套 regress 全绿(1609 passed,1 已修)
+
 ## P0 — 命令模板更新(D-RestoreConsentGate)
 
 - [ ] P0.1:Read 现有 `.claude/commands/forgeue/change-apply-subagent.md` + `.claude/commands/forgeue/change-apply-parallel.md`(archived ADR-012 P3 mandatory 版)
@@ -54,11 +62,16 @@
   - 入口加 `worktree_mode` field present check:absent → return [](legacy 兼容)
   - `worktree_mode: wrapper_worktree` → require `worktree_receipt_path` present + receipt JSON well-formed + receipt `worktree_path` == evidence `worktree_path` + receipt `is_isolated_worktree: true`
   - `worktree_mode ∈ {in_place, skill_worktree}` → 不要求 receipt;若写了 → Blocker(skill_worktree mode 禁写 receipt)
-- [ ] P1.4:加新 fence `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency`(沿 codex round 1 F2+F3 writeback):
+- [ ] P1.4:加新 fence `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency`(沿 codex round 1 F2+F3 writeback + codex round 2 plan review F2 writeback):
   - `_check_worktree_consent_outcome`:
     - field absent(legacy archived)→ return []
     - field present + `triggered_by_command ∈ {change-apply-subagent, change-apply-parallel}` → enum value validate(`{declined, accepted, already_isolated, sandbox_fallback}`);非法 → Blocker
-    - 校验 invariants:`declined ↔ in_place`;`accepted → mode ∈ {skill_worktree, wrapper_worktree}`;违 invariant → Blocker
+    - 校验 invariants:
+      - `declined ↔ in_place`;违 → Blocker
+      - `accepted → mode ∈ {skill_worktree, wrapper_worktree}`;违 → Blocker
+      - **W6 codex round 2 F2**:`already_isolated → mode ∈ {skill_worktree, wrapper_worktree}`(**禁** in_place);违 → Blocker
+      - **W6 codex round 2 F2**:`already_isolated` 时 `worktree_path` 必填 + `os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`(防 controller 写假 isolated path = main repo);违 → Blocker
+      - `sandbox_fallback ↔ in_place`;违 → Blocker
   - `_check_worktree_mode_consistency`:
     - field absent(legacy archived)→ return []
     - `mode: in_place` + `worktree_path` present → Blocker(关闭 F2 双歧义)
@@ -69,6 +82,8 @@
   - 加 `test_worktree_consent_outcome_invalid_blocks`(F3 enum validate)
   - 加 `test_worktree_consent_outcome_declined_requires_mode_in_place`(F3 invariant)
   - 加 `test_worktree_consent_outcome_accepted_requires_mode_worktree_or_wrapper`(F3 invariant)
+  - 加 `test_worktree_consent_outcome_already_isolated_rejects_mode_in_place`(W6 codex round 2 F2)
+  - 加 `test_worktree_consent_outcome_already_isolated_requires_worktree_path_not_main_repo`(W6 codex round 2 F2)
   - 加 `test_worktree_mode_in_place_rejects_worktree_path_field`(F2 disambiguation)
   - 加 `test_worktree_mode_wrapper_requires_receipt_path`(F2 mode-conditional)
   - 加 `test_worktree_mode_skill_rejects_receipt_path_field`(F2 mode-conditional)
@@ -160,7 +175,7 @@
 - [ ] P10.1:`python tools/forgeue_finish_gate.py --change restore-superpowers-worktree-consent-gate --no-validate` 跑(预期 P11 unchecked sole blockers)
 - [ ] P10.2:验证 12-key frontmatter 全填
 - [ ] P10.3:验证 cross-check `disputed_open: 0`
-- [ ] P10.4:验证 evidence 全部 `runtime_enforcement_protocol_version: v1`(沿 archived ADR-012 自 dogfood gap 同款 — wrapper 仍 opt-in 不强制 v2)
+- [ ] P10.4:验证 evidence 全部 `runtime_enforcement_protocol_version: v2`(沿 D-DogfoodSelfHostMode revised path A literal compliance;wrapper-managed worktree;每 evidence 含 `worktree_path` + `worktree_receipt_path` + `worktree_consent_outcome: accepted` + `worktree_mode: wrapper_worktree`;ADR-013 outcome/mode fence 在 P1 ship 后 future replay 自动 enforce)
 - [ ] P10.5:验证 writeback_commit 真实性
 - [ ] P10.6:验证 tasks.md P0-P10 全 [x](P11/P12 留 archive)
 - [ ] P10.7:`openspec validate restore-superpowers-worktree-consent-gate --strict` 全绿

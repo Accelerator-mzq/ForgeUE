@@ -12,13 +12,20 @@
 
 **Outcome / Mode 显式状态机**(D-ConsentOutcomeStateMachine;codex round 1 F2+F3 writeback):
 
-| `worktree_consent_outcome` | 必配 `worktree_mode` | `worktree_path` | `worktree_receipt_path` |
-|---|---|---|---|
-| `declined` | `in_place`(强制) | **禁写** | absent |
-| `accepted` | `skill_worktree` | required + path exists | absent |
-| `accepted` | `wrapper_worktree` | required + path exists | required + JSON valid + receipt path matches |
-| `already_isolated` | `in_place` 或 `skill_worktree` | conditional on mode | conditional on mode |
-| `sandbox_fallback` | `in_place` | **禁写** | absent |
+| `worktree_consent_outcome` | 必配 `worktree_mode` | `worktree_path` | `worktree_receipt_path` | parallel-route allowed? |
+|---|---|---|---|---|
+| `declined` | `in_place`(强制) | **禁写** | absent | NO(自动降级 sequential)|
+| `accepted` | `skill_worktree` | required + path exists | absent | YES |
+| `accepted` | `wrapper_worktree` | required + path exists | required + JSON valid + receipt path matches | YES |
+| `already_isolated` | `skill_worktree` 或 `wrapper_worktree`(**必须** isolated workspace mode;codex round 2 plan review F2 writeback) | required + path exists + path != main repo root | mode-conditional | YES |
+| `sandbox_fallback` | `in_place` | **禁写** | absent | NO(自动降级 sequential)|
+
+**`already_isolated` 强 invariant**(W6 / codex round 2 plan review F2 writeback;关闭 already_isolated → in_place 绕过 parallel decline auto-fallback 漏洞):
+
+- `worktree_consent_outcome: already_isolated` MUST 配 `worktree_mode ∈ {skill_worktree, wrapper_worktree}`(**禁** `in_place`)
+- `worktree_path` MUST 写 + path exists + `os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`(防 controller 写 `worktree_path: <main_repo>` 假声 isolated)
+- 任一违反 → `_check_worktree_consent_outcome` Blocker
+- `parallel` Step 0 决策表对 `already_isolated` 仅在以上 invariant 全满足时允许 parallel 路径;违反 → 自动降级 sequential(同 declined 处理)
 
 实装路径:
 
@@ -98,11 +105,32 @@
 - **THEN** `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 入口 field-present check → pass-through(legacy 兼容)
 - **AND** `_check_worktree_path` v1 / v2 沿 archived 行为(写了字段就 validate)
 
-#### Scenario: opt-in W1 wrapper 仍 functional
+#### Scenario: implementation evidence already_isolated + in_place 阻断(W6 codex round 2 F2)
 
-- **WHEN** user 显式 `python tools/forgeue_preflight_wrapper.py --change <id>` 调用
-- **THEN** wrapper 行为不变(沿 archived `enhance-workflow-automation-executable-enforcement` D-W1-ReceiptSchema):自管 worktree + 13-field receipt JSON + cwd realpath 校验
+- **WHEN** evidence frontmatter `worktree_consent_outcome: already_isolated` + `worktree_mode: in_place`
+- **THEN** `_check_worktree_consent_outcome` exit 非 0(违 invariant:already_isolated 必须 mode ∈ {skill_worktree, wrapper_worktree})
+- **AND** 错误指明 already_isolated 不允许 in_place(消除"已隔离 + main repo cwd 重新打开 F1 attribution"漏洞)
+
+#### Scenario: implementation evidence already_isolated + worktree_path == main repo 阻断(W6 codex round 2 F2)
+
+- **WHEN** evidence frontmatter `worktree_consent_outcome: already_isolated` + `worktree_mode: skill_worktree` + `worktree_path: <main_repo_root>`(controller 写假声 isolated)
+- **THEN** `_check_worktree_consent_outcome` exit 非 0(违 invariant:`os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`)
+- **AND** 错误指明 worktree_path 不能等于 main repo root
+
+#### Scenario: parallel + already_isolated valid 路径走 parallel(W6)
+
+- **WHEN** controller invoke `/forgeue:change-apply-parallel` + `worktree_consent_outcome: already_isolated` + `worktree_mode: skill_worktree` + `worktree_path` 写且 != main repo
+- **THEN** parallel 路径正常跑(W6 invariant 守门通过)
+- **AND** W2 actual diff 收集 in 各自 implementer workspace
+
+#### Scenario: opt-in W1 wrapper 仍 functional(含 worktree-internal call 路径;W7-a)
+
+- **WHEN** user 显式 `python tools/forgeue_preflight_wrapper.py --change <id>` 调用(无论 cwd 在 main repo 还是已存在 wrapper-managed worktree 内)
+- **THEN** wrapper 行为(沿 archived `enhance-workflow-automation-executable-enforcement` D-W1-ReceiptSchema + 本 change W7-a bug fix):
+  - 用 `git rev-parse --git-common-dir` 推断 main repo root(**不**用 `--show-toplevel`,避免 worktree 内调用返 worktree 自身造成 nested target);main / worktree 两种调用上下文返同一 main repo
+  - 自管 worktree(`git worktree add` from main repo;already exists → reuse)+ 13-field receipt JSON + cwd realpath 校验
 - **AND** wrapper `--help` 含 `[DEPRECATED in default flow]` deprecation notice
+- **AND** regression test:`tests/unit/test_preflight_wrapper.py::test_git_repo_root_from_inside_worktree_returns_main_repo` + `test_wrapper_reuse_path_works_when_invoked_from_existing_worktree`(W7-a fence)
 
 ### Requirement: Implementation parallel dispatch via `/forgeue:change-apply-parallel`
 
@@ -114,10 +142,12 @@ evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `fal
 
 **v2 升级(archived `enhance-workflow-automation-executable-enforcement`,F4 round 1 + F3 round 2 codex inline writeback)**:dispatch 后主 session 自动在每个 implementer 跑 `git diff --name-only -z <base_sha>..HEAD` + `git ls-files --others --exclude-standard -z` 合集收集 actual changed-files set;先 `git status --porcelain=v1` precondition fail-closed 校验 implementer worktree clean(若 dirty → 自动降级 sequential)。任意两 implementer actual set 交集非空 → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: actual_file_overlap_detected` 或 `dirty_implementer_worktree`。
 
-**ADR-013 update**(D-ParallelDeclineFallback;codex round 1 F1 writeback):`/forgeue:change-apply-parallel` Step 0 outcome 决策表:
+**ADR-013 update**(D-ParallelDeclineFallback;codex round 1 F1 writeback + codex round 2 F2 writeback):`/forgeue:change-apply-parallel` Step 0 outcome 决策表:
+
 - `worktree_consent_outcome: declined` → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt;沿 R-no-continue-prompts);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: parallel_requires_isolated_workspace` + `worktree_consent_outcome: declined` + `worktree_mode: in_place`。**main repo + multi-implementer + W2 路径 SHALL NOT 走**(F1 attribution 漏洞:多 implementer 同 working tree git state 全局污染)。
 - `worktree_consent_outcome: accepted` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}` → parallel 路径正常跑 + W2 actual diff 收集 in 各自 worktree(沿 archived ADR-012 `task_files_actual` 含 `implementer_agent_id` + `files`)
-- `worktree_consent_outcome: already_isolated` → parallel 路径正常跑(假定 session 已在 isolated workspace)
+- `worktree_consent_outcome: already_isolated` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}` + `worktree_path` 写且 != main repo → parallel 路径正常跑(W6 codex round 2 F2 writeback:已 enforce isolated workspace invariant;不再绕过 F1 attribution 守门)
+- `worktree_consent_outcome: already_isolated` + `worktree_mode: in_place` → **invalid**;`_check_worktree_consent_outcome` Blocker(消除 W6 codex round 2 F2 揭示的"已隔离 + main repo cwd 重新打开 F1"漏洞);**自动降级 sequential**(同 declined 处理)
 - `worktree_consent_outcome: sandbox_fallback` → 警告 + 降级 sequential(sandbox 与 parallel 不兼容)
 
 #### Scenario: controller 显式声明 task 独立 + parallel dispatch

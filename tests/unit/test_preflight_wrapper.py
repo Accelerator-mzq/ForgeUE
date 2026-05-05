@@ -784,3 +784,119 @@ def test_cli_minimal_invocation_smoke(
     )
     rel = second.stdout.strip()
     assert rel.startswith("preflight_receipts/")
+
+
+# ---------------------------------------------------------------------------
+# ADR-013 codex round 2 plan review F3 writeback(W7-a wrapper bug fix
+# regression):_git_repo_root 在 worktree 内调用必须返 main repo 而非 worktree
+# 自身,否则 _resolve_target_worktree 算 nested target → ``git worktree add``
+# nested fail(本仓库实测 "Filename too long" 链锁失败)。
+# ---------------------------------------------------------------------------
+
+
+def test_git_repo_root_from_inside_worktree_returns_main_repo(
+    tmp_path: Path,
+):
+    """``_git_repo_root(<inside-worktree-cwd>)`` MUST 返回 main repo 路径,**不**返
+    worktree 自身路径(原 bug:用 ``git rev-parse --show-toplevel`` 在 worktree 内
+    返 worktree 自身 → ``_resolve_target_worktree`` 算 nested target → 创第二
+    worktree 失败)。
+
+    本 fence 测 fixed wrapper 用 ``git rev-parse --git-common-dir`` 取共享
+    ``.git`` 目录的 parent 作 main repo root,两种调用上下文(main / worktree)
+    返同一 main repo 路径。
+    """
+    # import wrapper 内部 helper(沿 SUT 直接 unit-test)
+    sys.path.insert(0, str(_TOOLS))
+    try:
+        from forgeue_preflight_wrapper import _git_repo_root  # noqa: WPS433
+    finally:
+        sys.path.pop(0)
+
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+
+    # 创 worktree(用 git CLI 直接,不走 wrapper)
+    worktree = tmp_path / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree), "-b", "wt-branch"],
+        cwd=str(repo), check=True, capture_output=True,
+    )
+
+    # 校验:从 main repo 内 cwd 调用 → 返 main repo
+    root_from_main = _git_repo_root(repo)
+    assert root_from_main is not None
+    assert os.path.realpath(root_from_main) == os.path.realpath(repo), (
+        f"_git_repo_root from main repo cwd should return main repo;\n"
+        f"got {root_from_main!r}, expected {repo!r}"
+    )
+
+    # 校验(关键 fence):从 worktree 内 cwd 调用 → 仍返 main repo,**不**返 worktree
+    root_from_worktree = _git_repo_root(worktree)
+    assert root_from_worktree is not None
+    assert os.path.realpath(root_from_worktree) == os.path.realpath(repo), (
+        f"_git_repo_root from inside worktree cwd MUST return main repo "
+        f"(W7-a bug fix for ADR-013);\n"
+        f"got {root_from_worktree!r}, expected {repo!r} (NOT worktree {worktree!r})"
+    )
+    assert os.path.realpath(root_from_worktree) != os.path.realpath(worktree), (
+        f"_git_repo_root from inside worktree MUST NOT return worktree itself "
+        f"(this is the original bug — pre-fix used git rev-parse --show-toplevel "
+        f"which returns worktree self);\n"
+        f"got {root_from_worktree!r}"
+    )
+
+
+def test_wrapper_reuse_path_works_when_invoked_from_existing_worktree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression for ADR-013 codex round 2 plan review F3:wrapper 第二次从已
+    创建的 worktree 内调用应走 reuse 路径(exit 0 + receipt 写入),**不**应试图
+    nested 创建第二 worktree。
+
+    Pre-fix:``_git_repo_root`` 在 worktree 内返 worktree 自身 →
+    ``_resolve_target_worktree`` 算 ``<worktree>/.worktrees/<change>`` nested
+    target → ``git worktree add`` 在 nested 路径创 worktree → "Filename too
+    long" / branch 已存在 链锁失败(本仓库实测 D:/ClaudeProject/ForgeUE_claude
+    路径深度触发 Windows MAX_PATH)。
+
+    Post-fix:_git_repo_root 用 git-common-dir 推断 main repo,target =
+    ``<main>/.worktrees/<change>``;`_ensure_worktree` `worktree list` 找到
+    existing entry → 走 reused 分支 → exit 0 + receipt OK。
+    """
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+
+    skills_root = tmp_path / "fake-skills"
+    skill_name = "superpowers:dummy-leaf"
+    _write_skill(skills_root, skill_name)
+    monkeypatch.setenv("FORGEUE_SKILL_ROOT", str(skills_root))
+
+    change_id = "wt-reuse-regression"
+    target, first, second = _two_step_setup(repo, change_id, skill_name)
+
+    # First: from main repo → exit 6 (worktree created + wrong-cwd warning)
+    assert first.returncode == 6
+    assert target.exists()
+
+    # Second (key fence): from worktree internal cwd → exit 0 (reuse path works)
+    assert second.returncode == 0, (
+        f"reuse path from inside worktree MUST succeed (W7-a bug fix);\n"
+        f"stdout={second.stdout}\nstderr={second.stderr}"
+    )
+
+    # Verify worktree_action == "reused" (not "created" — that would mean
+    # wrapper still tried to nested-create instead of reusing)
+    receipt_rel = second.stdout.strip()
+    receipt_abs = target / "openspec" / "changes" / change_id / receipt_rel
+    payload = json.loads(receipt_abs.read_text(encoding="utf-8"))
+    assert payload["worktree_action"] == "reused", (
+        f"second invoke from worktree MUST reuse existing worktree, not create "
+        f"a nested one;\n got worktree_action={payload['worktree_action']!r}"
+    )
+    # Verify worktree_path is the original worktree, not a nested path
+    assert os.path.realpath(payload["worktree_path"]) == os.path.realpath(target), (
+        f"worktree_path in receipt MUST point to original worktree;\n"
+        f"got {payload['worktree_path']!r}, expected {target!r}"
+    )
