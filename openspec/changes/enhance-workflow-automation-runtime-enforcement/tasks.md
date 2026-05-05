@@ -2,29 +2,28 @@
 
 ## Pre-P0(self-host bootstrap;沿 D-SelfHost 模式;**本 change 实施期间 sequential dispatch**因为 parallel 协议未 land)
 
-- [ ] Pre-P0.1:`/codex:adversarial-review` round 1 挑战 D-ParallelDispatch / D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity / D-TaskGranularityDeclaration / D-PreflightProtocol 6 个 D-decision + Open Questions OQ-1/2/3
-- [ ] Pre-P0.2:落 `notes/pre_p0/codex_review_round1.md` evidence
-- [ ] Pre-P0.3:Claude 独立验证 codex finding(file:line 引用)+ verdict 矩阵
-- [ ] Pre-P0.4:writeback finding 到 design.md / proposal.md / spec.md / tasks.md(double-commit)
-- [ ] Pre-P0.5:落 `notes/pre_p0/plan_cross_check.md`(plan-level cross-check 覆盖 design + plan + spec + tasks 四 scope)
-- [ ] Pre-P0.6:`disputed_open: 0` 验证
+- [x] Pre-P0.1:`/codex:adversarial-review` round 1 挑战 D-ParallelDispatch / D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity / D-TaskGranularityDeclaration / D-PreflightProtocol 6 个 D-decision + Open Questions OQ-1/2/3
+- [x] Pre-P0.2:落 `notes/pre_p0/codex_review_round1.md` evidence
+- [x] Pre-P0.3:Claude 独立验证 codex finding(file:line 引用)+ verdict 矩阵
+- [x] Pre-P0.4:writeback finding 到 design.md / proposal.md / spec.md / tasks.md(double-commit;commit 7300173 + amend 3de6165)
+- [x] Pre-P0.5:落 `notes/pre_p0/plan_cross_check.md`(plan-level cross-check 覆盖 design + plan + spec + tasks 四 scope)
+- [x] Pre-P0.6:`disputed_open: 0` 验证(2 inline writeback F4/F5 + 3 deferred-tracking F1/F2/F3)
 
 ## P0 — `tools/forgeue_skill_cascade_check.py` 新建 + 测试 fence
 
-- [ ] P0.1:Read 一个 sample SKILL.md(`subagent-driven-development` / `using-git-worktrees`)了解 `## Integration` 段格式
-- [ ] P0.2:加 `tools/forgeue_skill_cascade_check.py`(stdlib only):
-  - argparse:`--skill <name>` + `--invoked <comma-separated-skill-list>`
-  - SKILL.md 路径推断:`~/.claude/plugins/cache/claude-plugins-official/superpowers/<version>/skills/<skill-name>/SKILL.md`(version 拿最新)
-  - 解析 `## Integration` 段 / `**Required workflow skills:**` 子段 / `**Required:**` 标记
-  - 输出 missing dependency 列表 + exit 0 / 5
-- [ ] P0.3:加 `tests/unit/test_skill_cascade_check.py`(新建)fence:
-  - `test_cascade_check_invokes_dependencies_resolves` — sample SKILL with deps + all invoked → exit 0
-  - `test_cascade_check_missing_dependency_blocks` — sample SKILL with deps + partial invoked → exit 5 + 列出 missing
-  - `test_cascade_check_no_integration_section_skip` — sample SKILL 无 `## Integration` 段 → exit 0(无 dependency)
-  - `test_cascade_check_unknown_skill_error` — `--skill` 不存在 → exit 非 0
-  - `test_cascade_check_robust_to_section_format_drift` — sample SKILL `## Integration` 段格式略变(空格 / 大小写) → 仍能解析
-- [ ] P0.4:`pytest -q tests/unit/test_skill_cascade_check.py` 全绿
-- [ ] P0.5:`pytest -q` 全套 regress
+- [x] P0.1:Read 一个 sample SKILL.md(`subagent-driven-development` / `using-git-worktrees`)了解 `## Integration` 段格式
+- [x] P0.2:加 `tools/forgeue_skill_cascade_check.py`(stdlib only):
+  - argparse:`--skill <name>` + `--invoked <comma-separated-skill-list>` + `--skill-root <path>`(D-SkillRootMultiSource override)
+  - SKILL.md 路径推断:8 root probe 链(CLI flag / env var / repo-local / Anthropic plugin cache 拿最新 version / 其他 plugin / Codex / `${CODEX_HOME}` / `.agents/skills`),首个命中即返回
+  - 解析 `## Integration` 段 / `**Required workflow skills:**` 子段 / `REQUIRED` 标记
+  - 输出 missing dependency 列表 + exit 0 / 5(unknown skill 与 missing dep 都用 5,通过 sentinel 区分)
+- [x] P0.3:加 `tests/unit/test_skill_cascade_check.py`(新建)fence(共 18 个):
+  - 5 base fence:cascade resolves / missing dep blocks / no Integration → skip / unknown skill → exit 5 / format drift(大小写 + 空格)
+  - 6 D-SkillRootMultiSource fence:CLI flag / env var / repo-local / Anthropic plugin default / Anthropic latest version / Codex / CODEX_HOME / unknown
+  - 3 CLI smoke(subprocess 验证 exit code + stderr 内容)
+  - 4 辅助(two-deps all-invoked / partial-invoke listing / etc.)
+- [x] P0.4:`pytest -q tests/unit/test_skill_cascade_check.py` 全绿(18 passed in 0.54s)
+- [x] P0.5:`pytest -q` 全套 regress(1503 passed + 1 skipped(Windows symlink) in 60.64s)
 
 ## P1 — `forgeue_finish_gate.py` 加 3 fence + 测试
 
