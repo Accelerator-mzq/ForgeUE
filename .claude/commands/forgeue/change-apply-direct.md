@@ -15,7 +15,7 @@ S3→S4-S5 transition(fallback 路径,自 `adopt-subagent-driven-development` ch
 
 实施 Steps 之前 controller MUST 顺序完成以下 2 个 preflight 检查;任一 fail → 命令 abort + 详细错误,不进入 Steps 主流程。
 
-> **本命令 NOT 含 Preflight Worktree**(D-DirectWorktreeRefinement 2026-05-05 user 拍板):direct 路径沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项**仍跑在主 worktree**,不强制 isolated worktree(direct 是 < 3 micro-task 轻量 fallback,worktree 创建 + commit-before-worktree + squash merge 收尾的 ~10-20s 开销不划算)。需要 worktree 隔离的 change 改走 `/forgeue:change-apply-subagent` 或 `/forgeue:change-apply-parallel`。`forgeue_finish_gate.py::_check_worktree_path` fence 在 direct evidence 上 pass-through(`triggered_by_command: change-apply-direct` 不触发 worktree_path 强制)。
+> **本命令 NOT 含 Preflight Worktree**(沿 D-DirectWorktreeRefinement 2026-05-05 user 拍板 + retire-parallel-and-worktree-fully 进一步 retire ForgeUE-level worktree 强制层):direct 路径**仍跑在主 worktree**,不强制 isolated worktree。controller 可在 dispatch 前自由 invoke `Skill(superpowers:using-git-worktrees)` SKILL 决定是否 isolation(default decline → main repo cwd)。需要 worktree 隔离请走 `/forgeue:change-apply-subagent`。
 
 ### Preflight Skill Cascade(D-SkillCascadeCheck)
 
@@ -37,14 +37,16 @@ evidence frontmatter MUST 加 `skill_cascade_audit` 字段(对象,含 `invoked_s
 Controller MUST 在实施前显式声明本次 task 粒度,枚举值 `phase` / `per-file` / `sub-task`:
 
 - `phase` — 整个 phase(如 P0/P1)整体在主 worktree 实施(direct 默认 — 单 task / 微调场景常用)
-- `per-file` — 每个修改文件 1 round 实施(独立 file scope 时建议改走 `/forgeue:change-apply-parallel`)
+- `per-file` — 每个修改文件 1 round 实施
 - `sub-task` — tasks.md 每个 `- [ ] X.Y` 1 round 实施(细粒度场景;此粒度通常配 subagent dispatch,建议改走 `/forgeue:change-apply-subagent`)
 
 evidence frontmatter MUST 加 `task_granularity: <value>` 字段;`forgeue_finish_gate.py::_check_task_granularity` fence 守门。
 
 ### Preflight 协议版本标记(D-ProtocolVersionMigration)
 
-evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段。此字段触发 4 fence 生效;无此字段的 evidence 视为 legacy(fence pass-through)。direct 路径 evidence(`tdd_log` / `debug_log`)的 `worktree_path` 字段不强制(沿 D-DirectWorktreeRefinement)。
+evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段。此字段触发 v1 advisory fence(skill_cascade / round_fix_continuity / task_granularity)生效;无此字段的 evidence 视为 legacy → 全 fence pass-through(archived ADR-010 时期 evidence 兼容)。
+
+**Active 路径 evidence + present-but-invalid value**(`v2` / `v3` / typo / null / empty / `v4`)→ BLOCKER `unknown_protocol_version`(沿 D-ActiveVsArchivedReplayBoundary)。**Archived 路径 evidence + 任何 unknown value** → legacy pass-through(归档不动)。
 
 **Steps**
 
@@ -98,8 +100,8 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
 - **越界检测是字面契约要求**(design.md §4 / round-2 H4.1 修过):改动超 design.md scope 必须阻断或回写 design.md,**不可静默扩大 scope**。
 - **evidence 不能成新规范源**:tdd_log / debug_log 暴露的 contract 漏洞必须回写到 design.md / proposal.md / tasks.md。
 - **必跑 writeback 检测**;DRIFT type 3/4 阻断 S5。
-- **direct 路径不进 isolated worktree**(沿 design.md D-Worktree-Detail 第 5 项 "fallback 路径仍跑在主 worktree";如需 worktree 隔离请改走 `/forgeue:change-apply-subagent`)。
-- **direct 路径 evidence shape 与 subagent 路径不同**:本路径产 `tdd_log` + `debug_log`(沿现 evidence 协议),**不产** `subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review` 4 类 per-task evidence(沿 D-EvidenceSchema)。`forgeue_finish_gate.py` 从 evidence frontmatter `triggered_by_command` 字段判定 dispatch mode(F2 修复),direct 路径无该 audit field → 不报缺失 4 类 subagent evidence。
+- **direct 路径不进 isolated worktree**(主 worktree 实施;如需 worktree 隔离请改走 `/forgeue:change-apply-subagent` 或自由 invoke `Skill(superpowers:using-git-worktrees)`)。
+- **direct 路径 evidence shape 与 subagent 路径不同**:本路径产 `tdd_log` + `debug_log`(沿现 evidence 协议),**不产** `subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review` 4 类 per-task evidence。`forgeue_finish_gate.py` 从 evidence frontmatter `triggered_by_command` 字段判定 dispatch mode,direct 路径无该 audit field → 不报缺失 4 类 subagent evidence。
 
 ## Decision Delegation
 

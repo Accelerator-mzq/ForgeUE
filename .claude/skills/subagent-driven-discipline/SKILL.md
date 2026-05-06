@@ -1,17 +1,15 @@
 ---
 name: subagent-driven-discipline
-description: Subagent task type taxonomy + cheap-model reliability playbook + Trigger Type Matrix retrospect for subagent-driven-development workflows。**重场景轻业务**:按 subagent 任务类型(implementation 5 子类 / spec review 4 子类 / code quality review 5 子类 / test creation / doc / debug / verification)细分 model tier + WHY + 让 cheap model 高质量的具体 prompt patterns。**Design 任务(algorithmic / architectural / arch doc rewrite / complex root cause)绝对原则 Opus only,无 exception**。Cross-scenario discipline(cwd verify / cross-verify / cherry-pick recovery / cost framework)作为 supporting infrastructure。**Living catalog 增长由 §3.4 Trigger Type Matrix retrospect 强制**:5 trigger types(3-stage / parallel / standalone / ad-hoc / codex CLI)各自 retrospect intensity;Type 1+2 Opus mandatory full;Type 3 light;Type 4 skip retrospect 仅 cross-verify;任一 Yes 才加 case study;全 No 不加(避免噪声)。Companion to `superpowers:subagent-driven-development`。
+description: Subagent task type taxonomy + cheap-model reliability playbook + Trigger Type Matrix retrospect for subagent-driven-development workflows。**重场景轻业务**:按 subagent 任务类型(implementation 5 子类 / spec review 4 子类 / code quality review 5 子类 / test creation / doc / debug / verification)细分 model tier + WHY + 让 cheap model 高质量的具体 prompt patterns。**Design 任务(algorithmic / architectural / arch doc rewrite / complex root cause)绝对原则 Opus only,无 exception**。Cross-scenario discipline(cwd verify / cross-verify / cherry-pick recovery / cost framework)作为 supporting infrastructure。**Living catalog 增长由 §3.4 Trigger Type Matrix retrospect 强制**:4 trigger types(3-stage / standalone / ad-hoc / codex CLI)各自 retrospect intensity;Type 1 Opus mandatory full;Type 3 light;Type 4 skip retrospect 仅 cross-verify;任一 Yes 才加 case study;全 No 不加(避免噪声)。Companion to `superpowers:subagent-driven-development`。
 license: MIT
 compatibility: Claude Code Agent tool + python -m pytest;sister to superpowers:subagent-driven-development(generic 3-stage process)
 metadata:
   author: forgeue (initial seed)
-  version: "2.3"
+  version: "2.4"
   scenario_subtype_count: 28
   case_study_count: 3
-  retrospect_protocol: trigger-type-matrix(5 types × per-type intensity)
-  worktree_consent_policy: default-decline-in-implementation  # ADR-013 (2026-05-06)
-  consent_outcome_enum: [declined, accepted, already_isolated, sandbox_fallback]
-  consent_mode_enum: [in_place, skill_worktree, wrapper_worktree]
+  retrospect_protocol: trigger-type-matrix(4 types × per-type intensity)  # Type 2 parallel retired in retire-parallel-and-worktree-fully (2026-05-06)
+  worktree_consent_policy: superpowers-upstream-using-git-worktrees  # retire ForgeUE-level worktree consent gate;沿 upstream Step 0 consent gate
 ---
 
 Universal controller-side discipline for `superpowers:subagent-driven-development` workflows。
@@ -202,7 +200,7 @@ Universal controller-side discipline for `superpowers:subagent-driven-developmen
 
 ### §3.1 STRICT cwd verify(防 worktree-scope leak)
 
-**ADR-013 update**(v2.3 2026-05-06):本 cwd verify 协议**仅在 worktree IS used**(after Step 0 consent gate `accepted` / `already_isolated`,即 `worktree_mode ∈ {skill_worktree, wrapper_worktree}`)时 trigger;**default decline 路径**(`worktree_consent_outcome: declined` + `worktree_mode: in_place`)直接走 main repo cwd,本 cwd verify section 简化为 `pwd` show main repo + `git branch --show-current` 是 dev branch / change branch(沿 ADR-013 D-RestoreConsentGate)。
+**Worktree usage scope**(v2.4 2026-05-06,沿 retire-parallel-and-worktree-fully retire ADR-013 ForgeUE-level consent gate 后):本 cwd verify 协议**仅在 worktree IS used**(controller 自由 invoke `Skill(superpowers:using-git-worktrees)` 后 user 在 upstream Step 0 consent gate accept 进入 isolation)时 trigger;**default decline 路径**(controller 不 invoke worktree skill 或 user 在 upstream consent gate decline)直接走 main repo cwd,本 cwd verify section 简化为 `pwd` show main repo + `git branch --show-current` 是 dev branch / change branch。
 
 每次 dispatch prompt 必含(when worktree IS used):
 ````markdown
@@ -221,7 +219,7 @@ If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误
 
 **Default decline 路径**(when worktree NOT used / main repo cwd):
 ````markdown
-## Working Directory(main repo cwd — ADR-013 default)
+## Working Directory(main repo cwd — default decline 路径)
 
 ```bash
 cd <repo-root>  # main repo, NOT a worktree
@@ -263,7 +261,6 @@ git branch --show-current  # MUST be <change-or-dev-branch>
 | Trigger Type | 何时 fires | Retrospect Intensity | Actor | Cost |
 |---|---|---|---|---|
 | **Type 1: 3-stage full**(canonical;§1.1 + §1.2 + §1.3)| per-task implementer + spec_reviewer + code_quality_reviewer 全 ✅/⚠️ + 3 evidence committed | **MANDATORY full Q1-Q6** | **Opus**(MANDATORY)| $0.30-1.00 |
-| **Type 2: Parallel dispatch**(`superpowers:dispatching-parallel-agents`)| 多 implementer 并行全 commit + W2 actual diff 验证 + 后续 spec / code_quality reviewer 全 ✅ | **MANDATORY full Q1-Q6 + Q7**(parallel-specific) | **Opus**(MANDATORY)| $0.40-1.20 |
 | **Type 3: Standalone Task**(§1.4/§1.5/§1.6/§1.7 单 subagent dispatch,无 3-stage review)| Single Task return DONE / DONE_WITH_CONCERNS | **Light:Q2 + Q3 + Q4**(skip Q1/Q5/Q6 — 单 task scope 不够 trigger broader pattern) | **Opus or Sonnet** | $0.10-0.30 |
 | **Type 4: Ad-hoc research Task**(无 evidence committed;e.g. "summarize files" / "find X usage")| Task return | **Skip full retrospect;仅 §3.2 cross-verify** | Controller(any tier) | ~$0(cross-verify only) |
 | **Type 5: Codex CLI subprocess**(`/codex:adversarial-review` / `/codex:review`)| Codex CLI return | **本 skill 不 cover**(Codex 自家 protocol — 沿 codex-plugin/codex-companion) | N/A | N/A |
@@ -283,28 +280,6 @@ git branch --show-current  # MUST be <change-or-dev-branch>
 **Phase complete** = Stage 1 + Stage 2 + Stage 3 全 ✅(或 ⚠️ non-blocker)+ 3 类 evidence 文件落盘 + commit。**此时**触发 Type 1 retrospect。
 
 (注:**final_reviewer** 是 **per-change 末尾**额外 stage — 全 phase 完成后跑一次综合 review,不属于 per-phase 3-stage。final_reviewer 完成后做 change-level retrospect,不是 phase-level。)
-
-#### §3.4.2 Type 2: Parallel Dispatch Retrospect
-
-**Trigger**:`superpowers:dispatching-parallel-agents`(或 `/forgeue:change-apply-parallel`)派多 implementer 并行 → 全 commit → W2 actual diff verified disjoint(若 overlap 检测自动降级 sequential → 改走 Type 1 retrospect)→ 后续 spec / code_quality reviewer 全 ✅。
-
-**Inputs(controller 必读)**:
-1. 全 N implementer evidence files
-2. spec_reviewer + code_quality_reviewer evidence
-3. W2 actual diff result(`task_files_actual` declared vs detected)
-4. parallel-specific log(若有 abort log:`<change>/parallel_abort_*`)
-5. Phase commit diff
-6. 本 skill 当前版本
-
-**Question Matrix Q1-Q6 + Type 2 加 Q7**(parallel-specific):
-
-| Q | 问题 | Yes 后果 |
-|---|---|---|
-| Q1-Q6 | 沿 Type 1 同款 | 同 Type 1 |
-| **Q7a** | Actual file overlap detected post-dispatch?(implementer 间 diff 实际有交) | 必加 §5 case 标 controller declaration vs reality drift |
-| **Q7b** | Race condition / shared state 影响?(implementer 改 shared fixture / global config / import hub)| 必加 §5 case + §6 catalog "parallel race condition" |
-| **Q7c** | IMPL_FILES_JSON 序列化缺 / W2 actual diff Bash glue 错?(silent overlap detection failure)| 必加 §5 case + §1.1.3 multi-file integration playbook 加 prompt 元素 |
-| **Q7d** | parallel implementer 数 vs degradation 实际比例?(若 ≥30% 降级 → 该 phase 不该选 parallel)| 必加 §5 case + §1.1.x 加 "适合 parallel vs sequential" 判定准则 |
 
 #### §3.4.3 Type 3: Standalone Task Retrospect(Light)
 
@@ -416,46 +391,6 @@ git branch --show-current  # MUST be <change-or-dev-branch>
 - 若每 phase 不 retrospect → skill 只在 controller 主动 "想到要更新" 时长 → unreliable feedback loop
 - Mandatory retrospect = skill 自动从实证增长(只在真有 issue 时更新,无问题不污染)
 - Opus-only = retrospect verdict 可信(cheap model retrospect 自己就是 unreliable)
-
-### §3.5 Worktree Consent Policy(ADR-013;v2.3 2026-05-06 added)
-
-ForgeUE-level worktree usage 协议(沿 archived `restore-superpowers-worktree-consent-gate` change ADR-013 D-RestoreConsentGate + D-ConsentOutcomeStateMachine + D-AlreadyIsolatedInvariant):
-
-**Default**:**implementation 期 worktree user-consent decline**(沿 user worktree 使用观念:worktree 仅用于 bug-fix iteration 后期回归 + 隔离;implementation 默认 main repo cwd)。
-
-**Outcome × Mode 显式状态机**(controller 必显式 capture 到 evidence frontmatter):
-
-| `worktree_consent_outcome` | `worktree_mode` | 路径 | use case |
-|---|---|---|---|
-| `declined` | `in_place` | main repo cwd(default) | implementation phase / lightweight change |
-| `accepted` | `skill_worktree` | upstream Superpowers `using-git-worktrees` 自管 | 多 implementer 并行 / 大型 feature |
-| `accepted` | `wrapper_worktree` | OPT-IN W1 wrapper 自管 + 13-field receipt | 强 audit + provenance 需要 |
-| `already_isolated` | `skill_worktree` 或 `wrapper_worktree` | session 已在 isolated workspace(如 user 手工 git worktree)| 跨 session resume / sandbox 内自动激活 |
-| `sandbox_fallback` | `in_place` | upstream skill sandbox fallback | sandbox 路径不允许 worktree creation |
-
-**Cross-field invariants**(`forgeue_finish_gate.py::_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 守门):
-- `declined ↔ in_place`
-- `accepted → mode ∈ {skill_worktree, wrapper_worktree}`
-- `already_isolated → mode ∈ {skill_worktree, wrapper_worktree}`(**禁** `in_place`)+ `worktree_path` 必写且 `os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`(W6 codex round 2 F2)
-- `mode: in_place` → 禁写 `worktree_path` / `worktree_receipt_path`
-- `mode: skill_worktree` → 必写 `worktree_path`,禁写 `worktree_receipt_path`
-- `mode: wrapper_worktree` → 必写 `worktree_path` + `worktree_receipt_path`
-
-**Parallel decline auto-fallback**(`/forgeue:change-apply-parallel`):
-- `declined + in_place` → 命令 abort + 自动降级 sequential(沿 codex round 1 F1 关闭"main repo + multi-implementer + W2 attribution"漏洞)
-- `accepted + {skill,wrapper}_worktree` → parallel 路径正常跑
-- `already_isolated + valid isolated path` → parallel 正常跑
-- `already_isolated + in_place` → INVALID(W6 codex round 2 F2 — 不再允许 main repo cwd 假声 isolated)
-
-**Use case dispatch heuristic**:
-- 多 micro-task implementation + 期望 strong review checkpoint → `accepted + skill_worktree`
-- 单点 bug-fix iteration + 后期回归测试 + 强 provenance audit → `accepted + wrapper_worktree`(opt-in W1 wrapper)
-- 轻量 mechanical change(< 3 micro-task) → `declined + in_place`(default)
-- Cross-session resume / sandbox auto-activate → `already_isolated`(必须真 isolated path)
-
-**Wrapper deprecation note**(D-WrapperDeprecate):`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;命令模板 default decline 路径不再 mandatory invoke wrapper(仅 user 显式 opt-in `wrapper_worktree` mode 时才调用)。
-
----
 
 ## §4 Failure Recovery
 
