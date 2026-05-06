@@ -32,7 +32,14 @@ created_at: 2026-05-06T10:26:44Z
 
 # retire-parallel-and-worktree-fully Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task(本 change 走 `/forgeue:change-apply-direct` 直执路径,沿 D-DirectWorktreeRefinement;subagent 路径不用是因为本 change 自身 retire `change-apply-subagent` 的部分协议层,用 subagent 派 task 跑反而引入循环 self-reference 风险)。Steps use checkbox (`- [ ]`) syntax for tracking。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` to implement this plan task-by-task(本 change 走 `/forgeue:change-apply-subagent` 派 subagent 路径)。理由:
+>
+> 1. **工程量超 direct 适用边界**:~3000-4000 LOC + 30-50 测试 case + 12-15 文档 — 远超 CLAUDE.md `/forgeue:change-apply-direct` 描述的 "< 3 micro-task / budget 紧张" 适用域。
+> 2. **destructive wide retire 高风险面**:多 reviewer 守门(spec reviewer 对 spec delta REMOVED 完整性 / code quality reviewer 对 fence 删除 + import 链 + dispatch matrix 改写)对漏物检测有价值;codex round 1 F1(backbone skill 漏改)正是 controller 单点判断容易漏的类型,subagent spec reviewer 有机会更早 catch。
+> 3. **9 phase × 60+ checkbox**:subagent 标准切片粒度;每 phase 派 fresh implementer + spec reviewer + code quality reviewer + final reviewer,得到 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`),audit trail 完整。
+> 4. **无 self-reference 循环**:本 change retire 的是 `change-apply-subagent.md` 内 Preflight sections(整 section 删除)+ v2/v3 frontmatter 字段说明,**dispatch flow 主体(派 implementer + 2 reviewer + final reviewer)完全不动**。各 phase commit-by-commit forward progress,后续 phase 读改完的命令模板,不会回头自指。
+>
+> Steps use checkbox (`- [ ]`) syntax for tracking。
 
 **Goal:** Wide retire ADR-011 + ADR-012 + ADR-013 + ledger-binding 全部引入物(~3000-4000 LOC delete + ~30-50 测试 case 删除 + ~12-15 文档 stale residue 清理),ForgeUE-level worktree / parallel dispatch / dispatch ledger / sister skill 强制层完全删除,行为退回 ADR-010 advisory baseline + Superpowers upstream `using-git-worktrees` SKILL 自家 consent gate。
 
