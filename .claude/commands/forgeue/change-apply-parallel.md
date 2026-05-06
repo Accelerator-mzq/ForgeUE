@@ -120,13 +120,14 @@ for i, set_a in enumerate(task_files_disjoint):
 
 ### Preflight 协议版本标记(D-ProtocolVersionMigration;ADR-012 v2 升级)
 
-evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v2` 字段(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05;F3 round 1 codex mixed-scope inline writeback)。此字段触发 v1 + v2 fence 全套生效:
+evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v3` 字段(自 `enhance-workflow-automation-ledger-binding` change 起,2026-05-06;升级自 v2)。此字段触发 v1 + v2 + v3 fence 全套生效:
 - v1 fence(沿 ADR-011):`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity` / `_check_worktree_path`
-- v2 fence(沿 ADR-012):`_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`
+- v2 fence(沿 ADR-012):`_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`(v2 + v3 内嵌分支)
+- v3 fence(本 change ship):`_check_runtime_enforcement_protocol_version_validity`(round 2 codex F2)/ `_check_archived_replay_path_boundary`(round 2 codex F1)/ `_check_ledger_terminal_proof`(round 1 codex F3)/ `_check_ledger_forgery_resistance_consistency`(round 1 codex F4)
 
-**legacy `v1` 仅用 archived runtime-enforcement 等历史 change replay**(本 change ship 后新 evidence MUST `v2`);无 `runtime_enforcement_protocol_version` 字段的 evidence 视为 pre-v1 legacy(全 fence pass-through;archived `enhance-workflow-automation` 等更早 change replay 兼容)。
+**legacy `v1` / `v2` 用 archived runtime-enforcement / executable-enforcement 等历史 change replay**(本 change ship 后新 evidence MUST `v3`);无 `runtime_enforcement_protocol_version` 字段的 evidence 视为 pre-v1 legacy(全 fence pass-through;archived 更早 change replay 兼容);**unknown value(`v4` / typo / empty)→ BLOCKER `unknown_protocol_version`**(沿 D-RuntimeEnforcementProtocolVersionValidity)。
 
-**自 dogfood 边界**(本 change 实施期 evidence 仍 v1):本 change 实施时 W1 wrapper 尚未实际 dispatch 给 subagent(沿 D-DogfoodGap),本 change 自身 evidence 沿 v1 advisory 协议;**本 model template 写 v2 是给后续 change 用**(后续 change 实施时 W1 wrapper 已 ship,自动跑 v2 fence)。
+**自 dogfood 边界**(本 change 实施期 evidence 仍 v2):本 change 实施时 v3 fence 与 cmd_append v3 schema 同步 ship,本 change 自身 evidence 沿 v2 advisory 协议(`runtime_enforcement_protocol_version: v2` + `ledger_forgery_resistance: advisory`);**本 model template 写 v3 是给本 change ship 后的下一个 active change 用**(沿 D-SelfDogfoodGap)。
 
 ### Preflight Subagent Discipline(MANDATORY before any Skill(Task) dispatch)
 
@@ -191,7 +192,7 @@ Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**�
     - 每个 implementer 接收主 session Claude 提取的完整 prompt 文本(沿 SKILL.md Red Flag "Make subagent read plan file (provide full text instead)");subagent **不被授权**读 `execution/micro_tasks.md` / `execution/execution_plan.md`
     - **并行 dispatch spec compliance reviewer + code quality reviewer subagents**(每 implementer return 后立即 dispatch 该 task 的 reviewer;不等其他 task 完成)
 
-10a. **dispatch implementer subagent 后立即 append dispatch ledger**(F1 round 2 inline writeback,post-dispatch capture):
+10a. **dispatch implementer subagent 后立即 append dispatch ledger**(F1 round 2 inline writeback,post-dispatch capture;round 3 codex F3 + F4 inline writeback 加 stdout 解析 + main session serial 约束):
      - 每个 Skill(Task) dispatch implementer subagent → capture return metadata → parse 真实 `agent_id`
      - Bash(对每个 implementer):
        ```bash
@@ -203,6 +204,8 @@ Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**�
            --task-subject-hash $(echo -n "$TASK_SUBJECT" | sha256sum | cut -d' ' -f1)
        ```
      - 此步必须在每个 Skill dispatch **之后** 执行(post-dispatch order;capture 真实 agent_id)
+     - **v3 升级 stdout 解析**(round 1 codex F3 + D-LedgerTerminalProof):cmd_append 成功后 stdout 末行格式 `[LEDGER] line_count=<N> final_hmac=<64-hex>`;主 session **MUST 解析此行 + 复制 `line_count` / `final_hmac` 值到 evidence frontmatter `ledger_line_count` / `ledger_final_hmac` 字段**(防 tail truncation;finish_gate `_check_ledger_terminal_proof` cross-check)
+     - **Append serial invariant**(round 3 codex F4 + spec "Append serial invariant"):**implementer subagent dispatch 之间 parallel,但主 session 收集 dispatch return + append wrapper 是 sequential** — implementer dispatch parallel 与 append serial 不冲突;主 session **SHALL 顺序调** cmd_append wrapper(每个 Skill(Task) 返回后串行调一次,不并发)— 防并发 append race(同时读 prev_hmac → 写两行同 prev_hmac → chain 断)
 
 10b. **并行 implementer 实施完成后 W2 actual diff 收集**(F3 round 2 + F4 round 1 inline writeback;沿 design.md D-W2-OverlapDetection):
 
@@ -364,8 +367,8 @@ drift_decision: written-back-to-design | written-back-to-tasks | written-back-to
 writeback_commit: <sha>(若 drift_decision != unresolved-permanent-drift)
 drift_reason: <reason>
 reasoning_notes_anchor: <file>:<line>
-# --- 9 个 runtime enforcement audit 字段(v2,parallel 命令专用) ---
-runtime_enforcement_protocol_version: v2
+# --- runtime enforcement audit 字段(v3 自 enhance-workflow-automation-ledger-binding 起,parallel 命令专用) ---
+runtime_enforcement_protocol_version: v3
 triggered_by_command: change-apply-parallel
 worktree_path: <absolute-path-from-receipt>
 worktree_receipt_path: <relative-path-to-receipt.json>
@@ -375,8 +378,11 @@ task_files_disjoint: [<file-set-1>, <file-set-2>, ...]
 task_files_actual: [{implementer_agent_id: <id>, files: [...]}, ...]
 degraded_to: null | change-apply-subagent
 degradation_reason: null | actual_file_overlap_detected | dirty_implementer_worktree
-pre_dispatch_metadata: advisory
-ledger_forgery_resistance: advisory
+pre_dispatch_metadata: advisory  # 沿 archived `executable-enforcement` F2 inline writeback advisory
+ledger_forgery_resistance: cryptographic  # v3 升级(round 1 codex F4 inline writeback + D-FrontmatterAuditConsistency:v3 ↔ cryptographic 强 enum)
+ledger_line_count: <int>  # 必填 v3(round 1 codex F3 + D-LedgerTerminalProof);LLM 复制 wrapper stdout `[LEDGER] line_count=<N>` 行
+ledger_final_hmac: <64-hex>  # 必填 v3(同上);LLM 复制 wrapper stdout `[LEDGER] ... final_hmac=<hex>` 行
+# ledger_archived_replay: <NOT 写>  # default 不在;archived replay 时由 user 显式标 true(沿 D-ArchivedReplayPathBoundary,round 2 codex F1)
 autonomy_decision: claude_codex_concurred | claude_autonomous | user_required | user_overrode
 codex_review_ref: <reference>(若 autonomy_decision == claude_codex_concurred)
 ---

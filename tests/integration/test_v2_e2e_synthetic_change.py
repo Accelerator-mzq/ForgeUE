@@ -954,3 +954,282 @@ class TestFinishGateV2:
                 f"legacy evidence should trigger NO fence {pattern!r}. "
                 f"finish_gate stdout:\n{stdout}"
             )
+
+
+# =============================================================================
+# v3 e2e tests(沿 enhance-workflow-automation-ledger-binding;round 1+2+3 codex inline writeback)
+#
+# scope:happy path + tail truncation negative + audit inconsistency negative。
+# 通过 monkeypatch HOME / USERPROFILE 隔离 user home(防 ledger key 文件污染)。
+# =============================================================================
+
+
+def _run_with_isolated_home(
+    cmd: list[str],
+    *,
+    cwd: Path,
+    fake_home: Path,
+    timeout: int = 60,
+) -> subprocess.CompletedProcess:
+    """subprocess invoke + override HOME / USERPROFILE 让 Path.home() 返回 tmp_path。"""
+    env = dict(os.environ)
+    env["HOME"] = str(fake_home)
+    env["USERPROFILE"] = str(fake_home)  # Windows
+    return subprocess.run(
+        cmd, cwd=str(cwd), capture_output=True, text=True, timeout=timeout, env=env
+    )
+
+
+class TestV3CryptographicLedger:
+    """v3 cryptographic ledger binding e2e:wrapper 真跑 v3 schema + finish_gate v3 fence。"""
+
+    def test_v3_e2e_cryptographic_synthetic_change_happy(self, tmp_path: Path) -> None:
+        """happy path:wrapper 真跑 v3 ledger(11 字段 + chain HMAC)+ evidence frontmatter v3 +
+        finish_gate v3 fence pass(no dispatch_ledger_violation BLOCKER)。"""
+        repo = _synthetic_repo(tmp_path)
+        change_id = "v3-e2e-happy"
+        change_dir = _synthetic_change_dir(repo, change_id)
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+
+        # wrapper 真跑生成 v3 ledger(2 行:implementer + spec_reviewer)
+        ledger_path = change_dir / "dispatch_ledger.jsonl"
+        for role, agent_idx in [("implementer", 0), ("spec_reviewer", 1)]:
+            agent_id = f"abc{agent_idx:014x}def"
+            cmd = [
+                sys.executable, str(_LEDGER_SCRIPT), "append",
+                "--change", change_id,
+                "--agent-id", agent_id,
+                "--round", "1",
+                "--role", role,
+                "--ledger-path", str(ledger_path),
+            ]
+            result = _run_with_isolated_home(cmd, cwd=repo, fake_home=fake_home)
+            assert result.returncode == 0, (
+                f"wrapper append failed: {result.stderr}\nstdout: {result.stdout}"
+            )
+            assert "[LEDGER]" in result.stdout
+
+        # 解析末行 hmac(LLM 复制到 evidence frontmatter)
+        ledger_lines = [
+            json.loads(raw)
+            for raw in ledger_path.read_text(encoding="utf-8").splitlines()
+            if raw.strip()
+        ]
+        final_hmac = ledger_lines[-1]["hmac"]
+        line_count = len(ledger_lines)
+
+        # 写 v3 evidence frontmatter
+        _write_evidence(
+            change_dir,
+            subdir="execution",
+            filename="task_1_implementer.md",
+            frontmatter={
+                "change_id": change_id,
+                "stage": "S4",
+                "evidence_type": "subagent_implementer_report",
+                "contract_refs": ["tasks.md#P1"],
+                "aligned_with_contract": True,
+                "detected_env": "claude-code",
+                "triggered_by": "/forgeue:change-apply-subagent",
+                "codex_plugin_available": True,
+                "runtime_enforcement_protocol_version": "v3",
+                "ledger_forgery_resistance": "cryptographic",
+                "ledger_line_count": line_count,
+                "ledger_final_hmac": final_hmac,
+                "dispatch_ledger_path": "dispatch_ledger.jsonl",
+                "triggered_by_command": "change-apply-subagent",
+                "skill_cascade_audit": {
+                    "invoked_skills": ["superpowers:subagent-driven-development"],
+                    "cascade_check_pass_at": "2026-05-06T00:00:00Z",
+                },
+                "task_granularity": "per-file",
+                "worktree_path": str(change_dir),
+                "worktree_consent_outcome": "accepted",
+                "worktree_mode": "wrapper_worktree",
+                "subagent_continuity": {
+                    "round_1_implementer_id": ledger_lines[0]["agent_id"],
+                },
+                "autonomy_decision": "claude_codex_concurred",
+                "codex_review_ref": "review/codex_design_review.md",
+            },
+        )
+
+        # finish_gate 跑 v3 fence — happy path → no BLOCKER
+        cmd = [
+            sys.executable, str(_FINISH_GATE_SCRIPT),
+            "--change", change_id,
+            "--no-validate", "--dry-run",
+        ]
+        result = _run_with_isolated_home(cmd, cwd=repo, fake_home=fake_home)
+        # happy path 应该没有 dispatch_ledger_violation / archived_replay_path_violation 等 v3 BLOCKER
+        # finish_gate 退出码可能因其他原因非 0(如 missing codex evidence),但 v3 fence 不报错
+        v3_fence_patterns = [
+            "[hmac_mismatch]",
+            "[chain_break]",
+            "[key_id_inconsistent]",
+            "[key_id_mismatch]",
+            "[tail_truncation_detected]",
+            "[final_hmac_mismatch]",
+            "[schema_violation]",
+            "[audit_mismatch]",
+            "[archived_replay_path_violation]",
+            "[unknown_protocol_version]",
+        ]
+        for pattern in v3_fence_patterns:
+            assert pattern not in result.stdout + result.stderr, (
+                f"happy path should NOT trigger v3 fence {pattern!r}. "
+                f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+            )
+
+    def test_v3_e2e_negative_tail_truncation(self, tmp_path: Path) -> None:
+        """删尾行后 evidence frontmatter ledger_line_count 未跟改 → finish_gate
+        _check_ledger_terminal_proof BLOCKER tail_truncation_detected。"""
+        repo = _synthetic_repo(tmp_path)
+        change_id = "v3-e2e-tail-trunc"
+        change_dir = _synthetic_change_dir(repo, change_id)
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+
+        # wrapper 真跑生成 3 行 v3 ledger
+        ledger_path = change_dir / "dispatch_ledger.jsonl"
+        for i in range(3):
+            cmd = [
+                sys.executable, str(_LEDGER_SCRIPT), "append",
+                "--change", change_id,
+                "--agent-id", f"abc{i:014x}def",
+                "--round", "1",
+                "--role", "implementer",
+                "--ledger-path", str(ledger_path),
+            ]
+            _run_with_isolated_home(cmd, cwd=repo, fake_home=fake_home)
+
+        # 取 3 行 ledger 的末行 hmac
+        ledger_lines = [
+            json.loads(raw)
+            for raw in ledger_path.read_text(encoding="utf-8").splitlines()
+            if raw.strip()
+        ]
+        original_count = len(ledger_lines)
+        original_final_hmac = ledger_lines[-1]["hmac"]
+
+        # **删尾行**(模拟 LLM 删 ledger 末行 attack)
+        truncated_lines = ledger_path.read_text(encoding="utf-8").splitlines()[:-1]
+        ledger_path.write_text("\n".join(truncated_lines) + "\n", encoding="utf-8")
+
+        # evidence frontmatter 仍声明原 line_count + final_hmac(LLM 没跟改)
+        _write_evidence(
+            change_dir,
+            subdir="execution",
+            filename="task_1_implementer.md",
+            frontmatter={
+                "change_id": change_id,
+                "stage": "S4",
+                "evidence_type": "subagent_implementer_report",
+                "contract_refs": ["tasks.md#P1"],
+                "aligned_with_contract": True,
+                "detected_env": "claude-code",
+                "triggered_by": "/forgeue:change-apply-subagent",
+                "codex_plugin_available": True,
+                "runtime_enforcement_protocol_version": "v3",
+                "ledger_forgery_resistance": "cryptographic",
+                "ledger_line_count": original_count,  # ← LLM 谎称 3 行
+                "ledger_final_hmac": original_final_hmac,
+                "dispatch_ledger_path": "dispatch_ledger.jsonl",
+                "triggered_by_command": "change-apply-subagent",
+                "skill_cascade_audit": {
+                    "invoked_skills": ["superpowers:subagent-driven-development"],
+                    "cascade_check_pass_at": "2026-05-06T00:00:00Z",
+                },
+                "task_granularity": "per-file",
+                "worktree_path": str(change_dir),
+                "worktree_consent_outcome": "accepted",
+                "worktree_mode": "wrapper_worktree",
+                "autonomy_decision": "claude_codex_concurred",
+                "codex_review_ref": "review/codex_design_review.md",
+            },
+        )
+
+        # finish_gate 跑 v3 fence — terminal proof catch tail truncation
+        cmd = [
+            sys.executable, str(_FINISH_GATE_SCRIPT),
+            "--change", change_id,
+            "--no-validate", "--dry-run",
+        ]
+        result = _run_with_isolated_home(cmd, cwd=repo, fake_home=fake_home)
+        assert "[tail_truncation_detected]" in result.stdout + result.stderr, (
+            f"tail truncation MUST trigger _check_ledger_terminal_proof BLOCKER. "
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+    def test_v3_e2e_negative_audit_inconsistency(self, tmp_path: Path) -> None:
+        """v3 evidence + ledger_forgery_resistance: advisory(LLM 自降级)→ finish_gate
+        _check_ledger_forgery_resistance_consistency BLOCKER audit_mismatch。"""
+        repo = _synthetic_repo(tmp_path)
+        change_id = "v3-e2e-audit"
+        change_dir = _synthetic_change_dir(repo, change_id)
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+
+        # wrapper 真跑生成 1 行 v3 ledger
+        ledger_path = change_dir / "dispatch_ledger.jsonl"
+        cmd = [
+            sys.executable, str(_LEDGER_SCRIPT), "append",
+            "--change", change_id,
+            "--agent-id", "abc00000000000000def",
+            "--round", "1",
+            "--role", "implementer",
+            "--ledger-path", str(ledger_path),
+        ]
+        _run_with_isolated_home(cmd, cwd=repo, fake_home=fake_home)
+
+        ledger_lines = [
+            json.loads(raw)
+            for raw in ledger_path.read_text(encoding="utf-8").splitlines()
+            if raw.strip()
+        ]
+
+        # v3 evidence + advisory(audit mismatch)
+        _write_evidence(
+            change_dir,
+            subdir="execution",
+            filename="task_1_implementer.md",
+            frontmatter={
+                "change_id": change_id,
+                "stage": "S4",
+                "evidence_type": "subagent_implementer_report",
+                "contract_refs": ["tasks.md#P1"],
+                "aligned_with_contract": True,
+                "detected_env": "claude-code",
+                "triggered_by": "/forgeue:change-apply-subagent",
+                "codex_plugin_available": True,
+                "runtime_enforcement_protocol_version": "v3",
+                "ledger_forgery_resistance": "advisory",  # ← LLM 谎称 advisory(实际走 v3 cryptographic)
+                "ledger_line_count": 1,
+                "ledger_final_hmac": ledger_lines[0]["hmac"],
+                "dispatch_ledger_path": "dispatch_ledger.jsonl",
+                "triggered_by_command": "change-apply-subagent",
+                "skill_cascade_audit": {
+                    "invoked_skills": ["superpowers:subagent-driven-development"],
+                    "cascade_check_pass_at": "2026-05-06T00:00:00Z",
+                },
+                "task_granularity": "per-file",
+                "worktree_path": str(change_dir),
+                "worktree_consent_outcome": "accepted",
+                "worktree_mode": "wrapper_worktree",
+                "autonomy_decision": "claude_codex_concurred",
+                "codex_review_ref": "review/codex_design_review.md",
+            },
+        )
+
+        # finish_gate 跑 v3 fence — audit consistency catch
+        cmd = [
+            sys.executable, str(_FINISH_GATE_SCRIPT),
+            "--change", change_id,
+            "--no-validate", "--dry-run",
+        ]
+        result = _run_with_isolated_home(cmd, cwd=repo, fake_home=fake_home)
+        assert "[audit_mismatch]" in result.stdout + result.stderr, (
+            f"v3 + advisory MUST trigger _check_ledger_forgery_resistance_consistency BLOCKER. "
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )

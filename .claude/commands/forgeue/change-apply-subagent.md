@@ -84,7 +84,7 @@ evidence frontmatter MUST 加 `task_granularity: <value>` 字段;`forgeue_finish
 
 ### Preflight 协议版本标记(D-ProtocolVersionMigration)
 
-evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v2` 字段(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05;F3 round 1 codex mixed-scope inline writeback)。此字段触发 v1 + v2 fence 全套生效(v1 fence:`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`;v2 fence:`_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`)。**legacy `v1` 仅用 archived runtime-enforcement 等历史 change replay**(本 change ship 后新 evidence MUST `v2`);无字段视为 pre-v1 legacy(全 fence pass-through;archived `enhance-workflow-automation` 等更早 change replay 兼容)。**自 dogfood 边界**:本 change 实施时 W1 wrapper 尚未实际 dispatch 给 subagent(沿 D-DogfoodGap),本 change 自身 evidence 沿 v1 advisory 协议;model template 写 v2 是给后续 change 用。
+evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v3` 字段(自 `enhance-workflow-automation-ledger-binding` change 起,2026-05-06;升级自 v2)。此字段触发 v1 + v2 + v3 fence 全套生效(v1 fence:`skill_cascade` / `round_fix_continuity` / `task_granularity` / `worktree_path`;v2 fence:`_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`(v2 + v3 内嵌分支);v3 fence:`_check_runtime_enforcement_protocol_version_validity` / `_check_archived_replay_path_boundary` / `_check_ledger_terminal_proof` / `_check_ledger_forgery_resistance_consistency`)。**legacy `v1` / `v2` 用 archived runtime-enforcement / executable-enforcement 等历史 change replay**(本 change ship 后新 evidence MUST `v3`);无字段视为 pre-v1 legacy(全 fence pass-through;archived 更早 change replay 兼容);**unknown value(`v4` / typo / empty)→ BLOCKER `unknown_protocol_version`**(沿 D-RuntimeEnforcementProtocolVersionValidity,round 2 codex F2)。**自 dogfood 边界**:本 change 实施时 v3 fence 与 cmd_append 同步 ship,本 change 自身 evidence 沿 v2 advisory 协议(`runtime_enforcement_protocol_version: v2` + `ledger_forgery_resistance: advisory`);model template 写 v3 是给本 change ship 后的下一个 active change 用(沿 D-SelfDogfoodGap)。
 
 ### Preflight Subagent Discipline(MANDATORY before any Skill(Task) dispatch)
 
@@ -158,7 +158,7 @@ Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**�
     - `tasks.md#X.Y` 锚点引用作 audit trail 进 evidence frontmatter `contract_refs`,**不**直接进入 subagent prompt(subagent 不知道 tasks.md 存在)
     - skill 内部协议(implementer / spec reviewer / code quality reviewer prompt 模板)由 Superpowers 自管,ForgeUE 不复制 / 不引用
 
-10a. **dispatch implementer subagent 后立即 append dispatch ledger**(F1 round 2 inline writeback,post-dispatch capture):
+10a. **dispatch implementer subagent 后立即 append dispatch ledger**(F1 round 2 inline writeback,post-dispatch capture;round 3 codex F3 + F4 inline writeback 加 stdout 解析 + main session serial 约束):
      - Skill(Task) dispatch implementer subagent → capture return metadata → parse 真实 `agent_id`
      - Bash:
        ```bash
@@ -170,6 +170,8 @@ Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**�
            --task-subject-hash $(echo -n "$TASK_SUBJECT" | sha256sum | cut -d' ' -f1)
        ```
      - 此步必须在 Skill dispatch **之后** 执行(post-dispatch order;capture 真实 agent_id 而非 synthetic UUID)
+     - **v3 升级 stdout 解析**(round 1 codex F3 + D-LedgerTerminalProof):cmd_append 成功后 stdout 末行格式 `[LEDGER] line_count=<N> final_hmac=<64-hex>`;主 session **MUST 解析此行 + 复制 `line_count` / `final_hmac` 值到下一步 evidence frontmatter `ledger_line_count` / `ledger_final_hmac` 字段**(防 tail truncation;finish_gate `_check_ledger_terminal_proof` cross-check)
+     - **Append serial invariant**(round 3 codex F4 + spec "Append serial invariant"):主 session **SHALL 顺序调** cmd_append wrapper(每次 Skill(Task) 返回后串行调一次),**不**并发调 wrapper;parallel 模式下 implementer subagent dispatch 之间 parallel,但主 session 收集 dispatch return + append wrapper 是 sequential — implementer dispatch parallel 与 append serial 不冲突(防并发 append race)
 11. **每 task 完成后 evidence 收口**(D-EvidenceSchema 4 类 evidence):
     - 主 session Claude 把每个 subagent return 落盘为 4 类 per-task evidence 文件(全部 12-key frontmatter):
       - `execution/task_<n>_implementer.md` — `evidence_type: subagent_implementer_report`
@@ -254,14 +256,17 @@ drift_decision: written-back-to-design | written-back-to-tasks | written-back-to
 writeback_commit: <sha>(若 drift_decision != unresolved-permanent-drift)
 drift_reason: <reason>
 reasoning_notes_anchor: <file>:<line>
-# --- 8 个 runtime enforcement audit 字段(v2) ---
-runtime_enforcement_protocol_version: v2
+# --- runtime enforcement audit 字段(v3 自 enhance-workflow-automation-ledger-binding 起) ---
+runtime_enforcement_protocol_version: v3
 triggered_by_command: change-apply-subagent
 worktree_path: <absolute-path-from-receipt>
 worktree_receipt_path: <relative-path-to-receipt.json>
 dispatch_ledger_path: dispatch_ledger.jsonl
-pre_dispatch_metadata: advisory
-ledger_forgery_resistance: advisory
+pre_dispatch_metadata: advisory  # 沿 archived `executable-enforcement` F2 inline writeback advisory(post-dispatch capture limitation;F2 真 wrapper-bound dispatch 留 follow-on `enhance-workflow-automation-skill-tool-binding`)
+ledger_forgery_resistance: cryptographic  # v3 升级(round 1 codex F4 inline writeback + D-FrontmatterAuditConsistency:v3 ↔ cryptographic 强 enum 绑定)
+ledger_line_count: <int>  # 必填 v3(round 1 codex F3 inline writeback + D-LedgerTerminalProof);LLM 复制 wrapper stdout `[LEDGER] line_count=<N>` 行
+ledger_final_hmac: <64-hex>  # 必填 v3(同上);LLM 复制 wrapper stdout `[LEDGER] ... final_hmac=<hex>` 行
+# ledger_archived_replay: <NOT 写>  # default 不在 frontmatter;archived replay 时由 user 显式标 true,且 evidence 必须在 archive/ 路径(沿 D-ArchivedReplayPathBoundary,round 2 codex F1 inline writeback);active change 用此字段 = drift signal forgeue_finish_gate `_check_archived_replay_path_boundary` BLOCKER
 autonomy_decision: claude_codex_concurred | claude_autonomous | user_required | user_overrode
 codex_review_ref: <reference>(若 autonomy_decision == claude_codex_concurred)
 ---
