@@ -9,7 +9,7 @@ contract_refs:
 aligned_with_contract: false
 drift_decision: written-back-to-design.md
 drift_reason: codex round 1 揭示 4 finding(F1 backbone skill 漏改 + F2 archived id 格式 + F3 pass-through 边界 + F4 测试文件名),全部 accepted-codex 写入 design.md + tasks.md + spec delta + micro_tasks.md
-writeback_commit: pending
+writeback_commit: 875e801
 detected_env: claude-code
 triggered_by: /forgeue:change-plan retire-parallel-and-worktree-fully
 codex_plugin_available: true
@@ -28,6 +28,8 @@ resolved_at: 2026-05-06T10:35:00Z
 disputed_open: 0
 review_round: 1
 ---
+
+> 注:frontmatter `writeback_commit` field 在第一个 `---` block 顶部(line 12),非本段下方的 narrative 引用(line 105)。第一个 commit 为 `875e801`(本 round writeback 落盘),frontmatter SHA 在该 commit 内即写入。
 
 # Design Cross-Check — retire-parallel-and-worktree-fully
 
