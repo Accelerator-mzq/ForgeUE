@@ -88,16 +88,16 @@ S9 (archived)
 /forgeue:change-plan <id>
 ```
 
-**做什么**(4 步串联):
-1. **codex** `/codex:adversarial-review`(默认 background dispatch,D-DefaultBackground)→ `review/codex_design_review.md`(verbatim 完整保留;round N+1 时 prompt 首段自动注入 round N reference,D-CodexContextBridge)
+**做什么**(4 步串联,命令模板自动跑):
+1. **codex** `/codex:adversarial-review`(默认 background)→ `review/codex_design_review.md`(verbatim 完整保留)
 2. **Superpowers** `writing-plans` → `execution/execution_plan.md` + `execution/micro_tasks.md`(引用 `tasks.md#X.Y` 锚点)
-3. **Claude** 写 cross-check matrix → `review/design_cross_check.md`(`## A` 冻结于 codex 调用前;A/B/C/D 4 段齐 + `disputed_open: 0`);按 D-AutonomyBoundary 判定 `autonomy_decision`(routine step 自主 → `claude_codex_concurred` / 6 类 fence 触发 → `user_required`)
-4. **`forgeue_change_state.py --writeback-check`** → 4 类 named DRIFT 检测(锚点 / 决策越界 / 接口字段 / 异常段)
+3. **Claude** 写 cross-check matrix → `review/design_cross_check.md`(`## A` 冻结于 codex 调用前;A/B/C/D 4 段齐 + `disputed_open: 0`)
+4. **writeback 检测** → `forgeue_change_state.py --writeback-check` 跑 4 类 named DRIFT 检测(锚点 / 决策越界 / 接口字段 / 异常段)
 
 **关键检查**:
 - ✓ codex 每条 finding **独立验证** `file:line`(沿 ForgeUE memory `feedback_verify_external_reviews`)
 - ✓ `## A` 段冻结于 codex 调用前(防 anchoring bias;不允许回填)
-- ✓ blocker 涉及 design choice → 回写 `design.md` 或标 `disputed-permanent-drift`(≥ 50 字 reason + Reasoning Notes anchor)
+- ✓ blocker 涉及 design choice → 回写 `design.md` 或标 `disputed-permanent-drift`(深读见 `forgeue_integrated_ai_workflow.md`)
 - ✓ `disputed_open == 0` 才能进 S3
 
 **常见错误**:
@@ -109,9 +109,9 @@ S9 (archived)
 
 ---
 
-### 3.3 S3→S4-S5 实施(自 `adopt-subagent-driven-development` change 起拆 subagent + direct;自 `enhance-workflow-automation-runtime-enforcement` change 起加 parallel — 三选一显式路由)
+### 3.3 S3→S4-S5 实施(三选一路径:subagent / parallel / direct)
 
-**命令**(根据 change 复杂度 + task 独立性显式选一,**不**走 env flag facade):
+**命令**(根据 change 复杂度 + task 独立性显式选一):
 
 ```bash
 # default sequential 路径:多 micro-task / 需要强 review checkpoint
@@ -120,94 +120,56 @@ S9 (archived)
 # 并行 dispatch 路径:多独立 task / file scope 不交叉 / 无 sequential dep
 /forgeue:change-apply-parallel <id>
 
-# fallback 路径:小 change(< 3 micro-task)/ budget 紧张(主 worktree)
+# fallback 路径:小 change(< 3 micro-task)/ budget 紧张
 /forgeue:change-apply-direct <id>
 
 # bug 时显式调 systematic-debugging
 /forgeue:change-debug <id>
 ```
 
-**路由决策树**(沿 design.md D-ParallelDispatch / D-DirectWorktreeRefinement):
+**路由决策树**:
 
 ```
 是否多 task?
   yes → 是否独立 file scope + 无 sequential dependency?
-    yes → /forgeue:change-apply-parallel(并行 dispatch;借用 dispatching-parallel-agents SKILL)
-    no  → /forgeue:change-apply-subagent(sequential per-task,fresh subagent;subagent-driven-development SKILL)
-  no(单 task / 微调)→ /forgeue:change-apply-direct(executing-plans + TDD;主 worktree)
+    yes → /forgeue:change-apply-parallel(并行 dispatch)
+    no  → /forgeue:change-apply-subagent(sequential per-task,fresh subagent)
+  no(单 task / 微调)→ /forgeue:change-apply-direct(executing-plans + TDD)
 ```
 
-> **Preflight 三项**(自 `enhance-workflow-automation-runtime-enforcement` change 起,D-PreflightProtocol;subagent + parallel 命令 3 段,direct 命令 2 段):
->
-> 1. **Preflight Worktree**(**ADR-013 update 2026-05-06**:D-WorktreeEnforce mandatory 部分由 D-RestoreConsentGate + D-ConsentOutcomeStateMachine **superseded**):MUST invoke `Skill(superpowers:using-git-worktrees)` 沿 upstream cascade,但 Step 0 outcome capture 决定路径 — `declined + in_place`(default,main repo cwd)/ `accepted + skill_worktree`(skill 自管 worktree)/ `accepted + wrapper_worktree`(opt-in W1 wrapper + receipt)/ `already_isolated`(session 已 isolated workspace;path != main repo)/ `sandbox_fallback + in_place`;evidence frontmatter `worktree_consent_outcome` + `worktree_mode` 必填;**direct 沿 D-DirectWorktreeRefinement 不强制**
-> 2. **Preflight Skill Cascade**(D-SkillCascadeCheck):跑 `tools/forgeue_skill_cascade_check.py` 验证主 SKILL declared dependency 全 invoke + `skill_cascade_audit` frontmatter 字段
-> 3. **Preflight Task Granularity**(D-TaskGranularityDeclaration):controller 显式声明 `task_granularity: phase|per-file|sub-task` + frontmatter 字段
->
-> 任一 preflight fail → 命令 abort + 详细错误。evidence frontmatter 必加 `runtime_enforcement_protocol_version: v1`(或 v2 沿 ADR-012)标记触发 fence 生效;无此字段视为 legacy(fence pass-through;archived ADR-011/012 evidence replay 兼容)。
+**命令交互**(subagent / parallel 路径):
 
-> **ADR-013 D-ParallelDeclineFallback**(2026-05-06):`/forgeue:change-apply-parallel` `declined + in_place` → 自动降级 sequential(无 user prompt;关闭 main repo + multi-implementer + W2 attribution 漏洞)。`already_isolated + in_place` 同款 INVALID(W6 codex round 2 F2 — 不允许 main repo cwd 假声 isolated)。
->
-> **ADR-013 D-WrapperDeprecate**:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;default decline 路径不再 mandatory invoke wrapper;仅 user 显式 opt-in `wrapper_worktree` mode 时调用。W7-a wrapper bug fix(`_git_repo_root` 改用 `git rev-parse --git-common-dir`;关闭 worktree 内调 wrapper 时 nested target → "Filename too long" 链锁失败)在本 change scope 内。
->
-> 完整规则见 `forgeue_integrated_ai_workflow.md` §C.9 ADR-013 + sister skill `subagent-driven-discipline` v2.3 §3.5 Worktree Consent Policy。
+调命令后,**会问你"是否进 isolated worktree"**(走 Superpowers `using-git-worktrees` SKILL 的 user-consent gate):
 
-**做什么(`change-apply-subagent` default 路径)**:
-- codex plan review hook → `review/codex_plan_review.md`
-- 主 session Claude **invoke `Skill(superpowers:using-git-worktrees)`** 沿 upstream cascade(ADR-013 D-RestoreConsentGate;Step 0 user-consent gate 决定路径 — **default decline → 主 repo cwd**(不起 worktree)/ opt-in `accepted` → skill_worktree 或 wrapper_worktree mode);evidence frontmatter `worktree_consent_outcome` + `worktree_mode` 必填
-- 仅 opt-in `accepted` 路径才需要 commit untracked artifacts → 起 worktree → cwd 切换(沿 design.md D-Worktree-Detail);default decline 路径直接在主 repo cwd 实施
-- invoke Superpowers `subagent-driven-development` skill;每 task 派:
-  - implementer subagent(Task tool;prompt 含 task FULL TEXT + context;subagent **不**读 plan 文件)
-  - spec compliance reviewer subagent(独立验证 implementer 是否按 spec 做 + 不过度建造)
-  - code quality reviewer subagent(代码干净度 / 测试度 / 可维护度)
-- 全 task 完成后派 final reviewer subagent(整体 review 跨 task 一致性)
-- evidence 落盘:
-  - `execution/task_<n>_implementer.md`(`evidence_type: subagent_implementer_report`)
-  - `execution/task_<n>_spec_review.md`(`evidence_type: subagent_spec_review`)
-  - `execution/task_<n>_code_quality_review.md`(`evidence_type: subagent_code_quality_review`)
-  - `review/subagent_final_review.md`(`evidence_type: subagent_final_review`)
-- evidence frontmatter 必含 audit 字段 `triggered_by_command: change-apply-subagent`(沿 D-EvidenceSchema;`forgeue_finish_gate.py` 从此字段判定 dispatch mode)
-- token usage 写 evidence body `## Token usage` 段(`data_source: task_tool_return` / `manual_estimate`),由 `tools/forgeue_subagent_budget.py --record` 追踪
-- 越界检测 + writeback-check + 全 task done + Level 0 全绿 + finish_gate exit 0 后:**default decline 路径**(主 repo cwd)直接 `openspec archive` + commit;**opt-in accepted 路径**(worktree)squash merge / cherry-pick 回主分支 + `git worktree remove`(沿 ADR-013 mode-conditional)
+| 选择 | 行为 | 适合场景 |
+|---|---|---|
+| **N(default)** | 在主 repo cwd 实施,无 worktree;完成后 `openspec archive` + commit | 大部分 implementation 流程(不污染 dirty state)|
+| **Y** | 命令模板起 isolated worktree,实施在 worktree 内;完成后 squash merge / cherry-pick 回主分支 + `git worktree remove` | bug-fix 迭代 / 多用户并行 / 想物理隔离 |
 
-**做什么(`change-apply-direct` fallback 路径)**:
-- 沿原 `executing-plans + TDD` 编排
-- Superpowers `executing-plans` 取 `execution/micro_tasks.md` 按部就班跑
-- Superpowers `test-driven-development` → `execution/tdd_log.md`(增量)
-- Superpowers `systematic-debugging`(bug 时)→ `execution/debug_log.md`
-- 越界检测:git diff 模块 vs design.md 接口字段
-- 不需要 worktree isolation;不派 subagent;不落 4 类 subagent evidence
+`change-apply-direct` 路径不问(沿 D-DirectWorktreeRefinement,fallback 路径默认 in_place 不强制 worktree)。
+
+**产出**(命令完成后看哪个 evidence):
+
+| 路径 | 关键 evidence 文件 |
+|---|---|
+| `change-apply-subagent` / `parallel` | `execution/task_<n>_implementer.md` + `execution/task_<n>_spec_review.md` + `execution/task_<n>_code_quality_review.md` + `review/subagent_final_review.md`(每 task 4 类) |
+| `change-apply-direct` | `execution/tdd_log.md` 增量 + `execution/debug_log.md`(bug 时)|
 
 **关键检查**:
 - ✓ 每条 codex review / adversarial finding 修复 = **1 个新回归测试**(项目铁律)
 - ✓ 实施暴露 contract 漏洞 = 必须**回写**(design / tasks / proposal),evidence 不能成新规范源
 - ✓ 不调付费 provider 默认(env guard `{1,true,yes,on}`)
-- ✓ subagent path 每个 task 必有 spec_review + code_quality_review evidence;通过的 task 允许"frontmatter + 一行 summary"轻量化,未通过的 task MUST 完整 issues 列表
-- ✓ Token / cost 字段**不进** 12-key frontmatter,在 evidence body `## Token usage` 段记录
-- ✓ ADR-009 budget tracker 仅 informational + soft WARNING(`exit 0` 始终,**不**做 hard gate;用户保留判断权)
+- ✓ Token / cost 不进 evidence frontmatter,写在 evidence body `## Token usage` 段
 
 **常见错误**:
 - ✗ 边写代码边改 design.md decisions(应当先回写 contract,确认 + commit 后再实施)
 - ✗ 修 codex finding 不补 fence test(下次回归没人守)
-- ✗ subagent path **opt-in accepted + worktree mode** 时跳过 step 6.5 commit untracked artifacts(`git worktree add` 不带 untracked 文件,subagent 看不到 contract;sequence 必须 commit → worktree → dispatch);**default decline 路径**(主 repo cwd)无此 step,subagent 直接看到主 repo 文件
-- ✗ `change-apply-subagent` 命令文件复制 / 引用 Superpowers 内部 prompt 模板(沿 D-SkillInvoke;ForgeUE 仅做 evidence wrapper,不重写 skill 协议)
-- ✗ 使用 `FORGEUE_APPLY_MODE` env flag 切换路径(沿 D-Default 拒绝 env flag facade;两条命令独立显式声明)
+- ✗ 改命令模板 / 复制 Superpowers 内部 prompt(命令模板不是 user-editable;ForgeUE 只做 evidence wrapper)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.3 Superpowers 集成边界 + §B.6 subagent-driven-development 集成边界
-
-**v2 wrapper 协议(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05;**ADR-013 update 2026-05-06 改 consent gate**)**:`/forgeue:change-apply-{subagent,parallel}` Preflight Worktree section invoke `Skill(superpowers:using-git-worktrees)` 沿 upstream cascade,Step 0 user-consent gate 决定是否调 wrapper:
-- **default decline → 主 repo cwd**(`worktree_mode: in_place`):**不**调 wrapper;evidence frontmatter `worktree_consent_outcome: declined` + `worktree_mode: in_place`(无 `worktree_path` / `worktree_receipt_path` 字段)
-- **opt-in accepted + wrapper_worktree mode**:命令模板自动跑 `python tools/forgeue_preflight_wrapper.py`(wrapper 自管 isolated worktree + 写 13-field receipt;LLM 复制 worktree_path / receipt_path 到 evidence frontmatter)
-- **opt-in accepted + skill_worktree mode**:Skill 自管 worktree(不调 wrapper);evidence frontmatter `worktree_consent_outcome: accepted` + `worktree_mode: skill_worktree`
-
-ADR-013 D-WrapperDeprecate:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;**default decline 路径不再 mandatory invoke wrapper**。
-
-post-dispatch ledger append(沿 archived `executable-enforcement` F2 round 1 inline writeback;**与 worktree consent 解耦**):Skill(Task) 之后 capture 真实 agent_id → `python tools/forgeue_dispatch_ledger.py append`(主 session 串行 append wrapper);**v3 升级**(自 `enhance-workflow-automation-ledger-binding` change 起,2026-05-06):cmd_append 写 11 字段 v3 schema + stdout `[LEDGER] line_count=<N> final_hmac=<hex>`,LLM 复制到 evidence frontmatter `ledger_line_count` / `ledger_final_hmac`(沿 D-LedgerTerminalProof)。**用户视角无需手工 invoke 工具,命令模板自动跑**。
-
-Parallel 命令额外跑:
-- **declined + in_place** → 自动降级 sequential(沿 ADR-013 D-ParallelDeclineFallback;关闭 main repo + multi-implementer + W2 attribution 漏洞)
-- **accepted + worktree mode** → W2 actual diff(`git status --porcelain` precondition + `git diff -z` + `git ls-files --others -z` 合集,overlap 自动降级 sequential)
-
-详见 `forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2 + §C.9 ADR-013 + §C.10 v3 Cryptographic Ledger Binding。
+**深读**(命令模板内部协议 + controller-side 实施细节):
+- 三路径选用 + 路由决策:`forgeue_integrated_ai_workflow.md` §B.6 subagent-driven-development 集成边界
+- Worktree consent gate(5 状态 outcome × mode 矩阵)+ Preflight 三项(Worktree / Skill Cascade / Task Granularity)+ runtime fence v1/v2/v3 协议:`forgeue_integrated_ai_workflow.md` §C.7-C.10
+- 命令模板真实 Bash steps + Skill invoke:`.claude/commands/forgeue/change-apply-{subagent,parallel,direct}.md`
 
 ---
 
@@ -222,10 +184,9 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 
 **做什么**:Level 0 必跑(`pytest -q` + offline-bundle-smoke);Level 1/2 默认 SKIP,env guard truthy 才跑
 
-**codex verification hook**(D-DefaultBackground):
-- `/codex:review --base <main>` 默认 background 启动 → `notes/verification_active_jobs.txt` 记 job id
-- main session 用 `/codex:status --wait <job>` + `/codex:result <job>` 轮询拿结果(不能在 result 未 finalize 前写 `claude_codex_concurred`)
-- **`autonomy_decision` 字段**:routine verify step 写 `claude_autonomous` 或 `claude_codex_concurred`(若走 codex 验证);verify 发现 6 类 fence 场景写 `user_required`
+**codex verification hook**(命令模板自动跑;background dispatch):
+- `/codex:review --base <main>` 默认 background 启动,完成后自动拿 result + 写入 `verify_report.md`
+- 用户视角:调命令 → 等命令完成 → 看 `verification/verify_report.md` 结果
 
 **产出**:`verification/verify_report.md`(frontmatter `aligned_with_contract: true` + body summary `[OK]: N / [FAIL]: 0 / [SKIP]: M`)
 
@@ -244,26 +205,20 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 /forgeue:change-review <id>
 ```
 
-**做什么**:
-1. **Superpowers** `requesting-code-review` + `code-reviewer` subagent finalize → `review/superpowers_review.md`
-2. **codex** `/codex:adversarial-review`(adversarial 永远 background,D-DefaultBackground)→ `review/codex_adversarial_review.md`(若是 round 2+,prompt 首段自动注入 round N-1 reference,D-CodexContextBridge)
-
-**autonomy_decision 字段**(evidence frontmatter 必填):
-- 大部分 S6 finding 处理:Claude 接受 codex finding → `claude_codex_concurred`
-- Claude 拒绝 codex finding 但 codex verdict `needs-attention` → fence #3 冲突 → `user_required`
-- 用户主动参与裁决 → `user_required` 或 `user_overrode`
+**做什么**(命令模板自动跑):
+1. **Superpowers** `requesting-code-review` 主 session retrospective → `review/superpowers_review.md`
+2. **codex** `/codex:adversarial-review`(永远 background)→ `review/codex_adversarial_review.md`(round 2+ 自动 inject 前轮 reference)
 
 **关键检查**:
-- ✓ 每条 blocker **独立验证** TRUE 后才接受(verdict per item;沿 memory `feedback_verify_external_reviews`)
+- ✓ 每条 codex blocker **独立验证 file:line** TRUE 后才接受(verdict per item;沿 ForgeUE memory `feedback_verify_external_reviews`,**不**把 codex claim 当结论)
 - ✓ 用户裁决"全改"后,沿**双 commit 模式**(见 §5)落地
-- ✓ `/codex:status --wait <job>` + `/codex:result <job>` 拿完整 output 后才写 `concurred` evidence
+- ✓ Claude 拒绝 codex finding 但 codex 仍标 `needs-attention` → 冲突升级用户裁决
 
 **常见错误**:
 - ✗ 把 codex 的 claim 当结论不验证 file:line(项目用户明确要求)
 - ✗ self-review 与 codex review 重合 finding 不分别记录(失去对照价值)
-- ✗ background job 未完成就写 `autonomy_decision: claude_codex_concurred`(必须先拿 result)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook S6 + §C Autonomy Boundary Protocol
+**深读**(autonomy boundary fence 6 类 / autonomy_decision 字段值枚举 / round N-1 context bridge):`forgeue_integrated_ai_workflow.md` §B.4 + §C
 
 ---
 
