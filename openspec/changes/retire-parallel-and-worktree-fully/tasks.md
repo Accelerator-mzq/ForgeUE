@@ -1,11 +1,11 @@
 ## 1. P0 — Pre-flight + Baseline
 
 - [ ] 1.1 在 dev branch 起点(`git log --oneline -1` SHA backfill 进 evidence frontmatter)记录 baseline pytest 数:`python -m pytest -q --collect-only 2>&1 | tail -3`,记到 `verification/baseline.md`
-- [ ] 1.2 验证 4 archived change 的当前 finish_gate replay 状态(本 change 后 D-ArchivedReplayCompat legacy pass-through 必须保 PASS;**沿 codex round 1 F2 inline writeback 修正:archived change id 不带 `archive/` 前缀,因 `tools/_common.py:484-496 change_path()` 仅匹配 `archive entry.name.endswith(change_id)`;且 runtime-enforcement 实际归档日期是 2026-05-05 非 2026-05-04**):
-  - `python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-runtime-enforcement --json`
-  - `python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-executable-enforcement --json`
-  - `python tools/forgeue_finish_gate.py --change 2026-05-06-restore-superpowers-worktree-consent-gate --json`
-  - `python tools/forgeue_finish_gate.py --change 2026-05-06-enhance-workflow-automation-ledger-binding --json`
+- [ ] 1.2 验证 4 archived change 的当前 finish_gate replay 状态(本 change 后 D-ArchivedReplayCompat legacy pass-through 必须保 PASS;**沿 codex round 1 F2 inline writeback 修正:archived change id 不带 `archive/` 前缀,因 `tools/_common.py:484-496 change_path()` 仅匹配 `archive entry.name.endswith(change_id)`;且 runtime-enforcement 实际归档日期是 2026-05-05 非 2026-05-04**;**沿 P0 实施 writeback:必加 `--dry-run` flag 防止 tool 副作用写入 archived `finish_gate_report.md` 违 "归档即冻结"**):
+  - `python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-runtime-enforcement --json --dry-run`
+  - `python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-executable-enforcement --json --dry-run`
+  - `python tools/forgeue_finish_gate.py --change 2026-05-06-restore-superpowers-worktree-consent-gate --json --dry-run`
+  - `python tools/forgeue_finish_gate.py --change 2026-05-06-enhance-workflow-automation-ledger-binding --json --dry-run`
   - 前置校验 4 目录确实存在:`ls openspec/changes/archive/ | grep -E "runtime-enforcement|executable-enforcement|consent-gate|ledger-binding"`(应输出 4 行)
   - 4 个全 PASS 记到 `verification/baseline.md`(P5 完成后回归对比期望仍 PASS)
 

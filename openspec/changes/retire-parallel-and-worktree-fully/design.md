@@ -69,10 +69,20 @@ ForgeUE 在 2026-05-04 至 2026-05-06 短窗口内 ship 了 4 个 workflow autom
 
 **精化(codex round 1 F3 writeback)**:本决定**仅适用于 archived/ 物理路径**;active evidence 的 protocol_version 字段值检查由 `D-ActiveVsArchivedReplayBoundary` 决定(active path + present-but-invalid value → BLOCKER)。本决定的"v2/v3/unknown 都走 legacy"语义被精化为"**archived 路径下** v2/v3/unknown 都走 legacy",防止 active evidence 用 typo 静默 bypass v1 advisory fence。
 
+**进一步精化(P0 baseline writeback,2026-05-06)**:原决定"archived 4 change 全 PASS"与 P0 实测矛盾(`verification/baseline.md` P0.2.1 实测 4 archive 共 31 个 blocker,**全为 pre-existing 失败模式**:25 个 `tasks_unchecked`(`_SECTION_HEADING_RE` regex 不匹配 `## P<N>` 格式 — `a4334db` 起 pre-existing bug)+ 4 个 `openspec_validate_failed`(openspec CLI 不识别 archived change id — pre-existing tool limitation)+ 2 个 v2 fence cross-check failure(`round_fix_continuity_v2_violation` + `dispatch_ledger_violation`,本 change retire 后应消失))。**修正 criterion**:archived replay 不要求"全 PASS",而要求**"无新失败模式引入"**:
+- Pre-existing 29 个 blocker(25 tasks_unchecked + 4 openspec_validate_failed)在 retire 前后**保持不变**(因 root cause 与本 change 无关)
+- 2 个 v2 fence blocker(`round_fix_continuity_v2_violation` + `dispatch_ledger_violation`)在 retire 后**应消失**(对应 fence 整删后 archived evidence 走 legacy pass-through)
+- **总 blocker 应从 31 → 29**;**不引入新 blocker type**;P5 verify 实测对账标准
+
+2 follow-on backlog(本 change scope 外):
+- `fix-finish-gate-section-regex-for-p-prefixed`:`_SECTION_HEADING_RE` 扩展支持 `## P<N> — ` 格式(P-prefixed + em-dash)
+- `fix-openspec-validate-archived-change-support`:openspec CLI 支持 archived change validate
+
 **Alternatives considered**:
 - (A) v2/v3 报 BLOCKER `superseded_by_retire_change`(沿 ledger-binding D-RuntimeEnforcementProtocolVersionValidity):**拒绝**,archived 4 change 的 evidence 会失败,违反归档不动原则。
 - (B) v2/v3 当作 legacy pass-through(原):**部分接受**,需限定 archived/ 路径(沿 D-ActiveVsArchivedReplayBoundary 精化)。
 - (C) v2/v3 报 WARNING 不 BLOCKER:**拒绝**,WARNING 也是噪声;legacy pass-through 更干净。
+- (D) "archived 4 change 全 PASS"(原 criterion):**拒绝**,与 P0 实测矛盾,pre-existing 29 个 blocker 来自无关 bug,不应阻断 retire change archive(沿 P0 baseline writeback)。
 
 ### D-V1ProtocolBoundary:v1 fence 内仍保留哪些 advisory check
 

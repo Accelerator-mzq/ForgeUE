@@ -86,10 +86,10 @@ ls openspec/changes/archive/ | grep -E "runtime-enforcement|executable-enforceme
 - [ ] **P0.2.1**:run finish_gate on 4 archived changes(**id 不带 `archive/` 前缀**,沿 `tools/_common.py:484-496 change_path()` 仅匹配 `archive entry.name.endswith(change_id)`)
 
 ```bash
-python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-runtime-enforcement --json 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('runtime-enforcement:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
-python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-executable-enforcement --json 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('executable-enforcement:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
-python tools/forgeue_finish_gate.py --change 2026-05-06-restore-superpowers-worktree-consent-gate --json 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('restore-consent-gate:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
-python tools/forgeue_finish_gate.py --change 2026-05-06-enhance-workflow-automation-ledger-binding --json 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('ledger-binding:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
+python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-runtime-enforcement --json --dry-run 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('runtime-enforcement:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
+python tools/forgeue_finish_gate.py --change 2026-05-05-enhance-workflow-automation-executable-enforcement --json --dry-run 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('executable-enforcement:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
+python tools/forgeue_finish_gate.py --change 2026-05-06-restore-superpowers-worktree-consent-gate --json --dry-run 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('restore-consent-gate:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
+python tools/forgeue_finish_gate.py --change 2026-05-06-enhance-workflow-automation-ledger-binding --json --dry-run 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('ledger-binding:', 'PASS' if d.get('all_checks_passed') else 'FAIL')"
 ```
 
 期望:4 行全 `PASS`(若有 FAIL → 立即 user_required + 暂停本 change,沿 fence #1 / fence #2)
@@ -573,17 +573,37 @@ python tools/forgeue_finish_gate.py --change retire-parallel-and-worktree-fully 
 
 期望:输出 JSON 含 `evidence_complete: false`(P7 才完整)。
 
-- [ ] **P5.1.2** archived 4 change replay PASS(D-ArchivedReplayCompat + D-ActiveVsArchivedReplayBoundary critical check;沿 codex round 1 F2 inline writeback 修正:**id 不带 `archive/` 前缀** + runtime-enforcement 日期 `2026-05-05` 非 `2026-05-04`)
+- [ ] **P5.1.2** archived 4 change replay 不引入新失败模式(D-ArchivedReplayCompat 修正 criterion;沿 P0 baseline writeback `verification/baseline.md` P0.2.1 — 不再要求"全 PASS",改要求"blocker total 31 → 29 + 不引入新 blocker type")
 
 ```bash
+# 实测 blocker 分布对照 P0 baseline
 for archived in 2026-05-05-enhance-workflow-automation-runtime-enforcement \
                 2026-05-05-enhance-workflow-automation-executable-enforcement \
                 2026-05-06-restore-superpowers-worktree-consent-gate \
                 2026-05-06-enhance-workflow-automation-ledger-binding; do
-  result=$(python tools/forgeue_finish_gate.py --change $archived --json 2>&1 | python -c "import sys, json; d = json.loads(sys.stdin.read()); print('PASS' if d.get('all_checks_passed') else 'FAIL')")
-  echo "$archived: $result"
+  python tools/forgeue_finish_gate.py --change $archived --json 2>&1 | python -c "
+import sys, json
+d = json.loads(sys.stdin.read())
+b_types = {}
+for b in d.get('blockers', []):
+    t = b.get('type', '?')
+    b_types[t] = b_types.get(t, 0) + 1
+print('$archived blocker types:', b_types)
+"
 done
 ```
+
+**期望对账表**(P0 baseline 31 → P5 retire 后 29):
+
+| Archive | tasks_unchecked | openspec_validate_failed | round_fix_continuity_v2 | dispatch_ledger_violation | 期望总 |
+|---------|---|---|---|---|---|
+| runtime-enforcement | 11 | 1 | 0 | 0 | 12 |
+| executable-enforcement | 14 | 1 | 0 | 0 | 15 |
+| restore-consent-gate | 0 | 1 | **0**(从 1 消失) | **0**(从 1 消失) | 1 |
+| ledger-binding | 0 | 1 | 0 | 0 | 1 |
+| **总** | **25** | **4** | **0** | **0** | **29** |
+
+若 P5 实测 blocker 不符(任何新 blocker type 出现 / `tasks_unchecked` 数变 / `openspec_validate_failed` 数变 / 2 个 v2 fence blocker 没消失)→ DRIFT type 3 阻断 archive。
 
 期望:4 行全 `PASS`(若有 FAIL → critical blocker → user_required + 阻断 archive)。
 
