@@ -15,10 +15,12 @@ triggered_by_command: change-plan
 runtime_enforcement_protocol_version: v2
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_design_review.md
-disputed_open: null
-writeback_commit: null
+disputed_open: 0
+writeback_commit: 81edd63
 resolved_at: null
 created_at: 2026-05-06T13:53:29+08:00
+round_1_closed_at: 2026-05-06T14:30:00+08:00
+round_2_status: pending
 ---
 
 # Design Cross-check — enhance-workflow-automation-ledger-binding
@@ -322,11 +324,103 @@ created_at: 2026-05-06T13:53:29+08:00
 - All accepted-codex(0 disputed)
 - 4 inline writeback + 1 scope expansion
 - Writeback target:`design.md`(D-KeyRotationHandling 改 + D-HashChain 加 sub-section 修 overclaim + 加 D-FrontmatterAuditConsistency / D-Scope-F3-MergeWithP12.8 2 新 D-decision)+ `proposal.md`(scope expansion 描述加 P12.8 合并)+ `specs/examples-and-acceptance/spec.md`(spec line 264 改 + key_rotation BLOCKER + ADDED Requirement "v3 ledger terminal proof" + 加 strict schema validation Requirement)+ `tasks.md`(P1.1 / P2.1 / P3.1 测试加 ~10 case + P9.4 P12.8 standby cancel 标记 superseded)
+- Writeback commit:`81edd63`
 
-下一步:
-- inline writeback 实施(并行 4 文件 Edit)
-- writeback commit
-- 更新 cross-check frontmatter `writeback_commit` + `resolved_at`
-- round 2 codex adversarial review(继承 round 1 verdict;沿 codex command 协议)
-- round 2 cross-check `## B/C/D round 2` 段
-- round 2 disputed_open == 0 → 进 S3
+## E. Codex Findings + Resolution(round 2)
+
+逐条 codex round 2 finding(全 verbatim 见 `notes/codex_adversarial_review_review_round2.md`)对照 + Resolution。
+
+### E.1 round2-F1 [high](承 round1-F2)— archived replay opt-in escape hatch reopens round1-F2 bypass
+
+**Codex 立场**:round 1 inline writeback 把 key_id mismatch default 改 fail-closed BLOCKER + archived replay 走 `ledger_archived_replay: true` evidence frontmatter + cmd_verify `--allow-archived-replay` flag 双重 explicit user override。但 evidence frontmatter 是 controller-written — LLM 在 active change 评估时 forge `ledger_archived_replay: true` + 替换 key 文件 + 用 `--allow-archived-replay` flag → fence WARN 接受 unverifiable ledger,等于 reopens round1-F2 bypass under different flag。round 1 R10 mitigation 把"active change 用此字段 = drift signal WARN"留 P9.6 follow-on 是 escape hatch — P9.6 触发条件是"实证 LLM 滥用",但 P9.6 不会 ship 直到滥用发生 → 修复永远 deferred → 等于不修复。
+
+**Claude 独立 verify**:
+- design.md:230-253 Risk + Mitigation 段 line 253 字面"留 follow-on tracking 在 P9.6" — confirmed,确实 defer
+- 攻击场景重现:active change → LLM 写 `ledger_archived_replay: true` + 替换 `~/.claude/forgeue_ledger_key` + cmd_verify `--allow-archived-replay` → 走 user override,unverifiable ledger 通过
+- F1 finding 完全 valid;P9.6 defer = 不修复
+
+**Resolution**:`accepted-codex,inline writeback`
+- 加新 D-decision **D-ArchivedReplayPathBoundary**(物证驱动 — evidence 文件路径必须含 `openspec/changes/archive/` segment 才允许 `ledger_archived_replay: true` 字段)
+- 新 fence `_check_archived_replay_path_boundary`:
+  - active change evidence(`openspec/changes/<id>/`)+ `ledger_archived_replay: true` → BLOCKER `archived_replay_path_violation`
+  - archive/ 路径 evidence + `ledger_archived_replay: true` → fence pass(走后续 user override 路径)
+- `tools/forgeue_dispatch_ledger.py::cmd_verify` `--allow-archived-replay` flag 同款边界 — ledger 路径不在 archive/ 段 + flag → BLOCKER
+- `tools/forgeue_change_state.py --writeback-check` 同步加此 invariant 检测(active change evidence 含 `ledger_archived_replay: true` = drift)
+- spec 加新 ADDED Requirement "Archived replay path boundary" + 5 scenario
+- tasks P3.1 加 5 测试 case
+- **P9.6 follow-on 标 RETIRED**(本 change 直接实施,沿 round 2 codex F1 recommendation "Do not defer this to P9.6")
+
+### E.2 round2-F2 [high] — unknown runtime protocol_version unspecified,fail-open
+
+**Codex 立场**:dispatch matrix 只列 absent / v1 / v2 / v3,没说 unknown value 怎么处理。现有 gate helpers 用 exact equality 检测 active protocol(`_runtime_enforcement_v3_active` 检测 `== "v3"`),unknown value(`v4` / typo / empty)被 treat as inactive(skip v3 fence)— LLM 可写 `v4` 自动跳过 fence,等于 controller-written 字段提供 fence skip escape hatch。
+
+**Claude 独立 verify**:
+- spec.md:139-146 fence dispatch matrix — confirmed,4 档(absent/v1/v2/v3)无 unknown 处理
+- 攻击场景重现:LLM 写 `runtime_enforcement_protocol_version: v4`(typo / 故意写错)→ `_runtime_enforcement_v3_active` 返回 False → v3 fence 全 skip + v2 fence 也 skip(`== "v2"` 也不匹配)→ legacy pass-through path → 整 fence chain skip
+- F2 finding 完全 valid;fence skip 不应由 invalid value 决定
+
+**Resolution**:`accepted-codex,inline writeback`
+- 加新 D-decision **D-RuntimeEnforcementProtocolVersionValidity**(fence skip 必须由 absence 决定,不能由 invalid value 决定)
+- 新 fence `_check_runtime_enforcement_protocol_version_validity`:
+  - 字段缺失 → pass-through(legacy)
+  - 字段值 in `_VALID_PROTOCOL_VERSIONS = frozenset({"v1", "v2", "v3"})` → 走对应 dispatch
+  - 其他 present value(`v4` / typo / empty / null)→ BLOCKER `unknown_protocol_version`
+- 此 fence 在所有 protocol-version-dependent fence 之前跑(防 unknown value silent skip)
+- `_VALID_PROTOCOL_VERSIONS` 同步纳入 `forgeue_enum_cross_ref_check.py` canonical frozenset 协议(扩值时同步扩 docs)
+- spec 加新 ADDED Requirement "Runtime enforcement protocol_version validity gate" + 5 scenario
+- tasks P3.1 加 6 测试 case
+- spec.md fence dispatch matrix 加新行(unknown → BLOCKER)
+
+### E.3 round2-F3 [medium](承 round1-F2/F3)— proposal.md 与 final contract 不同步
+
+**Codex 立场**:proposal "What Changes" 段写"`cmd_verify` exit code 加 6 `key_rotation_detected`,WARN 而非 fail" — round 1 inline writeback 后已改为 user override,proposal 漏改。proposal 也没提 `ledger_line_count` / `ledger_final_hmac` 必填字段(round 1 F3 inline writeback)。可能 drive implementation 回 round1-F2 WARN behavior 或 incomplete round1-F3 terminal proof。
+
+**Claude 独立 verify**:
+- proposal.md:35-43 What Changes 段 line 37 字面"`cmd_verify`:protocol_version dispatch — `v3` 走整链 verify 分支;exit code 加 6(`key_rotation_detected`,WARN 而非 fail)" — confirmed,沿 round 1 原文未跟改
+- proposal line 42 命令模板字段没提 `ledger_line_count` / `ledger_final_hmac` 必填字段
+- F3 finding 完全 valid;proposal 与 spec/design 不同步
+
+**Resolution**:`accepted-codex,inline writeback`
+- proposal What Changes 段 5 处更新:
+  1. cmd_verify exit code 6 改语义:`key_rotation_user_override_required`(仅在 evidence frontmatter `ledger_archived_replay: true` 在 archive/ 路径 + cmd_verify `--allow-archived-replay` flag + ledger 路径在 archive/ 段三重 explicit user override 时触发)
+  2. 加 `ledger_line_count` + `ledger_final_hmac` 必填字段说明(D-LedgerTerminalProof)
+  3. 加 `_check_ledger_terminal_proof` + `_check_ledger_forgery_resistance_consistency` + `_check_runtime_enforcement_protocol_version_validity` + `_check_archived_replay_path_boundary` 4 个新 fence 说明
+  4. 加 `--allow-archived-replay` flag 边界(仅 archive/ 路径 ledger 接受)
+  5. cmd_append stdout `[LEDGER]` line 说明(LLM 复制到 evidence frontmatter)
+
+## F. Disputed Open Count(round 2)
+
+`disputed_open: 0`
+
+> 3 codex round 2 finding 全 `accepted-codex,inline writeback`(round2-F1+F2+F3)。无 disputed-pending。无 disputed-permanent-drift。
+> writeback 完成后 commit SHA 填回 frontmatter `writeback_commit` + `resolved_at`。
+
+## G. Independent Verification(round 2 file:line)
+
+| Codex round 2 finding | claimed file:line | Claude 独立 verify | match |
+|---|---|---|---|
+| round2-F1 | `design.md:230-253` D-KeyRotationHandling Risk + Mitigation 段 留 P9.6 | Read line 253 字面"留 follow-on tracking 在 P9.6" | ✅ |
+| round2-F2 | `spec.md:139-146` fence dispatch matrix | Read line 139-146 — 4 档(absent/v1/v2/v3)无 unknown 处理 | ✅ |
+| round2-F3 | `proposal.md:35-43` What Changes 段 cmd_verify exit code 6 WARN + 漏 ledger_line_count / ledger_final_hmac | Read line 37 字面 confirmed cmd_verify exit code 6 仍 WARN;line 42 命令模板字段无 ledger_line_count / ledger_final_hmac | ✅ |
+
+3/3 codex round 2 file:line claim 独立 verify 通过。
+
+## Round 2 Status
+
+- Total findings: 3(high=2 + medium=1)
+- All accepted-codex(0 disputed)
+- 3 inline writeback(无 scope expansion;round 2 修复都在已有 D-decision 之上加增量 fence + 新 D-decision)
+- Writeback target:
+  - `design.md`(D-KeyRotationHandling 表加路径限定 + Risk R10 改 + 加 D-ArchivedReplayPathBoundary + D-RuntimeEnforcementProtocolVersionValidity 2 新 D-decision + D-FenceDispatchMatrix 更新)
+  - `proposal.md`(What Changes 段同步 final contract;cmd_verify exit code 6 user override + ledger_line_count + ledger_final_hmac + 4 新 fence + --allow-archived-replay flag 边界 + cmd_append stdout)
+  - `specs/examples-and-acceptance/spec.md`(dispatch matrix 加 unknown BLOCKER + 加 2 新 ADDED Requirement)
+  - `tasks.md`(P3.1 加 11 测试 case + P3.2 fence list 加 2 个新 fence + P9.6 retire)
+- 总 D-decision:13 → 15(加 D-ArchivedReplayPathBoundary + D-RuntimeEnforcementProtocolVersionValidity)
+- 总 fence:v3 fence 2 → 4(加 protocol_version_validity + archived_replay_path_boundary)
+- 总测试 case:34 → 45(round 2 加 11 case)
+- Writeback commit:pending
+- 下一步:
+  - 跑 `openspec validate --strict` + commit round 2 inline writeback
+  - 更新 cross-check frontmatter `writeback_commit` + `resolved_at`
+  - 评估 round 3:round 2 inline writeback 改动较大(加 2 fence + 2 D-decision),建议跑 round 3 validation;若 round 3 无新 finding → S3 unblocked
+  - round 3 disputed_open == 0 → 进 step 7(Superpowers writing-plans skill auto-trigger)+ step 8(writeback check)+ step 9(S2→S3 transition)

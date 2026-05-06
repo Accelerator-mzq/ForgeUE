@@ -102,6 +102,19 @@
   - **round 1 codex F5 scope expansion 加**:
     - `test_finish_gate_v3_fence_blocker_on_schema_unknown_field`(ledger 行 12 字段 → BLOCKER `[schema_violation]`)
     - `test_finish_gate_v3_fence_blocker_on_schema_negative_round`(round: -1 → BLOCKER)
+  - **round 2 codex F1 inline writeback 加**(D-ArchivedReplayPathBoundary):
+    - `test_finish_gate_active_change_archived_replay_blocker`(active change evidence 路径 + `ledger_archived_replay: true` → BLOCKER `archived_replay_path_violation`)
+    - `test_finish_gate_archived_evidence_archived_replay_with_flag_pass`(archive/ 路径 evidence + `ledger_archived_replay: true` + `--allow-archived-replay` + key rotation → WARN exit 6 user override)
+    - `test_finish_gate_archived_evidence_archived_replay_no_flag_default_blocker`(archive/ 路径 evidence + `ledger_archived_replay: true` + 无 flag + key rotation → 默认 fail-closed BLOCKER;三重 opt-in 之一缺失即 BLOCKER)
+    - `test_cmd_verify_allow_archived_replay_flag_active_path_blocker`(cmd_verify `--allow-archived-replay` flag + ledger 不在 archive/ 路径 → exit 5 `archived_replay_path_violation`)
+    - `test_writeback_check_active_change_archived_replay_drift`(forgeue_change_state.py `--writeback-check` 检测 active change evidence 含 `ledger_archived_replay: true` → exit 5 + DRIFT signal)
+  - **round 2 codex F2 inline writeback 加**(D-RuntimeEnforcementProtocolVersionValidity):
+    - `test_finish_gate_unknown_protocol_v4_blocker`(evidence frontmatter `runtime_enforcement_protocol_version: v4` → BLOCKER `unknown_protocol_version`)
+    - `test_finish_gate_unknown_protocol_typo_blocker`(evidence frontmatter `runtime_enforcement_protocol_version: 'v 3'` 或 'V3' → BLOCKER)
+    - `test_finish_gate_unknown_protocol_empty_string_blocker`(evidence frontmatter `runtime_enforcement_protocol_version: ''` → BLOCKER)
+    - `test_finish_gate_unknown_protocol_null_blocker`(evidence frontmatter `runtime_enforcement_protocol_version: null` → BLOCKER)
+    - `test_finish_gate_legacy_absent_protocol_pass_through`(evidence frontmatter 无 `runtime_enforcement_protocol_version` 字段 → pass;后续 fence 全 skip)
+    - `test_finish_gate_protocol_validity_runs_before_dispatch_ledger`(`_check_runtime_enforcement_protocol_version_validity` 在 `_check_dispatch_ledger` 之前跑;unknown protocol 直接 BLOCKER 不进 v3 verify)
   - `test_finish_gate_v2_evidence_skips_v3_fence`(v2 evidence + v2 ledger → v3 分支 pass-through)
   - `test_finish_gate_legacy_evidence_skips_all`(无 protocol_version 字段 → 全分支 pass-through)
   - `test_finish_gate_v3_double_fence_round_fix_continuity_also_fails`(v3 evidence + tampered ledger → `_check_round_fix_continuity` v3 fence 也阻断,双重守门)
@@ -110,8 +123,11 @@
   - `_check_dispatch_ledger` 加 v3 分支(import `_forgeue_ledger_crypto.verify_chain_v3` + 整链 verify);error message prefix `[hmac_mismatch]` / `[chain_break]` / `[key_id_inconsistent]` / `[key_id_mismatch]` / `[tail_truncation_detected]` / `[final_hmac_mismatch]` / `[schema_violation]` / `[audit_mismatch]` / `[key_rotation_user_override]` 区分(round 1 codex inline writeback 后 9 类)
   - 新 fence `_check_ledger_terminal_proof`(D-LedgerTerminalProof;evidence `ledger_line_count` + `ledger_final_hmac` 必填 + 与实际 ledger 一致)
   - 新 fence `_check_ledger_forgery_resistance_consistency`(D-FrontmatterAuditConsistency;v3 ↔ cryptographic / v2 ↔ advisory 强 enum)
+  - 新 fence `_check_runtime_enforcement_protocol_version_validity`(round 2 codex F2 inline writeback;D-RuntimeEnforcementProtocolVersionValidity;`_VALID_PROTOCOL_VERSIONS = frozenset({"v1", "v2", "v3"})`;unknown value → BLOCKER `unknown_protocol_version`;此 fence 在所有 protocol-version-dependent fence 之前跑)
+  - 新 fence `_check_archived_replay_path_boundary`(round 2 codex F1 inline writeback;D-ArchivedReplayPathBoundary;active change evidence 路径含 `ledger_archived_replay: true` → BLOCKER `archived_replay_path_violation`;`Path.resolve()` 后必须含 `archive/` segment 才允许此字段)
   - `_check_round_fix_continuity` 加 v3 路径(在 v2 cross-check 基础上加 chain verify + terminal proof,沿 specs MODIFIED Requirement)
-  - fence dispatch matrix 扩到 4 档(legacy / v1 / v2 / v3);v3 fence 总数 = v2 6 fence + 2 新(terminal_proof + audit_consistency)+ schema_strict 内嵌进 _check_dispatch_ledger v3 分支
+  - fence dispatch matrix 扩到 4 档(legacy / v1 / v2 / v3)+ unknown value BLOCKER;v3 fence 总数 = v2 6 fence + 4 新(terminal_proof + audit_consistency + protocol_version_validity + archived_replay_path_boundary)+ schema_strict 内嵌进 _check_dispatch_ledger v3 分支
+  - `tools/forgeue_change_state.py --writeback-check` 加 `archived_replay_path_violation` 进 4 类 named DRIFT 检测之一(round 2 codex F1 inline writeback)
 - [ ] P3.3 跑 P3.1 + P2.1 + P1.1 测试 — verify 全过
 - [ ] P3.4 commit `feat(forgeue): forgeue_finish_gate.py — v3 fence dispatch + HMAC chain verify`
 
@@ -189,7 +205,7 @@
 ## P9 — MEMORY.md update + follow-on tracking(后置可选)
 
 - [ ] P9.1 更新 `MEMORY.md` 加 ledger-binding change 摘要(沿 forgeue auto memory 协议;落 `~/.claude/projects/.../memory/project_ledger_binding_change.md` + MEMORY.md index entry):
-  - 10 D-decision(Scope-F3Only / KeyLocation / ProtocolVersion / HashChain / CanonicalJSON / KeyRotationHandling / FenceDispatchMatrix / SelfDogfoodGap / DispatchPath / WrapperVersionBump)
+  - 15 D-decision(round 1+2 codex inline writeback 后):Scope-F3Only / KeyLocation / ProtocolVersion / HashChain / CanonicalJSON / KeyRotationHandling / FenceDispatchMatrix / SelfDogfoodGap / DispatchPath / WrapperVersionBump / **LedgerTerminalProof**(round 1 F3) / **FrontmatterAuditConsistency**(round 1 F4) / **Scope-F3-MergeWithP12.8**(round 1 F5) / **ArchivedReplayPathBoundary**(round 2 F1) / **RuntimeEnforcementProtocolVersionValidity**(round 2 F2)
   - HMAC chain protocol + key file lifecycle + 4 verify 状态
   - fence dispatch matrix 4 档(legacy / v1 / v2 / v3)
   - commit SHA + threat model 边界
@@ -199,4 +215,4 @@
   - **`enhance-workflow-automation-v2-fence-hardening`**(archived `executable-enforcement` P12.8):**superseded by 本 change**(round 1 codex F5 scope expansion 已合并 P12.8 schema validation 部分进本 change v3 verify;本 change archive 后正式 cancel P12.8 follow-on tracking)— action item:本 change archive 时同步更新 archived `executable-enforcement/tasks.md` P12.8 标 `[CANCELLED — superseded by enhance-workflow-automation-ledger-binding round 1 codex F5 scope expansion;merged into v3 strict 11-field schema validation]`
   - **`enhance-workflow-automation-final-review-fence-strictness`**(archived `executable-enforcement` P12.7):**单独评估**(本 change F3 ledger terminal proof + F5 schema validation 是否已覆盖 P12.7 hygiene gap?P12.7 scope 是 SKIP stub vs dispatched evidence 区分,与 ledger 校验是 orthogonal)— action item:本 change ship 后实证下一个 active change 用 v3 + SKIP stub pattern 是否仍误通过;若 ship-later 实证 P12.7 hygiene gap 已闭合 → cancel,否则 P12.7 触发条件不变
 - [ ] P9.5 (follow-on tracking)`enhance-workflow-automation-os-keystore`(R1 mitigation;OS-level secret store):用 Windows DPAPI / Mac Keychain / Linux libsecret 替代 `~/.claude/forgeue_ledger_key` 文件存储;防 LLM 主动恶意 forge(本 change threat model 之外的攻击);触发条件:本 change ship 后实证 LLM 主动恶意 forge 实际发生(若 advisory layer + obscurity 足够 → 不必 ship)
-- [ ] P9.6 (follow-on tracking)`enhance-workflow-automation-archived-replay-audit`(round 1 codex F2 inline writeback R10 mitigation):active change(非 archived)evidence 用 `ledger_archived_replay: true` = WARN drift signal;实施 fence audit 守门 active vs archived 区分;触发条件:本 change ship 后实证 LLM 滥用 `ledger_archived_replay` 字段绕过 fail-closed
+- [ ] P9.6 (follow-on tracking RETIRED)`enhance-workflow-automation-archived-replay-audit` — **本 change round 2 codex F1 inline writeback 已实施**(D-ArchivedReplayPathBoundary fence + spec ADDED Requirement "Archived replay path boundary" + tasks.md P3.1 测试 case 5 个);本 change ship 后**正式 cancel** P9.6 follow-on tracking(沿 round 2 codex F1 recommendation "Do not defer this to P9.6")

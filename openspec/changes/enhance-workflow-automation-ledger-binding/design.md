@@ -228,7 +228,7 @@ def canonical_payload(record: dict) -> bytes:
 | **正常 load** | key 文件存在 + JSON 合法 + key_hex 64 chars | 读 key + 计算 key_id + 用于 append/verify | 0 |
 | **文件损坏** | key 文件存在但 JSON 解析失败 / key_hex 长度错误 / version 不识别 | abort,不静默重建;提示 user backup + 删除 + 重新 init | 7(`key_file_corrupted`) |
 | **key_id mismatch active v3**(verify 时) | active v3 evidence(`evidence_frontmatter.ledger_archived_replay` ≠ `true`)+ ledger key_id ≠ 当前 file key_id | **fail-closed BLOCKER**(攻击场景:LLM 替换 key 文件即可降级 HMAC 校;**不**走 WARN 自动 pass) | 5(`key_id_mismatch` 类 verify_fail) |
-| **key_id mismatch archived replay opt-in**(verify 时) | evidence frontmatter `ledger_archived_replay: true`(user 显式 opt-in)+ cmd_verify 配套 `--allow-archived-replay` flag + ledger key_id ≠ 当前 file key_id + ledger 自身 key_id 一致 | WARN(`key_rotation_user_override_required`);user 显式承担"无法重算 HMAC"风险 | 6(WARN,user override) |
+| **key_id mismatch archived replay opt-in**(verify 时;round 2 codex F1 inline writeback 后加路径限定) | evidence frontmatter `ledger_archived_replay: true`(user 显式 opt-in)+ cmd_verify 配套 `--allow-archived-replay` flag + ledger key_id ≠ 当前 file key_id + ledger 自身 key_id 一致 + **evidence 文件路径在 `openspec/changes/archive/` 段下**(沿 D-ArchivedReplayPathBoundary;active change 路径 = BLOCKER `archived_replay_path_violation`)| WARN(`key_rotation_user_override_required`);user 显式承担"无法重算 HMAC"风险 | 6(WARN,user override) |
 | **forge 检测同 ledger 内不同 key_id**(verify 时) | 同一 ledger 内不同行 key_id 不一致(LLM 中途切换 key) | BLOCKER | 5(`key_id_inconsistent` 类 verify_fail) |
 
 **Why(round 1 codex F2 inline writeback,fail-closed default)**:
@@ -248,27 +248,95 @@ def canonical_payload(record: dict) -> bytes:
 - (d)ledger terminal proof(独立 receipt 锚点 ledger 末行 hmac)— **接受 D-LedgerTerminalProof,本 change 实施**;沿 round 1 codex F3 inline writeback 同款 mitigation
 - (e)default fail-closed + explicit user opt-in WARN(本 change 选)— **接受**;沿 fail-closed-by-default 原则,opt-in user override 是审计友好的 escape hatch
 
+**Risk + Mitigation**(round 2 codex F1 inline writeback 后):
+- archived ledger replay 操作复杂度增加(user 必须手工标 frontmatter `ledger_archived_replay: true` + 命令行 `--allow-archived-replay` + evidence 必须在 archive/ 路径)→ Mitigation:`forgeue_change_state.py` 检测 archived change replay 时 alert user 是否需要 opt-in;命令模板默认不写本字段,LLM 不能 default 把"无法验证"漂白成"通过"
+- LLM 学到"可以加 `ledger_archived_replay: true` 绕过 fence" — **本 change ship D-ArchivedReplayPathBoundary fence 守门,active change(非 archive/ 路径)evidence 用此字段 = BLOCKER `archived_replay_path_violation`,不再 defer 到 follow-on**(round 2 codex F1 inline writeback;原 round 1 设计 defer P9.6 被 codex 揭穿是 escape hatch reopen round1-F2 bypass,本 change 直接修复);active change LLM 即使 forge `ledger_archived_replay: true` 也无法绕 fence — fence 校 evidence 文件绝对路径必须 contains `/archive/` segment
+
+### D-ArchivedReplayPathBoundary — `ledger_archived_replay: true` 仅在 archive/ 路径 evidence 接受,active change 路径 BLOCKER(round 2 codex F1 inline writeback)
+
+**决策**:`forgeue_finish_gate.py` 加新 fence `_check_archived_replay_path_boundary` 守门 `ledger_archived_replay` evidence frontmatter 字段使用边界:
+
+| evidence 文件路径 | `ledger_archived_replay` 字段值 | fence 行为 |
+|---|---|---|
+| 任何路径 | 缺失 / `false` / `null` | pass-through(default 路径) |
+| 含 `openspec/changes/archive/` segment | `true` | 接受 archived replay opt-in;走 D-KeyRotationHandling user override 路径(WARN exit 6) |
+| 不含 `archive/` segment(active change `openspec/changes/<id>/`) | `true` | **BLOCKER `archived_replay_path_violation`** |
+
+`tools/forgeue_dispatch_ledger.py::cmd_verify` `--allow-archived-replay` flag 同款边界 — 仅在 ledger 路径在 `openspec/changes/archive/` 内才 honor flag;active change ledger 路径 + `--allow-archived-replay` flag → BLOCKER + 提示用户 ledger 不在 archive 路径。
+
+**Why(round 2 codex F1 inline writeback)**:
+
+round 1 设计的 `ledger_archived_replay: true` opt-in 路径已经引入双重 explicit user override(frontmatter 字段 + cmd_verify flag),但 codex round 2 揭穿仍有 escape hatch:**evidence frontmatter 是 controller-written,LLM 在 active change 评估时 forge `ledger_archived_replay: true` + 替换 key 文件 + 用 `--allow-archived-replay` flag → fence 走 user override 路径接受 unverifiable ledger,等于 reopens round1-F2 bypass under different flag**。
+
+原 round 1 R10 mitigation 把"active change 用此字段 = drift signal WARN"留 P9.6 follow-on 是 codex F1 揭穿的核心问题 — P9.6 触发条件是"实证 LLM 滥用",但 P9.6 不会 ship 直到滥用发生 → 修复永远 deferred → 等于不修复。
+
+**核心 invariant 升级**:archived replay 路径不仅要 user explicit opt-in(双 flag),还要 evidence 物理位置在 archive/ 目录(物证驱动);LLM 即使 forge frontmatter + 替换 key 文件,只要 evidence 不在 archive/ 段,fence BLOCKER。
+
+**实施**:fence 校 `evidence_path.resolve()` 字符串含 `os.sep + "archive" + os.sep` segment;`forgeue_change_state.py --writeback-check` 同步加此 invariant 检测。
+
+**Alternatives considered**:
+- (a)round 1 原设计 — defer P9.6 follow-on(沿"实证驱动"原则)— **拒绝**(round 2 codex F1 finding 完全 valid);P9.6 实际不会 ship,defer = 不修复
+- (b)evidence 路径强校 archive/ segment(本 change 选)— **接受**;物证驱动,LLM 不能伪造文件物理位置(LLM 写 evidence 时由 stage 决定路径,active change 写到 `openspec/changes/<id>/`,无法跨写到 archive/)
+- (c)finish_gate 强校 evidence 必须有 archived 时间戳 prefix(`archived_at` frontmatter 字段)— **拒绝**(过严);时间戳是 controller-written,可被伪造;不如 archive/ 目录路径物证强
+
 **Risk + Mitigation**:
-- archived ledger replay 操作复杂度增加(user 必须手工标 frontmatter `ledger_archived_replay: true` + 命令行 `--allow-archived-replay`)→ Mitigation:`forgeue_change_state.py` 检测 archived change replay 时 alert user 是否需要 opt-in;命令模板默认不写本字段,LLM 不能 default 把"无法验证"漂白成"通过"
-- LLM 学到"可以加 `ledger_archived_replay: true` 绕过 fence" — Mitigation:本字段 audit trail 永久保留(任何 archive / commit 都带 trail);finish_gate 强校 archived replay 模式不允许 written-by-this-change 的 evidence(只允许 archived 时间戳的 evidence;本 change ship 后新 v3 evidence 用此字段 = drift signal,留 follow-on tracking 在 P9.6)
+- archived replay 时 user 必须把 evidence 文件移进 archive/ 才能跑 fence — Mitigation:archived change 已经在 `archive/2026-MM-DD-<id>/` 目录(沿 `openspec archive` 协议),evidence 自然在 archive/ 段;active change 的 evidence 在 `openspec/changes/<id>/`,如需 replay 必须先 archive(物证-驱动符合直觉)
+- LLM 在 active change 把 evidence 移到 archive/ 段绕 fence — Mitigation:`forgeue_change_state.py --writeback-check` 检测 active change 的 evidence 出现在 archive/ 路径 = drift signal;同时本 change ship D-ArchivedReplayPathBoundary 的 fence 物证强(`Path.resolve()` 后包含 archive segment 必然在归档路径)
 
-### D-FenceDispatchMatrix — fence dispatch 4 档矩阵 (legacy / v1 / v2 / v3),v3 = v2 + HMAC chain
+### D-RuntimeEnforcementProtocolVersionValidity — unknown protocol_version 默认 BLOCKER 而非 silent pass(round 2 codex F2 inline writeback)
 
-**决策**:`forgeue_finish_gate.py::_check_dispatch_ledger` 入口加 4 档 dispatch:
+**决策**:`forgeue_finish_gate.py` 加新 fence `_check_runtime_enforcement_protocol_version_validity` 守门 `runtime_enforcement_protocol_version` 字段值合法性:
+
+| evidence frontmatter `runtime_enforcement_protocol_version` | fence 行为 |
+|---|---|
+| 字段缺失(legacy) | pass-through(全 v1/v2/v3 fence skip) |
+| 字段值 `v1` / `v2` / `v3` | 走对应 fence dispatch matrix |
+| 字段值 present 但不在 {`v1`, `v2`, `v3`} 内(`v4` / typo / empty string / null) | **BLOCKER `unknown_protocol_version`** |
+
+**Why(round 2 codex F2 inline writeback)**:
+
+round 1 dispatch matrix 只列 absent / v1 / v2 / v3,没说 unknown value 怎么处理。codex round 2 揭穿:现有 gate helpers 用 exact equality 检测 active protocol(如 `_runtime_enforcement_v3_active` 检测 `== "v3"`),unknown value(`v4` / typo / empty)被 treat as inactive(skip v3 fence)— LLM 可写 `v4` 自动跳过 fence,等于 controller-written 字段提供 fence skip escape hatch。
+
+**修正**:加新 fence 校 enum 合法性。default behavior 改为 fail-closed unknown(LLM 不能 silently skip fence)。
+
+**核心 invariant**:**fence skip 必须由 absence 决定(legacy),不能由 invalid value 决定**(LLM 写错值不应该意外 unlock 旁路)。
+
+**实施细节**:
+- 新 helper `_VALID_PROTOCOL_VERSIONS = frozenset({"v1", "v2", "v3"})` 模块常量
+- 新 fence `_check_runtime_enforcement_protocol_version_validity(frontmatter) -> list[str]`:
+  - `runtime_enforcement_protocol_version` not in frontmatter → return `[]`(legacy pass)
+  - 字段值 in `_VALID_PROTOCOL_VERSIONS` → return `[]`(跑后续 dispatch matrix)
+  - 其他 → return `[error]`(BLOCKER)
+- 此 fence 在 `_check_dispatch_ledger` / `_check_round_fix_continuity` / `_check_skill_cascade` 等所有 protocol-version-dependent fence 之前跑(防 fence 内部 silent dispatch)
+- forgeue_change_state.py canonical frozenset 加 `_VALID_PROTOCOL_VERSIONS`(沿 forgeue_enum_cross_ref_check.py 协议;`CLAUDE.md` + `forgeue_integrated_ai_workflow.md` 文档同步声明)
+
+**Alternatives considered**:
+- (a)round 1 原设计 — unknown value silent skip(default behavior)— **拒绝**(round 2 codex F2 finding 完全 valid);LLM 可 typo / 写错绕 fence
+- (b)unknown value warn 而非 BLOCKER — **拒绝**;warn 不阻断 archive,与 fail-closed 原则违背
+- (c)unknown value BLOCKER + future v4/v5 ship 时同步扩 frozenset(本 change 选)— **接受**;严格 enum 是 future-extensible 的(扩值同步扩 frozenset)
+
+**Risk + Mitigation**:
+- 后续 follow-on 加新 protocol(v4)— Mitigation:沿 forgeue_enum_cross_ref_check.py 协议,扩 `_VALID_PROTOCOL_VERSIONS` frozenset 时同步扩 docs(`CLAUDE.md` + `forgeue_integrated_ai_workflow.md`),工具自动 catch drift
+- 测试 fixture 用错 protocol value 触发 BLOCKER — Mitigation:测试 fixture 显式列 valid value;archive/ 兼容性测试 case 显式覆盖 legacy(absent field) + 各 valid value
+
+### D-FenceDispatchMatrix — fence dispatch 4 档矩阵 (legacy / v1 / v2 / v3) + unknown value BLOCKER(round 2 codex F2 inline writeback 后),v3 = v2 + HMAC chain
+
+**决策**(round 2 codex F2 inline writeback 后):`forgeue_finish_gate.py::_check_dispatch_ledger` 入口加 dispatch matrix:
 - 无 frontmatter 字段(legacy)→ 全 v1/v2/v3 fence pass-through
 - `runtime_enforcement_protocol_version: v1` → 走 v1 fence(沿 ADR-011)
 - `runtime_enforcement_protocol_version: v2` → 走 v1 + v2 fence(advisory schema-only,沿 ADR-012)
-- `runtime_enforcement_protocol_version: v3` → 走 v1 + v2 + v3 fence(v3 = v2 schema check + HMAC chain verify)
+- `runtime_enforcement_protocol_version: v3` → 走 v1 + v2 + v3 fence(v3 = v2 schema check + HMAC chain verify + terminal proof + audit consistency + strict 11-field schema)
+- **其他 present value(unknown protocol)→ BLOCKER `unknown_protocol_version`**(沿 D-RuntimeEnforcementProtocolVersionValidity)
 
 **Why**:
-- 4 档矩阵清晰 — 每档独立 logic,后续 follow-on 加 v4 / v5 协议时可继续扩展
+- 4 档矩阵 + unknown BLOCKER 清晰 — 每档独立 logic,unknown silent skip 路径已封死
 - archived v2 evidence + v2 ledger 完全 backward compatible(走 v2 路径,不触 v3)
 - 本 change 自身 evidence 仍走 v2 advisory(self-dogfood gap;沿 D-SelfDogfoodGap)
 
 **实施细节**:
 - 新 helper `_runtime_enforcement_v3_active(frontmatter) -> bool`,检测 `runtime_enforcement_protocol_version == "v3"`
-- `_check_dispatch_ledger` v3 分支调 `_forgeue_ledger_crypto.verify_chain_v3(key_bytes, lines)` 整链 verify
-- 新 Blocker.type 不增加(仍 `dispatch_ledger_violation`);error message 内容更细(区分 hmac_mismatch / chain_break / key_id_inconsistent / key_rotation_warn)
+- `_check_dispatch_ledger` v3 分支调 `_forgeue_ledger_crypto.verify_chain_v3(key_bytes, lines, evidence_frontmatter)` 整链 verify + terminal proof + strict schema
+- 新 Blocker.type 不增加(仍 `dispatch_ledger_violation`);error message 内容更细(区分 hmac_mismatch / chain_break / key_id_inconsistent / key_id_mismatch / tail_truncation_detected / final_hmac_mismatch / schema_violation / audit_mismatch / archived_replay_path_violation / unknown_protocol_version)
 
 ### D-SelfDogfoodGap — 本 change 自身 evidence 仍走 v2 advisory,ship 后下一个 change 才用 v3
 

@@ -32,15 +32,29 @@
 - **新增 stdlib helper**:`tools/_forgeue_ledger_crypto.py` — `load_or_init_key()` / `canonical_payload()` / `compute_hmac()` / `compute_key_id()` / `verify_chain_v3()`;纯 stdlib(`hashlib` + `hmac` + `secrets` + `json` + `pathlib` + `os.chmod`),无第三方依赖
 - **HMAC key 持久化**:文件路径 `~/.claude/forgeue_ledger_key`(JSON 单文件;version + created_at + key_hex);wrapper 首次 invoke 时 `secrets.token_bytes(32)` 随机生成 + `os.chmod(0o600)`(Linux/Mac;Windows 简化为不在 git 跟踪 + 用户目录 obscurity);跨 change 共享(任一 change 写的 ledger 都用同 key 校)
 - **ledger schema v3**:新增 4 字段 `protocol_version: "v3"` / `key_id`(SHA256(key)[:16] fingerprint)/ `prev_hmac`(上一行 hmac,首行全 0)/ `hmac`(HMAC-SHA256 over canonical JSON of 前 9 字段 + prev_hmac);hash chain 防删行 attack
-- **`tools/forgeue_dispatch_ledger.py` 升级**:
-  - `cmd_append`:加载 key + 读 prev_hmac + 计算 hmac + 写 11 字段;exit code 加 7(`key_file_corrupted`)
-  - `cmd_verify`:protocol_version dispatch — `v3` 走整链 verify 分支;exit code 加 6(`key_rotation_detected`,WARN 而非 fail)
+- **`tools/forgeue_dispatch_ledger.py` 升级**(round 1+2 codex inline writeback 后):
+  - `cmd_append`:加载 key + 读 prev_hmac + 计算 hmac + 写 11 字段(strict schema:11 字段精确 + 字段类型 + 字段 format);**stdout 打印 `[LEDGER] line_count=<N> final_hmac=<hex>`**(D-LedgerTerminalProof,LLM 复制到 evidence frontmatter)
+  - `cmd_verify`:protocol_version dispatch — `v3` 走整链 verify + terminal proof + strict 11-field schema validation;**`v4` / typo / empty / 任何 unknown protocol_version → BLOCKER `unknown_protocol_version`**(round 2 codex F2 inline writeback)
+  - 加 `--allow-archived-replay` flag(round 1 codex F2 + round 2 codex F1 inline writeback;**仅在 ledger 路径在 `openspec/changes/archive/` 内才允许走 user override 路径**;active change 路径 BLOCKER)
+  - exit code:0 pass / 5 verify_fail BLOCKER / **6 仅在 archived replay 显式 opt-in 时**(`ledger_archived_replay: true` 在 archive/ 路径 evidence + cmd_verify `--allow-archived-replay` flag 双重 explicit user override)/ 7 key_file_corrupted
 - **`tools/forgeue_finish_gate.py` 升级**:
-  - `_check_dispatch_ledger` 加 v3 分支(整链 verify + key_id rotation 区分 forge BLOCKER vs key-rotation WARN)
+  - `_check_dispatch_ledger` 加 v3 分支(整链 verify + key_id mismatch default fail-closed BLOCKER + archived replay 路径限定)
+  - 新 fence `_check_ledger_terminal_proof`(D-LedgerTerminalProof;evidence frontmatter `ledger_line_count` + `ledger_final_hmac` 必填字段 + 与实际 ledger cross-check)
+  - 新 fence `_check_ledger_forgery_resistance_consistency`(D-FrontmatterAuditConsistency;v3 ↔ cryptographic / v2 ↔ advisory 强 enum)
+  - 新 fence `_check_runtime_enforcement_protocol_version_validity`(round 2 codex F2 inline writeback;absent → legacy pass-through;`v1`/`v2`/`v3` → 走对应 fence;**其他 present value(含 `v4` / typo / empty)→ BLOCKER `unknown_protocol_version`**)
+  - 新 fence 守门 `_check_archived_replay_path_boundary`(round 2 codex F1 inline writeback;active change evidence 用 `ledger_archived_replay: true` → BLOCKER `archived_replay_path_violation`;仅 archive/ 路径 evidence 允许此字段)
   - 新 helper `_runtime_enforcement_v3_active(frontmatter)`
-  - fence dispatch matrix 扩到 4 档:`legacy(no field) / v1 / v2 / v3`
-- **命令模板升级**(`.claude/commands/forgeue/change-apply-{subagent,parallel}.md`):evidence frontmatter 模板字段 `runtime_enforcement_protocol_version: v3` + `ledger_forgery_resistance: cryptographic`;Step 10a `forgeue_dispatch_ledger.py append` 调用接口不变(wrapper 自管 hmac 计算,LLM 不参与)
-- **测试矩阵新增 ~12 case**(`tests/unit/test_dispatch_ledger.py`):happy path + forge attack(hand-edit / delete / reorder)+ key boundary(rotation / corrupted)+ canonical 稳定性 + dispatch matrix v1/v2/v3 三档
+  - fence dispatch matrix 扩到 4 档:`legacy(no field) / v1 / v2 / v3` + unknown value 路径 BLOCKER
+- **命令模板升级**(`.claude/commands/forgeue/change-apply-{subagent,parallel}.md`):evidence frontmatter 模板字段:
+  - `runtime_enforcement_protocol_version: v3`
+  - `ledger_forgery_resistance: cryptographic`
+  - `ledger_line_count: <int>`(round 1 F3 inline writeback;LLM 复制 wrapper stdout `[LEDGER]` 行的 line_count)
+  - `ledger_final_hmac: <64 hex>`(同上 LLM 复制)
+  - **不写** `ledger_archived_replay`(default false / null;只在 archived replay 时 user 显式标 true,且 evidence 必须在 archive/ 目录)
+  - Step 10a 加"读 wrapper stdout `[LEDGER]` 行 + 复制到 evidence frontmatter `ledger_line_count` / `ledger_final_hmac` 字段"明确指令
+- **测试矩阵新增 ~37 case**(round 1+2 codex inline writeback 后;原 22 → 34 round 1 → 37 round 2):
+  - tests/unit/test_dispatch_ledger.py(happy path + forge attack + tail truncation + key boundary + schema strict + audit consistency + unknown protocol)
+  - 新加 round 2 case:`test_v3_unknown_protocol_version_v4_blocker` / `test_v3_unknown_protocol_version_empty_blocker` / `test_v3_archived_replay_active_path_blocker`
 - **e2e fixture 平行 case**(`tests/integration/test_v2_e2e_synthetic_change.py` 加 `test_v3_e2e_cryptographic_synthetic_change`):用 monkey-patched `Path.home()` 隔离真实 user key
 - **doc 更新**:`docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C 加 v3 dispatch matrix + 新增 §C.10 Cryptographic Ledger Binding;`CLAUDE.md` Runtime enforcement frontmatter 字段段加 v3 说明
 - **Self-dogfood gap**(沿 `executable-enforcement` D-DogfoodGap):本 change 自身 implementation evidence 仍走 v2 advisory(因为 v3 fence ship 时本 change 已经 archive);ship 完后下一个 change 起可用 v3
