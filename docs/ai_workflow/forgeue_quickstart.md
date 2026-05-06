@@ -139,11 +139,17 @@ S9 (archived)
 
 > **Preflight 三项**(自 `enhance-workflow-automation-runtime-enforcement` change 起,D-PreflightProtocol;subagent + parallel 命令 3 段,direct 命令 2 段):
 >
-> 1. **Preflight Worktree**(D-WorktreeEnforce):invoke `Skill(superpowers:using-git-worktrees)` + cwd 切换 + `worktree_path` frontmatter 字段;**direct 沿 D-DirectWorktreeRefinement 不强制**
+> 1. **Preflight Worktree**(**ADR-013 update 2026-05-06**:D-WorktreeEnforce mandatory 部分由 D-RestoreConsentGate + D-ConsentOutcomeStateMachine **superseded**):MUST invoke `Skill(superpowers:using-git-worktrees)` 沿 upstream cascade,但 Step 0 outcome capture 决定路径 — `declined + in_place`(default,main repo cwd)/ `accepted + skill_worktree`(skill 自管 worktree)/ `accepted + wrapper_worktree`(opt-in W1 wrapper + receipt)/ `already_isolated`(session 已 isolated workspace;path != main repo)/ `sandbox_fallback + in_place`;evidence frontmatter `worktree_consent_outcome` + `worktree_mode` 必填;**direct 沿 D-DirectWorktreeRefinement 不强制**
 > 2. **Preflight Skill Cascade**(D-SkillCascadeCheck):跑 `tools/forgeue_skill_cascade_check.py` 验证主 SKILL declared dependency 全 invoke + `skill_cascade_audit` frontmatter 字段
 > 3. **Preflight Task Granularity**(D-TaskGranularityDeclaration):controller 显式声明 `task_granularity: phase|per-file|sub-task` + frontmatter 字段
 >
-> 任一 preflight fail → 命令 abort + 详细错误。evidence frontmatter 必加 `runtime_enforcement_protocol_version: v1` 标记触发 4 fence 生效;无此字段视为 legacy(fence pass-through)。
+> 任一 preflight fail → 命令 abort + 详细错误。evidence frontmatter 必加 `runtime_enforcement_protocol_version: v1`(或 v2 沿 ADR-012)标记触发 fence 生效;无此字段视为 legacy(fence pass-through;archived ADR-011/012 evidence replay 兼容)。
+
+> **ADR-013 D-ParallelDeclineFallback**(2026-05-06):`/forgeue:change-apply-parallel` `declined + in_place` → 自动降级 sequential(无 user prompt;关闭 main repo + multi-implementer + W2 attribution 漏洞)。`already_isolated + in_place` 同款 INVALID(W6 codex round 2 F2 — 不允许 main repo cwd 假声 isolated)。
+>
+> **ADR-013 D-WrapperDeprecate**:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;default decline 路径不再 mandatory invoke wrapper;仅 user 显式 opt-in `wrapper_worktree` mode 时调用。W7-a wrapper bug fix(`_git_repo_root` 改用 `git rev-parse --git-common-dir`;关闭 worktree 内调 wrapper 时 nested target → "Filename too long" 链锁失败)在本 change scope 内。
+>
+> 完整规则见 `forgeue_integrated_ai_workflow.md` §C.9 ADR-013 + sister skill `subagent-driven-discipline` v2.3 §3.5 Worktree Consent Policy。
 
 **做什么(`change-apply-subagent` default 路径)**:
 - codex plan review hook → `review/codex_plan_review.md`

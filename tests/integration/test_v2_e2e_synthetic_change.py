@@ -687,6 +687,9 @@ class TestFinishGateV2:
             },
             "task_granularity": "per-file",
             "worktree_path": worktree_path,
+            # ADR-013 D-ConsentOutcomeStateMachine 字段(v2 evidence 默认 wrapper_worktree)
+            "worktree_consent_outcome": "accepted",
+            "worktree_mode": "wrapper_worktree",
             # v2 fence 字段(W1 receipt)
             "worktree_receipt_path": receipt_rel,
             # v2 fence 字段(W3 ledger)

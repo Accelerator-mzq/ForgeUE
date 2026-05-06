@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""W1 preflight wrapper — D-W1-ReceiptSchema(F1 round 1 inline:wrapper 自管 worktree)+ D-DispatchWrapperBoundary。
+"""W1 preflight wrapper [DEPRECATED in default flow per ADR-013] — D-W1-ReceiptSchema(F1 round 1 inline:wrapper 自管 worktree)+ D-DispatchWrapperBoundary。
 
 设计文档:
     openspec/changes/enhance-workflow-automation-executable-enforcement/design.md
@@ -65,6 +65,16 @@ import _common  # noqa: E402
 # frontmatter ``runtime_enforcement_protocol_version`` 对齐(v2)
 WRAPPER_VERSION = "1.1"
 PROTOCOL_VERSION = "v2"
+
+# ADR-013 D-WrapperDeprecate(2026-05-06):wrapper 标 deprecated 但 functional —
+# 命令模板 default decline 路径不再调用 wrapper(仅 user 显式 opt-in
+# `worktree_mode: wrapper_worktree` 时调用)。LLM / docs 引用 wrapper 时应附此 notice。
+__deprecated_note__ = (
+    "[DEPRECATED in default flow per ADR-013] forgeue_preflight_wrapper.py "
+    "remains functional for opt-in bug-fix iteration use case "
+    "(worktree_mode: wrapper_worktree path). Default flow走 ADR-013 D-RestoreConsentGate "
+    "consent gate (decline → in_place mode;skill_worktree mode 不调本 wrapper)."
+)
 
 # Exit codes — 与 spec.md scenarios + design.md D-W1-ReceiptSchema 对齐
 EXIT_OK = 0
@@ -430,9 +440,13 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="forgeue_preflight_wrapper",
         description=(
+            "[DEPRECATED in default flow per ADR-013] "
             "W1 preflight wrapper: self-managed isolated worktree (git worktree "
             "subprocess) + skill cascade check + 13-field receipt JSON. "
-            "LLM only copies worktree_path + receipt_id to evidence frontmatter."
+            "LLM only copies worktree_path + receipt_id to evidence frontmatter. "
+            "Remains functional for opt-in `worktree_mode: wrapper_worktree` "
+            "(bug-fix iteration / explicit isolation); default flow passes to consent gate "
+            "decline -> in_place mode (no wrapper invocation)."
         ),
     )
     p.add_argument(

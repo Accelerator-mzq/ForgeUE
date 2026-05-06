@@ -5,10 +5,13 @@ license: MIT
 compatibility: Claude Code Agent tool + python -m pytest;sister to superpowers:subagent-driven-development(generic 3-stage process)
 metadata:
   author: forgeue (initial seed)
-  version: "2.2"
+  version: "2.3"
   scenario_subtype_count: 28
-  case_study_count: 2
+  case_study_count: 3
   retrospect_protocol: trigger-type-matrix(5 types × per-type intensity)
+  worktree_consent_policy: default-decline-in-implementation  # ADR-013 (2026-05-06)
+  consent_outcome_enum: [declined, accepted, already_isolated, sandbox_fallback]
+  consent_mode_enum: [in_place, skill_worktree, wrapper_worktree]
 ---
 
 Universal controller-side discipline for `superpowers:subagent-driven-development` workflows。
@@ -199,7 +202,9 @@ Universal controller-side discipline for `superpowers:subagent-driven-developmen
 
 ### §3.1 STRICT cwd verify(防 worktree-scope leak)
 
-每次 dispatch prompt 必含:
+**ADR-013 update**(v2.3 2026-05-06):本 cwd verify 协议**仅在 worktree IS used**(after Step 0 consent gate `accepted` / `already_isolated`,即 `worktree_mode ∈ {skill_worktree, wrapper_worktree}`)时 trigger;**default decline 路径**(`worktree_consent_outcome: declined` + `worktree_mode: in_place`)直接走 main repo cwd,本 cwd verify section 简化为 `pwd` show main repo + `git branch --show-current` 是 dev branch / change branch(沿 ADR-013 D-RestoreConsentGate)。
+
+每次 dispatch prompt 必含(when worktree IS used):
 ````markdown
 ## Working Directory(STRICT — verify before any work)
 
@@ -212,6 +217,19 @@ git status --short  # SHOULD be clean
 ```
 
 If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误 directory 工作**。
+````
+
+**Default decline 路径**(when worktree NOT used / main repo cwd):
+````markdown
+## Working Directory(main repo cwd — ADR-013 default)
+
+```bash
+cd <repo-root>  # main repo, NOT a worktree
+pwd  # MUST show <repo-root>
+git branch --show-current  # MUST be <change-or-dev-branch>
+```
+
+(默认 decline 路径下 commits 直接落 main repo dev branch;无 worktree-scope leak 风险)
 ````
 
 ### §3.2 Controller Cross-Verify(防 self-hallucination)
@@ -399,6 +417,44 @@ If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误
 - Mandatory retrospect = skill 自动从实证增长(只在真有 issue 时更新,无问题不污染)
 - Opus-only = retrospect verdict 可信(cheap model retrospect 自己就是 unreliable)
 
+### §3.5 Worktree Consent Policy(ADR-013;v2.3 2026-05-06 added)
+
+ForgeUE-level worktree usage 协议(沿 archived `restore-superpowers-worktree-consent-gate` change ADR-013 D-RestoreConsentGate + D-ConsentOutcomeStateMachine + D-AlreadyIsolatedInvariant):
+
+**Default**:**implementation 期 worktree user-consent decline**(沿 user worktree 使用观念:worktree 仅用于 bug-fix iteration 后期回归 + 隔离;implementation 默认 main repo cwd)。
+
+**Outcome × Mode 显式状态机**(controller 必显式 capture 到 evidence frontmatter):
+
+| `worktree_consent_outcome` | `worktree_mode` | 路径 | use case |
+|---|---|---|---|
+| `declined` | `in_place` | main repo cwd(default) | implementation phase / lightweight change |
+| `accepted` | `skill_worktree` | upstream Superpowers `using-git-worktrees` 自管 | 多 implementer 并行 / 大型 feature |
+| `accepted` | `wrapper_worktree` | OPT-IN W1 wrapper 自管 + 13-field receipt | 强 audit + provenance 需要 |
+| `already_isolated` | `skill_worktree` 或 `wrapper_worktree` | session 已在 isolated workspace(如 user 手工 git worktree)| 跨 session resume / sandbox 内自动激活 |
+| `sandbox_fallback` | `in_place` | upstream skill sandbox fallback | sandbox 路径不允许 worktree creation |
+
+**Cross-field invariants**(`forgeue_finish_gate.py::_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 守门):
+- `declined ↔ in_place`
+- `accepted → mode ∈ {skill_worktree, wrapper_worktree}`
+- `already_isolated → mode ∈ {skill_worktree, wrapper_worktree}`(**禁** `in_place`)+ `worktree_path` 必写且 `os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`(W6 codex round 2 F2)
+- `mode: in_place` → 禁写 `worktree_path` / `worktree_receipt_path`
+- `mode: skill_worktree` → 必写 `worktree_path`,禁写 `worktree_receipt_path`
+- `mode: wrapper_worktree` → 必写 `worktree_path` + `worktree_receipt_path`
+
+**Parallel decline auto-fallback**(`/forgeue:change-apply-parallel`):
+- `declined + in_place` → 命令 abort + 自动降级 sequential(沿 codex round 1 F1 关闭"main repo + multi-implementer + W2 attribution"漏洞)
+- `accepted + {skill,wrapper}_worktree` → parallel 路径正常跑
+- `already_isolated + valid isolated path` → parallel 正常跑
+- `already_isolated + in_place` → INVALID(W6 codex round 2 F2 — 不再允许 main repo cwd 假声 isolated)
+
+**Use case dispatch heuristic**:
+- 多 micro-task implementation + 期望 strong review checkpoint → `accepted + skill_worktree`
+- 单点 bug-fix iteration + 后期回归测试 + 强 provenance audit → `accepted + wrapper_worktree`(opt-in W1 wrapper)
+- 轻量 mechanical change(< 3 micro-task) → `declined + in_place`(default)
+- Cross-session resume / sandbox auto-activate → `already_isolated`(必须真 isolated path)
+
+**Wrapper deprecation note**(D-WrapperDeprecate):`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;命令模板 default decline 路径不再 mandatory invoke wrapper(仅 user 显式 opt-in `wrapper_worktree` mode 时才调用)。
+
 ---
 
 ## §4 Failure Recovery
@@ -447,6 +503,55 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 
 **Cost vs all-Opus alternative**:实际 $X vs Opus 估 $Y → 节省 ratio
 ```
+
+### Case 3: ForgeUE / restore-superpowers-worktree-consent-gate / P0+P1(Type 1 3-stage retrospect)
+
+**Date**:2026-05-06
+**Project context**:ADR-013 protocol revert change(命令模板 OPT-IN narrative + finish_gate mode-conditional advisory + 2 new fences);P0 + P1 phase 共 13 inline fix(P0 m-1 + I-1 + I-2;P1 I-1 + I-2 + M-1 + M-2 + M-3 + sister md sync drift fence)
+
+**Subagent dispatch**(Type 1 3-stage,P0 + P1):
+
+| Phase | Subagent | Scenario subtype(§1.X.Y)| Model | $cost | Verdict |
+|---|---|---|---|---|---|
+| P0 | implementer | §1.5.2 doc rewrite + §1.4.1 unit test from spec(混合)| Sonnet | $0.18 | ✅ DONE |
+| P0 | spec_reviewer | §1.2.1 string matching(8 specific checks) | Haiku | $0.014 | ✅ SPEC_COMPLIANT |
+| P0 | code_quality | §1.3.3 maintainability + §1.3.4 runtime correctness | Sonnet | $0.085 | ⚠️ APPROVED_WITH_CONCERNS(I-1+I-2 Important) |
+| P1 | implementer | §1.1.3 multi-file integration(Python fence + fixture + orchestrator wiring)| Sonnet | $0.18 | ✅ DONE |
+| P1 | spec_reviewer | §1.2.1 string matching(9 specific checks) | Haiku | $0.018 | ✅ SPEC_COMPLIANT |
+| P1 | code_quality | §1.3.3 + §1.3.4 + cross-platform path | Sonnet | $0.15 | ⚠️ APPROVED_WITH_CONCERNS(I-1+I-2 Important + 3 Minor) |
+
+**Real issues caught(全 Important + Minor;0 Critical)**:
+
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+| **P0 I-1 sister md sync drift**(2 文件 ## Preflight Worktree section body 无 fence 强 equality → silent protocol divergence)| Important | Sonnet code_quality(§1.3.3 maintainability)| §1.3.3 验证有效 — Haiku 无法看出 multi-file structural 缺陷 |
+| P0 I-2 narrative OR-chain over-broad(`auto-fallback` narrative 检查不限 section 内 → 删 narrative 但留 heading 即 PASS)| Important | Sonnet code_quality(§1.3.4 runtime correctness)| §1.3.4 Sonnet 抓 silent vacuous-PASS 类 bug |
+| P0 m-1 assertion message 不够明确 + m-2 enum cross-ref 无 machine-checked | Minor + defer | Sonnet code_quality | §1.3.1 style/lint nits + cross-doc 协议 maintenance gap |
+| **P1 I-1 fence asymmetry docstring gap**(`_check_worktree_mode_consistency` vs `_check_worktree_consent_outcome` trigger gating asymmetry 无 docstring 解释 → future maintainer 添加 trigger gate 会 silent break direct evidence)| Important | Sonnet code_quality(§1.3.3 maintainability)| §1.3.3 验证有效 — 跨函数 design intent 需 docstring 显式记录 |
+| P1 I-2 enum cross-ref 无 machine-check + M-1 has_path 公式 non-obvious + M-2 already_isolated valid positive test 缺 + M-3 fixture docstring 未更新 | Important + Minor | Sonnet code_quality | §1.3.3 + §1.3.4 + §1.4.1 综合;sync drift / silent failure / test coverage gap |
+
+**Lesson reinforce / new pattern surfaced**:
+
+- **Pattern A reinforced**(沿 Case 2):**Sonnet code_quality 是 silent failure 抓手** — 两 phase 6 issues 全部 Sonnet code_quality 抓出;Haiku spec_reviewer 全 spec compliant(8/9 + 9/9)但完全看不见 maintainability / structural 缺陷
+- **Pattern B 新 — sister-file fence test sync drift**(P0 I-1):多 sister command md 文件含 IDENTICAL section body 时,无 fence 强 equality → maintainer 改一不改另一 silent 协议分裂。**Mitigation pattern**:加 fence 函数 extract 各文件 section + character-level equality assert(15 LOC 即可);本 change inline-fix 加 `test_preflight_worktree_section_bodies_identical` fence 实例
+- **Pattern C 新 — fence design intent docstring gap**(P1 I-1):跨 fence 函数的 trigger gating asymmetry(structural vs semantic)若无 docstring 显式记录,future maintainer "看 fence A 有 trigger gate,fence B 也加一致" 会 silent break original design。**Mitigation pattern**:asymmetric 设计必含 "Asymmetry note" docstring 段说明 why
+- **Pattern D 新 — controller inline fix > round 2 dispatch threshold**:P0 + P1 共 11 issues 全 controller inline fix;无一项 round 2 dispatch — 实证 sister skill §3.3 inline fix 决策框架对 docstring/comment/trivial test 类 issue 100% applicable(round 2 dispatch ~$0.30 + 5min wall-clock + 引入新错误风险 vs inline 30s + ~free)
+
+**Cost vs all-Opus alternative**:P0+P1 实际 $0.63 vs 全 Opus 估 $4-6 → 节省 ~$3-5 same quality(沿 Case 1 验证 9.5x reduction)。
+
+**§6 catalog new row**(Q4 + new pattern surfaced):
+
+| Subagent failure mode | Pattern that prevents | Case studies reproducing |
+|---|---|---|
+| **sister-file fence test sync drift**(多 sister command md 文件 IDENTICAL section body,无 fence 强 equality → silent protocol divergence)| Add fence 函数 extract sister files section + character-level equality assert(15 LOC pattern)| Case 3 P0 |
+| **fence design intent docstring gap**(asymmetric trigger gating 无 docstring 显式记录 → future maintainer 加 trigger gate 一致化 silent break)| Asymmetric 设计必含 "Asymmetry note" docstring 段说明 why | Case 3 P1 |
+
+**§3.4 Retrospect verdict per phase**:
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P0 | No | No(implementer 准确;cross-verify 吻合)| **Yes**(3 inline fix:I-1+I-2+m-1)| **Yes**(sister-md sync drift)| No | No(sonnet 选择正确;Haiku spec compliance 8/8)| **Add case** — Q3 + Q4 |
+| P1 | No | No | **Yes**(5 inline fix:I-1+I-2+M-1+M-2+M-3)| **Yes**(fence design intent docstring gap)| No | No(model 矩阵全正确;Sonnet code_quality 抓有效)| **Add case** — Q3 + Q4 |
 
 ### Case 2: ForgeUE / enhance-workflow-automation-executable-enforcement / P5.5
 
@@ -525,6 +630,8 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 - **§3.1 STRICT cwd verify 是 detection 不是 prevention**:P3 教训 — prompt 写 STOP NEEDS_CONTEXT 不够,subagent 仍可能跳过;controller 必须 §3.2 cross-verify branch + §4.1 cherry-pick 兜底。
 - **Cost framework 验证**:P0 全 Opus $5.90 vs P3 矩阵 $0.62(same task type complexity)→ **9.5x cost reduction**。
 
+**ADR-013 scope-down note**(2026-05-06,sister change `restore-superpowers-worktree-consent-gate` ship 后):本 case P3 implementer worktree leak incident 在 ADR-013 default decline 协议下**不会触发** — implementation 期 default `worktree_consent_outcome: declined` + `worktree_mode: in_place`,直接走 main repo cwd,无 worktree-scope leak 风险物理面。本 case study 留作 historical reference;在 user opt-in worktree(bug-fix iteration / explicit isolation;`accepted + {skill,wrapper}_worktree`)时 §3.1 STRICT cwd verify + §4.1 cherry-pick recovery 仍 relevant。
+
 **Cost vs all-Opus**:P1+P2+P3 实际 $2.44 vs 全 Opus 估 $15-25 → 节省 ~$15-22 same quality。
 
 **New scenario subtype surfaced**:无 — 28 子类(§1)在 P0-P3 实证全覆盖。
@@ -555,6 +662,8 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 | worktree-scope leak | §3.1 STRICT cwd 写 prompt 但被跳过 | §3.1 + §3.2 branch verify | §4.1 cherry-pick recovery |
 | 自我汇报幻觉 | subagent 输出 trust 过度 | §3.2 cross-verify 必跑 | §3.2 5 类 verify 命令 |
 | 静态 review 漏 runtime correctness | §1.3.4 误用 Haiku 替代 Sonnet | §1.3.4 MANDATORY Sonnet | controller catches downstream / Sonnet code_quality 必跑 |
+| **sister-file fence test sync drift**(多 sister command md 文件 IDENTICAL section body,无 fence 强 equality)| §1.3.3 multi-file maintainability 漏 — 缺 cross-file equality fence | Add fence 函数 extract sister files section + character-level equality assert(15 LOC pattern)| controller inline-fix 加 fence(沿 Case 3 P0 实例) |
+| **fence design intent docstring gap**(asymmetric trigger gating 无 docstring 解释)| §1.3.3 maintainability 漏 — design intent 不显式 | Asymmetric 设计必含 "Asymmetry note" docstring 段 | controller inline-fix 加 docstring(沿 Case 3 P1 实例) |
 
 ---
 

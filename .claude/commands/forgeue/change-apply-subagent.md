@@ -15,28 +15,45 @@ S3→S4-S5 transition(default 路径,自 `adopt-subagent-driven-development` cha
 
 实施 Steps 之前 controller MUST 顺序完成以下 3 个 preflight 检查;任一 fail → 命令 abort + 详细错误,不进入 Steps 主流程。每项均要求在 evidence frontmatter 留 audit 字段。
 
-### Preflight Worktree(D-WorktreeEnforce)
+### Preflight Worktree(D-RestoreConsentGate;ADR-013 — consent-gated)
 
-实施前 isolated worktree 必须存在。此 preflight 通过 `python tools/forgeue_preflight_wrapper.py` 自管 worktree(不再 invoke `Skill(superpowers:using-git-worktrees)` 直接):
+实施前 controller MUST invoke `Skill(superpowers:using-git-worktrees)` 加载 upstream consent gate 协议(沿 Superpowers `subagent-driven-development/SKILL.md` `## Integration` 段声明的 Required cascade — codex round 1 F3 writeback:`MAY invoke` → `MUST invoke`,不允许只放字符串占位)。Step 0 outcome 必须显式 capture 到 evidence frontmatter `worktree_consent_outcome` + `worktree_mode` 字段。
 
-- **Bash 调用 wrapper**:
+**Step 0 outcome × mode 决策表**(default 行为 = decline → main repo cwd):
+
+| `worktree_consent_outcome` | `worktree_mode` | 路径 | evidence 必填字段 |
+|---|---|---|---|
+| `declined` | `in_place`(强制) | main repo cwd(default;沿 D-AllChangeApplyMainRepoDefault)| `worktree_consent_outcome: declined` + `worktree_mode: in_place`(禁写 `worktree_path`)|
+| `accepted` | `skill_worktree` | upstream Superpowers skill 自管 worktree | + `worktree_path: <abs>`(无 receipt)|
+| `accepted` | `wrapper_worktree` | OPT-IN W1 wrapper 自管 worktree + 13-field receipt | + `worktree_path: <abs>` + `worktree_receipt_path: <relative>` |
+| `already_isolated` | `skill_worktree` 或 `wrapper_worktree`(**禁** `in_place`;codex round 2 F2 invariant)| session 已在 isolated workspace;`worktree_path` 必写且 realpath != main repo | 同 accepted |
+| `sandbox_fallback` | `in_place` | upstream skill sandbox fallback;特殊路径 | 同 declined |
+
+**Default decline 路径**(D-RestoreConsentGate;沿 user worktree 使用观念):
+- user 在 Step 0 consent gate **decline** → work in main repo cwd
+- worktree 仅用于 **bug-fix iteration**(后期回归 + 隔离),implementation 期默认 main repo
+
+**Opt-in worktree 路径**(bug-fix iteration / explicit isolation):
+- `worktree_mode: skill_worktree` — Superpowers skill 创建 worktree;evidence 写 `worktree_path`(无 receipt)
+- `worktree_mode: wrapper_worktree` — 显式 invoke W1 wrapper(opt-in tool):
   ```bash
   python tools/forgeue_preflight_wrapper.py --change <change-id>
   ```
-  - wrapper 创建 isolated worktree(git worktree subprocess)
-  - stdout 返回 13-field receipt JSON(relative path)
-  - 失败:exit 5 (env error) / exit 6 (path resolution error,需 cd 到 wrapper-managed worktree 后重试) / exit 7 (other)
+  - wrapper 自管 worktree + 13-field receipt JSON;LLM 复制 `worktree_path` + `worktree_receipt_path` 到 evidence frontmatter
+  - **W7-a wrapper bug fix(ADR-013)**:`_git_repo_root` 改用 `git rev-parse --git-common-dir`,从已存在 worktree 内调用也能正确解析 main repo;regression test `test_git_repo_root_from_inside_worktree_returns_main_repo` + `test_wrapper_reuse_path_works_when_invoked_from_existing_worktree` 守门
+  - wrapper `--help` 含 `[DEPRECATED in default flow]` notice(沿 D-WrapperDeprecate)
 
-- **capture receipt 和 worktree path**:
-  - LLM 从 receipt JSON 复制 `worktree_path` 字段(绝对路径)到 evidence frontmatter
-  - LLM 从 receipt JSON 复制 `receipt_path` 字段(相对路径)到 evidence frontmatter `worktree_receipt_path`
-  - 若 exit 6:stderr 含 path resolution 提示;cd 到 wrapper-managed worktree 后重新调用 wrapper
+**Cross-field invariants**(`forgeue_finish_gate.py::_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 守门):
+- `declined ↔ in_place`
+- `accepted → mode ∈ {skill_worktree, wrapper_worktree}`
+- `already_isolated → mode ∈ {skill_worktree, wrapper_worktree}`(**禁** `in_place`)+ `worktree_path` 必写且 `os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`(W6 codex round 2 F2 invariant — 关闭 main repo 重新打开 F1 attribution 漏洞)
+- `mode: in_place` → 禁写 `worktree_path`
+- `mode: wrapper_worktree` → 必写 `worktree_path` + `worktree_receipt_path`
+- `mode: skill_worktree` → 必写 `worktree_path`,不写 `worktree_receipt_path`
 
-- **cwd 切换到 isolated worktree**(沿 Step 9);后续 dispatch / evidence 落盘 / writeback 检测全部以该 worktree 为 cwd
+Preflight 失败(skill cascade 缺 invoke / wrapper exit != 0(若用 wrapper_worktree)/ outcome enum value 非法 / mode invariant 违反)→ 命令 abort。
 
-- evidence frontmatter MUST 加 `worktree_path: <path>` + `worktree_receipt_path: <relative_path>` 字段(non-null);`forgeue_finish_gate.py::_check_worktree_path_v2` fence 守门(`triggered_by_command: change-apply-subagent` 触发强制)
-
-Preflight 失败(wrapper exit != 0 / receipt JSON malformed / clean baseline test 不绿)→ 命令 abort。
+**Supersedes**(沿 ADR-013 D-CrossArchiveADRSupersede):archived `enhance-workflow-automation-runtime-enforcement` D-WorktreeEnforce(L2 mandatory worktree)+ archived `enhance-workflow-automation-executable-enforcement` D-W1-ReceiptSchema mandatory invocation 部分;archived ADR-011/012 evidence 不动(legacy fence pass-through)。
 
 ### Preflight Skill Cascade(D-SkillCascadeCheck)
 
@@ -105,17 +122,34 @@ Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**�
    - 跑 `/codex:adversarial-review --background "<plan focus>"`
    - 输出落 `review/codex_plan_review.md`(`evidence_type: codex_plan_review`)
 6. **Claude 写 plan cross-check `## B/C/D`**(沿 design.md §3 Cross-check Protocol;独立验证 file:line)。
-7. **commit active change artifacts 到当前分支**(F1 修复 — design.md D-Worktree-Detail 第 1 项):
-   - `git add openspec/changes/<id>/`(含 `proposal.md` / `design.md` / `tasks.md` / `specs/<cap>/spec.md` / `notes/pre_p0/*` / 任何已生成的 `execution/` / `review/` evidence)
-   - `git commit -m "wip: snapshot active change artifacts before isolated worktree"`
-   - **必要原因**:`git worktree add` 不复制 untracked / unstaged 文件,跨 worktree 不可见;不 commit 则 isolated worktree 内 active change 目录为空,subagent dispatch 拿不到 plan / micro_tasks 文本
-8. **创建 isolated worktree**(D-Worktree-Detail 第 2 项):
-   - invoke `superpowers:using-git-worktrees` skill 起 isolated worktree
-   - worktree 路径例 `<repo>-worktrees/<change-id>/`(由 skill 决定具体位置;跟随 SKILL.md "smart directory selection")
-9. **cwd 切换到 isolated worktree**(D-Worktree-Detail 第 3 项):
-   - `cd` 到 isolated worktree
-   - **所有后续命令(本命令 step 10+ 的 dispatch / evidence 落盘 / 越界检测 / 回写检测;后续 `/forgeue:change-verify` Level 0 / `/forgeue:change-review` / `/forgeue:change-doc-sync` / `/forgeue:change-finish` 全部以该 worktree 为 cwd 执行)**
-   - **主 worktree 不能跨 worktree 检查 isolated worktree 的 evidence**(沿 D-Worktree-Detail 第 6 项 "条件透明")
+7-9. **Outcome × Mode 路径分支**(P7 codex round 3 F1 writeback 2026-05-06;**ADR-013 D-RestoreConsentGate** 关闭原 Steps 8-9 mandatory worktree 与 Preflight Worktree section OPT-IN narrative 矛盾):
+
+按 Step 0 capture 的 `worktree_consent_outcome` × `worktree_mode` 分支:
+
+**Branch A — `declined` + `in_place` 或 `sandbox_fallback` + `in_place`(ADR-013 default — main repo cwd)**:
+
+- **Step 7**:`git add openspec/changes/<id>/`(含 `proposal.md` / `design.md` / `tasks.md` / `specs/<cap>/spec.md` / `notes/pre_p0/*` / 任何已生成的 `execution/` / `review/` evidence)+ `git commit -m "wip: snapshot active change artifacts"`(在 main repo dev branch 直接 commit;**不**为 worktree 准备)
+- **Step 8 SKIP**:**不**创建 isolated worktree(沿 D-RestoreConsentGate user decline)
+- **Step 9 SKIP**:`cd` 不切换 — 后续 dispatch / evidence 落盘 / 越界检测 / 回写检测 全在 **main repo cwd**(`<repo-root>`)
+- **后续命令**:`/forgeue:change-verify` Level 0 / `/forgeue:change-review` / `/forgeue:change-doc-sync` / `/forgeue:change-finish` 全在 main repo cwd 执行;无 `git worktree remove` cleanup(沿 Step 16 Branch A SKIP)
+- evidence frontmatter 不写 `worktree_path` / `worktree_receipt_path`(沿 D-ConsentOutcomeStateMachine `mode: in_place` 禁写)
+
+**Branch B — `accepted` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}` 或 `already_isolated` + same modes(opt-in worktree)**:
+
+- **Step 7**:`git add openspec/changes/<id>/` + `git commit -m "wip: snapshot active change artifacts before isolated worktree"`(为 worktree 准备 — `git worktree add` 不复制 untracked / unstaged 文件)
+- **Step 8**:
+  - `worktree_mode: skill_worktree` → invoke `superpowers:using-git-worktrees` skill 起 worktree;LLM 复制 `worktree_path` 到 evidence frontmatter(无 receipt)
+  - `worktree_mode: wrapper_worktree` → user 显式 invoke W1 wrapper(opt-in tool;沿 D-WrapperDeprecate):
+    ```bash
+    python tools/forgeue_preflight_wrapper.py --change <change-id>
+    ```
+    LLM 复制 wrapper stdout 的 `worktree_path` + `worktree_receipt_path` 到 evidence frontmatter
+  - `worktree_consent_outcome: already_isolated` → session 已在 isolated workspace(无需新建);LLM 写当前 cwd 的 `worktree_path`(`os.path.realpath != main_repo` 强制;W6 codex round 2 F2 invariant)
+- **Step 9**:`cd` 到 isolated worktree;后续命令全以该 worktree 为 cwd
+- **后续命令**:沿 worktree cwd 执行(沿 D-Worktree-Detail 第 3 + 6 项 "条件透明")
+- evidence frontmatter 写 `worktree_path` 必填;`worktree_mode: wrapper_worktree` 时 `worktree_receipt_path` 必填(沿 D-ConsentOutcomeStateMachine + `_check_worktree_mode_consistency` fence)
+
+**Step 0 outcome capture 决定 controller 走 Branch A 或 Branch B**;`forgeue_finish_gate.py` 的 `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` + `_check_parallel_decline_fallback` fence 在 archive 时 audit invariant(沿 P7 codex round 3 F2+F3 writeback)。
 10. **invoke `superpowers:subagent-driven-development` skill**(D-SkillInvoke / D-TaskInput 重写):
     - 主 session Claude 从 `execution/micro_tasks.md` extract task list
     - 主 session Claude 从 `execution/execution_plan.md` 提取 per-task context(包含 design.md modules / 接口字段 / 测试要求)
@@ -160,11 +194,17 @@ Controller MUST 在 Step 10 dispatch 第一个 implementer subagent **之前**�
     - DRIFT type 4(`evidence_exposes_contract_gap`):per-task evidence 揭示 design.md 异常段缺失 → exit 5
     - 出现 DRIFT → 回写 design.md 或标 `disputed-permanent-drift`
 15. **状态推进** — 所有 micro-task done(全部 4 类 evidence 齐)+ Level 0 PASS + writeback-check exit 0 + cross-check `disputed_open: 0` + 越界检测 in-scope → 进 S5。
-16. **squash merge / cherry-pick + worktree 清理**(F1 修复 — D-Worktree-Detail 第 4 项):
-    - 全部 micro-task done + Level 0 全绿 + finish_gate exit 0 后(通常本命令在 step 15 状态推进,`/forgeue:change-finish` 跑完后再做本步)
-    - **squash merge 或 cherry-pick** isolated worktree 全部 commits(含 evidence 落盘 commits)回主分支
-    - 然后 `git worktree remove <isolated-path>` 清理
-    - **禁止** force-push 或 evidence 文件手工 cp 到主 worktree(违 D-Worktree-Detail 协议)
+16. **Outcome × Mode 路径分支:cleanup**(P7 codex round 3 F1 writeback 2026-05-06;沿 Step 7-9 同款分支):
+
+**Branch A — `declined` / `sandbox_fallback` + `in_place`(main repo cwd)**:
+- **Step 16 SKIP**:无 worktree → 无 squash merge / cherry-pick / `git worktree remove` cleanup;commits 已直接落 main repo dev branch
+- 仅 `/forgeue:change-finish` 完成后用户授权 push(沿 Fence #1 不可逆)
+
+**Branch B — `accepted` / `already_isolated` + `{skill,wrapper}_worktree`(isolated worktree cwd)**:
+- 全部 micro-task done + Level 0 全绿 + finish_gate exit 0 后(通常本命令在 step 15 状态推进,`/forgeue:change-finish` 跑完后再做本步)
+- **squash merge 或 cherry-pick** isolated worktree 全部 commits(含 evidence 落盘 commits)回主分支
+- 然后 `git worktree remove <isolated-path>` 清理
+- **禁止** force-push 或 evidence 文件手工 cp 到主 worktree(违 D-Worktree-Detail 协议)
 
 **Output Format**
 

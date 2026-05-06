@@ -293,28 +293,43 @@ def test_change_apply_parallel_command_exists(cmd_files):
 
 
 def test_change_apply_subagent_invokes_preflight_wrapper(cmd_files):
-    """P3.2 fence(F1 round 1):change-apply-subagent.md 内含
-    `python tools/forgeue_preflight_wrapper.py` 字符串(Preflight Worktree section)。"""
+    """P0.5 fence(ADR-013 codex round 1 F3 writeback):change-apply-subagent.md
+    内仍含 `python tools/forgeue_preflight_wrapper.py` 字符串(留 OPT-IN reference
+    for `worktree_mode: wrapper_worktree` 路径),但**不再 mandatory invoke**。
+
+    沿 ADR-013 D-RestoreConsentGate:wrapper 留 deprecated 但 functional;
+    user 显式选 `worktree_mode: wrapper_worktree` 时仍可调用,故 string 保留;
+    但 default decline 路径(`worktree_mode: in_place`)不调用 wrapper。"""
     subagent_path = next(
         (f for f in cmd_files if f.name == "change-apply-subagent.md"), None
     )
     assert subagent_path is not None
     body = subagent_path.read_text(encoding="utf-8")
+    # ADR-013 advisory:wrapper string 仍保留(opt-in tool reference for wrapper_worktree
+    # mode);若被完全删除则 spec.md "opt-in W1 wrapper 仍 functional" Scenario 失效。
     assert "python tools/forgeue_preflight_wrapper.py" in body, (
-        "change-apply-subagent.md MUST invoke preflight wrapper in Preflight Worktree section"
+        "change-apply-subagent.md MUST retain `python tools/forgeue_preflight_wrapper.py` "
+        "string as OPT-IN reference (opt-in path for wrapper_worktree mode only — "
+        "ADR-013 D-RestoreConsentGate; wrapper 留 deprecated 但 functional;"
+        "P0 code_quality m-1 message clarification)"
     )
 
 
 def test_change_apply_parallel_invokes_preflight_wrapper(cmd_files):
-    """P3.3 fence(F1 round 1):change-apply-parallel.md 内含
-    `python tools/forgeue_preflight_wrapper.py` 字符串(Preflight Worktree section)。"""
+    """P0.5 fence(ADR-013 codex round 1 F3 writeback):change-apply-parallel.md
+    内仍含 `python tools/forgeue_preflight_wrapper.py` 字符串(留 OPT-IN reference
+    for `worktree_mode: wrapper_worktree` 路径),但**不再 mandatory invoke**。
+
+    沿 ADR-013 D-RestoreConsentGate:wrapper 留 deprecated 但 functional。"""
     parallel_path = next(
         (f for f in cmd_files if f.name == "change-apply-parallel.md"), None
     )
     assert parallel_path is not None
     body = parallel_path.read_text(encoding="utf-8")
     assert "python tools/forgeue_preflight_wrapper.py" in body, (
-        "change-apply-parallel.md MUST invoke preflight wrapper in Preflight Worktree section"
+        "change-apply-parallel.md MUST retain `python tools/forgeue_preflight_wrapper.py` "
+        "string as OPT-IN reference (opt-in path for wrapper_worktree mode only — "
+        "ADR-013 D-RestoreConsentGate;P0 code_quality m-1 message clarification)"
     )
 
 
@@ -502,3 +517,180 @@ def test_apply_subagent_parallel_invoke_subagent_discipline_skill(cmd_files):
         assert "Type 1" in body or "Type 2" in body, (
             f"{cmd_name} MUST reference §3.4.0 Trigger Type(Type 1 3-stage 或 Type 2 Parallel)"
         )
+
+
+# ---------------------------------------------------------------------------
+# restore-superpowers-worktree-consent-gate P0.5 fence:ADR-013 OPT-IN narrative
+# (D-RestoreConsentGate + D-ConsentOutcomeStateMachine + D-ParallelDeclineFallback;
+# codex round 1 F3 + round 2 F1+F2 writeback)
+# ---------------------------------------------------------------------------
+
+
+def test_apply_subagent_parallel_must_invoke_skill_using_git_worktrees(cmd_files):
+    """P0.5 fence(ADR-013 codex round 1 F3 writeback):subagent + parallel 命令
+    `## Preflight Worktree` section 必含 `MUST invoke Skill(superpowers:using-git-worktrees)`
+    字符串(不再允许 `MAY invoke` 或字符串占位 — codex F3 揭示 MAY invoke 让 Option B'
+    consent gate 滑成 Option C 撤 cascade 等价物)。"""
+    bad: list[str] = []
+    for f in cmd_files:
+        if f.name not in _APPLY_CMD_WITH_WORKTREE:
+            continue
+        body = f.read_text(encoding="utf-8")
+        if "MUST invoke `Skill(superpowers:using-git-worktrees)`" not in body:
+            bad.append(
+                f"{f.name}: missing 'MUST invoke `Skill(superpowers:using-git-worktrees)`' "
+                f"(ADR-013 codex round 1 F3 — MAY invoke 不再允许)"
+            )
+    assert not bad, (
+        "subagent / parallel cmd md missing MUST invoke narrative:\n  " + "\n  ".join(bad)
+    )
+
+
+def test_apply_subagent_parallel_preflight_outcome_capture_field(cmd_files):
+    """P0.5 fence(ADR-013 D-ConsentOutcomeStateMachine;codex round 1 F2 writeback):
+    subagent + parallel 命令 `## Preflight Worktree` section 必含
+    `worktree_consent_outcome` 字段提示(显式 outcome capture 到 evidence frontmatter)。"""
+    bad: list[str] = []
+    for f in cmd_files:
+        if f.name not in _APPLY_CMD_WITH_WORKTREE:
+            continue
+        body = f.read_text(encoding="utf-8")
+        if "worktree_consent_outcome" not in body:
+            bad.append(
+                f"{f.name}: missing 'worktree_consent_outcome' field reference "
+                f"(ADR-013 D-ConsentOutcomeStateMachine — outcome capture mandatory)"
+            )
+    assert not bad, (
+        "subagent / parallel cmd md missing outcome capture field:\n  " + "\n  ".join(bad)
+    )
+
+
+def test_apply_parallel_decline_auto_fallback_sequential_narrative(cmd_files):
+    """P0.5 fence(ADR-013 D-ParallelDeclineFallback;codex round 1 F1 writeback):
+    change-apply-parallel.md 必含 parallel decline → 自动降级 sequential narrative
+    (关闭 main repo + multi-implementer + W2 attribution 漏洞)。
+
+    P0 code_quality I-2 inline fix(2026-05-06):narrative 检查改 section-scoped,
+    防止未来 maintainer 删 section 内 narrative content 但保留 heading 即 PASS 漏洞。
+    """
+    parallel_path = next(
+        (f for f in cmd_files if f.name == "change-apply-parallel.md"), None
+    )
+    assert parallel_path is not None
+    body = parallel_path.read_text(encoding="utf-8")
+    # parallel decline auto-fallback section 应该存在(沿 P0.3 sub-task B.2)
+    assert "Preflight Parallel Decline Auto-Fallback" in body, (
+        "change-apply-parallel.md MUST contain '## Preflight Parallel Decline Auto-Fallback' "
+        "section (ADR-013 D-ParallelDeclineFallback)"
+    )
+    # P0 code_quality I-2 fix:narrative check 限定在 section 内(从本 section heading
+    # 起,到下一个同级或更高级 heading 止);防止 narrative 被删但 heading 保留时 PASS
+    section_start = body.index("Preflight Parallel Decline Auto-Fallback")
+    section_after = body[section_start:]
+    # 找下一个 ###/## section heading(本 section 结束位置)
+    next_heading_idx = len(section_after)
+    for marker in ("\n### ", "\n## "):
+        idx = section_after.find(marker, len("Preflight Parallel Decline Auto-Fallback"))
+        if 0 < idx < next_heading_idx:
+            next_heading_idx = idx
+    section_body = section_after[:next_heading_idx]
+    # 至少含一条 decline → fallback narrative IN SECTION;允许 "自动降级" / "auto-fallback" / "降级 sequential"
+    has_fallback_narrative_in_section = (
+        "自动降级" in section_body
+        or "auto-fallback" in section_body.lower()
+        or "降级 sequential" in section_body
+    )
+    assert has_fallback_narrative_in_section, (
+        "change-apply-parallel.md `## Preflight Parallel Decline Auto-Fallback` section "
+        "MUST contain decline → auto-fallback sequential narrative IN SECTION BODY "
+        "(ADR-013 D-ParallelDeclineFallback; codex round 1 F1 — "
+        "main repo + multi-implementer + W2 attribution 漏洞;P0 code_quality I-2 fix)"
+    )
+
+
+def test_preflight_worktree_section_bodies_identical(cmd_files):
+    """P0 code_quality I-1 inline fix(2026-05-06):防 sync drift —
+    change-apply-subagent.md 与 change-apply-parallel.md 的 `## Preflight Worktree`
+    section body 必须完全一致(沿 D-RestoreConsentGate 协议:两命令共用同款 OPT-IN
+    narrative)。
+
+    Without this fence:future maintainer 可能更新一个 file 不更新另一个 → 决策表
+    drift / invariant 描述不一致 / 字段引用差异 → silent 协议分裂(沿 P0 code_quality
+    I-1 sync drift risk)。
+    """
+    subagent_path = next(
+        (f for f in cmd_files if f.name == "change-apply-subagent.md"), None
+    )
+    parallel_path = next(
+        (f for f in cmd_files if f.name == "change-apply-parallel.md"), None
+    )
+    assert subagent_path is not None and parallel_path is not None
+
+    def _extract_preflight_worktree_section(body: str) -> str:
+        """提取 ### Preflight Worktree heading 起到下一个同级 ### / ## heading 止的 body。"""
+        idx = body.find("### Preflight Worktree")
+        assert idx >= 0, "Preflight Worktree section not found"
+        section = body[idx:]
+        next_heading_idx = len(section)
+        for marker in ("\n### ", "\n## "):
+            i = section.find(marker, len("### Preflight Worktree"))
+            if 0 < i < next_heading_idx:
+                next_heading_idx = i
+        return section[:next_heading_idx].rstrip()
+
+    sub_section = _extract_preflight_worktree_section(
+        subagent_path.read_text(encoding="utf-8")
+    )
+    par_section = _extract_preflight_worktree_section(
+        parallel_path.read_text(encoding="utf-8")
+    )
+
+    assert sub_section == par_section, (
+        "## Preflight Worktree section body MUST be character-identical between "
+        "change-apply-subagent.md and change-apply-parallel.md "
+        "(ADR-013 D-RestoreConsentGate sync drift防御;P0 code_quality I-1 fix)。\n"
+        "Diff first divergence:\n"
+        f"  subagent length={len(sub_section)} chars\n"
+        f"  parallel length={len(par_section)} chars\n"
+        "(use `diff` tool on extracted sections to debug)"
+    )
+
+
+def test_apply_subagent_parallel_steps_branch_by_outcome_mode(cmd_files):
+    """ADR-013 P7 codex round 3 F1 writeback fence(2026-05-06):subagent + parallel
+    命令的 Steps 7-9 + Step 16 必须按 `worktree_consent_outcome` × `worktree_mode`
+    分支(Branch A: declined/sandbox_fallback + in_place 走 main repo cwd /
+    Branch B: accepted/already_isolated + worktree mode 走 isolated worktree)。
+
+    防回归:原 Steps 8-9 mandatory create worktree + cwd 切换,与 Preflight Worktree
+    section OPT-IN narrative 矛盾(P7 codex F1 揭示 controller 拿 declined 后仍 force
+    建 worktree 的 narrative-vs-implementation gap)。
+    """
+    bad: list[str] = []
+    for f in cmd_files:
+        if f.name not in _APPLY_CMD_WITH_WORKTREE:
+            continue
+        body = f.read_text(encoding="utf-8")
+        # 必含 Branch A / Branch B 分支 narrative
+        if "Branch A" not in body or "Branch B" not in body:
+            bad.append(
+                f"{f.name}: missing 'Branch A' / 'Branch B' Steps narrative "
+                f"(P7 codex F1 — outcome × mode branching required)"
+            )
+            continue
+        # Branch A 必须明确 main repo cwd 不创建 worktree
+        if "Branch A" in body and "main repo cwd" not in body:
+            bad.append(
+                f"{f.name}: Branch A narrative MUST mention 'main repo cwd' "
+                f"(declined / sandbox_fallback path)"
+            )
+        # Branch A 必须 SKIP worktree 创建
+        if "Branch A" in body and "SKIP" not in body:
+            bad.append(
+                f"{f.name}: Branch A narrative MUST contain 'SKIP' to indicate "
+                f"worktree creation/cleanup is skipped under declined path"
+            )
+    assert not bad, (
+        "subagent / parallel cmd md missing outcome × mode Steps branching:\n  "
+        + "\n  ".join(bad)
+    )

@@ -371,6 +371,30 @@ ADR-011 v1 Runtime Enforcement Protocol 是 **advisory not deterministic**(R6 �
 
 完整规则见 OpenSpec change `enhance-workflow-automation-executable-enforcement/design.md` D-W1-ReceiptSchema / D-W2-OverlapDetection / D-W3-LedgerFormat / D-W3-WrapperImpl / D-DispatchWrapperBoundary / D-DegradationPath / D-FrontmatterSchemaExtension / D-W4-IntegrationGate / D-DogfoodGap 决策。
 
+> **⚠️ Superseded note(ADR-013;archived `restore-superpowers-worktree-consent-gate` change 2026-05-06)**:§C.7 D-WorktreeEnforce mandatory worktree 部分 + §C.8 D-W1-ReceiptSchema mandatory invocation 部分由 ADR-013 superseded。详 §C.9 ADR-013 段。
+
+### §C.9 ADR-013 Restore Superpowers Worktree Consent Gate(archived `restore-superpowers-worktree-consent-gate` 2026-05-06)
+
+ADR-011 D-WorktreeEnforce + ADR-012 D-W1-ReceiptSchema 累积 ForgeUE-level mandatory worktree 实质 override Superpowers upstream `using-git-worktrees` SKILL Step 0 user-consent gate。本 change revert mandatory 部分,restore upstream consent gate;default decline → main repo cwd;opt-in for bug-fix iteration。
+
+**核心决策**(7 D-decision;详 archived `openspec/changes/archive/2026-05-06-restore-superpowers-worktree-consent-gate/design.md`):
+
+- **D-RestoreConsentGate**:命令模板 OPT-IN narrative;MUST invoke `Skill(superpowers:using-git-worktrees)` 沿 upstream cascade,但 Step 0 outcome capture 决定路径
+- **D-ConsentOutcomeStateMachine**(codex round 1 F2+F3 writeback):evidence frontmatter `worktree_consent_outcome` enum + `worktree_mode` enum 必填;outcome × mode 状态机
+- **D-AlreadyIsolatedInvariant**(codex round 2 F2 writeback):`already_isolated` 必须 mode ∈ {skill,wrapper}_worktree + `worktree_path != main_repo`
+- **D-ParallelDeclineFallback**(codex round 1 F1 writeback):parallel `declined + in_place` → 自动降级 sequential
+- **D-WrapperDeprecate**:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;default decline 路径不再 mandatory invoke
+- **D-WrapperBugFixInScope**(codex round 2 F3 writeback):W7-a wrapper bug fix(`_git_repo_root` 改用 `git rev-parse --git-common-dir`)拨入本 change scope
+- **D-CrossArchiveADRSupersede**:archived ADR-011/012 evidence 不动(legacy fence pass-through)
+
+**Outcome × Mode 状态机**(`forgeue_finish_gate.py::_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 守门):5 outcome × 3 mode 组合;cross-field invariants(`declined ↔ in_place` / `accepted → mode ∈ {skill,wrapper}_worktree` / `already_isolated → mode 同 + worktree_path != main_repo` / `mode in_place → 禁写 worktree_path` / `mode wrapper_worktree → 必写 worktree_path + worktree_receipt_path` / `mode skill_worktree → 必写 worktree_path,禁写 receipt_path`)。
+
+**Sister skill `subagent-driven-discipline` v2.3 update**:加新 §3.5 Worktree Consent Policy + Pattern 2 §3.1 STRICT cwd verify rewrite + Case 3 P0+P1 retrospect + §6 catalog 加 2 row。
+
+**legacy 兼容**:archived ADR-011/012 evidence 不含 `worktree_consent_outcome` 字段 → 全 fence pass-through。
+
+完整规则见 OpenSpec change `restore-superpowers-worktree-consent-gate/design.md` D-RestoreConsentGate / D-ConsentOutcomeStateMachine / D-AlreadyIsolatedInvariant / D-ParallelDeclineFallback / D-WrapperDeprecate / D-WrapperBugFixInScope / D-CrossArchiveADRSupersede 决策。
+
 ---
 
 ## D. Documentation Sync Gate

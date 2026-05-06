@@ -2318,33 +2318,44 @@ def test_task_granularity_valid_phase_passes(runtime_fence_evidence_setup):
 # ---- D-WorktreeEnforce _check_worktree_path ----
 
 
-def test_worktree_path_missing_for_change_apply_blocks(runtime_fence_evidence_setup):
-    """P1.7 fence:implementation evidence 来自 change-apply-* 命令但缺
-    worktree_path → block。"""
-    change_dir, ev_path, fm = runtime_fence_evidence_setup(
-        "fc-wt-missing",
-        triggered_by_command="change-apply-subagent",
-        # worktree_path 缺
-    )
-    errors = fg._check_worktree_path(ev_path, fm, change_dir)
-    assert errors
-    assert "worktree_path" in " ".join(errors)
+def test_worktree_path_advisory_pass_through_when_no_outcome_field(runtime_fence_evidence_setup):
+    """ADR-013 P0.5 fence(rewritten 2026-05-06):implementation evidence 来自
+    change-apply-* 命令但**无** worktree_consent_outcome 字段 → fence pass-through
+    (legacy archived ADR-011/012 evidence replay 兼容意图)。
 
-
-def test_worktree_path_empty_string_blocks(runtime_fence_evidence_setup):
-    """P1.7 fence:worktree_path 是空字符串 → block。
-
-    沿 D-DirectWorktreeRefinement,worktree fence 仅对 subagent / parallel
-    强制(direct 沿 archived 第 5 项不强制),所以这里用 change-apply-subagent
-    构造 trigger,空字符串 worktree_path 仍应 block。
+    沿 ADR-013 D-RestoreConsentGate:gating 从命令 trigger 改为 outcome field
+    presence;关闭 ADR-011/012 mandatory worktree_path 协议(已 superseded)。
     """
     change_dir, ev_path, fm = runtime_fence_evidence_setup(
-        "fc-wt-empty",
+        "fc-wt-legacy-no-outcome",
         triggered_by_command="change-apply-subagent",
+        # worktree_consent_outcome 缺 + worktree_path 缺 → legacy archived pattern
+    )
+    errors = fg._check_worktree_path(ev_path, fm, change_dir)
+    assert errors == [], (
+        f"legacy evidence (no worktree_consent_outcome) MUST pass-through "
+        f"_check_worktree_path fence (ADR-013 D-RestoreConsentGate); got: {errors}"
+    )
+
+
+def test_worktree_path_empty_string_blocks_under_skill_worktree_mode(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(rewritten 2026-05-06):worktree_path 是空字符串 +
+    worktree_mode=skill_worktree → block(non-in_place mode 必写 worktree_path)。
+
+    沿 D-ConsentOutcomeStateMachine: outcome=accepted + mode=skill_worktree
+    需 worktree_path non-empty;空字符串等价缺失 → Blocker。
+    """
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-wt-empty-skill",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="accepted",
+        worktree_mode="skill_worktree",
         worktree_path="   ",
     )
     errors = fg._check_worktree_path(ev_path, fm, change_dir)
-    assert errors
+    assert errors, "empty worktree_path under skill_worktree mode MUST block"
 
 
 def test_worktree_path_not_required_for_non_change_apply_command(
@@ -2379,19 +2390,393 @@ def test_worktree_path_not_required_for_change_apply_direct(
     )
 
 
-def test_worktree_path_required_for_change_apply_parallel(
+def test_worktree_path_required_for_change_apply_parallel_when_skill_worktree_mode(
     runtime_fence_evidence_setup,
 ):
-    """D-WorktreeEnforce:change-apply-parallel 与 change-apply-subagent 同等
-    强制 worktree_path 字段。"""
+    """ADR-013 P0.5 fence(rewritten 2026-05-06):change-apply-parallel +
+    worktree_mode=skill_worktree 必写 worktree_path。
+
+    沿 D-ConsentOutcomeStateMachine:non-in_place mode 必写 worktree_path,
+    parallel 命令同款。
+    """
     change_dir, ev_path, fm = runtime_fence_evidence_setup(
-        "fc-wt-parallel",
+        "fc-wt-parallel-skill",
         triggered_by_command="change-apply-parallel",
+        worktree_consent_outcome="accepted",
+        worktree_mode="skill_worktree",
         # worktree_path 缺 → 应触发 fence
     )
     errors = fg._check_worktree_path(ev_path, fm, change_dir)
     assert errors
     assert "worktree_path" in " ".join(errors)
+
+
+# ---- ADR-013 D-ConsentOutcomeStateMachine new fences (P0.5 + W6) ----
+
+
+def test_legacy_evidence_no_consent_outcome_field_pass_through(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence:legacy archived evidence(无 worktree_consent_outcome
+    字段)→ all 3 ADR-013 fences pass-through(关闭 archived ADR-011/012 evidence
+    false-block 风险)。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-adr013-legacy",
+        triggered_by_command="change-apply-subagent",
+        # 缺 worktree_consent_outcome + worktree_mode → legacy
+    )
+    assert fg._check_worktree_path(ev_path, fm, change_dir) == []
+    assert fg._check_worktree_consent_outcome(ev_path, fm, change_dir) == []
+    assert fg._check_worktree_mode_consistency(ev_path, fm, change_dir) == []
+
+
+def test_worktree_consent_outcome_invalid_enum_blocks(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(D-ConsentOutcomeStateMachine):worktree_consent_outcome
+    非合法 enum value → block,错误指明合法枚举。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-invalid-outcome",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="approved",  # 非枚举(应是 accepted)
+        worktree_mode="skill_worktree",
+        worktree_path="/tmp/wt",
+    )
+    errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    assert errors, "invalid outcome enum MUST block"
+    joined = " ".join(errors)
+    assert "declined" in joined and "accepted" in joined and "already_isolated" in joined
+
+
+def test_worktree_consent_outcome_declined_requires_mode_in_place(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(D-ConsentOutcomeStateMachine cross-field):
+    declined → mode 必须 in_place;违反 → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-decline-skill",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="declined",
+        worktree_mode="skill_worktree",  # 违反 declined ↔ in_place
+        worktree_path="/tmp/wt",
+    )
+    errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "declined" in joined and "in_place" in joined
+
+
+def test_worktree_consent_outcome_accepted_requires_mode_worktree_or_wrapper(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(D-ConsentOutcomeStateMachine cross-field):
+    accepted → mode 必须 ∈ {skill_worktree, wrapper_worktree};in_place 违反 → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-accept-inplace",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="accepted",
+        worktree_mode="in_place",  # 违反 accepted → mode != in_place
+    )
+    errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "accepted" in joined
+
+
+def test_worktree_consent_outcome_already_isolated_rejects_mode_in_place(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 + W6 fence(codex round 2 F2 writeback):already_isolated +
+    in_place INVALID(关闭 main repo cwd 假声 isolated → 重新打开 F1 attribution
+    漏洞)。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-already-inplace",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="already_isolated",
+        worktree_mode="in_place",  # 违反 W6 invariant
+    )
+    errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "already_isolated" in joined and "in_place" not in joined.split("got")[0]
+
+
+def test_worktree_consent_outcome_already_isolated_requires_worktree_path_not_main_repo(
+    runtime_fence_evidence_setup, tmp_path,
+):
+    """ADR-013 W6 fence(codex round 2 F2 writeback):already_isolated 必须
+    worktree_path 写且 realpath != main repo;假声 isolated path = main repo → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-already-mainrepo",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="already_isolated",
+        worktree_mode="skill_worktree",
+        worktree_path=str(tmp_path),  # = main_repo (change_root.parents[2] = tmp_path)
+    )
+    errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "main repo" in joined.lower() or "main repo" in joined
+
+
+def test_worktree_mode_in_place_rejects_worktree_path_field(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(D-ConsentOutcomeStateMachine mode invariant):
+    in_place mode 写 worktree_path → block(关闭 codex round 1 F2 双歧义漏洞)。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-mc-inplace-with-path",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="declined",
+        worktree_mode="in_place",
+        worktree_path="/tmp/wt",  # 违反 in_place 禁写 worktree_path
+    )
+    errors = fg._check_worktree_mode_consistency(ev_path, fm, change_dir)
+    assert errors
+    assert "in_place" in " ".join(errors) and "worktree_path" in " ".join(errors)
+
+
+def test_worktree_mode_wrapper_requires_receipt_path(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(D-ConsentOutcomeStateMachine mode invariant):
+    wrapper_worktree mode 必写 worktree_receipt_path;缺 → block(关闭 codex
+    round 1 F2 receipt provenance 漏洞)。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-mc-wrapper-no-receipt",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="accepted",
+        worktree_mode="wrapper_worktree",
+        worktree_path="/tmp/wt",
+        # worktree_receipt_path 缺 → 违反
+    )
+    errors = fg._check_worktree_mode_consistency(ev_path, fm, change_dir)
+    assert errors
+    assert "wrapper_worktree" in " ".join(errors) and "receipt" in " ".join(errors)
+
+
+def test_worktree_mode_skill_rejects_receipt_path_field(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(D-ConsentOutcomeStateMachine mode invariant):
+    skill_worktree mode 禁写 receipt;present → block。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-mc-skill-with-receipt",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="accepted",
+        worktree_mode="skill_worktree",
+        worktree_path="/tmp/wt",
+        worktree_receipt_path="preflight_receipts/foo.json",  # 违反 skill_worktree 禁写 receipt
+    )
+    errors = fg._check_worktree_mode_consistency(ev_path, fm, change_dir)
+    assert errors
+    assert "skill_worktree" in " ".join(errors)
+
+
+def test_worktree_consent_outcome_valid_full_state_machine_passes(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P0.5 fence(positive):4 个合法 outcome × mode 组合全 pass。"""
+    valid_combos = [
+        ("declined", "in_place", None, None),
+        ("accepted", "skill_worktree", "/tmp/wt-skill", None),
+        ("accepted", "wrapper_worktree", "/tmp/wt-wrap", "preflight_receipts/x.json"),
+        ("sandbox_fallback", "in_place", None, None),
+    ]
+    for i, (outcome, mode, path, receipt) in enumerate(valid_combos):
+        fm_kwargs = {
+            "triggered_by_command": "change-apply-subagent",
+            "worktree_consent_outcome": outcome,
+            "worktree_mode": mode,
+        }
+        if path is not None:
+            fm_kwargs["worktree_path"] = path
+        if receipt is not None:
+            fm_kwargs["worktree_receipt_path"] = receipt
+        change_dir, ev_path, fm = runtime_fence_evidence_setup(
+            f"fc-cs-valid-{i}", **fm_kwargs,
+        )
+        outcome_errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+        consistency_errors = fg._check_worktree_mode_consistency(ev_path, fm, change_dir)
+        path_errors = fg._check_worktree_path(ev_path, fm, change_dir)
+        assert outcome_errors == [], (
+            f"valid combo {(outcome, mode)} _check_worktree_consent_outcome should pass; "
+            f"got: {outcome_errors}"
+        )
+        assert consistency_errors == [], (
+            f"valid combo {(outcome, mode)} _check_worktree_mode_consistency should pass; "
+            f"got: {consistency_errors}"
+        )
+        assert path_errors == [], (
+            f"valid combo {(outcome, mode)} _check_worktree_path should pass; "
+            f"got: {path_errors}"
+        )
+
+
+def test_worktree_consent_outcome_already_isolated_valid_with_distinct_path_passes(
+    runtime_fence_evidence_setup, tmp_path,
+):
+    """ADR-013 P0.5 + W6 fence(positive;P1 code_quality M-2 fix 2026-05-06):
+    already_isolated + worktree_mode ∈ {skill_worktree, wrapper_worktree} +
+    ``worktree_path`` 写且 realpath != main repo → 全 pass。
+
+    覆盖 already_isolated 在合法 isolated workspace 路径下的 positive case
+    (其余 negative case 已由 ``test_worktree_consent_outcome_already_isolated_*``
+    覆盖;此 positive 防止 W6 invariant 未来重构 silently 破坏 valid 路径)。
+    """
+    # main_repo 推断 = change_root.parents[2] = tmp_path
+    # 故构造 isolated_path != tmp_path,例如 tmp_path / "isolated_workspace"
+    isolated_workspace = tmp_path / "isolated_workspace"
+    isolated_workspace.mkdir()
+
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-already-valid",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="already_isolated",
+        worktree_mode="skill_worktree",
+        worktree_path=str(isolated_workspace),
+    )
+    outcome_errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    consistency_errors = fg._check_worktree_mode_consistency(ev_path, fm, change_dir)
+    path_errors = fg._check_worktree_path(ev_path, fm, change_dir)
+    assert outcome_errors == [], (
+        f"already_isolated + valid isolated path should pass _check_worktree_consent_outcome; "
+        f"got: {outcome_errors}"
+    )
+    assert consistency_errors == [], (
+        f"already_isolated + skill_worktree should pass _check_worktree_mode_consistency; "
+        f"got: {consistency_errors}"
+    )
+    assert path_errors == [], (
+        f"already_isolated + valid worktree_path should pass _check_worktree_path; "
+        f"got: {path_errors}"
+    )
+
+
+# ---- ADR-013 P7 codex round 3 F2 + F3 writeback fences ----
+
+
+def test_check_consent_outcome_enforces_invariant_when_triggered_by_command_missing(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P7 codex round 3 F2 fix:enum + invariant 校验 NOT gated by
+    triggered_by_command — controller 拼错 / 漏写 triggered_by_command 字段时,
+    `accepted + in_place` 等非法组合仍 must be caught(原 fence ordering 有 bypass 漏洞)。
+    """
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-no-trigger",
+        # NO triggered_by_command field (controller 漏写 / 拼错的场景)
+        worktree_consent_outcome="accepted",
+        worktree_mode="in_place",  # 违反 accepted → mode ∈ {skill,wrapper}_worktree
+    )
+    errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    assert errors, (
+        "P7 F2 fix:invariant violation MUST be caught even when triggered_by_command "
+        "is missing/misspelled (no early-return gating by trigger filter); "
+        f"got: {errors}"
+    )
+    joined = " ".join(errors)
+    assert "accepted" in joined and "in_place" in joined
+
+
+def test_check_consent_outcome_enforces_invariant_when_triggered_by_command_misspelled(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P7 codex round 3 F2 fix:trigger 字段拼错(non-enum value)→ 仍校验 invariant。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-cs-misspelled-trigger",
+        triggered_by_command="change-apply-supervisor",  # 拼错(应是 change-apply-subagent)
+        worktree_consent_outcome="declined",
+        worktree_mode="skill_worktree",  # 违反 declined ↔ in_place
+        worktree_path="/tmp/wt",
+    )
+    errors = fg._check_worktree_consent_outcome(ev_path, fm, change_dir)
+    assert errors, "P7 F2 fix:misspelled trigger field MUST NOT bypass invariant check"
+    joined = " ".join(errors)
+    assert "declined" in joined and "in_place" in joined
+
+
+def test_parallel_decline_fallback_blocks_when_degraded_to_missing(
+    runtime_fence_evidence_setup,
+):
+    """ADR-013 P7 codex round 3 F3 fix:`change-apply-parallel` + outcome ∈
+    {declined, sandbox_fallback} → MUST set `degraded_to: change-apply-subagent` +
+    `degradation_reason: parallel_requires_isolated_workspace`(否则 Blocker)。
+    """
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-pdf-no-degraded",
+        triggered_by_command="change-apply-parallel",
+        worktree_consent_outcome="declined",
+        worktree_mode="in_place",
+        # NO degraded_to / degradation_reason — 应 block
+    )
+    errors = fg._check_parallel_decline_fallback(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "degraded_to" in joined and "change-apply-subagent" in joined
+
+
+def test_parallel_decline_fallback_blocks_when_degradation_reason_wrong(
+    runtime_fence_evidence_setup,
+):
+    """P7 F3:degradation_reason 必须 `parallel_requires_isolated_workspace`(其他 reason → Blocker)。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-pdf-wrong-reason",
+        triggered_by_command="change-apply-parallel",
+        worktree_consent_outcome="sandbox_fallback",
+        worktree_mode="in_place",
+        degraded_to="change-apply-subagent",
+        degradation_reason="actual_file_overlap_detected",  # 应是 parallel_requires_isolated_workspace
+    )
+    errors = fg._check_parallel_decline_fallback(ev_path, fm, change_dir)
+    assert errors
+    joined = " ".join(errors)
+    assert "parallel_requires_isolated_workspace" in joined
+
+
+def test_parallel_decline_fallback_passes_when_correctly_degraded(
+    runtime_fence_evidence_setup,
+):
+    """P7 F3 positive:正确 degraded_to + degradation_reason → pass。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-pdf-correct",
+        triggered_by_command="change-apply-parallel",
+        worktree_consent_outcome="declined",
+        worktree_mode="in_place",
+        degraded_to="change-apply-subagent",
+        degradation_reason="parallel_requires_isolated_workspace",
+    )
+    errors = fg._check_parallel_decline_fallback(ev_path, fm, change_dir)
+    assert errors == [], f"correctly degraded parallel evidence should pass; got: {errors}"
+
+
+def test_parallel_decline_fallback_pass_through_for_non_parallel_command(
+    runtime_fence_evidence_setup,
+):
+    """P7 F3:非 parallel command(subagent / direct) → fence pass-through。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-pdf-subagent",
+        triggered_by_command="change-apply-subagent",
+        worktree_consent_outcome="declined",
+        worktree_mode="in_place",
+    )
+    errors = fg._check_parallel_decline_fallback(ev_path, fm, change_dir)
+    assert errors == [], f"non-parallel command should pass-through; got: {errors}"
+
+
+def test_parallel_decline_fallback_pass_through_for_accepted_outcome(
+    runtime_fence_evidence_setup,
+):
+    """P7 F3:parallel + accepted/already_isolated → 沿正常 parallel 路径(非 decline fallback case)→ pass。"""
+    change_dir, ev_path, fm = runtime_fence_evidence_setup(
+        "fc-pdf-accepted",
+        triggered_by_command="change-apply-parallel",
+        worktree_consent_outcome="accepted",
+        worktree_mode="skill_worktree",
+        worktree_path="/tmp/wt",
+    )
+    errors = fg._check_parallel_decline_fallback(ev_path, fm, change_dir)
+    assert errors == [], f"parallel + accepted should not require degradation; got: {errors}"
 
 
 # ---- D-ProtocolVersionMigration:protocol v1 gate skips legacy evidence ----
@@ -2437,7 +2822,12 @@ def test_runtime_fences_skip_non_implementation_evidence_under_protocol_v1(
 def test_runtime_fences_wired_into_check_frontmatter_protocol(tmp_path):
     """P1.7 e2e:4 fence 接到 check_frontmatter_protocol 主循环 — 用 builders 写一
     份违反 4 fence 的 implementation evidence,跑 finish_gate CLI,期待 4 类
-    Blocker.type 全出现。"""
+    Blocker.type 全出现。
+
+    ADR-013 更新(2026-05-06):worktree_path fence 由 outcome field presence
+    触发(非 command trigger),故加 worktree_consent_outcome=accepted +
+    worktree_mode=skill_worktree 缺 worktree_path → worktree_path_violation。
+    """
     b = make_complete_change(tmp_path, "fc-rt-e2e")
     # 写一份实施 evidence(protocol v1)— 故意缺 skill_cascade_audit + task_granularity
     # + worktree_path,且 subagent_continuity round_1/2 implementer 不一致 → 4 fence 全触发
@@ -2455,9 +2845,12 @@ def test_runtime_fences_wired_into_check_frontmatter_protocol(tmp_path):
                 "round_1_implementer_id": "ag-aaa",
                 "round_2_fix_implementer_id": "ag-bbb",  # 不一致 → fence 触发
             },
+            # ADR-013:outcome+mode presence → worktree_path fence 触发
+            "worktree_consent_outcome": "accepted",
+            "worktree_mode": "skill_worktree",
             # skill_cascade_audit 缺 → fence 触发
             # task_granularity 缺 → fence 触发
-            # worktree_path 缺 → fence 触发
+            # worktree_path 缺 → worktree_path_violation 触发(skill_worktree 必写)
         },
     )
     proc = _run_cli(tmp_path, ["--change", "fc-rt-e2e", "--no-validate", "--json"])
@@ -2481,6 +2874,18 @@ def v2_fence_evidence_setup(tmp_path):
     """v2 evidence fixture:默认 frontmatter 含 runtime_enforcement_protocol_version: v2
     + implementation evidence 类型(subagent_implementer_report)。
 
+    **ADR-013 default 字段**(P1 code_quality M-3 doc fix 2026-05-06):本 fixture
+    自动 default ``worktree_consent_outcome: accepted`` + ``worktree_mode: wrapper_worktree``
+    + ``worktree_path: <change_dir>``(因 ADR-013 D-ConsentOutcomeStateMachine 强制
+    v2 evidence 含 outcome × mode 字段;v2 evidence 沿 W1 receipt schema 等价
+    ``wrapper_worktree`` mode);测试若需 override 这些 default(如测 declined / in_place
+    / skill_worktree mode 路径),传 fm_overrides 即可:
+
+        v2_fence_evidence_setup("fc-test", worktree_consent_outcome="declined", worktree_mode="in_place", worktree_path=None)
+
+    Note:测 legacy v2 evidence(无 outcome 字段)需显式 override
+    ``worktree_consent_outcome=None`` + ``worktree_mode=None`` 触发 legacy pass-through。
+
     返回 callable `setup(change_id, **fm_overrides)` -> (change_dir, evidence_path, fm)。
     """
     def _setup(change_id: str = "fc-v2-fixture", **fm_overrides):
@@ -2503,6 +2908,10 @@ def v2_fence_evidence_setup(tmp_path):
             },
             "task_granularity": "per-file",
             "worktree_path": str(change_dir),
+            # ADR-013 D-ConsentOutcomeStateMachine v2 evidence 默认 wrapper_worktree mode
+            # (v2 evidence 沿 W1 receipt schema;worktree_receipt_path 由 test 按需设置)
+            "worktree_consent_outcome": "accepted",
+            "worktree_mode": "wrapper_worktree",
         }
         fm.update(fm_overrides)
         return change_dir, evidence_path, fm

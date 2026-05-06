@@ -235,6 +235,26 @@ ADR-011 v1 是 advisory not deterministic(R6 限制)。本 change 升级 v2 为 
 
 完整规则见 [`forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2](forgeue_integrated_ai_workflow.md) + ADR-012。
 
+> **⚠️ Superseded note(ADR-013;archived `restore-superpowers-worktree-consent-gate` change 2026-05-06)**:§4.4-bis(ADR-011 D-WorktreeEnforce mandatory worktree)+ §4.4-ter(ADR-012 D-W1-ReceiptSchema mandatory invocation)部分由 ADR-013 superseded。详 §4.4-quater。
+
+### 4.4-quater Worktree Consent Gate Restored(ADR-013;archived `restore-superpowers-worktree-consent-gate` change 2026-05-06)
+
+ADR-011/012 累积 mandatory worktree 实质 override Superpowers upstream consent gate。本 change revert mandatory 部分,restore upstream Step 0 user-consent gate;**default decline → main repo cwd**(implementation phase);**opt-in for bug-fix iteration / explicit isolation**(`accepted` outcome → `skill_worktree` / `wrapper_worktree` mode)。
+
+**Outcome × Mode 状态机**(必填 evidence frontmatter):
+
+- `worktree_consent_outcome` ∈ {`declined`, `accepted`, `already_isolated`, `sandbox_fallback`}
+- `worktree_mode` ∈ {`in_place`, `skill_worktree`, `wrapper_worktree`}
+- Cross-field invariants:`declined ↔ in_place` / `accepted → mode ∈ {skill,wrapper}_worktree` / `already_isolated → mode 同 + worktree_path != main_repo`(W6)/ `mode in_place → 禁写 worktree_path` / `mode wrapper_worktree → 必写 receipt`
+
+**Parallel decline auto-fallback**:`/forgeue:change-apply-parallel` `declined + in_place` → 自动降级 sequential(沿 codex round 1 F1 关闭 main repo + multi-implementer + W2 attribution 漏洞)。
+
+**Wrapper deprecate**:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;default decline 路径不再 mandatory invoke;仅 user 显式 opt-in `wrapper_worktree` mode 时调用。W7-a wrapper bug fix(`_git_repo_root` 改用 `git rev-parse --git-common-dir`)在本 change scope 内。
+
+**legacy 兼容**:archived ADR-011/012 evidence(无 `worktree_consent_outcome` 字段)→ 全 fence pass-through。
+
+完整规则见 [`forgeue_integrated_ai_workflow.md` §C.9 ADR-013 Restore Superpowers Worktree Consent Gate](forgeue_integrated_ai_workflow.md) + sister skill `subagent-driven-discipline` v2.3 §3.5 Worktree Consent Policy + ADR-013。
+
 ### 4.5 tasks.md 必含段模板
 
 每个 change 的 `tasks.md` 末尾必须含:

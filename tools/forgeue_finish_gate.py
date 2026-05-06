@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -183,7 +184,53 @@ _ISO_TIMESTAMP_RE = re.compile(
 # **不强制** worktree(direct 是 < 3 micro-task 轻量 fallback,worktree 创建
 # + squash merge 收尾 ~10-20s 开销不划算);_check_worktree_path fence 在
 # direct evidence 上 pass-through。
-_WORKTREE_REQUIRED_COMMANDS: frozenset[str] = frozenset({
+# ADR-013 D-RestoreConsentGate:_WORKTREE_REQUIRED_COMMANDS retire to empty frozenset.
+# Mode-conditional advisory (D-ConsentOutcomeStateMachine) replaces command-trigger gating;
+# fence gating now driven by `worktree_consent_outcome` + `worktree_mode` field presence
+# (legacy archived evidence without these fields → fence pass-through).
+_WORKTREE_REQUIRED_COMMANDS: frozenset[str] = frozenset()
+
+
+# ADR-013 D-ConsentOutcomeStateMachine + D-AlreadyIsolatedInvariant constants:
+# evidence frontmatter `worktree_consent_outcome` + `worktree_mode` enum state machine.
+_WORKTREE_CONSENT_OUTCOME_FIELD = "worktree_consent_outcome"
+_WORKTREE_MODE_FIELD = "worktree_mode"
+
+# NOTE(P2+ follow-on / I-2 P1 code_quality):本 enum 与 spec.md `Preflight Worktree
+# runtime enforcement` Requirement state machine table 必须同步;currently 无 fence
+# test 强 cross-ref(若 spec.md 加 5th outcome 如 `user_skipped`,本常量需手动同步;
+# 否则新 valid value 被 fence 误判 invalid)。沿 P0 m-2 + P1 I-2 deferred 至 P2+
+# enum cross-reference fence change 落地。
+_VALID_WORKTREE_CONSENT_OUTCOMES: frozenset[str] = frozenset({
+    "declined",
+    "accepted",
+    "already_isolated",
+    "sandbox_fallback",
+})
+
+_VALID_WORKTREE_MODES: frozenset[str] = frozenset({
+    "in_place",
+    "skill_worktree",
+    "wrapper_worktree",
+})
+
+# outcome -> required mode set (cross-field invariant).
+# Sourced from spec.md `Preflight Worktree runtime enforcement` Requirement state machine table:
+#   declined ↔ in_place
+#   accepted → {skill_worktree, wrapper_worktree}
+#   already_isolated → {skill_worktree, wrapper_worktree}  (W6 codex round 2 F2 — 禁 in_place)
+#   sandbox_fallback ↔ in_place
+_OUTCOME_MODE_INVARIANTS: dict[str, frozenset[str]] = {
+    "declined": frozenset({"in_place"}),
+    "accepted": frozenset({"skill_worktree", "wrapper_worktree"}),
+    "already_isolated": frozenset({"skill_worktree", "wrapper_worktree"}),
+    "sandbox_fallback": frozenset({"in_place"}),
+}
+
+# Triggered-by-command set used by ADR-013 mode-conditional fences.
+# (Distinct from the retired _WORKTREE_REQUIRED_COMMANDS;these two commands MAY produce
+#  evidence with worktree_consent_outcome.)
+_WORKTREE_FENCE_TRIGGER_COMMANDS: frozenset[str] = frozenset({
     "change-apply-subagent",
     "change-apply-parallel",
 })
@@ -835,6 +882,18 @@ def check_frontmatter_protocol(
             blockers.append(
                 Blocker(type="worktree_path_violation", detail=err, file=rel)
             )
+        for err in _check_worktree_consent_outcome(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="worktree_consent_outcome_violation", detail=err, file=rel)
+            )
+        for err in _check_worktree_mode_consistency(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="worktree_mode_consistency_violation", detail=err, file=rel)
+            )
+        for err in _check_parallel_decline_fallback(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="parallel_decline_fallback_violation", detail=err, file=rel)
+            )
 
         # enhance-workflow-automation-executable-enforcement:v2 runtime fence
         # (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
@@ -1313,22 +1372,20 @@ def _check_worktree_path(
     frontmatter: dict,
     change_root: "Path",
 ) -> list[str]:
-    """检查 implementation evidence 来自 change-apply-* 命令时含 ``worktree_path`` 字段。
+    """ADR-013 D-RestoreConsentGate + D-ConsentOutcomeStateMachine 重写(2026-05-06)。
 
-    D-WorktreeEnforce(spec.md L40)+ D-DirectWorktreeRefinement(2026-05-05
-    user 拍板):implementation evidence 由 ``change-apply-subagent`` /
-    ``change-apply-parallel`` 命令 dispatch 时,evidence frontmatter MUST 含
-    ``worktree_path`` 字段(non-null)— 双层守门:命令模板 preflight(early
-    abort)+ finish_gate audit(late catch)。
+    legacy archived evidence(无 ``worktree_consent_outcome`` 字段)→ pass-through
+    (沿 ADR-011/012 archived evidence replay 兼容意图;不 false-block)。
 
-    ``change-apply-direct`` 沿 archived 2026-05-04-adopt-subagent-driven-development
-    D-Worktree-Detail 第 5 项不强制 worktree(direct 是 < 3 micro-task 轻量
-    fallback);direct evidence 在此 fence pass-through。
+    新 ADR-013 evidence(有 ``worktree_consent_outcome``)→ mode-conditional 校验:
+    - ``worktree_mode: in_place`` → ``worktree_path`` 禁写(present → Blocker)
+    - ``worktree_mode: skill_worktree`` → ``worktree_path`` 必写(missing/empty → Blocker)
+    - ``worktree_mode: wrapper_worktree`` → ``worktree_path`` 必写
+      (receipt cross-check 由 ``_check_worktree_path_v2`` 处理)
 
-    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
-    生效。仅对 implementation evidence + 来源命令在
-    ``_WORKTREE_REQUIRED_COMMANDS`` frozenset 内的强制(其他 stage evidence
-    如 verify_report 或 direct 命令的 tdd_log 不强制)。
+    Outcome enum / mode invariant 校验由 ``_check_worktree_consent_outcome``
+    + ``_check_worktree_mode_consistency`` 处理(本 fence 仅校验 path 存在与否,
+    不重复 mode invariant)。
     """
     errors: list[str] = []
     if not _runtime_enforcement_active(frontmatter):
@@ -1337,24 +1394,309 @@ def _check_worktree_path(
     if ev_type not in _IMPLEMENTATION_EV_TYPES:
         return errors
 
-    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
-    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
-        return errors  # change-apply-direct / 非 change-apply-* / 手工 evidence 不强制
+    # ADR-013 legacy gating:outcome field absent → pass-through(archived evidence)
+    outcome = frontmatter.get(_WORKTREE_CONSENT_OUTCOME_FIELD)
+    if outcome is None:
+        return errors
+
+    mode = frontmatter.get(_WORKTREE_MODE_FIELD)
+    if mode is None:
+        # outcome present but mode missing → caught by _check_worktree_consent_outcome / _check_worktree_mode_consistency
+        return errors
+    if not isinstance(mode, str) or mode not in _VALID_WORKTREE_MODES:
+        # invalid mode → caught by _check_worktree_consent_outcome
+        return errors
 
     ev_name = evidence_path.name
-    worktree = frontmatter.get("worktree_path")
-    if worktree is None:
+    worktree_path = frontmatter.get("worktree_path")
+    has_path = worktree_path is not None and (
+        not isinstance(worktree_path, str) or worktree_path.strip()
+    )
+
+    if mode == "in_place":
+        if has_path:
+            errors.append(
+                f"worktree_path={worktree_path!r} present in {ev_name} but worktree_mode=in_place "
+                "(D-ConsentOutcomeStateMachine: in_place mode 禁写 worktree_path; "
+                "ADR-013 codex round 1 F2 关闭 mode 双歧义漏洞)"
+            )
+        return errors
+
+    # mode in {skill_worktree, wrapper_worktree} → require worktree_path
+    if not has_path:
         errors.append(
-            f"worktree_path field missing from {ev_name} "
-            f"(D-WorktreeEnforce: implementation evidence triggered by {triggered!r} "
-            "MUST carry worktree_path field non-null)"
+            f"worktree_path missing or empty in {ev_name} but worktree_mode={mode!r} "
+            "(D-ConsentOutcomeStateMachine: non-in_place mode 必写 worktree_path)"
         )
         return errors
-    if not isinstance(worktree, str) or not worktree.strip():
+    if not isinstance(worktree_path, str) or not worktree_path.strip():
         errors.append(
-            f"worktree_path in {ev_name} is empty or non-string "
-            f"(got {worktree!r})"
+            f"worktree_path in {ev_name} is empty or non-string (got {worktree_path!r})"
         )
+
+    return errors
+
+
+# ADR-013 D-ConsentOutcomeStateMachine + D-AlreadyIsolatedInvariant new fences
+# (codex round 1 F2+F3 + round 2 F2 writeback;v1 fence — apply to both v1 + v2 evidence)
+
+
+def _check_worktree_consent_outcome(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """ADR-013 D-ConsentOutcomeStateMachine + D-AlreadyIsolatedInvariant new fence。
+
+    校验:
+    - ``worktree_consent_outcome`` enum value 合法(declined / accepted /
+      already_isolated / sandbox_fallback)
+    - outcome ↔ mode invariant(沿 ``_OUTCOME_MODE_INVARIANTS`` 表):
+        * declined ↔ in_place
+        * accepted → mode ∈ {skill_worktree, wrapper_worktree}
+        * already_isolated → mode ∈ {skill_worktree, wrapper_worktree}(W6 codex round 2 F2 — 禁 in_place)
+        * sandbox_fallback ↔ in_place
+    - W6 codex round 2 F2 invariant:``already_isolated`` 必写 ``worktree_path``
+      且 ``os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)``
+      (关闭 main repo cwd 假声 isolated → 重新打开 F1 attribution 漏洞)
+
+    Gating(P7 codex round 3 F2 writeback 2026-05-06):
+    - legacy archived evidence(无 outcome 字段)→ pass-through
+    - **Triggered_by_command filter MOVED to AFTER enum + invariant check**
+      (沿 P7 codex F2:原 `triggered not in _WORKTREE_FENCE_TRIGGER_COMMANDS` 早 return
+      让 controller 拼错 / 漏写 `triggered_by_command` 字段时,`accepted + in_place` 等
+      非法组合直接绕过 enum 校验 + invariant 校验 → semantic 漏洞);新协议:enum +
+      outcome × mode invariant + already_isolated path != main_repo 全部无条件检查;
+      只在最后 path-existence 校验时按 trigger filter(direct evidence 不要求 worktree_path
+      实际存在,但仍要求 enum + invariant 一致性)
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+
+    outcome = frontmatter.get(_WORKTREE_CONSENT_OUTCOME_FIELD)
+    if outcome is None:
+        return errors  # legacy pass-through(archived ADR-011/012 evidence 兼容)
+
+    # P7 codex round 3 F2 writeback:enum + invariant 校验 NOT gated by triggered_by_command。
+    # 只要 evidence 写了 outcome 字段,无条件校验语义 invariant(防 controller 拼错
+    # triggered_by_command 字段时绕过校验)。
+    ev_name = evidence_path.name
+
+    if not isinstance(outcome, str) or outcome not in _VALID_WORKTREE_CONSENT_OUTCOMES:
+        errors.append(
+            f"worktree_consent_outcome={outcome!r} in {ev_name} is not a valid enum value "
+            f"(D-ConsentOutcomeStateMachine: must be one of {sorted(_VALID_WORKTREE_CONSENT_OUTCOMES)})"
+        )
+        return errors
+
+    mode = frontmatter.get(_WORKTREE_MODE_FIELD)
+    if mode is None:
+        errors.append(
+            f"worktree_mode field missing from {ev_name} but worktree_consent_outcome={outcome!r} "
+            "(D-ConsentOutcomeStateMachine: outcome 必配 mode)"
+        )
+        return errors
+    if not isinstance(mode, str) or mode not in _VALID_WORKTREE_MODES:
+        errors.append(
+            f"worktree_mode={mode!r} in {ev_name} is not a valid enum value "
+            f"(must be one of {sorted(_VALID_WORKTREE_MODES)})"
+        )
+        return errors
+
+    # outcome ↔ mode invariant
+    required_modes = _OUTCOME_MODE_INVARIANTS.get(outcome, frozenset())
+    if mode not in required_modes:
+        errors.append(
+            f"worktree_consent_outcome={outcome!r} requires worktree_mode in {sorted(required_modes)} "
+            f"but got worktree_mode={mode!r} in {ev_name} "
+            "(D-ConsentOutcomeStateMachine cross-field invariant)"
+        )
+        return errors
+
+    # W6 codex round 2 F2 invariant:already_isolated worktree_path != main repo
+    if outcome == "already_isolated":
+        worktree_path = frontmatter.get("worktree_path")
+        if worktree_path is None or (
+            isinstance(worktree_path, str) and not worktree_path.strip()
+        ):
+            errors.append(
+                f"worktree_consent_outcome=already_isolated in {ev_name} requires "
+                "worktree_path field (D-AlreadyIsolatedInvariant: already_isolated MUST "
+                "carry worktree_path != main repo)"
+            )
+            return errors
+        if isinstance(worktree_path, str):
+            try:
+                wt_real = os.path.realpath(worktree_path)
+                # Heuristic: main_repo = change_root.parents[2] (change_root = .../openspec/changes/<id>/)
+                # 实际 production 中 main_repo = git toplevel;但本 fence 用 change_root 上溯避免依赖 git CLI
+                if len(change_root.parents) >= 3:
+                    main_repo = change_root.parents[2]
+                else:
+                    main_repo = change_root.parent
+                main_repo_real = os.path.realpath(str(main_repo))
+                if wt_real == main_repo_real:
+                    errors.append(
+                        f"worktree_path={worktree_path!r} in {ev_name} equals main repo root "
+                        "(D-AlreadyIsolatedInvariant codex round 2 F2: already_isolated 禁假 "
+                        "isolated path = main repo,关闭 F1 attribution 漏洞)"
+                    )
+            except (OSError, ValueError):
+                pass  # path resolve fail → leave to other fences
+
+    return errors
+
+
+def _check_parallel_decline_fallback(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """ADR-013 D-ParallelDeclineFallback executable enforcement(P7 codex round 3 F3 writeback 2026-05-06)。
+
+    parallel decline auto-fallback narrative 在命令模板写明,但原 finish_gate 无 fence
+    强制 — main repo + parallel + 文件不重叠 → fence 通过 → F1 attribution 漏洞重新打开。
+    本 fence 关闭命令模板 narrative 与 finish_gate 实施之间的 gap。
+
+    校验:`triggered_by_command: change-apply-parallel` + `worktree_consent_outcome ∈
+    {declined, sandbox_fallback}` → MUST `degraded_to: change-apply-subagent` +
+    `degradation_reason: parallel_requires_isolated_workspace`(否则 Blocker)。
+
+    Gating:
+    - legacy archived evidence(无 outcome 字段)→ pass-through
+    - non-parallel triggered_by_command → pass-through(本 fence 仅 parallel-specific)
+    - outcome ∉ {declined, sandbox_fallback} → pass-through(其他 outcome 沿正常 parallel 路径)
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+
+    outcome = frontmatter.get(_WORKTREE_CONSENT_OUTCOME_FIELD)
+    if outcome is None:
+        return errors  # legacy pass-through
+
+    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
+    if triggered != "change-apply-parallel":
+        return errors  # 仅 parallel-specific
+
+    if outcome not in ("declined", "sandbox_fallback"):
+        return errors  # accepted / already_isolated 沿正常 parallel 路径
+
+    ev_name = evidence_path.name
+    degraded_to = frontmatter.get("degraded_to")
+    degradation_reason = frontmatter.get("degradation_reason")
+
+    if degraded_to != "change-apply-subagent":
+        errors.append(
+            f"worktree_consent_outcome={outcome!r} on change-apply-parallel evidence in {ev_name} "
+            "MUST set degraded_to: change-apply-subagent "
+            f"(D-ParallelDeclineFallback;P7 codex round 3 F3 — 关闭 main repo + multi-implementer "
+            f"+ W2 attribution 漏洞;got degraded_to={degraded_to!r})"
+        )
+    if degradation_reason != "parallel_requires_isolated_workspace":
+        errors.append(
+            f"worktree_consent_outcome={outcome!r} on change-apply-parallel evidence in {ev_name} "
+            "MUST set degradation_reason: parallel_requires_isolated_workspace "
+            f"(D-ParallelDeclineFallback;got degradation_reason={degradation_reason!r})"
+        )
+
+    return errors
+
+
+def _check_worktree_mode_consistency(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """ADR-013 D-ConsentOutcomeStateMachine new fence:校验 worktree_mode 与
+    worktree_path / worktree_receipt_path 字段共存 invariants。
+
+    - ``mode: in_place`` → worktree_path 禁写;worktree_receipt_path 禁写
+    - ``mode: skill_worktree`` → worktree_path 必写;worktree_receipt_path 禁写
+    - ``mode: wrapper_worktree`` → worktree_path + worktree_receipt_path 都必写
+      (关闭 codex round 1 F2 receipt provenance 漏洞)
+
+    Gating:legacy archived evidence(无 worktree_mode 字段)→ pass-through。
+
+    **Asymmetry note**(P1 code_quality I-1 fix):本 fence **不**对
+    ``triggered_by_command`` 做 gating(与 ``_check_worktree_consent_outcome`` 不同
+    — 后者仅在 ``triggered_by_command ∈ {change-apply-subagent, change-apply-parallel}``
+    时校验语义 invariant)。本 fence 是 **structural** 校验(field co-existence),只要
+    任何 implementation evidence 含 ``worktree_mode`` 字段,就强制结构正确;
+    ``_check_worktree_consent_outcome`` 是 **semantic** 校验(outcome ↔ mode
+    invariant),仅对 change-apply-subagent/parallel evidence 强制。两 fence 分工:
+    structural-always vs semantic-conditional;**不要给本 fence 加 trigger gate**
+    否则 direct evidence 含 mode 字段时结构错误会被静默放过。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+
+    mode = frontmatter.get(_WORKTREE_MODE_FIELD)
+    if mode is None:
+        return errors  # legacy pass-through
+    if not isinstance(mode, str) or mode not in _VALID_WORKTREE_MODES:
+        return errors  # invalid mode caught by _check_worktree_consent_outcome
+
+    ev_name = evidence_path.name
+    worktree_path = frontmatter.get("worktree_path")
+    worktree_receipt_path = frontmatter.get("worktree_receipt_path")
+
+    # P1 code_quality M-1 fix:non-str values(如 int / list)count as "present"
+    # — 短路 OR 第一项 True 让 has_path=True;后续 mode-conditional check 会进
+    # is_path-required 分支并报错(具体的 type-不规范 错误由 v1 _check_worktree_path
+    # 的 isinstance check 兜底)。这是 structural 校验,不在此区分 type 错误 vs missing。
+    has_path = worktree_path is not None and (
+        not isinstance(worktree_path, str) or worktree_path.strip()
+    )
+    has_receipt = worktree_receipt_path is not None and (
+        not isinstance(worktree_receipt_path, str) or worktree_receipt_path.strip()
+    )
+
+    if mode == "in_place":
+        if has_path:
+            errors.append(
+                f"worktree_path={worktree_path!r} present in {ev_name} but worktree_mode=in_place "
+                "(D-ConsentOutcomeStateMachine: in_place mode 禁写 worktree_path)"
+            )
+        if has_receipt:
+            errors.append(
+                f"worktree_receipt_path={worktree_receipt_path!r} present in {ev_name} but worktree_mode=in_place "
+                "(D-ConsentOutcomeStateMachine: in_place mode 禁写 worktree_receipt_path)"
+            )
+    elif mode == "skill_worktree":
+        if not has_path:
+            errors.append(
+                f"worktree_path missing in {ev_name} but worktree_mode=skill_worktree "
+                "(D-ConsentOutcomeStateMachine: skill_worktree mode 必写 worktree_path)"
+            )
+        if has_receipt:
+            errors.append(
+                f"worktree_receipt_path={worktree_receipt_path!r} present in {ev_name} but worktree_mode=skill_worktree "
+                "(D-ConsentOutcomeStateMachine: skill_worktree mode 禁写 receipt)"
+            )
+    elif mode == "wrapper_worktree":
+        if not has_path:
+            errors.append(
+                f"worktree_path missing in {ev_name} but worktree_mode=wrapper_worktree "
+                "(D-ConsentOutcomeStateMachine: wrapper_worktree mode 必写 worktree_path)"
+            )
+        if not has_receipt:
+            errors.append(
+                f"worktree_receipt_path missing in {ev_name} but worktree_mode=wrapper_worktree "
+                "(D-ConsentOutcomeStateMachine: wrapper_worktree mode 必写 receipt; "
+                "关闭 codex round 1 F2 receipt provenance 漏洞)"
+            )
 
     return errors
 
@@ -1388,45 +1730,51 @@ def _check_worktree_path_v2(
     frontmatter: dict,
     change_root: "Path",
 ) -> list[str]:
-    """v2 worktree_path 升级校验:跨检 receipt JSON。
+    """ADR-013 D-RestoreConsentGate + D-ConsentOutcomeStateMachine 重写(2026-05-06)。
 
-    D-W1-ReceiptSchema(enhance-workflow-automation-executable-enforcement):
-    v2 evidence MUST 含 `worktree_receipt_path` 字段(non-null),finish_gate 读
-    receipt JSON 校验:
-    - receipt 文件存在(missing → error)
-    - receipt JSON well-formed(JSONDecodeError → error)
-    - receipt `worktree_path` == evidence frontmatter `worktree_path`(路径标准化后)
-    - receipt `is_isolated_worktree: true`(false 或缺失 → error)
+    legacy archived evidence(无 ``worktree_consent_outcome`` 字段)→ pass-through。
 
-    本 fence 在 v1 fence(_check_worktree_path)通过之后执行额外 v2 校验。
-    仅对 implementation evidence + triggered 在 _WORKTREE_REQUIRED_COMMANDS 内有效。
-    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+    新 ADR-013 v2 evidence(有 ``worktree_consent_outcome`` + ``worktree_mode``):
+    - ``worktree_mode: wrapper_worktree`` → 必读 receipt JSON + cross-check
+      (sourced from archived ADR-012 D-W1-ReceiptSchema):
+        * receipt 文件存在
+        * receipt JSON well-formed
+        * receipt ``worktree_path`` == evidence frontmatter ``worktree_path``(归一比较)
+        * receipt ``is_isolated_worktree: true``
+    - ``worktree_mode: in_place`` 或 ``skill_worktree`` → receipt 校验跳过
+      (skill_worktree 由 ``_check_worktree_mode_consistency`` 守门 receipt 禁写;
+       in_place 同款)
     """
     errors: list[str] = []
     if not _runtime_enforcement_v2_active(frontmatter):
-        return errors  # v1 / legacy evidence pass-through
+        return errors
 
     ev_type = frontmatter.get("evidence_type") or ""
     if ev_type not in _IMPLEMENTATION_EV_TYPES:
         return errors
 
-    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
-    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
-        return errors  # direct / 非 change-apply-* 不强制
+    # ADR-013 legacy gating
+    outcome = frontmatter.get(_WORKTREE_CONSENT_OUTCOME_FIELD)
+    if outcome is None:
+        return errors
+
+    mode = frontmatter.get(_WORKTREE_MODE_FIELD)
+    if not isinstance(mode, str) or mode not in _VALID_WORKTREE_MODES:
+        return errors
+
+    # Only wrapper_worktree mode requires receipt cross-check
+    if mode != "wrapper_worktree":
+        return errors
 
     ev_name = evidence_path.name
-
-    # v2 evidence MUST 含 worktree_receipt_path 字段
     receipt_rel = frontmatter.get("worktree_receipt_path")
     if receipt_rel is None or (isinstance(receipt_rel, str) and not receipt_rel.strip()):
         errors.append(
-            f"worktree_receipt_path field missing from {ev_name} "
-            "(D-W1-ReceiptSchema v2: implementation evidence triggered by "
-            f"{triggered!r} MUST carry worktree_receipt_path field non-null)"
+            f"worktree_receipt_path field missing from {ev_name} but worktree_mode=wrapper_worktree "
+            "(D-W1-ReceiptSchema v2: wrapper_worktree mode MUST carry worktree_receipt_path)"
         )
         return errors
 
-    # 读 receipt 文件(<change>/<receipt_rel>)
     receipt_path = change_root / str(receipt_rel).strip()
     if not receipt_path.is_file():
         errors.append(
@@ -1453,7 +1801,6 @@ def _check_worktree_path_v2(
         )
         return errors
 
-    # 校验 receipt.worktree_path == evidence frontmatter.worktree_path
     receipt_wt = receipt.get("worktree_path") or ""
     fm_wt = frontmatter.get("worktree_path") or ""
     if _normalize_path_str(str(receipt_wt)) != _normalize_path_str(str(fm_wt)):
@@ -1463,7 +1810,6 @@ def _check_worktree_path_v2(
             "(D-W1-ReceiptSchema: receipt and evidence MUST agree on worktree path)"
         )
 
-    # 校验 receipt.is_isolated_worktree == true
     is_isolated = receipt.get("is_isolated_worktree")
     if is_isolated is not True:
         errors.append(

@@ -42,7 +42,7 @@ OpenSpec contract artifact 是项目唯一规范锚点;Superpowers / codex / For
 | `requesting-code-review` | S5-S6 | superpowers_review 增量 + finalize |
 | `verification-before-completion` | S5 | verify_report 输入 |
 | `finishing-a-development-branch` | S9 后 | git 层 merge / PR / discard;不进 evidence |
-| `using-git-worktrees` | **REQUIRED for `/forgeue:change-apply-subagent` + `/forgeue:change-apply-parallel`**(`change-apply-direct` 沿 D-DirectWorktreeRefinement 不强制) | 起 isolated worktree;详 design.md D-Worktree-Detail(commit untracked / cwd 切换 / evidence 同步回主分支) |
+| `using-git-worktrees` | **consent-gated;default decline in implementation;opt-in for bug-fix iteration / explicit isolation**(ADR-013;archived `restore-superpowers-worktree-consent-gate` change)| Step 0 outcome × mode 状态机:`declined + in_place`(default,main repo cwd)/ `accepted + skill_worktree`(skill 自管 worktree)/ `accepted + wrapper_worktree`(opt-in W1 wrapper + receipt)/ `already_isolated + {skill,wrapper}_worktree`(session 已 isolated)/ `sandbox_fallback + in_place`;详 sister skill `subagent-driven-discipline` §3.5 Worktree Consent Policy |
 | `subagent-driven-development` | **default sequential for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational) | 4× LLM 调用;per-task 4 类 evidence + `subagent_budget.log`;ADR-009 与 ADR-007 vendor API 双扣边界**根本不同**;controller-side 40% scenario judgment 见 universal sister skill `subagent-driven-discipline`(8 patterns + growing case studies — model 矩阵 / cwd verify / cross-verify / strict reviewer prompts / cherry-pick recovery / inline fix vs round 2 / skip review boundary / cost-benefit) |
 | `dispatching-parallel-agents` | **for `/forgeue:change-apply-parallel`**(自 `enhance-workflow-automation-runtime-enforcement` change 起;借用 pattern,debugging-focused → implementation 借用) | 并行 dispatch implementer subagents;controller 显式判定 task 独立后路由(`task_independence_assertion: true` + `task_files_disjoint`,命令前自动 verify file overlap)|
 
@@ -75,6 +75,13 @@ Claude 默认拍板执行 + 同步 invoke codex 二次验证。**6 类 fence 无
 
 ## Runtime Enforcement Protocol(ADR-011,自 `enhance-workflow-automation-runtime-enforcement` change 起)
 
+> **⚠️ Superseded note(ADR-013;archived `restore-superpowers-worktree-consent-gate` change 2026-05-06)**:
+> D-WorktreeEnforce mandatory worktree 部分由 ADR-013 D-RestoreConsentGate + D-ConsentOutcomeStateMachine **superseded** —
+> `_check_worktree_path` v1 fence 改 mode-conditional advisory(legacy archived evidence pass-through;ADR-013 evidence 走 outcome × mode 状态机);
+> 加 `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 2 新 fence(沿 ADR-013 D-ConsentOutcomeStateMachine + D-AlreadyIsolatedInvariant);
+> archived ADR-011 evidence replay 不被 false-block(沿 legacy pass-through 兼容意图);
+> 详见本 skill 末尾 "ADR-013 Restore Superpowers Worktree Consent Gate" 段。
+
 **4 fence**(`tools/forgeue_finish_gate.py`):
 
 | Fence | D-decision | evidence frontmatter 检查 |
@@ -82,7 +89,9 @@ Claude 默认拍板执行 + 同步 invoke codex 二次验证。**6 类 fence 无
 | `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp)|
 | `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict(round 1/2 implementer + reviewer ID 一致)|
 | `_check_task_granularity` | D-TaskGranularityDeclaration | `task_granularity` ∈ {phase, per-file, sub-task} |
-| `_check_worktree_path` | D-WorktreeEnforce + D-DirectWorktreeRefinement | `worktree_path` non-null(仅 subagent + parallel 强制;direct 沿 archived 第 5 项 pass-through)|
+| `_check_worktree_path` | D-WorktreeEnforce(superseded by ADR-013)| **mode-conditional advisory**(沿 ADR-013):legacy(无 outcome)→ pass-through;mode in_place → 禁写 worktree_path;mode skill_worktree / wrapper_worktree → 必写 worktree_path |
+| `_check_worktree_consent_outcome` **(新加 ADR-013)** | D-ConsentOutcomeStateMachine + D-AlreadyIsolatedInvariant | `worktree_consent_outcome` ∈ {declined, accepted, already_isolated, sandbox_fallback} + outcome × mode invariant + already_isolated path != main repo |
+| `_check_worktree_mode_consistency` **(新加 ADR-013)** | D-ConsentOutcomeStateMachine | `worktree_mode` ∈ {in_place, skill_worktree, wrapper_worktree} + mode-conditional path/receipt 字段共存 invariant |
 
 **Protocol gating**(D-ProtocolVersionMigration):4 fence 仅对含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效;legacy archived evidence 全 pass-through。
 
@@ -105,6 +114,15 @@ Claude 默认拍板执行 + 同步 invoke codex 二次验证。**6 类 fence 无
 完整规则见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C.7 Runtime Enforcement Protocol。
 
 ## Runtime Enforcement Protocol v2(ADR-012,自 `enhance-workflow-automation-executable-enforcement` change 起)
+
+> **⚠️ Superseded note(ADR-013;archived `restore-superpowers-worktree-consent-gate` change 2026-05-06)**:
+> D-W1-ReceiptSchema mandatory invocation 部分由 ADR-013 D-RestoreConsentGate + D-WrapperDeprecate **superseded** —
+> wrapper(`tools/forgeue_preflight_wrapper.py`)标 deprecated 但 functional;命令模板 default decline 路径不再 mandatory invoke wrapper;
+> 仅 user 显式 opt-in `worktree_mode: wrapper_worktree` 时才调用 wrapper;
+> `_check_worktree_path_v2` fence 改 mode-conditional(仅 wrapper_worktree mode 强制 receipt cross-check;其他 mode pass-through);
+> archived ADR-012 evidence replay 不被 false-block(沿 legacy pass-through);
+> wrapper W7-a bug fix(`_git_repo_root` 改用 `git rev-parse --git-common-dir`)在本 change scope 内;
+> 详见本 skill 末尾 "ADR-013 Restore Superpowers Worktree Consent Gate" 段。
 
 ADR-011 v1 是 advisory not deterministic(R6 限制)— controller 跳过 markdown step 时 subagent 已修改 / finish_gate 是 archive 时才扫,无法 abort dispatch。本 change 升级 v2 为 **executable enforcement layer**(W1 wrapper + W2 actual diff + W3 ledger),关闭 v1 F1/F2/F3 deferred gap。
 
@@ -184,6 +202,44 @@ ADR-011 v1 是 advisory not deterministic(R6 限制)— controller 跳过 markdo
 本 change 引入命令模板 invoke `Skill(subagent-driven-discipline)`(sister skill;Layer 2 wiring)— controller dispatch subagent 前必含 Subagent Discipline preflight(详见 `subagent-driven-discipline/SKILL.md` §3.4 Trigger Type Matrix:Type 1 = 3-stage / Type 2 = parallel / Type 3 = standalone Task / Type 4 = ad-hoc / Type 5 = codex CLI;各自 retrospect intensity)。
 
 完整规则见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2(待 P5 doc sync 落)。
+
+## ADR-013:Restore Superpowers Worktree Consent Gate(自 archived `restore-superpowers-worktree-consent-gate` change 起,2026-05-06)
+
+ADR-011 D-WorktreeEnforce + ADR-012 D-W1-ReceiptSchema 累积引入 ForgeUE-level **MANDATORY worktree enforcement**(命令模板 mandatory invoke + finish_gate `worktree_path` 必填);但 Superpowers upstream `using-git-worktrees` SKILL.md Step 0 含 user-consent gate(用户可 decline → "work in place"),ForgeUE mandatory 实质 override upstream consent gate。**ADR-013 revert mandatory 部分,restore Superpowers upstream Step 0 user-consent gate 行为**。
+
+**4 D-decision**(完整 7 个 + 3 codex round 1/2 writeback 加,详见 archived `restore-superpowers-worktree-consent-gate/design.md`):
+
+- **D-RestoreConsentGate**:命令模板 `change-apply-subagent` + `change-apply-parallel` `## Preflight Worktree` section 改 OPT-IN narrative(MUST invoke `Skill(superpowers:using-git-worktrees)` 沿 upstream cascade,但 default decline → main repo cwd;opt-in for bug-fix iteration / explicit isolation)
+- **D-ConsentOutcomeStateMachine**(codex round 1 F2 + F3 writeback):evidence frontmatter `worktree_consent_outcome` enum + `worktree_mode` enum 必填;outcome × mode 显式状态机替代原 field-presence-conditional 推断
+- **D-AlreadyIsolatedInvariant**(codex round 2 F2 writeback):`already_isolated` 必须 mode ∈ {skill_worktree, wrapper_worktree} + `worktree_path != main_repo`(关闭"已隔离 + main repo cwd 假声 isolated → 重新打开 F1 attribution"漏洞)
+- **D-ParallelDeclineFallback**(codex round 1 F1 writeback):`/forgeue:change-apply-parallel` `declined + in_place` → 自动降级 sequential(无 user prompt;沿 R-no-continue-prompts);关闭"main repo + multi-implementer + W2 attribution"漏洞
+- **D-WrapperDeprecate**:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;命令模板 default decline 路径不再 mandatory invoke;仅 user 显式 opt-in `wrapper_worktree` mode 时调用
+- **D-WrapperBugFixInScope**(codex round 2 F3 writeback):W7-a wrapper bug fix(`_git_repo_root` 改用 `git rev-parse --git-common-dir` — 关闭从 worktree 内调用 wrapper 时 nested target → "Filename too long" 链锁失败漏洞)拨入本 change scope;加 2 unit fence test 守门 regression
+- **D-CrossArchiveADRSupersede**:archived ADR-011/012 evidence 不动(沿"归档即冻结");SRS ADR-011 + ADR-012 加 cross-reference 标 superseded by ADR-013(worktree mandatory parts)
+
+**Outcome × Mode 状态机**(`forgeue_finish_gate.py::_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 守门):
+
+| `worktree_consent_outcome` | `worktree_mode` | 路径 | use case |
+|---|---|---|---|
+| `declined` | `in_place`(强制) | main repo cwd(default)| implementation phase / lightweight change |
+| `accepted` | `skill_worktree` | upstream Superpowers 自管 | 多 implementer 并行 / 大型 feature |
+| `accepted` | `wrapper_worktree` | OPT-IN W1 wrapper + 13-field receipt | 强 audit + provenance |
+| `already_isolated` | `skill_worktree` 或 `wrapper_worktree` | session 已 isolated;`worktree_path != main repo` | cross-session resume / sandbox auto-activate |
+| `sandbox_fallback` | `in_place` | upstream skill sandbox fallback | sandbox 不允许 worktree creation |
+
+**Cross-field invariants**:
+- `declined ↔ in_place`
+- `accepted → mode ∈ {skill_worktree, wrapper_worktree}`
+- `already_isolated → mode ∈ {skill_worktree, wrapper_worktree}`(**禁** `in_place`;W6 codex round 2 F2)+ `worktree_path` 必写且 `realpath != main_repo_root`
+- `mode: in_place` → 禁写 `worktree_path` / `worktree_receipt_path`
+- `mode: skill_worktree` → 必写 `worktree_path`,禁写 `worktree_receipt_path`
+- `mode: wrapper_worktree` → 必写 `worktree_path` + `worktree_receipt_path`
+
+**legacy 兼容**:archived ADR-011/012 evidence 不含 `worktree_consent_outcome` 字段 → 全 fence pass-through(`_runtime_enforcement_active` False 模式 + 新 fence outcome 字段 absent 时直接 return [])。
+
+**Sister skill `subagent-driven-discipline` v2.3 update**:加新 §3.5 Worktree Consent Policy 段(完整 outcome × mode 决策表 + invariant + use case dispatch heuristic);Pattern 2 §3.1 STRICT cwd verify rewrite 为 "when worktree IS used";Case 3 P0+P1 retrospect(13 inline fix;2 new failure mode "sister-file fence test sync drift" + "fence design intent docstring gap")+ §6 catalog 加 2 row。
+
+**完整协议见**:archived `openspec/changes/archive/2026-05-06-restore-superpowers-worktree-consent-gate/`(design.md G11 / G12 / G13 + spec.md state machine 表 + 9 spec scenario 全覆盖)。
 
 ## codex stage hook(design.md §3 / §4 / forgeue_integrated_ai_workflow.md §B.4)
 

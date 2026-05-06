@@ -249,4 +249,19 @@ ADR-011 v1 是 advisory not deterministic(R6 限制)— 本 change 升级 v2 为
 - **Subagent Discipline Layer 2 wiring**:`/forgeue:change-apply-{subagent,parallel}` Preflight 段 MANDATORY invoke `Skill(subagent-driven-discipline)` sister skill(controller-side 40% scenario judgment + Trigger Type Matrix retrospect)
 - **F2/F3 deferred 到 follow-on `enhance-workflow-automation-ledger-binding`**:wrapper-bound dispatch + cryptographic ledger signing(advisory limitation 暴露在 `pre_dispatch_metadata: advisory` + `ledger_forgery_resistance: advisory` 字段)
 
+### Restore Superpowers Worktree Consent Gate(自 archived `restore-superpowers-worktree-consent-gate` change 起,2026-05-06;ADR-013)
+
+ADR-011 D-WorktreeEnforce + ADR-012 D-W1-ReceiptSchema 累积 ForgeUE-level mandatory worktree 实质 override Superpowers upstream `using-git-worktrees` SKILL Step 0 user-consent gate。本 change revert mandatory 部分,restore upstream consent gate;**default decline → main repo cwd**(implementation phase);**opt-in for bug-fix iteration / explicit isolation**(`accepted` outcome → `skill_worktree`/`wrapper_worktree` mode)。
+
+- **D-RestoreConsentGate + D-ConsentOutcomeStateMachine**:命令模板 `/forgeue:change-apply-{subagent,parallel}` `## Preflight Worktree` section MUST invoke `Skill(superpowers:using-git-worktrees)` 沿 upstream cascade,但 Step 0 outcome capture 决定路径。Evidence frontmatter `worktree_consent_outcome` enum + `worktree_mode` enum 必填;`worktree_path` / `worktree_receipt_path` 改 mode-conditional OPTIONAL
+- **D-AlreadyIsolatedInvariant**(codex round 2 F2 writeback):`already_isolated` 必须 mode ∈ {skill_worktree, wrapper_worktree} + `worktree_path != main_repo`(关闭 main repo cwd 假声 isolated → 重新打开 F1 attribution 漏洞)
+- **D-ParallelDeclineFallback**(codex round 1 F1 writeback):`/forgeue:change-apply-parallel` `declined + in_place` → 自动降级 sequential(关闭 main repo + multi-implementer + W2 attribution 漏洞)
+- **新增 2 fence**(`forgeue_finish_gate.py`):`_check_worktree_consent_outcome`(enum + outcome × mode invariant + W6 path != main repo)+ `_check_worktree_mode_consistency`(mode-conditional path/receipt 字段共存)
+- **D-WrapperDeprecate**:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;default decline 路径不再 mandatory invoke;仅 user 显式 opt-in `wrapper_worktree` mode 时调用
+- **D-WrapperBugFixInScope**(codex round 2 F3 writeback):W7-a wrapper bug fix(`_git_repo_root` 改用 `git rev-parse --git-common-dir` — 关闭从 worktree 内调用时 nested target → "Filename too long" 链锁失败)拨入本 change scope + 2 unit fence test 守门 regression
+- **D-CrossArchiveADRSupersede**:archived ADR-011/012 evidence 不动(legacy fence pass-through);SRS ADR table 加 cross-reference 标 superseded by ADR-013(worktree mandatory parts)
+- **Sister skill `subagent-driven-discipline` v2.3 update**:加新 §3.5 Worktree Consent Policy + Pattern 2 §3.1 STRICT cwd verify rewrite + Case 3 P0+P1 retrospect + §6 catalog 加 2 row(sister-file fence test sync drift / fence design intent docstring gap)
+
+完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md) §C.9 + sister skill v2.3 §3.5。
+
 完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)。
