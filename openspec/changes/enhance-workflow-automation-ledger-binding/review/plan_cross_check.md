@@ -26,7 +26,7 @@ skill_cascade_audit:
     - superpowers:brainstorming
   cascade_check_pass_at: 2026-05-06T15:30:00+08:00
 disputed_open: 0
-writeback_commit: pending
+writeback_commit: 58de930
 resolved_at: null
 created_at: 2026-05-06T15:30:00+08:00
 ---

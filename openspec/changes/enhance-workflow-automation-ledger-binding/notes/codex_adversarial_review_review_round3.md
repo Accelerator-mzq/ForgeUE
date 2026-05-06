@@ -23,7 +23,7 @@ findings_count: 4
 findings_severity: high=2, medium=2
 prior_round_status: round 1 closed (commit 81edd63) / round 2 closed (commit d96076f)
 drift_decision: written-back-to-execution_plan.md+micro_tasks.md+spec.md+tasks.md+forgeue_dispatch_ledger.py
-writeback_commit: pending
+writeback_commit: 58de930
 drift_reason: 4 codex round 3 finding 全 valid;round3-F1 cmd_verify dispatch fragile (LLM 改所有行 protocol_version 降级 v2 path);round3-F2 cmd_verify terminal proof 无 CLI input path;round3-F3 writeback-check archived replay 检测漏 micro plan;round3-F4 append 缺 cross-platform file lock
 reasoning_notes_anchor: design.md#reasoning-notes
 created_at: 2026-05-06T15:35:00+08:00

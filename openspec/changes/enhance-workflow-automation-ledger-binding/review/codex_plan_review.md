@@ -22,7 +22,7 @@ review_round: 3
 findings_count: 4
 findings_severity: high=2, medium=2
 drift_decision: written-back-to-execution_plan.md+micro_tasks.md+spec.md+tasks.md+forgeue_dispatch_ledger.py
-writeback_commit: pending
+writeback_commit: 58de930
 drift_reason: 4 codex round 3 finding 全 valid;round3-F1 cmd_verify dispatch fragile;round3-F2 cmd_verify terminal proof 无 CLI input path;round3-F3 writeback-check 漏 micro plan;round3-F4 append 缺 file lock
 reasoning_notes_anchor: design.md#reasoning-notes
 created_at: 2026-05-06T15:35:00+08:00
