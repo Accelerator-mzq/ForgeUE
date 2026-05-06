@@ -21,8 +21,8 @@ review_round: 1
 findings_count: 5
 findings_severity: high=3, medium=2
 drift_decision: written-back-to-design.md+spec.md+tasks.md
-writeback_commit: pending
-drift_reason: 5 codex finding 全 valid;F1 spec/design 文本 contradict;F2 key_rotation WARN 把 unverifiable 当 pass;F3 hash chain 抓不住 tail truncation;F4 audit 字段未 gate 绑定;F5 HMAC 不替代 schema validation
+writeback_commit: 81edd63
+drift_reason: 5 codex round 1 finding 全 valid (round 1 inline writeback commit 81edd63);round 2 加 3 finding 全 closed (commit d96076f);F1 spec/design 文本 contradict;F2 key_rotation WARN 把 unverifiable 当 pass;F3 hash chain 抓不住 tail truncation;F4 audit 字段未 gate 绑定;F5 HMAC 不替代 schema validation;round2-F1+F2+F3 见 review/design_cross_check.md ## E 段
 reasoning_notes_anchor: design.md#reasoning-notes
 created_at: 2026-05-06T13:53:29+08:00
 ---

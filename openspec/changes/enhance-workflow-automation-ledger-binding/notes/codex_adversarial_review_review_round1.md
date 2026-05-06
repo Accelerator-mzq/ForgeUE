@@ -21,7 +21,7 @@ codex_verdict: needs-attention
 findings_count: 5
 findings_severity: high=3, medium=2
 drift_decision: written-back-to-design.md+spec.md+tasks.md
-writeback_commit: pending
+writeback_commit: 81edd63
 drift_reason: 5 codex finding 全 valid;F1 spec/design 文本 contradict (调用前 vs post-dispatch);F2 key_rotation WARN 把 unverifiable 当 pass;F3 hash chain 抓不住 tail truncation;F4 audit 字段未 gate 绑定;F5 HMAC 不替代 schema validation
 reasoning_notes_anchor: design.md#reasoning-notes
 created_at: 2026-05-06T13:53:29+08:00

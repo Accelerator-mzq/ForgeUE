@@ -22,7 +22,7 @@ findings_count: 3
 findings_severity: high=2, medium=1
 prior_round_status: round 1 closed (F1 closed / F2 partial-reopen / F3 closed / F4 closed / F5 closed); round 1 commit 81edd63
 drift_decision: written-back-to-design.md+spec.md+tasks.md+proposal.md
-writeback_commit: pending
+writeback_commit: d96076f
 drift_reason: 3 codex round 2 finding 全 valid;round2-F1 (承 round1-F2) ledger_archived_replay opt-in 仍可被 active change LLM 滥用绕 fail-closed;round2-F2 unknown protocol_version 未定义 → fail-open;round2-F3 (承 round1-F2/F3) proposal.md 与 final contract 不同步
 reasoning_notes_anchor: design.md#reasoning-notes
 created_at: 2026-05-06T14:30:00+08:00
