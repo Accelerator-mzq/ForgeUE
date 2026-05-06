@@ -8,7 +8,7 @@ contract_refs:
   - design.md#decisions
 aligned_with_contract: false
 drift_decision: written-back-to-design
-writeback_commit: pending
+writeback_commit: 9fc4262
 drift_reason: "P0.1.2 archived 4 change finish_gate replay 全 FAIL(blockers 29 个);D-ArchivedReplayCompat 原 PASS 期望与实测矛盾,根因是 finish_gate `_SECTION_HEADING_RE` regex 不匹配 `## P<N>` 格式(pre-existing bug 自 a4334db 起),archived 历史 evidence 内 `## P10` / `## P11` 被解析为 < threshold 触发 tasks_unchecked"
 detected_env: claude-code
 triggered_by: /forgeue:change-apply-direct retire-parallel-and-worktree-fully
