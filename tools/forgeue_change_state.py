@@ -456,6 +456,41 @@ _TARGET_TO_FILE = {
 }
 
 
+def detect_drift_archived_replay_path(
+    change_dir: Path,
+    evidence: list[Path],
+) -> list[DriftRecord]:
+    """检测 active change evidence 含 `ledger_archived_replay: true`(沿 round 2 codex F1 +
+    round 3 codex F3 inline writeback;D-ArchivedReplayPathBoundary writeback-check 早期 drift signal)。
+
+    `ledger_archived_replay: true` 字段仅允许 archived 路径(`openspec/changes/archive/...`)
+    evidence;active change(`openspec/changes/<id>/`,无 archive/ segment)evidence 用此字段
+    = drift signal(LLM 在 active change forge 此字段企图绕 fail-closed)。
+
+    DriftRecord.type:`archived_replay_path_violation`(沿 finish_gate fence 同款 type)
+    """
+    drifts: list[DriftRecord] = []
+    for p in evidence:
+        fm, _ = _common.parse_frontmatter(_read_text(p))
+        if fm.get("ledger_archived_replay") is not True:
+            continue
+        # 校 evidence 文件路径是否含 `archive/` segment
+        resolved = str(p.resolve()).replace("\\", "/")
+        if "/archive/" not in resolved:
+            drifts.append(
+                DriftRecord(
+                    type="archived_replay_path_violation",
+                    file=p.relative_to(change_dir).as_posix() if p.is_relative_to(change_dir) else p.name,
+                    detail=(
+                        "active change evidence 含 ledger_archived_replay: true; "
+                        "仅 archived (openspec/changes/archive/) evidence 允许此字段 "
+                        "(D-ArchivedReplayPathBoundary)"
+                    ),
+                )
+            )
+    return drifts
+
+
 def _resolve_target_path(decision: str, change_dir: Path, repo: Path) -> str | None:
     if not decision.startswith("written-back-to-"):
         return None
@@ -567,6 +602,7 @@ def build_report(
             + detect_drift_anchor(change_dir, evidence)
             + detect_drift_contra(change_dir, evidence)
             + detect_drift_gap(change_dir, evidence)
+            + detect_drift_archived_replay_path(change_dir, evidence)
         )
         fm_issues = collect_frontmatter_issues(change_dir, repo, evidence)
 

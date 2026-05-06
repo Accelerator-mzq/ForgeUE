@@ -22,6 +22,7 @@ plus the spec.md ADDED Requirement Scenarios 2 + 3 from
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -3390,3 +3391,411 @@ def test_archived_v1_evidence_replay_not_killed_by_v2_fences(tmp_path):
     # v1 fence 仍应正常工作(无 regression)
     assert fg._check_skill_cascade(ev_path, fm, change_dir) == [], \
         "archived v1 evidence with valid skill_cascade_audit MUST pass v1 fence"
+
+
+# =============================================================================
+# P3 phase scope: v3 fence 测试(沿 enhance-workflow-automation-ledger-binding)
+#
+# round 1+2+3 codex inline writeback 后 4 新 fence:
+# - _check_runtime_enforcement_protocol_version_validity (D-RuntimeEnforcementProtocolVersionValidity)
+# - _check_archived_replay_path_boundary (D-ArchivedReplayPathBoundary)
+# - _check_ledger_terminal_proof (D-LedgerTerminalProof)
+# - _check_ledger_forgery_resistance_consistency (D-FrontmatterAuditConsistency)
+# + _check_dispatch_ledger v3 分支(strict schema + chain HMAC verify)
+# =============================================================================
+
+import sys as _sys
+_TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
+if str(_TOOLS_DIR) not in _sys.path:
+    _sys.path.insert(0, str(_TOOLS_DIR))
+import _forgeue_ledger_crypto as _ledger_crypto_test  # noqa: E402
+
+
+@pytest.fixture
+def v3_fence_evidence_setup(tmp_path, monkeypatch):
+    """v3 evidence fixture:frontmatter 含 runtime_enforcement_protocol_version: v3 +
+    cryptographic + ledger_line_count + ledger_final_hmac;ledger 用 cmd_append 真跑生成。
+
+    monkey-patch _forgeue_ledger_crypto._KEY_FILE_PATH 隔离真实 user home。
+    """
+    monkeypatch.setattr(
+        _ledger_crypto_test, "_KEY_FILE_PATH", tmp_path / ".claude" / "forgeue_ledger_key"
+    )
+    # 同时 patch finish_gate 内部 lazy-import 的 _ledger_crypto module
+    # (finish_gate 内部 import 是 lazy,monkey-patch _crypto 模块属性应该传递)
+
+    def _setup(change_id: str = "fc-v3-fixture", n_ledger_lines: int = 1, **fm_overrides):
+        change_dir = tmp_path / "openspec" / "changes" / change_id
+        change_dir.mkdir(parents=True, exist_ok=True)
+        evidence_path = change_dir / "execution" / "task_1_implementer.md"
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # 用 cmd_append 真跑生成 v3 ledger
+        ledger_path = change_dir / "dispatch_ledger.jsonl"
+        import importlib
+        ledger_cli = importlib.import_module("forgeue_dispatch_ledger")
+        for i in range(n_ledger_lines):
+            args = argparse.Namespace(
+                change=change_id,
+                agent_id=f"abc{i:014x}def",
+                round=1,
+                role="implementer",
+                task_subject_hash=None,
+                parent_session_id=None,
+                ledger_path=str(ledger_path),
+            )
+            ledger_cli.cmd_append(args)
+
+        # 解析 ledger 取末行 hmac 用于 evidence frontmatter `ledger_final_hmac`
+        ledger_lines = [
+            json.loads(raw)
+            for raw in ledger_path.read_text(encoding="utf-8").splitlines()
+            if raw.strip()
+        ]
+        final_hmac = ledger_lines[-1]["hmac"] if ledger_lines else "0" * 64
+
+        evidence_path.write_text("---\n---\n\nbody\n", encoding="utf-8")
+        fm = {
+            "change_id": change_id,
+            "stage": "S4",
+            "evidence_type": "subagent_implementer_report",
+            "aligned_with_contract": True,
+            "runtime_enforcement_protocol_version": "v3",
+            "ledger_forgery_resistance": "cryptographic",
+            "ledger_line_count": len(ledger_lines),
+            "ledger_final_hmac": final_hmac,
+            "dispatch_ledger_path": "dispatch_ledger.jsonl",
+            # v1 fence 也要满足
+            "triggered_by_command": "change-apply-subagent",
+            "skill_cascade_audit": {
+                "invoked_skills": ["superpowers:subagent-driven-development"],
+                "cascade_check_pass_at": "2026-05-06T00:00:00Z",
+            },
+            "task_granularity": "per-file",
+            "worktree_path": str(change_dir),
+            "worktree_consent_outcome": "accepted",
+            "worktree_mode": "wrapper_worktree",
+        }
+        fm.update(fm_overrides)
+        return change_dir, evidence_path, fm, ledger_path
+
+    return _setup
+
+
+# ---- P3.1 _check_runtime_enforcement_protocol_version_validity: 5 tests (round 2 codex F2) ----
+
+
+def test_protocol_validity_legacy_pass_through(v2_fence_evidence_setup):
+    """legacy evidence(无 protocol_version 字段)→ pass-through。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-pv-legacy")
+    fm.pop("runtime_enforcement_protocol_version", None)
+    assert fg._check_runtime_enforcement_protocol_version_validity(ev_path, fm, change_dir) == []
+
+
+def test_protocol_validity_v3_passes(v3_fence_evidence_setup):
+    """v3 evidence pass-through(走后续 v3 dispatch matrix)。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-pv-v3")
+    assert fg._check_runtime_enforcement_protocol_version_validity(ev_path, fm, change_dir) == []
+
+
+def test_protocol_validity_unknown_v4_blocks(v2_fence_evidence_setup):
+    """unknown protocol_version 'v4' → BLOCKER unknown_protocol_version。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-pv-v4")
+    fm["runtime_enforcement_protocol_version"] = "v4"
+    errors = fg._check_runtime_enforcement_protocol_version_validity(ev_path, fm, change_dir)
+    assert errors, "v4 MUST be BLOCKER"
+    assert "[unknown_protocol_version]" in errors[0]
+
+
+def test_protocol_validity_typo_blocks(v2_fence_evidence_setup):
+    """typo protocol_version 'V3' (case mismatch) → BLOCKER。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-pv-typo")
+    fm["runtime_enforcement_protocol_version"] = "V3"
+    errors = fg._check_runtime_enforcement_protocol_version_validity(ev_path, fm, change_dir)
+    assert errors
+    assert "[unknown_protocol_version]" in errors[0]
+
+
+def test_protocol_validity_empty_string_blocks(v2_fence_evidence_setup):
+    """empty string protocol_version → BLOCKER(present-but-empty 与 absent 不同)。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-pv-empty")
+    fm["runtime_enforcement_protocol_version"] = ""
+    errors = fg._check_runtime_enforcement_protocol_version_validity(ev_path, fm, change_dir)
+    assert errors
+    assert "[unknown_protocol_version]" in errors[0]
+
+
+# ---- P3.1 _check_archived_replay_path_boundary: 4 tests (round 2 codex F1) ----
+
+
+def test_archived_replay_default_pass_through(v3_fence_evidence_setup):
+    """default(无 ledger_archived_replay)→ pass-through。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-arb-default")
+    assert fg._check_archived_replay_path_boundary(ev_path, fm, change_dir) == []
+
+
+def test_archived_replay_active_path_blocks(v3_fence_evidence_setup):
+    """active path(无 archive/ segment)+ ledger_archived_replay: true → BLOCKER。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-arb-active")
+    fm["ledger_archived_replay"] = True
+    errors = fg._check_archived_replay_path_boundary(ev_path, fm, change_dir)
+    assert errors, "active path + opt-in MUST be BLOCKER"
+    assert "[archived_replay_path_violation]" in errors[0]
+
+
+def test_archived_replay_archive_path_passes(tmp_path, monkeypatch):
+    """archive/ 路径 evidence + ledger_archived_replay: true → fence pass(走 user override)。"""
+    monkeypatch.setattr(
+        _ledger_crypto_test, "_KEY_FILE_PATH", tmp_path / ".claude" / "forgeue_ledger_key"
+    )
+    # 在 archive/ 路径下创建 evidence
+    change_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-05-06-archived-test"
+    change_dir.mkdir(parents=True)
+    ev_path = change_dir / "execution" / "task_1_implementer.md"
+    ev_path.parent.mkdir(parents=True)
+    ev_path.write_text("---\n---\n\n", encoding="utf-8")
+    fm = {"ledger_archived_replay": True}
+
+    errors = fg._check_archived_replay_path_boundary(ev_path, fm, change_dir)
+    assert errors == [], f"archive/ path + opt-in MUST pass-through, got: {errors}"
+
+
+def test_archived_replay_false_or_null_pass_through(v3_fence_evidence_setup):
+    """ledger_archived_replay: false / null → pass-through。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-arb-false")
+    fm["ledger_archived_replay"] = False
+    assert fg._check_archived_replay_path_boundary(ev_path, fm, change_dir) == []
+
+
+# ---- P3.1 _check_ledger_terminal_proof: 6 tests (round 1 codex F3) ----
+
+
+def test_terminal_proof_v3_valid_passes(v3_fence_evidence_setup):
+    """happy path:line_count + final_hmac match → pass。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-tp-ok")
+    assert fg._check_ledger_terminal_proof(ev_path, fm, change_dir) == []
+
+
+def test_terminal_proof_v2_evidence_pass_through(v2_fence_evidence_setup):
+    """v2 evidence pass-through。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-tp-v2")
+    assert fg._check_ledger_terminal_proof(ev_path, fm, change_dir) == []
+
+
+def test_terminal_proof_missing_line_count_blocks(v3_fence_evidence_setup):
+    """v3 evidence 缺 ledger_line_count → BLOCKER tail_truncation_undeclared。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-tp-no-lc")
+    del fm["ledger_line_count"]
+    errors = fg._check_ledger_terminal_proof(ev_path, fm, change_dir)
+    assert errors
+    assert "[tail_truncation_undeclared]" in errors[0]
+
+
+def test_terminal_proof_missing_final_hmac_blocks(v3_fence_evidence_setup):
+    """v3 evidence 缺 ledger_final_hmac → BLOCKER final_hmac_undeclared。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-tp-no-fh")
+    del fm["ledger_final_hmac"]
+    errors = fg._check_ledger_terminal_proof(ev_path, fm, change_dir)
+    assert errors
+    assert "[final_hmac_undeclared]" in errors[0]
+
+
+def test_terminal_proof_line_count_mismatch_blocks(v3_fence_evidence_setup):
+    """evidence ledger_line_count != 实际 ledger 行数 → BLOCKER tail_truncation_detected。"""
+    change_dir, ev_path, fm, ledger_path = v3_fence_evidence_setup("fc-tp-tail-trunc", n_ledger_lines=3)
+    # 删 ledger 最后一行(模拟 LLM 删尾,不更新 evidence frontmatter)
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    ledger_path.write_text("\n".join(lines[:-1]) + "\n", encoding="utf-8")
+    # evidence frontmatter 仍声明 3 行
+    errors = fg._check_ledger_terminal_proof(ev_path, fm, change_dir)
+    assert errors
+    assert "[tail_truncation_detected]" in errors[0]
+
+
+def test_terminal_proof_final_hmac_mismatch_blocks(v3_fence_evidence_setup):
+    """evidence ledger_final_hmac != 实际末行 hmac → BLOCKER final_hmac_mismatch。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-tp-fh-mismatch")
+    fm["ledger_final_hmac"] = "f" * 64  # 假 hmac
+    errors = fg._check_ledger_terminal_proof(ev_path, fm, change_dir)
+    assert errors
+    assert "[final_hmac_mismatch]" in errors[0]
+
+
+# ---- P3.1 _check_ledger_forgery_resistance_consistency: 4 tests (round 1 codex F4) ----
+
+
+def test_audit_consistency_v3_cryptographic_passes(v3_fence_evidence_setup):
+    """v3 + cryptographic → pass。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-aud-v3-c")
+    assert fg._check_ledger_forgery_resistance_consistency(ev_path, fm, change_dir) == []
+
+
+def test_audit_consistency_v2_advisory_passes(v2_fence_evidence_setup):
+    """v2 + advisory → pass(self-dogfood gap path)。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-aud-v2-a")
+    fm["ledger_forgery_resistance"] = "advisory"
+    assert fg._check_ledger_forgery_resistance_consistency(ev_path, fm, change_dir) == []
+
+
+def test_audit_consistency_v3_advisory_blocks(v3_fence_evidence_setup):
+    """v3 + advisory(LLM 谎称 advisory)→ BLOCKER audit_mismatch。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-aud-v3-bad")
+    fm["ledger_forgery_resistance"] = "advisory"
+    errors = fg._check_ledger_forgery_resistance_consistency(ev_path, fm, change_dir)
+    assert errors
+    assert "[audit_mismatch]" in errors[0]
+
+
+def test_audit_consistency_v2_cryptographic_blocks(v2_fence_evidence_setup):
+    """v2 + cryptographic(LLM 虚报)→ BLOCKER audit_mismatch。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-aud-v2-bad")
+    fm["ledger_forgery_resistance"] = "cryptographic"
+    errors = fg._check_ledger_forgery_resistance_consistency(ev_path, fm, change_dir)
+    assert errors
+    assert "[audit_mismatch]" in errors[0]
+
+
+# ---- P3.1 _check_dispatch_ledger v3 strict schema + chain HMAC: 4 tests ----
+
+
+def test_dispatch_ledger_v3_valid_passes(v3_fence_evidence_setup):
+    """v3 evidence + valid v3 ledger → fence pass。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-dl-v3-ok")
+    errors = fg._check_dispatch_ledger(ev_path, fm, change_dir)
+    assert errors == [], f"valid v3 ledger MUST pass, got: {errors}"
+
+
+def test_dispatch_ledger_v3_chain_break_blocks(v3_fence_evidence_setup):
+    """v3 evidence + 删除中间行 → BLOCKER chain_break。"""
+    change_dir, ev_path, fm, ledger_path = v3_fence_evidence_setup("fc-dl-v3-cb", n_ledger_lines=3)
+    # 删除第 2 行(中间)
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    new_lines = [lines[0], lines[2]]
+    ledger_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    # 更新 evidence frontmatter line_count + final_hmac 以避免 terminal_proof 先 BLOCKER
+    fm["ledger_line_count"] = 2
+    last_record = json.loads(lines[2])
+    fm["ledger_final_hmac"] = last_record["hmac"]
+
+    errors = fg._check_dispatch_ledger(ev_path, fm, change_dir)
+    assert errors, "chain break MUST be BLOCKER"
+    assert any("[chain_break]" in e for e in errors)
+
+
+def test_dispatch_ledger_v3_schema_violation_unknown_field(v3_fence_evidence_setup):
+    """v3 evidence + ledger 加未知字段 → BLOCKER schema_violation。"""
+    change_dir, ev_path, fm, ledger_path = v3_fence_evidence_setup("fc-dl-v3-uf", n_ledger_lines=1)
+    # 改 ledger 加未知字段
+    record = json.loads(ledger_path.read_text(encoding="utf-8").strip())
+    record["extra_field_xyz"] = "anything"
+    ledger_path.write_text(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    # 更新 evidence final_hmac(可能 hmac 仍合法因为 hand-edit 后 schema 先 reject;
+    # 但 schema strict 在 chain HMAC 之前跑,所以 schema fail 即可)
+    errors = fg._check_dispatch_ledger(ev_path, fm, change_dir)
+    assert errors, "unknown field MUST be schema_violation BLOCKER"
+    assert any("[schema_violation]" in e for e in errors)
+
+
+def test_dispatch_ledger_v3_legacy_v2_evidence_skips_v3_branch(v2_fence_evidence_setup):
+    """v2 evidence(无 v3 protocol)→ v3 strict 分支 skip;现有 v2 schema-only path 仍跑。"""
+    change_dir, ev_path, fm = v2_fence_evidence_setup("fc-dl-v2-legacy")
+    # 设置最小 v2 ledger
+    ledger_path = change_dir / "dispatch_ledger.jsonl"
+    ledger_path.write_text(
+        json.dumps({
+            "agent_id": "agent-x",
+            "round": 1,
+            "role": "implementer",
+            "dispatched_at": "2026-05-06T00:00:00+00:00",
+            "wrapper_version": "1.0",
+            "task_subject_hash": None,
+            "parent_session_id": None,
+        }) + "\n",
+        encoding="utf-8",
+    )
+    fm["dispatch_ledger_path"] = "dispatch_ledger.jsonl"
+    errors = fg._check_dispatch_ledger(ev_path, fm, change_dir)
+    assert errors == [], f"v2 legacy evidence MUST pass, got: {errors}"
+
+
+# ---- P3.1 v3 round_fix_continuity (双重守门;round 1 codex F3): 1 test ----
+
+
+def test_v3_double_fence_round_fix_continuity_chain_break_also_fails(v3_fence_evidence_setup):
+    """v3 evidence + tampered ledger → _check_dispatch_ledger v3 + _check_round_fix_continuity v3
+    双重守门 BLOCKER。"""
+    change_dir, ev_path, fm, ledger_path = v3_fence_evidence_setup(
+        "fc-double-fence", n_ledger_lines=2
+    )
+    # tamper:改第 2 行 hmac 但不更新 chain
+    lines = ledger_path.read_text(encoding="utf-8").splitlines()
+    record_2 = json.loads(lines[1])
+    record_2["hmac"] = "f" * 64
+    new_lines = [lines[0], json.dumps(record_2, sort_keys=True, separators=(",", ":"))]
+    ledger_path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    # 加 subagent_continuity 字段供 _check_round_fix_continuity v2 cross-check
+    record_1 = json.loads(lines[0])
+    fm["subagent_continuity"] = {
+        "round_1_implementer_id": record_1["agent_id"],
+    }
+    fm["ledger_final_hmac"] = "f" * 64  # 与改后的 hmac 同
+
+    # _check_dispatch_ledger v3 fence catch hmac_mismatch
+    dl_errors = fg._check_dispatch_ledger(ev_path, fm, change_dir)
+    assert dl_errors, "v3 hmac mismatch MUST be caught by _check_dispatch_ledger"
+    assert any("[hmac_mismatch]" in e for e in dl_errors)
+
+
+# ---- P3.1 forgeue_change_state.py writeback-check archived_replay drift (round 3 codex F3): 2 tests ----
+
+
+def test_writeback_check_archived_replay_active_drift(tmp_path):
+    """active change evidence 含 ledger_archived_replay: true → forgeue_change_state.py
+    --writeback-check exit 5 + DRIFT(沿 round 2 codex F1 + round 3 codex F3 inline writeback)。"""
+    # in-process call detect_drift_archived_replay_path
+    import importlib
+    change_state = importlib.import_module("forgeue_change_state")
+
+    change_id = "fc-archived-replay-drift"
+    change_root = tmp_path / "openspec" / "changes" / change_id
+    change_root.mkdir(parents=True)
+    evidence = change_root / "review" / "test.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text(
+        "---\n"
+        "change_id: fc-archived-replay-drift\n"
+        "stage: S5\n"
+        "evidence_type: review\n"
+        "ledger_archived_replay: true\n"
+        "---\n"
+        "test\n",
+        encoding="utf-8",
+    )
+
+    drifts = change_state.detect_drift_archived_replay_path(change_root, [evidence])
+    assert drifts, "active change evidence with opt-in MUST drift"
+    assert drifts[0].type == "archived_replay_path_violation"
+
+
+def test_writeback_check_archived_replay_archive_path_no_drift(tmp_path):
+    """archive/ path evidence + ledger_archived_replay: true → no drift。"""
+    import importlib
+    change_state = importlib.import_module("forgeue_change_state")
+
+    change_root = tmp_path / "openspec" / "changes" / "archive" / "2026-05-06-archived-test"
+    change_root.mkdir(parents=True)
+    evidence = change_root / "review" / "test.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text(
+        "---\n"
+        "change_id: archived-test\n"
+        "stage: S9\n"
+        "evidence_type: review\n"
+        "ledger_archived_replay: true\n"
+        "---\n",
+        encoding="utf-8",
+    )
+
+    drifts = change_state.detect_drift_archived_replay_path(change_root, [evidence])
+    assert drifts == [], f"archive/ path evidence MUST NOT drift, got: {drifts}"

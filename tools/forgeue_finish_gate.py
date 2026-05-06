@@ -168,6 +168,23 @@ _SUBAGENT_STYLE_DISPATCH_VALUES: frozenset[str] = frozenset({
 _RUNTIME_ENFORCEMENT_VERSION_FIELD = "runtime_enforcement_protocol_version"
 _RUNTIME_ENFORCEMENT_VERSION_VALUE = "v1"
 _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2 = "v2"
+_RUNTIME_ENFORCEMENT_VERSION_VALUE_V3 = "v3"  # enhance-workflow-automation-ledger-binding
+
+# v3 protocol version validity gate(沿 D-RuntimeEnforcementProtocolVersionValidity;
+# round 2 codex F2 inline writeback);unknown value → BLOCKER `unknown_protocol_version`
+_VALID_PROTOCOL_VERSIONS: frozenset[str] = frozenset({
+    _RUNTIME_ENFORCEMENT_VERSION_VALUE,  # "v1"
+    _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2,  # "v2"
+    _RUNTIME_ENFORCEMENT_VERSION_VALUE_V3,  # "v3"
+})
+
+# v3 ledger forgery resistance audit field(沿 D-FrontmatterAuditConsistency;
+# round 1 codex F4 inline writeback);v3 ↔ cryptographic / v2 ↔ advisory 强 enum
+_LEDGER_FORGERY_RESISTANCE_FIELD = "ledger_forgery_resistance"
+_AUDIT_CONSISTENCY_MAP: dict[str, str] = {
+    _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2: "advisory",
+    _RUNTIME_ENFORCEMENT_VERSION_VALUE_V3: "cryptographic",
+}
 
 # task_granularity 字段合法枚举值(design.md D-TaskGranularityDeclaration)
 _TASK_GRANULARITY_VALUES: frozenset[str] = frozenset({"phase", "per-file", "sub-task"})
@@ -894,11 +911,22 @@ def check_frontmatter_protocol(
                 Blocker(type="parallel_decline_fallback_violation", detail=err, file=rel)
             )
 
+        # enhance-workflow-automation-ledger-binding:protocol_version validity gate
+        # (D-RuntimeEnforcementProtocolVersionValidity;round 2 codex F2 inline writeback)
+        # 此 fence MUST 在所有 protocol-version-dependent fence 之前跑(防 unknown
+        # value silent skip);沿 _VALID_PROTOCOL_VERSIONS = {"v1", "v2", "v3"}。
+        for err in _check_runtime_enforcement_protocol_version_validity(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
+            )
+
         # enhance-workflow-automation-executable-enforcement:v2 runtime fence
         # (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
         # v2 fence 仅对 `runtime_enforcement_protocol_version: v2` evidence 生效;
         # v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
-        if _runtime_enforcement_v2_active(fm):
+        # **v3 evidence**:_check_dispatch_ledger v2 path 走完(timestamp 单调 + wrapper_version)
+        # + 内部 v3 分支跑 strict schema + chain HMAC(沿 round 1 codex F5 + round 3 codex F1+F2 inline writeback)
+        if _runtime_enforcement_v2_active(fm) or _runtime_enforcement_v3_active(fm):
             for err in _check_worktree_path_v2(ev, fm, change_dir):
                 blockers.append(
                     Blocker(type="worktree_path_v2_violation", detail=err, file=rel)
@@ -912,6 +940,24 @@ def check_frontmatter_protocol(
                     Blocker(type="file_overlap_actual_violation", detail=err, file=rel)
                 )
             for err in _check_dispatch_ledger(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
+                )
+
+        # enhance-workflow-automation-ledger-binding:v3 runtime fence
+        # (D-LedgerTerminalProof + D-FrontmatterAuditConsistency + D-ArchivedReplayPathBoundary)
+        # v3 fence 仅对 `runtime_enforcement_protocol_version: v3` evidence 生效;
+        # v1/v2/legacy evidence pass-through v3 fence。
+        if _runtime_enforcement_v3_active(fm):
+            for err in _check_ledger_terminal_proof(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
+                )
+            for err in _check_ledger_forgery_resistance_consistency(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
+                )
+            for err in _check_archived_replay_path_boundary(ev, fm, change_dir):
                 blockers.append(
                     Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
                 )
@@ -1189,6 +1235,18 @@ def _runtime_enforcement_v2_active(frontmatter: dict) -> bool:
     的 evidence 生效;v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
     """
     return frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD) == _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2
+
+
+def _runtime_enforcement_v3_active(frontmatter: dict) -> bool:
+    """检查 evidence 是否声明加载 runtime enforcement protocol v3。
+
+    D-FenceDispatchMatrix(enhance-workflow-automation-ledger-binding):
+    v3 fence(ledger_terminal_proof / ledger_forgery_resistance_consistency /
+    runtime_enforcement_protocol_version_validity / archived_replay_path_boundary)
+    仅对 frontmatter 含 ``runtime_enforcement_protocol_version: v3`` 的 evidence 生效;
+    v1/v2/legacy evidence pass-through v3 fence。
+    """
+    return frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD) == _RUNTIME_ENFORCEMENT_VERSION_VALUE_V3
 
 
 def _check_skill_cascade(
@@ -2059,7 +2117,9 @@ def _check_dispatch_ledger(
     Maintenance contract:每次改 `cmd_verify` MUST 同步 review 本函数。
     """
     errors: list[str] = []
-    if not _runtime_enforcement_v2_active(frontmatter):
+    # v2 + v3 evidence 都进入此 fence(沿 enhance-workflow-automation-ledger-binding;
+    # round 1+2+3 codex inline writeback);v3 走 strict schema + chain HMAC + key rotation
+    if not (_runtime_enforcement_v2_active(frontmatter) or _runtime_enforcement_v3_active(frontmatter)):
         return errors  # v1 / legacy evidence pass-through
 
     ev_name = evidence_path.name
@@ -2125,6 +2185,273 @@ def _check_dispatch_ledger(
         if ts:
             prev_ts = ts
 
+    # v3 升级(沿 enhance-workflow-automation-ledger-binding;round 1+2+3 codex inline writeback):
+    # 若 evidence 是 v3 协议 → 加 strict 11-field schema + chain HMAC verify(D-Scope-F3-MergeWithP12.8 +
+    # D-HashChain + D-KeyRotationHandling)
+    if _runtime_enforcement_v3_active(frontmatter):
+        # 重新解析 ledger 全行(过滤空行)
+        v3_lines: list[dict] = []
+        for raw in ledger_text.splitlines():
+            if raw.strip():
+                try:
+                    v3_lines.append(json.loads(raw))
+                except json.JSONDecodeError:
+                    pass  # 上面 v2 loop 已经报错;跳过
+
+        # import _forgeue_ledger_crypto(沿 dispatch_ledger 同款 sys.path 加 tools/)
+        try:
+            from . import _forgeue_ledger_crypto as _ledger_crypto  # type: ignore[import-not-found]
+        except ImportError:
+            import sys as _sys
+            _tools_dir = str(Path(__file__).resolve().parent)
+            if _tools_dir not in _sys.path:
+                _sys.path.insert(0, _tools_dir)
+            import _forgeue_ledger_crypto as _ledger_crypto  # type: ignore[no-redef]
+
+        # strict 11-field schema(D-Scope-F3-MergeWithP12.8;round 1 codex F5 scope expansion)
+        sstatus, smsg = _ledger_crypto.verify_strict_schema_v3(v3_lines)
+        if sstatus != "ok":
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} in {ev_name}: [schema_violation] {smsg} "
+                "(D-Scope-F3-MergeWithP12.8: v3 ledger MUST satisfy strict 11-field schema)"
+            )
+            return errors
+
+        # chain HMAC verify + key rotation 双路径(D-HashChain + D-KeyRotationHandling)
+        try:
+            key, _key_id = _ledger_crypto.load_or_init_key()
+        except SystemExit as exc:
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} in {ev_name}: HMAC key load failed "
+                f"(exit {exc.code}); 沿 D-KeyRotationHandling state 'corrupted' fail-closed"
+            )
+            return errors
+
+        cstatus, cmsg = _ledger_crypto.verify_chain_v3(key, v3_lines, frontmatter)
+        if cstatus != "ok":
+            # key_rotation_user_override_required 是合法 archived replay 路径(WARN);
+            # 其他 status 全 BLOCKER
+            if cstatus == "key_rotation_user_override_required":
+                # finish_gate 自身**不**接受此 status 自动 pass;由 evidence frontmatter
+                # `ledger_archived_replay: true` + cmd_verify --allow-archived-replay 双重 opt-in
+                # 触发(沿 D-ArchivedReplayPathBoundary);finish_gate 看到这个 status 时,
+                # 由 _check_archived_replay_path_boundary fence 检验路径合法性后才放行
+                if frontmatter.get("ledger_archived_replay") is True:
+                    pass  # 接受 user override(_check_archived_replay_path_boundary 校路径)
+                else:
+                    errors.append(
+                        f"dispatch_ledger {ledger_rel!r} in {ev_name}: [key_id_mismatch] "
+                        f"{cmsg} (D-KeyRotationHandling default fail-closed; "
+                        "若需 archived replay,evidence frontmatter 加 ledger_archived_replay: true 且文件在 archive/ 路径)"
+                    )
+            else:
+                errors.append(
+                    f"dispatch_ledger {ledger_rel!r} in {ev_name}: [{cstatus}] {cmsg}"
+                )
+
+    return errors
+
+
+def _check_runtime_enforcement_protocol_version_validity(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """`runtime_enforcement_protocol_version` 字段值合法性 fence(沿 D-RuntimeEnforcementProtocolVersionValidity;
+    round 2 codex F2 inline writeback)。
+
+    Dispatch matrix:
+    - 字段缺失(legacy)→ pass-through(全 v1/v2/v3 fence skip)
+    - 字段值 in `_VALID_PROTOCOL_VERSIONS = {"v1", "v2", "v3"}` → 走对应 fence
+    - 字段值 present 但不在 frozenset 内(`v4` / typo / empty / null)→ BLOCKER `unknown_protocol_version`
+
+    **核心 invariant**:fence skip 必须由 absence 决定,**不能**由 invalid value 决定
+    (LLM 写错值不应该意外 unlock fence skip)。
+
+    此 fence SHALL 在所有 protocol-version-dependent fence 之前跑(防 unknown value silent skip)。
+    """
+    errors: list[str] = []
+    if _RUNTIME_ENFORCEMENT_VERSION_FIELD not in frontmatter:
+        return errors  # legacy pass-through
+
+    value = frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD)
+    if value in _VALID_PROTOCOL_VERSIONS:
+        return errors  # v1 / v2 / v3 → 走后续 dispatch matrix
+
+    ev_name = evidence_path.name
+    errors.append(
+        f"[unknown_protocol_version] {ev_name}: "
+        f"runtime_enforcement_protocol_version={value!r} not in valid set "
+        f"{sorted(_VALID_PROTOCOL_VERSIONS)}; fence skip MUST come from absence not invalid value "
+        "(D-RuntimeEnforcementProtocolVersionValidity)"
+    )
+    return errors
+
+
+def _check_archived_replay_path_boundary(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """`ledger_archived_replay: true` 字段使用边界 fence(沿 D-ArchivedReplayPathBoundary;
+    round 2 codex F1 inline writeback)。
+
+    字段使用规则:
+    - 缺失 / `false` / `null` → pass-through(default)
+    - `true` + evidence 文件路径含 `archive/` segment → 接受(走 D-KeyRotationHandling user override)
+    - `true` + evidence 文件路径不含 `archive/` segment(active change)→ BLOCKER
+
+    **核心 invariant**:archived replay 路径不仅要 user explicit opt-in(双 flag),还要 evidence
+    物理位置在 archive/ 目录(物证驱动);LLM 即使 forge frontmatter,只要 evidence 不在 archive/ 段,
+    fence BLOCKER。
+    """
+    errors: list[str] = []
+    if frontmatter.get("ledger_archived_replay") is not True:
+        return errors  # default pass-through
+
+    ev_name = evidence_path.name
+    # 校 evidence 文件路径是否含 `archive/` segment(沿 D-ArchivedReplayPathBoundary)
+    resolved_path = str(evidence_path.resolve()).replace("\\", "/")
+    if "/archive/" not in resolved_path:
+        errors.append(
+            f"[archived_replay_path_violation] {ev_name}: evidence path "
+            f"{resolved_path!r} does not contain 'archive/' segment but "
+            "ledger_archived_replay=true; archived replay opt-in only allowed for "
+            "archived evidence (D-ArchivedReplayPathBoundary)"
+        )
+    return errors
+
+
+def _check_ledger_terminal_proof(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """v3 ledger terminal proof fence(沿 D-LedgerTerminalProof;round 1 codex F3 inline writeback)。
+
+    抓 tail truncation attack — hash chain 抓不住"删除最后 N 行"(剩余前缀仍是合法链);
+    evidence frontmatter `ledger_line_count` + `ledger_final_hmac` 是 audit anchor。
+
+    校验:
+    - v3 evidence 缺 `ledger_line_count` 字段 → BLOCKER `tail_truncation_undeclared`
+    - v3 evidence 缺 `ledger_final_hmac` 字段 → BLOCKER `final_hmac_undeclared`
+    - 字段 format 不对(line_count 非正整数 / final_hmac 非 64 hex)→ BLOCKER
+    - evidence `ledger_line_count` ≠ 实际 ledger 非空行数 → BLOCKER `tail_truncation_detected`
+    - evidence `ledger_final_hmac` ≠ 实际 ledger 最后一行 hmac → BLOCKER `final_hmac_mismatch`
+
+    仅对 v3 evidence 生效(v1/v2/legacy pass-through)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v3_active(frontmatter):
+        return errors  # v1/v2/legacy pass-through
+
+    ev_name = evidence_path.name
+
+    # ledger_line_count 字段必填 + 必须正整数
+    line_count = frontmatter.get("ledger_line_count")
+    if line_count is None:
+        errors.append(
+            f"[tail_truncation_undeclared] {ev_name}: v3 evidence MUST carry "
+            "ledger_line_count field (D-LedgerTerminalProof)"
+        )
+        return errors  # 缺 line_count 无法校 cross-check
+    if isinstance(line_count, bool) or not isinstance(line_count, int) or line_count < 1:
+        errors.append(
+            f"[tail_truncation_undeclared] {ev_name}: ledger_line_count MUST be "
+            f"positive int, got {line_count!r}"
+        )
+        return errors
+
+    # ledger_final_hmac 字段必填 + 必须 64 hex chars
+    final_hmac = frontmatter.get("ledger_final_hmac")
+    if final_hmac is None:
+        errors.append(
+            f"[final_hmac_undeclared] {ev_name}: v3 evidence MUST carry "
+            "ledger_final_hmac field (D-LedgerTerminalProof)"
+        )
+        return errors
+    if not isinstance(final_hmac, str) or not re.match(r"^[a-f0-9]{64}$", final_hmac):
+        errors.append(
+            f"[final_hmac_undeclared] {ev_name}: ledger_final_hmac MUST match "
+            f"^[a-f0-9]{{64}}$, got {final_hmac!r}"
+        )
+        return errors
+
+    # cross-check 实际 ledger
+    ledger_rel = frontmatter.get("dispatch_ledger_path")
+    if not ledger_rel:
+        # v3 evidence 应该也有 dispatch_ledger_path(沿 v2 同款);若缺,_check_dispatch_ledger 会另报
+        return errors
+
+    ledger_path = change_root / str(ledger_rel).strip()
+    if not ledger_path.is_file():
+        # _check_dispatch_ledger 已报缺失;此处 skip
+        return errors
+
+    try:
+        ledger_text = ledger_path.read_text(encoding="utf-8")
+    except OSError:
+        return errors  # 读失败由 _check_dispatch_ledger 处理
+
+    # 解析非空行
+    actual_lines: list[dict] = []
+    for raw in ledger_text.splitlines():
+        if raw.strip():
+            try:
+                actual_lines.append(json.loads(raw))
+            except json.JSONDecodeError:
+                pass
+
+    actual_count = len(actual_lines)
+    if actual_count != line_count:
+        errors.append(
+            f"[tail_truncation_detected] {ev_name}: declared ledger_line_count={line_count}, "
+            f"actual={actual_count} (D-LedgerTerminalProof)"
+        )
+        return errors
+
+    if actual_lines:
+        actual_final_hmac = actual_lines[-1].get("hmac", "")
+        if actual_final_hmac != final_hmac:
+            errors.append(
+                f"[final_hmac_mismatch] {ev_name}: declared ledger_final_hmac={final_hmac!r}, "
+                f"actual={actual_final_hmac!r} (D-LedgerTerminalProof)"
+            )
+
+    return errors
+
+
+def _check_ledger_forgery_resistance_consistency(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """`ledger_forgery_resistance` 字段与 `runtime_enforcement_protocol_version` 强 enum 绑定 fence
+    (沿 D-FrontmatterAuditConsistency;round 1 codex F4 inline writeback)。
+
+    审计字段必须与协议版本一致:
+    - v2 evidence ↔ `ledger_forgery_resistance: advisory`
+    - v3 evidence ↔ `ledger_forgery_resistance: cryptographic`
+    - v1 / legacy evidence pass-through
+
+    不匹配 → BLOCKER `frontmatter_audit_inconsistency`(防 LLM 谎称 cryptographic 实际 advisory,
+    或 v3 evidence 自降级为 advisory)。
+    """
+    errors: list[str] = []
+    version = frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD)
+    if version not in _AUDIT_CONSISTENCY_MAP:
+        return errors  # v1 / legacy / unknown 不强制(unknown 由
+                       # _check_runtime_enforcement_protocol_version_validity 单独 BLOCKER)
+
+    expected = _AUDIT_CONSISTENCY_MAP[version]
+    actual = frontmatter.get(_LEDGER_FORGERY_RESISTANCE_FIELD)
+    if actual != expected:
+        ev_name = evidence_path.name
+        errors.append(
+            f"[audit_mismatch] {ev_name}: runtime_enforcement_protocol_version={version!r} "
+            f"requires ledger_forgery_resistance: {expected!r}, got {actual!r} "
+            "(D-FrontmatterAuditConsistency)"
+        )
     return errors
 
 
