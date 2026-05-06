@@ -1216,14 +1216,21 @@ def _check_autonomy_boundary(
 
 
 def _runtime_enforcement_active(frontmatter: dict) -> bool:
-    """检查 evidence 是否声明加载 runtime enforcement protocol v1 或 v2。
+    """检查 evidence 是否声明加载 runtime enforcement protocol v1 / v2 / v3。
 
     D-ProtocolVersionMigration:v1 fence(skill_cascade / round_fix_continuity /
-    task_granularity / worktree_path)对 v1 + v2 evidence 都生效(v2 ⊇ v1);
+    task_granularity / worktree_path / worktree_consent_outcome / worktree_mode_consistency /
+    parallel_decline_fallback)对 v1 + v2 + v3 evidence 都生效(v3 ⊇ v2 ⊇ v1);
     legacy evidence(无此字段)→ 全 fence pass-through。
+
+    **enhance-workflow-automation-ledger-binding round 4 codex /codex:review --base main P1
+    inline writeback**(2026-05-06):原版本 `version in (v1, v2)` 漏 v3,导致 v3 evidence 跳过
+    v1 fence(skill_cascade / task_granularity / worktree_path 等);改为 `version in
+    _VALID_PROTOCOL_VERSIONS`(沿 D-RuntimeEnforcementProtocolVersionValidity canonical frozenset),
+    确保 v3 evidence 继承 v1 fence 全集。
     """
     version = frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD)
-    return version in (_RUNTIME_ENFORCEMENT_VERSION_VALUE, _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2)
+    return version in _VALID_PROTOCOL_VERSIONS
 
 
 def _runtime_enforcement_v2_active(frontmatter: dict) -> bool:

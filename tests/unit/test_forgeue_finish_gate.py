@@ -3799,3 +3799,45 @@ def test_writeback_check_archived_replay_archive_path_no_drift(tmp_path):
 
     drifts = change_state.detect_drift_archived_replay_path(change_root, [evidence])
     assert drifts == [], f"archive/ path evidence MUST NOT drift, got: {drifts}"
+
+
+# ---- P5 codex /codex:review --base main P1 inline writeback regression ----
+#
+# Codex /codex:review --base main raised P1 finding (2026-05-06): v3 evidence 跳过
+# v1 fence (skill_cascade / task_granularity / worktree_path 等),因为 _runtime_enforcement_active
+# 只接受 v1/v2 不接受 v3。修复后 v3 ⊇ v2 ⊇ v1。本 regression 测试守门 fix 不被未来回退。
+
+
+def test_runtime_enforcement_active_accepts_v1_v2_v3(v3_fence_evidence_setup):
+    """v1 / v2 / v3 evidence 都被 _runtime_enforcement_active 接受(沿 P5 codex review P1 inline writeback)。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-rea-v3")
+    assert fg._runtime_enforcement_active(fm) is True, \
+        "v3 evidence MUST be runtime_enforcement_active (沿 codex P1 finding fix)"
+
+
+def test_runtime_enforcement_active_rejects_legacy_and_unknown():
+    """legacy(无字段)+ unknown value 都被 _runtime_enforcement_active 拒(沿 v1/v2/v3 frozenset)。"""
+    fm_legacy = {"change_id": "test"}  # 无 runtime_enforcement_protocol_version 字段
+    fm_unknown = {"runtime_enforcement_protocol_version": "v4"}
+    fm_typo = {"runtime_enforcement_protocol_version": "V3"}  # 大小写不一致
+    assert fg._runtime_enforcement_active(fm_legacy) is False
+    assert fg._runtime_enforcement_active(fm_unknown) is False
+    assert fg._runtime_enforcement_active(fm_typo) is False
+
+
+def test_v3_evidence_inherits_v1_fence_skill_cascade(v3_fence_evidence_setup):
+    """v3 evidence 缺 skill_cascade_audit 字段 → v1 fence skill_cascade BLOCKER
+    (沿 P5 codex review P1 inline writeback;v3 ⊇ v1 fence inheritance)。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-v3-cascade")
+    # 删 skill_cascade_audit 字段(v1 fence skill_cascade 检测)
+    del fm["skill_cascade_audit"]
+    errors = fg._check_skill_cascade(ev_path, fm, change_dir)
+    assert errors, "v3 evidence MUST inherit v1 _check_skill_cascade fence (沿 codex P1 finding fix)"
+
+
+def test_v3_evidence_inherits_v1_fence_task_granularity(v3_fence_evidence_setup):
+    """v3 evidence 缺 task_granularity 字段 → v1 fence task_granularity BLOCKER。"""
+    change_dir, ev_path, fm, _ = v3_fence_evidence_setup("fc-v3-tg")
+    del fm["task_granularity"]
+    errors = fg._check_task_granularity(ev_path, fm, change_dir)
+    assert errors, "v3 evidence MUST inherit v1 _check_task_granularity fence"
