@@ -170,23 +170,96 @@ def _parse_yaml_subset(lines: list[str]) -> dict[str, Any]:
             continue
 
         if rstrip_val == "":
-            items: list[Any] = []
+            # 空值 — 决定是 list、nested mapping 还是 empty mapping。
+            # 前看下一非空缩进行:`- item` 头 → list;`subkey: ...` → nested
+            # mapping(enhance-workflow-automation-runtime-enforcement 加;
+            # 支持 subagent_continuity / skill_cascade_audit 等 dict 字段)
+            j = i + 1
+            while j < n and not lines[j].strip():
+                j += 1
+            is_list = (
+                j < n
+                and lines[j].startswith((" ", "\t"))
+                and lines[j].lstrip(" \t").startswith("- ")
+            )
+            if is_list:
+                items: list[Any] = []
+                i += 1
+                while i < n:
+                    line2 = lines[i]
+                    if not line2.strip():
+                        i += 1
+                        continue
+                    stripped = line2.lstrip(" ")
+                    indent = len(line2) - len(stripped)
+                    if indent == 0:
+                        break
+                    if stripped.startswith("- "):
+                        # F2 round 1 codex mixed-scope inline writeback:
+                        # list-of-mapping 支持(沿 v2 task_files_actual / task_files_disjoint
+                        # 模板 `- implementer_agent_id: <id>` + `files: [...]` 子段);
+                        # 原实现把 `- ...` 直接 _parse_scalar 当 scalar,后续缩进 sub-key 被跳过。
+                        item_first = stripped[2:]  # "- " 后内容
+                        # 判断是 mapping start("key: value" 或 "key:" + 后续缩进)还是 scalar
+                        first_is_mapping = (
+                            ":" in item_first
+                            and not item_first.lstrip().startswith("[")  # 排除 flow list
+                            and not item_first.lstrip().startswith("{")  # 排除 flow dict
+                        )
+                        if first_is_mapping:
+                            # 收集本 list item 的所有行(从 `- key: ...` + 后续 deeper-indented 行)
+                            # `- key: value` 的 hyphen 占用 2 列;sub-key 缩进 = item indent + 2
+                            item_indent = indent
+                            item_lines = [item_first]  # 第一行去掉 "- " 后内容
+                            i += 1
+                            while i < n:
+                                line3 = lines[i]
+                                if not line3.strip():
+                                    item_lines.append("")
+                                    i += 1
+                                    continue
+                                stripped3 = line3.lstrip(" ")
+                                indent3 = len(line3) - len(stripped3)
+                                if indent3 <= item_indent:
+                                    break  # 下一 list item OR 退出 list
+                                # sub-key in this item — strip item_indent + 2 spaces
+                                item_lines.append(line3[item_indent + 2:])
+                                i += 1  # F2 fix bug fix:漏 i += 1 致死循环 + 内存爆炸 17GB
+                            # 递归 parse 本 item 的 sub-keys(F2 fix:_parse_yaml_subset 签名是 list[str] 不是 string)
+                            items.append(_parse_yaml_subset(item_lines))
+                        else:
+                            items.append(_parse_scalar(item_first))
+                            i += 1
+                    else:
+                        i += 1
+                result[key] = items
+                continue
+            # Nested mapping:收集所有缩进行 + dedent + 递归解析
+            sub_lines: list[str] = []
+            base_indent: int | None = None
             i += 1
             while i < n:
                 line2 = lines[i]
                 if not line2.strip():
+                    sub_lines.append("")
                     i += 1
                     continue
-                stripped = line2.lstrip(" ")
-                indent = len(line2) - len(stripped)
+                indent = len(line2) - len(line2.lstrip(" "))
                 if indent == 0:
                     break
-                if stripped.startswith("- "):
-                    items.append(_parse_scalar(stripped[2:]))
-                    i += 1
-                else:
-                    i += 1
-            result[key] = items
+                if base_indent is None:
+                    base_indent = indent
+                if indent < base_indent:
+                    break
+                sub_lines.append(line2[base_indent:])
+                i += 1
+            if sub_lines:
+                # 移除末尾空行避免误判
+                while sub_lines and not sub_lines[-1].strip():
+                    sub_lines.pop()
+                result[key] = _parse_yaml_subset(sub_lines) if sub_lines else {}
+            else:
+                result[key] = {}
             continue
 
         result[key] = _parse_scalar(rstrip_val)

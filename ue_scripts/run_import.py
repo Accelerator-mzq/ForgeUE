@@ -30,12 +30,17 @@ import evidence_writer  # noqa: E402
 import domain_texture   # noqa: E402
 import domain_audio     # noqa: E402
 import domain_mesh      # noqa: E402
+import domain_video     # noqa: E402  (OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1)
 
 
 _OP_HANDLERS = {
     "import_texture": domain_texture.import_texture_entry,
     "import_audio": domain_audio.import_audio_entry,
     "import_static_mesh": domain_mesh.import_static_mesh_entry,
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1:
+    # file_media_source asset_kind dispatch to domain_video.import_video_entry;
+    # D12 路径分流 mp4 → Content/Movies/<run_id>/,.uasset → Content/Generated/<run_id>/
+    "import_file_media_source": domain_video.import_video_entry,
 }
 
 
@@ -52,8 +57,27 @@ def run(run_folder: str | Path | None = None) -> None:
     entries_by_id = {e["asset_entry_id"]: e for e in bundle.manifest.get("assets", [])}
     ops = manifest_reader.topological_ops(bundle.plan)
 
+    # 读 framework-side seed evidence 找 PermissionPolicy denied op(`status="skipped"`)
+    # codex round-7 verification review P2 round-1:run_import.py 必须 honor 框架层
+    # PermissionPolicy(如 `allow_import_file_media_source=False`),否则被 deny 的 op
+    # 仍会被 commandlet 执行并创建 asset(违反 NFR-PERMISSION-001 用户权限边界)。
+    pre_skipped_op_ids: set[str] = set()
+    try:
+        import json as _json  # 仅本段用,不污染顶层 import
+        with open(bundle.evidence_path, "r", encoding="utf-8") as _f:
+            for _ev in _json.load(_f) or []:
+                if _ev.get("status") == "skipped" and _ev.get("op_id"):
+                    pre_skipped_op_ids.add(_ev["op_id"])
+    except Exception:
+        # evidence 不存在 / 损坏 → fall through(framework export 一般保证文件存在)
+        pass
+
     for op in ops:
         kind = op["kind"]
+        # PermissionPolicy 已在框架层 deny 此 op → run_import 跳过 + 不重复写 evidence
+        # (framework 已写 skipped 记录,UE 端只需 honor 不复写)
+        if op["op_id"] in pre_skipped_op_ids:
+            continue
         handler = _OP_HANDLERS.get(kind)
         if kind == "create_folder":
             evidence_writer.append(bundle.evidence_path, evidence_writer.make_record(

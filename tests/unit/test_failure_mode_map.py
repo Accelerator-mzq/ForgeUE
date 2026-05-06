@@ -302,3 +302,69 @@ def test_audio_takes_priority_over_generic_worker_exception_via_isinstance_order
     # And the entry decision is abort_or_fallback (not retry_same_step)
     entry = DEFAULT_MAP[mode]
     assert entry.decision is Decision.abort_or_fallback
+
+
+# ---------------------------------------------------------------------------
+# OpenSpec change comfy-agent-cli-video-adoption Phase 3 D14
+# Video failure mode + classify priority(沿 audio Phase 2 fence 同款 6-fence pattern)
+# ---------------------------------------------------------------------------
+
+
+from framework.providers.workers.video_worker import (  # noqa: E402
+    VideoWorkerError,
+    VideoWorkerTimeout,
+    VideoWorkerUnsupportedResponse,
+)
+
+
+def test_failure_mode_map_video_worker_timeout_maps_to_abort_or_fallback():
+    """`video_worker_timeout` mode → `Decision.abort_or_fallback`(沿 audio_worker_timeout
+    + mesh_worker_timeout 同款;Wan T2V 7-min 长生成成本高,二次 retry 烧 GPU 时间不合理)。"""
+    entry = DEFAULT_MAP[FailureMode.video_worker_timeout]
+    assert entry.decision is Decision.abort_or_fallback
+
+
+def test_failure_mode_map_video_worker_unsupported_maps_to_abort_or_fallback():
+    """`video_worker_unsupported` mode → `Decision.abort_or_fallback`(deterministic 不 retry
+    — outputs.video missing / 扩展名 / BMFF strict 5-tuple / path trust-boundary 拒)。"""
+    entry = DEFAULT_MAP[FailureMode.video_worker_unsupported]
+    assert entry.decision is Decision.abort_or_fallback
+
+
+def test_classify_video_worker_timeout_to_video_mode():
+    """`VideoWorkerTimeout` → `FailureMode.video_worker_timeout`(D14 priority:video
+    subclasses MUST match before audio / mesh / generic worker_*;video.t2v internal
+    retry already exhausted by _generate_via_comfy_worker before exception reaches
+    FailureModeMap)。"""
+    assert classify(VideoWorkerTimeout("subprocess hit 600s")) is FailureMode.video_worker_timeout
+
+
+def test_classify_video_worker_unsupported_to_video_mode():
+    """`VideoWorkerUnsupportedResponse` → `FailureMode.video_worker_unsupported`(deterministic)。
+    NOT generic `unsupported_response` — video-specific so orchestrator can surface
+    BMFF strict failure detail / outputs.video missing context via abort_or_fallback。"""
+    assert classify(VideoWorkerUnsupportedResponse("outputs.video missing")) is FailureMode.video_worker_unsupported
+
+
+def test_classify_video_worker_error_generic_maps_to_video_unsupported():
+    """Generic `VideoWorkerError` (NOT Timeout / NOT UnsupportedResponse) maps to
+    `video_worker_unsupported` (沿 audio_worker_error generic → unsupported 同款归类模式)。"""
+    assert classify(VideoWorkerError("generic video worker error")) is FailureMode.video_worker_unsupported
+
+
+def test_video_takes_priority_over_audio_mesh_generic_via_isinstance_order():
+    """D14 priority sweep:`VideoWorkerTimeout` 必须**先于** AudioWorkerTimeout /
+    MeshWorkerTimeout / WorkerTimeout 匹配。三类 worker exception 都是 RuntimeError 子类
+    但互不相关(VideoWorkerError 不继承 AudioWorkerError / MeshWorkerError),classify()
+    isinstance 顺序保险沿 audio R4-F1 priority 修订模式 — fence 守门 video 路径不被
+    audio / mesh / generic 抢先吞掉。"""
+    video_exc = VideoWorkerTimeout("video subprocess timeout")
+    mode = classify(video_exc)
+    assert mode is FailureMode.video_worker_timeout
+    # 验证不被 audio / mesh / generic 抢先匹配
+    assert mode is not FailureMode.audio_worker_timeout
+    assert mode is not FailureMode.mesh_worker_timeout
+    assert mode is not FailureMode.worker_timeout
+    # And the entry decision is abort_or_fallback (not retry_same_step / fallback_model)
+    entry = DEFAULT_MAP[mode]
+    assert entry.decision is Decision.abort_or_fallback

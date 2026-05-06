@@ -503,7 +503,7 @@ def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeypatch):
     # Ensure a fresh import regardless of prior test runs
     for mod in [
         "run_import", "manifest_reader", "evidence_writer",
-        "domain_texture", "domain_audio", "domain_mesh",
+        "domain_texture", "domain_audio", "domain_mesh", "domain_video",
     ]:
         sys.modules.pop(mod, None)
     import run_import            # noqa: E402
@@ -594,3 +594,535 @@ def test_p4_manifest_and_plan_builders_pure(tmp_path: Path):
     readiness = inspect_project(target)
     assert readiness.ready
     assert readiness.uproject_file is not None
+
+
+# ---------------------------------------------------------------------------
+# OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1 + D12
+# P4 stub-unreal video import fences (3 fences)
+# ---------------------------------------------------------------------------
+
+
+def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video(
+    tmp_path: Path, monkeypatch
+):
+    """D1 P4 真机 stub:`file_media_source` operation kind dispatch 到
+    `domain_video.import_video_entry`,evidence record `status="success"`,
+    UE-side AssetTools.create_asset 调用 1 次。
+
+    本 fence 走 stub `unreal` 模块(不需要真 UE 安装)— 验证 ue_scripts/ run_import
+    dispatch 协议 + domain_video 内部行为骨架 + commit 8c F1 export gate sweep
+    (`_is_importable` whitelist + `PermissionPolicy.allow_import_file_media_source` +
+    `_OP_ALLOW_ATTR["import_file_media_source"]`)端到端联通。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    run_id = "run_p4_video_stub"
+
+    # 准备 framework-side video Artifact + manifest + plan + evidence(seed)
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    vid = repo.put(
+        artifact_id=f"{run_id}_video_01",
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(
+            modality="video", shape="mp4", display_name="video_asset",
+        ),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video", provider="comfy_agent_cli",
+                             model="comfy/local-video"),
+        metadata={"ue_asset_name": "OpeningScene"},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/Video", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="ue video stub", input_payload={}, expected_output={},
+        project_id="proj_video_stub", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id="proj_video_stub", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id="wf_video_stub", trace_id="tr",
+    )
+    ExportExecutor().execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[vid.artifact_id],
+    ))
+    run_folder = ue_project / "Content" / "Generated" / run_id
+    evidence_before = load_evidence(run_folder / "evidence.json")
+
+    # Stub `unreal` 模块(简化版 — 只需 FileMediaSource + AssetTools.create_asset)
+    unreal_stub = types.ModuleType("unreal")
+
+    class _FakeFileMediaSource:
+        def __init__(self):
+            self._props: dict = {}
+
+        def set_editor_property(self, key, value):
+            self._props[key] = value
+
+        def get_editor_property(self, key):
+            return self._props.get(key)
+
+        def get_outer(self):
+            return self  # placeholder package
+
+    class _FakeFileMediaSourceFactoryNew:
+        pass
+
+    class _FakeAssetTools:
+        calls: list[dict] = []
+
+        @classmethod
+        def create_asset(cls, asset_name, package_path, asset_class, factory):
+            cls.calls.append({
+                "asset_name": asset_name, "package_path": package_path,
+                "asset_class": asset_class, "factory": factory,
+            })
+            return _FakeFileMediaSource()
+
+    class _FakeAssetToolsHelpers:
+        @staticmethod
+        def get_asset_tools():
+            return _FakeAssetTools
+
+    class _FakeEditorAssetLibrary:
+        folders: list[str] = []
+
+        @classmethod
+        def does_directory_exist(cls, p):
+            return p in cls.folders
+
+        @classmethod
+        def make_directory(cls, p):
+            cls.folders.append(p)
+
+        @staticmethod
+        def save_loaded_asset(asset):
+            return True
+
+    unreal_stub.FileMediaSource = _FakeFileMediaSource
+    unreal_stub.FileMediaSourceFactoryNew = _FakeFileMediaSourceFactoryNew
+    unreal_stub.AssetToolsHelpers = _FakeAssetToolsHelpers
+    unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
+    monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
+
+    # Inject ue_scripts path + reset modules
+    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
+    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    for mod in [
+        "run_import", "manifest_reader", "evidence_writer",
+        "domain_texture", "domain_audio", "domain_mesh", "domain_video",
+    ]:
+        sys.modules.pop(mod, None)
+    import run_import  # noqa: E402
+
+    run_import.run(run_folder=run_folder)
+
+    # Post-assertions
+    evidence_after = load_evidence(run_folder / "evidence.json")
+    ue_records = evidence_after[len(evidence_before):]
+    kinds = [e.kind for e in ue_records]
+    # create_folder + import_file_media_source 各 1 个
+    assert kinds.count("create_folder") == 1
+    assert kinds.count("import_file_media_source") == 1, f"expected 1 import_file_media_source op, got kinds={kinds}"
+    assert all(e.status == "success" for e in ue_records), f"non-success records: {[(e.kind, e.status, e.error) for e in ue_records if e.status != 'success']}"
+    # AssetTools.create_asset 被调 1 次(D1:FileMediaSource asset 创建)
+    assert len(_FakeAssetTools.calls) == 1
+    # 调用参数:asset_name = "MS_OpeningScene"(MS_ prefix + ue_asset_name hint)
+    assert _FakeAssetTools.calls[0]["asset_name"] == "MS_OpeningScene"
+
+
+def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_path: Path, monkeypatch):
+    """codex round-7 verification review P2 round-1:run_import.py MUST honor
+    framework-side `PermissionPolicy(allow_import_file_media_source=False)` —
+    框架 ExportExecutor 已为被 deny 的 op 写 `status="skipped"` seed evidence,
+    run_import 必须读 evidence.json + skip 已被 deny 的 op,不再 dispatch handler
+    + 不再调 AssetTools.create_asset(NFR-PERMISSION-001 用户权限边界)。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    run_id = "run_p4_video_denied"
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    repo.put(
+        artifact_id=f"{run_id}_video_01",
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video", provider="comfy_agent_cli",
+                             model="comfy/local-video"),
+        metadata={"ue_asset_name": "DeniedScene"},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/Video", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="ue video denied", input_payload={}, expected_output={},
+        project_id="proj_video_denied", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    artifact = repo.get(f"{run_id}_video_01")
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id="proj_video_denied", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id="wf_video_denied", trace_id="tr",
+    )
+    # PermissionPolicy 关键:allow_import_file_media_source=False → ExportExecutor
+    # 把 import_file_media_source op 写 status="skipped" seed evidence
+    ExportExecutor(
+        permission_policy=PermissionPolicy(allow_import_file_media_source=False),
+    ).execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[artifact.artifact_id],
+    ))
+    run_folder = ue_project / "Content" / "Generated" / run_id
+
+    # Stub `unreal` 模块 — AssetTools.create_asset 必须 NEVER 被调
+    unreal_stub = types.ModuleType("unreal")
+    create_asset_calls: list[dict] = []
+
+    class _FakeFileMediaSource:
+        def __init__(self):
+            self._props: dict = {}
+
+        def set_editor_property(self, key, value):
+            self._props[key] = value
+
+        def get_outer(self):
+            return self
+
+    class _FakeFileMediaSourceFactoryNew:
+        pass
+
+    class _FakeAssetTools:
+        @classmethod
+        def create_asset(cls, asset_name, package_path, asset_class, factory):
+            create_asset_calls.append({"asset_name": asset_name})
+            return _FakeFileMediaSource()
+
+    class _FakeAssetToolsHelpers:
+        @staticmethod
+        def get_asset_tools():
+            return _FakeAssetTools
+
+    class _FakeEditorAssetLibrary:
+        folders: list[str] = []
+
+        @classmethod
+        def does_directory_exist(cls, p):
+            return p in cls.folders
+
+        @classmethod
+        def make_directory(cls, p):
+            cls.folders.append(p)
+
+        @staticmethod
+        def save_loaded_asset(asset):
+            return True
+
+    unreal_stub.FileMediaSource = _FakeFileMediaSource
+    unreal_stub.FileMediaSourceFactoryNew = _FakeFileMediaSourceFactoryNew
+    unreal_stub.AssetToolsHelpers = _FakeAssetToolsHelpers
+    unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
+    monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
+
+    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
+    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    for mod in [
+        "run_import", "manifest_reader", "evidence_writer",
+        "domain_texture", "domain_audio", "domain_mesh", "domain_video",
+    ]:
+        sys.modules.pop(mod, None)
+    import run_import  # noqa: E402
+
+    run_import.run(run_folder=run_folder)
+
+    # AssetTools.create_asset MUST NOT be called(被 framework PermissionPolicy
+    # deny 的 op,run_import 必须 honor 不调 UE API);evidence.json 仍保留
+    # framework seed 写的 status="skipped" record(NOT 重复写)
+    assert len(create_asset_calls) == 0, (
+        f"PermissionPolicy(allow_import_file_media_source=False) 被违反:"
+        f"AssetTools.create_asset 被调 {len(create_asset_calls)} 次, 期望 0 次"
+    )
+    evidence_after = load_evidence(run_folder / "evidence.json")
+    skipped_records = [e for e in evidence_after if e.status == "skipped"]
+    file_media_source_skipped = [
+        e for e in skipped_records if e.kind == "import_file_media_source"
+    ]
+    assert len(file_media_source_skipped) == 1, (
+        f"期望 1 条 import_file_media_source skipped record, "
+        f"got {len(file_media_source_skipped)}; 全部 skipped: {skipped_records}"
+    )
+
+
+def test_p4_domain_video_copies_mp4_to_content_movies_subdir(tmp_path: Path, monkeypatch):
+    """D12:domain_video.import_video_entry copy mp4 source 到
+    `<project_root>/Content/Movies/<run_id>/<MS_<base>>.mp4`,**NOT**
+    `<project_root>/Content/Generated/<run_id>/`(packaging 路径分流)。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    (ue_project / "Content" / "Movies").mkdir(exist_ok=True)
+    run_id = "run_p4_video_movies"
+
+    # framework-side mp4 source(模拟已落 artifact tree)
+    artifact_root = tmp_path / "_artifacts"
+    artifact_root.mkdir()
+    source_mp4 = artifact_root / f"{run_id}_video_01.mp4"
+    minimal_mp4 = b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42"
+    source_mp4.write_bytes(minimal_mp4)
+
+    # Stub `unreal`(简化 — 同上)
+    unreal_stub = types.ModuleType("unreal")
+
+    class _FakeFileMediaSource:
+        def __init__(self):
+            self._props: dict = {}
+
+        def set_editor_property(self, key, value):
+            self._props[key] = value
+
+        def get_outer(self):
+            return self
+
+    class _FakeAssetTools:
+        @classmethod
+        def create_asset(cls, asset_name, package_path, asset_class, factory):
+            return _FakeFileMediaSource()
+
+    class _FakeAssetToolsHelpers:
+        @staticmethod
+        def get_asset_tools():
+            return _FakeAssetTools
+
+    class _FakeEditorAssetLibrary:
+        @classmethod
+        def does_directory_exist(cls, p):
+            return False
+
+        @classmethod
+        def make_directory(cls, p):
+            pass
+
+        @staticmethod
+        def save_loaded_asset(asset):
+            return True
+
+    unreal_stub.FileMediaSource = _FakeFileMediaSource
+    unreal_stub.FileMediaSourceFactoryNew = type("_F", (), {})
+    unreal_stub.AssetToolsHelpers = _FakeAssetToolsHelpers
+    unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
+    monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
+
+    # Import domain_video freshly
+    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
+    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    sys.modules.pop("domain_video", None)
+    import domain_video  # noqa: E402
+
+    # 构造 entry(模拟 manifest_builder + import_plan_builder 输出)
+    # source_uri 相对 project_root,filesystem path = project_root / source_uri;
+    # framework-side source mp4 必须实际存在 — 在 ue_project 树内 setup
+    # (本 fence 简化:直接 setup framework-side 在 project_root 子目录,verify domain_video copy 行为)
+    framework_source_in_project = ue_project / "_framework_source" / f"{run_id}_video_01.mp4"
+    framework_source_in_project.parent.mkdir(parents=True, exist_ok=True)
+    framework_source_in_project.write_bytes(minimal_mp4)
+    entry = {
+        "asset_entry_id": f"ae_{run_id}_video_01",
+        "artifact_id": f"{run_id}_video_01",
+        "asset_kind": "file_media_source",
+        "source_uri": f"_framework_source/{run_id}_video_01.mp4",
+        "target_object_path": f"/Game/Generated/Video/{run_id}/MS_OpeningScene",
+        "target_package_path": f"/Game/Generated/Video/{run_id}/MS_OpeningScene",
+        "ue_naming": {"prefix": "MS_", "ue_name": "MS_OpeningScene"},
+        "import_options": {"source_format": "mp4"},
+    }
+    result = domain_video.import_video_entry(entry, project_root=str(ue_project))
+
+    # D12:mp4 copy 到 Content/Movies/<run_id>/MS_OpeningScene.mp4
+    expected_movies_path = ue_project / "Content" / "Movies" / run_id / "MS_OpeningScene.mp4"
+    assert expected_movies_path.is_file(), \
+        f"D12:mp4 应 copy 到 Content/Movies/{run_id}/,实际找不到 {expected_movies_path}"
+    assert expected_movies_path.read_bytes() == minimal_mp4
+    # NOT in Content/Generated/<run_id>/(D12 路径分流核心)
+    forbidden_generated_path = ue_project / "Content" / "Generated" / run_id / "MS_OpeningScene.mp4"
+    assert not forbidden_generated_path.exists(), \
+        f"D12 violation:mp4 不应 copy 到 Content/Generated/<run_id>/,实际存在 {forbidden_generated_path}"
+    # Status success
+    assert result["status"] == "success"
+
+
+def test_p4_domain_video_does_not_import_framework_module():
+    """NFR-PORT-003:`ue_scripts/domain_video.py` 只 `import unreal` + stdlib;
+    不 `import framework.*`(沿 audio / mesh / image domain 守门)。
+    """
+    domain_video_path = Path(__file__).parents[2] / "ue_scripts" / "domain_video.py"
+    assert domain_video_path.is_file()
+    source = domain_video_path.read_text(encoding="utf-8")
+    # 严格检查:no `import framework` / `from framework`
+    forbidden_lines = [
+        line for line in source.splitlines()
+        if line.strip().startswith(("import framework", "from framework"))
+    ]
+    assert not forbidden_lines, \
+        f"NFR-PORT-003 violation:domain_video.py imports framework: {forbidden_lines}"
+
+
+# ---------------------------------------------------------------------------
+# Round-2 F1 export gate sweep fences(2 fence;commit 8c)
+# ---------------------------------------------------------------------------
+
+
+def test_p4_export_executor_passes_video_artifact_through_is_importable_to_manifest_builder(
+    tmp_path: Path, monkeypatch
+):
+    """Round-2 F1 critical:`ExportExecutor._is_importable` whitelist 加 "video"
+    后,video Artifact 通过 filter 进 manifest_builder.build_manifest;
+    UEAssetEntry.asset_kind == "file_media_source"(D1 唯一映射)。
+
+    若 F1 sweep 未完成(commit 8c 前),video Artifact 在 _is_importable 被 silent
+    filter 不进 manifest — 本 fence 守门「commit 8c 三处同改完整」。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    run_id = "run_p4_video_is_importable"
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    vid = repo.put(
+        artifact_id=f"{run_id}_video_01",
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video", provider="comfy_agent_cli",
+                             model="comfy/local-video"),
+        metadata={"ue_asset_name": "F1Test"},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/F1", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="F1 video", input_payload={}, expected_output={},
+        project_id="proj_f1", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id="proj_f1", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id="wf_f1", trace_id="tr",
+    )
+    ExportExecutor().execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[vid.artifact_id],
+    ))
+
+    # 验证 manifest.json 含 file_media_source entry(F1 sweep 起作用证据)
+    run_folder = ue_project / "Content" / "Generated" / run_id
+    manifest_json = json.loads((run_folder / "manifest.json").read_text(encoding="utf-8"))
+    asset_kinds = [e["asset_kind"] for e in manifest_json["assets"]]
+    assert "file_media_source" in asset_kinds, \
+        f"F1 sweep failure:video Artifact 未通过 _is_importable filter,manifest.assets={asset_kinds}"
+
+
+def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest_plan_and_evidence(
+    tmp_path: Path, monkeypatch
+):
+    """Round-2 F1 critical 端到端:video Artifact 经 ExportExecutor pipeline →
+    manifest.json + import_plan.json + evidence.json 都含 import_file_media_source op,
+    permission mask 不会 skip(因 PermissionPolicy.allow_import_file_media_source=True
+    + _OP_ALLOW_ATTR mapping 已加,is_op_allowed 返 True)。
+
+    本 fence 是 round-2 F1 三处 sweep 的端到端 acceptance fence — 守门:
+    PermissionPolicy 字段 + _OP_ALLOW_ATTR mapping + _is_importable whitelist 三者
+    必须**同 commit** 改,缺任一处此 fence 都会失败。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    run_id = "run_p4_video_e2e"
+
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    vid = repo.put(
+        artifact_id=f"{run_id}_video_01",
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video"),
+        metadata={"ue_asset_name": "E2ETest"},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/E2E", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="E2E video", input_payload={}, expected_output={},
+        project_id="proj_e2e", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id="proj_e2e", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id="wf_e2e", trace_id="tr",
+    )
+    ExportExecutor().execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[vid.artifact_id],
+    ))
+
+    run_folder = ue_project / "Content" / "Generated" / run_id
+
+    # 1. manifest.json 含 file_media_source asset
+    manifest_json = json.loads((run_folder / "manifest.json").read_text(encoding="utf-8"))
+    asset_kinds = [e["asset_kind"] for e in manifest_json["assets"]]
+    assert "file_media_source" in asset_kinds
+
+    # 2. import_plan.json 含 import_file_media_source operation
+    plan_json = json.loads((run_folder / "import_plan.json").read_text(encoding="utf-8"))
+    op_kinds = [op["kind"] for op in plan_json["operations"]]
+    assert "import_file_media_source" in op_kinds, \
+        f"F1 sweep:_IMPORT_OP_KIND 未把 file_media_source → import_file_media_source 映射,plan.operations={op_kinds}"
+
+    # 3. evidence.json 不含 status="skipped" 且 error 提及 PermissionPolicy 的 record
+    #    (round-2 F1 关键:PermissionPolicy.allow_import_file_media_source=True +
+    #     _OP_ALLOW_ATTR mapping 已加 → is_op_allowed 返 True → 不 skip)
+    evidence_records = load_evidence(run_folder / "evidence.json")
+    permission_skipped = [
+        e for e in evidence_records
+        if e.kind == "import_file_media_source" and e.status == "skipped"
+        and (e.error or "").startswith("PermissionPolicy")
+    ]
+    assert not permission_skipped, \
+        f"F1 sweep failure:import_file_media_source op 被 PermissionPolicy skip,records={permission_skipped}"

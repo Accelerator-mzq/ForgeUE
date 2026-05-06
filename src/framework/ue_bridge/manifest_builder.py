@@ -14,10 +14,12 @@ Rules (§E.1 — framework only DECLARES; UE-side script EXECUTES):
     audio.waveform               → sound_wave
     mesh.gltf / mesh.fbx / mesh.obj → static_mesh
     material.definition          → material
+    video.mp4                    → file_media_source  (Phase 3 D1;webm follow-on)
 - Naming policy: `house_rules` applies UE prefix table (§E.8 convention):
     T_<base>  for texture   S_<base> for sound_wave
     SM_<base> for static_mesh
     M_<base>  for material
+    MS_<base> for file_media_source  (Phase 3 D1)
 - `target_package_path` = `<UEOutputTarget.asset_root>/<UEName>`
 - `source_uri` is POSIX, relative to project_root, pointing at the payload file
   (inline payloads are rejected — only file-backed Artifacts can become assets).
@@ -47,6 +49,12 @@ _KIND_MAP: dict[tuple[str, str], str] = {
     ("mesh", "fbx"): "static_mesh",
     ("mesh", "obj"): "static_mesh",
     ("material", "definition"): "material",
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1:
+    # video.mp4 → file_media_source(`unreal.FileMediaSourceFactory` 一行 import,
+    # mp4 文件落 Content/Movies/<run_id>/ packaging 外挂,.uasset 落
+    # Content/Generated/<run_id>/ asset_root 沿用 — D12 路径分流由 domain_video.py
+    # 内部决定)。webm follow-on `comfy-video-webm-adoption` 时扩 ("video","webm") entry。
+    ("video", "mp4"): "file_media_source",
 }
 
 
@@ -55,6 +63,8 @@ _PREFIX_BY_KIND: dict[str, str] = {
     "sound_wave": "S_",
     "static_mesh": "SM_",
     "material": "M_",
+    # Phase 3 D1:MS_ 前缀(沿 SM_ / S_ / T_ / M_ 风格,2 字符前缀)
+    "file_media_source": "MS_",
 }
 
 
@@ -120,7 +130,10 @@ def build_manifest(
                 k: v for k, v in art.metadata.items()
                 if k in {"width", "height", "duration_sec", "sample_rate",
                          "poly_count", "transparent_background", "tileable",
-                         "texture_usage_hint", "color_space", "intended_use"}
+                         "texture_usage_hint", "color_space", "intended_use",
+                         # Phase 3 D1:video metadata fields(本 change scope 全 None,
+                         # follow-on `video-metadata-parser` 加 ffprobe 解析填充)
+                         "frame_count", "fps", "loop", "play_on_open"}
             },
         ))
 
@@ -196,6 +209,21 @@ def _default_import_options(kind: str, art: Artifact) -> dict:
             "generate_lightmap_uvs": True,
             "up_axis": md.get("up_axis", "Z"),
             "scale_unit": md.get("scale_unit", "cm"),
+            "source_format": art.format,
+        }
+    if kind == "file_media_source":
+        # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1:
+        # FileMediaSource import options;5 个 video metadata 字段本 change scope
+        # 全 None(ComfyUI agent CLI 不暴露,follow-on `video-metadata-parser` 解析填充);
+        # loop / play_on_open default False(用户在 bundle 显式 override 时 set)。
+        return {
+            "loop": bool(md.get("loop", False)),
+            "play_on_open": bool(md.get("play_on_open", False)),
+            "duration_seconds": md.get("duration_seconds"),
+            "frame_count": md.get("frame_count"),
+            "width": md.get("width"),
+            "height": md.get("height"),
+            "fps": md.get("fps"),
             "source_format": art.format,
         }
     return {"source_format": art.format}

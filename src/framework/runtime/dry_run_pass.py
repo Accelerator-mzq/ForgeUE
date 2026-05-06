@@ -125,11 +125,14 @@ class DryRunPass:
         plan writeback): gate set 从 {comfy/local} 扩为 {comfy/local, comfy/local-mesh};
         further extended by comfy-agent-cli-audio-adoption Phase 2 (commit 6):
         gate set 再扩 `comfy/local-audio`。
-        SYNC probe gated by `model in {"comfy/local", "comfy/local-mesh", "comfy/local-audio"}`
-        in any step's prepared_routes (model id-based gate because ResolvedRoute
-        lacks provider field). Bundles that don't use any skip the probe entirely
-        (qwen / glm image steps + remote hunyuan mesh steps unaffected on hosts
-        without ComfyUI installed).
+        Phase 3 (comfy-agent-cli-video-adoption commit 9): gate set 再扩
+        `comfy/local-video`(TBD-009 全 phase closed)。
+        SYNC probe gated by `model in {"comfy/local", "comfy/local-mesh",
+        "comfy/local-audio", "comfy/local-video"}` in any step's prepared_routes
+        (model id-based gate because ResolvedRoute lacks provider field).
+        Bundles that don't use any skip the probe entirely(qwen / glm image
+        steps + remote hunyuan mesh steps unaffected on hosts without ComfyUI
+        installed)。
         """
         import os
 
@@ -137,8 +140,11 @@ class DryRunPass:
             ComfyAgentWorker, WorkerUnsupportedResponse,
         )
 
-        # P-F4 + commit 6 (audio): gate 从单值 == 改为 set membership(image+mesh+audio)
-        _COMFY_LOCAL_MODEL_IDS = {"comfy/local", "comfy/local-mesh", "comfy/local-audio"}
+        # P-F4 + commit 6 (audio) + commit 9 (video): 4 capability gate
+        _COMFY_LOCAL_MODEL_IDS = {
+            "comfy/local", "comfy/local-mesh",
+            "comfy/local-audio", "comfy/local-video",
+        }
         has_comfy_local = False
         for s in steps:
             pp = getattr(s, "provider_policy", None)

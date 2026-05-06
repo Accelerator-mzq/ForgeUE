@@ -1,0 +1,65 @@
+{
+  "task": {
+    "task_id": "task_comfy_video_smoke",
+    "task_type": "asset_generation",
+    "run_mode": "basic_llm",
+    "title": "Local ComfyUI video smoke (ComfyAgentWorker, text-to-video single step)",
+    "input_payload": {
+      "prompt": "uplifting space scene, cinematic camera dolly forward, ethereal lighting"
+    },
+    "expected_output": {
+      "artifact_types": [
+        "video_asset"
+      ]
+    },
+    "project_id": "proj_comfy_video_smoke"
+  },
+  "workflow": {
+    "workflow_id": "wf_comfy_video_smoke",
+    "name": "comfy_video_smoke",
+    "version": "1.0.0",
+    "entry_step_id": "step_video",
+    "step_ids": [
+      "step_video"
+    ]
+  },
+  "steps": [
+    {
+      "step_id": "step_video",
+      "type": "generate",
+      "name": "comfy-local-text-to-video",
+      "risk_level": "medium",
+      "capability_ref": "video.t2v",
+      "provider_policy": {
+        "capability_required": "video.t2v",
+        "models_ref": "video_local"
+      },
+      "retry_policy": {
+        "max_attempts": 2,
+        "backoff": "fixed",
+        "retry_on": [
+          "timeout",
+          "provider_error"
+        ]
+      },
+      "config": {
+        "num_candidates": 1,
+        "seed": 5042,
+        "worker_timeout_s": 1800,
+        "spec": {
+          "comfy_workflow": "Vedio/Wan2.1-T2V-1.3B_native_5sec",
+          "comfy_params": {
+            "positive_prompt": "uplifting space scene, cinematic camera dolly forward, ethereal lighting",
+            "negative_prompt": "blurry, low quality, distorted, watermark, worst quality, jpeg artifacts",
+            "width": 832,
+            "height": 480,
+            "num_frames": 81,
+            "seed": 5042,
+            "steps": 25
+          },
+          "comfy_lifecycle": "none"
+        }
+      }
+    }
+  ]
+}

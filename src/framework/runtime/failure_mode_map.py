@@ -49,6 +49,15 @@ class FailureMode(str, Enum):
     # _generate_via_comfy_worker before exception reaches FailureModeMap)
     audio_worker_timeout = "audio_worker_timeout"
     audio_worker_unsupported = "audio_worker_unsupported"
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D14:video-specific
+    # failure modes(沿 audio_worker_* / mesh_worker_* 镜像 + D14 priority:
+    # video isinstance check 必须**先于** audio / mesh / generic worker_* 在
+    # classify(),否则 wrapped VideoWorker* 会被通用父类抢先吞掉 — 沿 audio R4-F1
+    # priority 修订模式)。本地 ComfyUI video non-premium per ADR-007 边界,
+    # internal retry happens in _generate_via_comfy_worker before exception
+    # reaches FailureModeMap。
+    video_worker_timeout = "video_worker_timeout"
+    video_worker_unsupported = "video_worker_unsupported"
     budget_exceeded = "budget_exceeded"
     disk_full = "disk_full"
 
@@ -112,6 +121,22 @@ DEFAULT_MAP: dict[FailureMode, FailureMapEntry] = {
         "outputs.audio missing / 扩展名 whitelist 拒 / magic bytes mismatch / "
         "path trust-boundary 拒;retry 也错,直接 abort_or_fallback)",
     ),
+    FailureMode.video_worker_timeout: FailureMapEntry(
+        FailureMode.video_worker_timeout, Decision.abort_or_fallback,
+        "video worker timeout — abort_or_fallback (沿 audio_worker_timeout / "
+        "mesh_worker_timeout 同款模式;本地 ComfyUI video non-premium 但 internal "
+        "retry 已在 _generate_via_comfy_worker 完成,wrapped VideoWorkerTimeout 到此处时已 "
+        "retry exhausted;Decision 走 abort_or_fallback honor `on_fallback`;Wan T2V "
+        "7-min 长生成成本高,二次 retry 烧 GPU 时间,abort_or_fallback 是合理选择)",
+    ),
+    FailureMode.video_worker_unsupported: FailureMapEntry(
+        FailureMode.video_worker_unsupported, Decision.abort_or_fallback,
+        "video worker unsupported response — abort_or_fallback (deterministic — "
+        "outputs.video missing / 扩展名 whitelist 拒 mp4-only / BMFF strict header "
+        "5-tuple 拒(too short / ftyp mismatch / box_size out of range / largesize "
+        "box_size==1 拒 / major_brand empty)/ path trust-boundary 拒;retry 也错,"
+        "直接 abort_or_fallback)",
+    ),
     FailureMode.budget_exceeded: FailureMapEntry(
         FailureMode.budget_exceeded, Decision.human_review_required,
         "budget cap exceeded — escalating",
@@ -147,6 +172,11 @@ def classify(exc: BaseException) -> FailureMode | None:
         MeshWorkerTimeout,
         MeshWorkerUnsupportedResponse,
     )
+    from framework.providers.workers.video_worker import (
+        VideoWorkerError,
+        VideoWorkerTimeout,
+        VideoWorkerUnsupportedResponse,
+    )
 
     # Deterministic "unsupported response" subclasses MUST be checked before
     # their generic parents. The orchestrator treats worker_error / provider_
@@ -155,6 +185,13 @@ def classify(exc: BaseException) -> FailureMode | None:
     # rebills paid providers (Hunyuan/Qwen/Tripo3D/DashScope) for the same
     # bad output. 2026-04 共性平移 extended the mesh-only
     # `MeshWorkerUnsupportedResponse` pattern to every image/worker surface.
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D14:video subclasses
+    # MUST be checked **BEFORE** audio / mesh / generic(沿 audio R4-F1 priority
+    # 修订 + D14 priority lock — wrapped VideoWorker* 子类必须先于 AudioWorker* /
+    # MeshWorker* / generic WorkerUnsupportedResponse 匹配,否则被通用父类抢先吞掉
+    # 失去 video-specific decision)。
+    if isinstance(exc, VideoWorkerUnsupportedResponse):
+        return FailureMode.video_worker_unsupported
     # F-Plan-R7-B + commit 5: AudioWorkerUnsupportedResponse 走 audio-specific
     # mode (audio_worker_unsupported),NOT generic unsupported_response,因为
     # audio 内部已 retry exhausted 时 wrapped 才到此处,语义与 mesh_worker_* 一致。
@@ -166,6 +203,12 @@ def classify(exc: BaseException) -> FailureMode | None:
         ProviderUnsupportedResponse,
     )):
         return FailureMode.unsupported_response
+    # Phase 3 D14:VideoWorkerTimeout / VideoWorkerError 同款 priority — 必须**先于**
+    # audio / mesh / generic worker_* 匹配。
+    if isinstance(exc, VideoWorkerTimeout):
+        return FailureMode.video_worker_timeout
+    if isinstance(exc, VideoWorkerError):
+        return FailureMode.video_worker_unsupported  # generic VideoWorkerError → video_worker_unsupported(沿 audio 同款)
     # OpenSpec change comfy-agent-cli-audio-adoption Phase 2:audio subclasses
     # MUST be checked BEFORE generic worker_* AND BEFORE mesh subclasses
     # (AudioWorkerTimeout 不是 MeshWorkerTimeout 子类,但都是 RuntimeError 子类,

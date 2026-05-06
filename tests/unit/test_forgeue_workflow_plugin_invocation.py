@@ -1,5 +1,10 @@
-"""tasks.md §5.4.1 fence: 8 forgeue command md must reference codex hooks
+"""tasks.md §5.4.1 fence: forgeue command md must reference codex hooks
 + forgeue_env_detect; must NOT invoke /codex:rescue or --enable-review-gate.
+
+Active command count:9(post-task 2 split:change-apply-subagent +
+change-apply-direct;旧 change-apply.md 标 ``tags: [forgeue, deprecated]``
+作 deprecation banner stub,fixture 通过 tags-aware skip 排除,见
+design.md ``## Migration Plan``)。
 
 Lines that mention banned tokens are allowed only in negation context
 (``不调`` / ``禁`` / ``Don't`` / ``do not``) or detection context
@@ -8,18 +13,38 @@ Lines that mention banned tokens are allowed only in negation context
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
 
 _REPO = Path(__file__).resolve().parents[2]
 _CMD_DIR = _REPO / ".claude" / "commands" / "forgeue"
+_TOOLS = _REPO / "tools"
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
+
+import _common  # noqa: E402
+
+
+def _is_deprecated(path: Path) -> bool:
+    """Frontmatter ``tags`` includes ``deprecated``(见
+    test_forgeue_command_markdown 同款 helper rationale)。"""
+    fm, _ = _common.parse_frontmatter(path.read_text(encoding="utf-8"))
+    tags = fm.get("tags") or []
+    if isinstance(tags, str):
+        tags_str = tags
+    else:
+        tags_str = ", ".join(str(t) for t in tags)
+    return "deprecated" in tags_str
 
 
 @pytest.fixture(scope="module")
 def cmd_files() -> list[Path]:
-    files = sorted(_CMD_DIR.glob("change-*.md"))
-    assert len(files) == 8, f"expected exactly 8 forgeue command files, found {len(files)}"
+    files = sorted(p for p in _CMD_DIR.glob("change-*.md") if not _is_deprecated(p))
+    # 10 = 7 keep + change-apply-subagent + change-apply-direct + change-apply-parallel
+    # (自 enhance-workflow-automation-runtime-enforcement P2.3 加 parallel 命令)
+    assert len(files) == 10, f"expected exactly 10 active forgeue command files, found {len(files)}"
     return files
 
 
@@ -97,16 +122,31 @@ def test_no_enable_review_gate_invocation(cmd_files):
 
 
 # ---------------------------------------------------------------------------
-# Sanity: 8 expected command names
+# Sanity: 10 expected active command names(post enhance-workflow-automation-runtime-enforcement P2.3)
 # ---------------------------------------------------------------------------
 
 
-def test_expected_eight_commands_present(cmd_files):
+def test_expected_active_commands_present(cmd_files):
+    """Active(非 deprecated)命令名集合 = 10。
+
+    历史:
+    - 2026-05-04 ``adopt-subagent-driven-development`` task 2 把旧 ``change-apply``
+      split 为 ``change-apply-subagent``(default subagent path,sequential)+
+      ``change-apply-direct``(fallback direct path,主 worktree)
+    - 2026-05-05 ``enhance-workflow-automation-runtime-enforcement`` P2.3 加
+      ``change-apply-parallel``(并行 dispatch 路径,invoke
+      ``superpowers:dispatching-parallel-agents`` SKILL),共 10 命令。
+
+    旧 stub 保留 1 archive cycle 作 deprecation banner(见 design.md
+    ``## Migration Plan``),通过 fixture tags-aware skip 排除。
+    """
     names = {f.stem for f in cmd_files}
     expected = {
         "change-status",
         "change-plan",
-        "change-apply",
+        "change-apply-subagent",
+        "change-apply-direct",
+        "change-apply-parallel",
         "change-debug",
         "change-verify",
         "change-review",

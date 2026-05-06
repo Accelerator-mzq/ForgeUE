@@ -59,6 +59,7 @@ from typing import Any
 # 不扩字段 — provenance 走 metadata dict per design D5)。
 from framework.providers.workers.audio_worker import AudioCandidate
 from framework.providers.workers.mesh_worker import MeshCandidate
+from framework.providers.workers.video_worker import VideoCandidate
 
 # 模块级 logger(R2-F4 fix:auxiliary outputs.images SHALL emit INFO via 此 logger,
 # fence 用 caplog.set_level(logging.INFO, logger="framework.providers.workers.comfy_worker") 抓)
@@ -290,40 +291,56 @@ class ComfyAgentWorker(ComfyWorker):
     name = "comfy_agent_cli"
 
     # Capability dispatch(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption
-    # design D1 + comfy-agent-cli-audio-adoption Phase 2 D1):capability 由 model_id 推断,
+    # design D1 + comfy-agent-cli-audio-adoption Phase 2 D1 +
+    # comfy-agent-cli-video-adoption Phase 3 D6):capability 由 model_id 推断,
     # bundle 不引入 outputs_kind 字段。未知 model_id → __init__ raise(不静默 fallback)。
-    # Video capability 留 follow-on change(comfy-agent-cli-video-adoption)。
+    # All TBD-009 phases closed:image (Phase 1) + mesh (Phase 1 mesh) +
+    # audio (Phase 2) + video (Phase 3)。
     _CAPABILITY_BY_MODEL_ID: dict[str, str] = {
         "comfy/local": "image",
         "comfy/local-mesh": "mesh",
         "comfy/local-audio": "audio",  # Phase 2 audio (F1 round-1 修订)
+        "comfy/local-video": "video",  # Phase 3 video (D6)
     }
 
     # Output validation 三段表(design D2 + B4 修订:mesh-mode auxiliary outputs.images
     # 容忍,不构造 candidate 但 SHALL emit INFO log per R2-F4;Phase 2 D2 audio 行
-    # 加 — audio capability 无 auxiliary tolerance,REJECTED 含 images/glb/video)。
+    # 加 — audio capability 无 auxiliary tolerance;Phase 3 D6 video 行加 —
+    # video capability 无 auxiliary tolerance,REJECTED 含 images/glb/audio)。
     # REQUIRED:capability 必须产出此 key non-empty
-    # AUXILIARY:允许 non-empty 但不消费(emit INFO log;audio 无 auxiliary)
+    # AUXILIARY:允许 non-empty 但不消费(emit INFO log;audio / video 无 auxiliary)
     # REJECTED:non-empty 即 raise WorkerUnsupportedResponse
     _REQUIRED_OUTPUT_KEY: dict[str, str] = {
         "image": "images",
         "mesh": "glb",
         "audio": "audio",  # Phase 2 audio
+        "video": "video",  # Phase 3 video (round-3 PF1 D-Runner-Extension:user-authored
+                           # runner.py 已加 video collection block 把 VHS gifs UI key 装到
+                           # outputs.video,沿 image / audio / glb 同款 4-dict 协议)
     }
     _AUXILIARY_OUTPUT_KEYS_BY_CAP: dict[str, set[str]] = {
         "image": set(),                # image-mode 无 auxiliary
         "mesh": {"images"},            # mesh-mode 容忍 PNG preview(B4)
         "audio": set(),                # audio-mode 无 auxiliary tolerance(Phase 2 D2)
+        "video": set(),                # video-mode 无 auxiliary tolerance(Phase 3 D6;
+                                       # VHS_VideoCombine 默认只输出 video file,无 PNG preview)
     }
     _REJECTED_OUTPUT_KEYS_BY_CAP: dict[str, set[str]] = {
         "image": {"glb", "audio", "video"},
         "mesh": {"audio", "video"},
         "audio": {"images", "glb", "video"},  # Phase 2 audio
+        "video": {"images", "glb", "audio"},  # Phase 3 video (D6;reject 其它三 capability output keys)
     }
 
     # Audio capability whitelist(Phase 2 D10:format ∈ {flac, mp3, wav};
     # F5 round-1 magic bytes 二次校验 + F-Plan-4 round-2 path trust-boundary 防护)
     _AUDIO_FORMAT_WHITELIST: set[str] = {"flac", "mp3", "wav"}
+
+    # Video capability whitelist(Phase 3 D8 + round-2 F2 + round-3 PF3 sweep:
+    # mp4-only,webm follow-on `comfy-video-webm-adoption`;round-2 F4 + round-3 PF2
+    # BMFF strict header 5-tuple 校验在 _run_once_video 内部 enforce — len + ftyp +
+    # box_size in [8,len] reject box_size==1 + major_brand non-empty/non-zero/non-spaces)
+    _VIDEO_FORMAT_WHITELIST: set[str] = {"mp4"}
 
     def __init__(
         self,
@@ -370,13 +387,13 @@ class ComfyAgentWorker(ComfyWorker):
             )
         # D1: capability dispatch via model_id 推断;unknown id raise(不静默 fallback)。
         # F-Plan-R3-A round-3 修订:audio capability 已加(comfy/local-audio);
-        # 仅 video 留 follow-on(comfy-agent-cli-video-adoption)。
+        # Phase 3 D6 修订:video capability 已加(comfy/local-video) — TBD-009 全 3 phase closed。
         capability = self._CAPABILITY_BY_MODEL_ID.get(model_id)
         if capability is None:
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.__init__: unsupported model_id={model_id!r}, "
                 f"expected one of {sorted(self._CAPABILITY_BY_MODEL_ID)} "
-                f"(video is the only remaining follow-on; see SRS TBD-009)"
+                f"(all TBD-009 phases closed: image / mesh / audio / video)"
             )
         self.scripts_dir = Path(scripts_dir)
         self.python_exe = Path(python_exe) if python_exe else Path(sys.executable)
@@ -1158,6 +1175,263 @@ class ComfyAgentWorker(ComfyWorker):
                 },
                 duration_seconds=duration_seconds,
                 sample_rate=sample_rate,
+            ))
+        return candidates
+
+    # ------------------------------------------------------------------------
+    # Video capability (Phase 3 — comfy-agent-cli-video-adoption)
+    # ------------------------------------------------------------------------
+
+    def generate_video(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[VideoCandidate]:
+        """Video capability path(OpenSpec change comfy-agent-cli-video-adoption Phase 3)。
+
+        - 仅在 `_capability == "video"` 时可调(否则 raise)
+        - 不在 `ComfyWorker` ABC 上(返 list[VideoCandidate],与其它 capability 类型不兼容)
+        - video capability 是 text-to-video(per design D7),**无** source bytes 输入 — prompt 已在 `spec["comfy_params"]` 内
+        - 调用模式同 audio:per-candidate loop in worker;N 次 subprocess.run + outputs.video path → VideoCandidate
+        - round-3 PF1 D-Runner-Extension:`outputs.video` key 由 user-authored
+          `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 提供(收集 VHS_VideoCombine
+          legacy `gifs` UI key 的 video preview dict);沿 image / audio / glb 同款 4-dict 协议
+        - F-Plan-4 + F-Plan-R7-C symmetry:`is_file` + `is_symlink` 防护(沿 audio G11 R2 fix)+
+          `_assert_path_within_comfy_output_root`(沿 path-containment-hardening follow-on)
+        - round-2 F4 + round-3 PF2 BMFF strict 5-tuple 校验(扩展名 mp4-only + len + ftyp + box_size in [8,len] reject==1 + major_brand non-empty)
+        - D8 + round-2 F2 + round-3 PF3 sweep mp4-only;webm follow-on `comfy-video-webm-adoption`
+        - D8:metadata 仅含 5 个 comfy_* provenance keys;duration_seconds / frame_count / width / height / fps 顶层 None always(follow-on `video-metadata-parser`)
+        """
+        # Capability 守门
+        if self._capability != "video":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-video' 的 worker 可调 generate_video(video-mode);"
+                f"image-mode 应调 generate(),mesh-mode 应调 generate_mesh(),audio-mode 应调 generate_audio()"
+            )
+        # Reject legacy v1 spec shape(对齐 image / mesh / audio)
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate_video: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate_video: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like "
+                "'Vedio/Wan2.1-T2V-1.3B_native_5sec' — D5 上游 'Vedio/' 拼写照实跟随,不做翻译)"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: spec.comfy_params must be dict "
+                f"(got {type(comfy_params).__name__})"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+        # D3 默认 worker_timeout_s: 600 (Wan T2V 1.3B 5sec ≈ 7 分钟 + 启动余量;
+        # 对照 audio 默认 300s)
+        per_call_timeout = float(timeout_s) if timeout_s else 600.0
+
+        # Per-candidate loop in worker(沿 audio F-Plan-3 + F-Plan-R5-A round-5;
+        # executor 调一次即可,不需要外层 loop)
+        results: list[VideoCandidate] = []
+        for i in range(max(1, num_candidates)):
+            call_seed = (seed or 0) + i
+            params_for_call = dict(comfy_params)
+            # Per-candidate seed 直接覆盖(沿 audio G11-F3 round-8 fix 同款,
+            # 不用 setdefault — 否则 caller 在 comfy_params 内填 seed 时 num_candidates>1
+            # 所有 candidate 拿同一 seed)
+            params_for_call["seed"] = call_seed
+            results.extend(self._run_once_video(
+                comfy_workflow=comfy_workflow,
+                params=params_for_call,
+                params_snapshot=dict(params_for_call),  # snapshot 隔离 caller spec mutation
+                seed=call_seed,
+                timeout_s=per_call_timeout,
+            ))
+        return results
+
+    def _run_once_video(
+        self,
+        *,
+        comfy_workflow: str,
+        params: dict[str, Any],
+        params_snapshot: dict[str, Any],
+        seed: int,
+        timeout_s: float,
+    ) -> list[VideoCandidate]:
+        """One subprocess.run for video capability → 1+ VideoCandidate(per outputs.video)。
+
+        Sub-process 调用 / JSON 解析 / outputs 守门复用 audio 同样的逻辑骨架,
+        产物构造走 video path:
+        - 从 outputs.video 路径(absolute paths per round-3 PF1 D-Runner-Extension:user-authored runner.py 加 video collection block)读 video bytes
+        - F-Plan-4 round-2 path trust-boundary 防护:`is_file` + `is_symlink`(沿 audio G11 R2 fix)
+        - 扩展名 whitelist `{mp4}`(D8 + round-2 F2 + round-3 PF3 sweep mp4-only);不在 raise WorkerUnsupportedResponse
+        - round-2 F4 + round-3 PF2 BMFF strict 5-tuple 校验(len >= 16 + ftyp at offset 4 + box_size in [8,len] reject box_size==1 + major_brand non-empty/non-zero/non-spaces)
+        - **不**做 worker 内部 in-tree copy(沿 audio 模式;由 ArtifactRepository.put 自动落 in-tree)
+        - D8 metadata 仅 5 个 comfy_* provenance keys;5 个 video metadata 顶层字段 None always
+        """
+        cmd = [
+            str(self.python_exe), "-m", "comfyui_api", "run",
+            "--workflow", comfy_workflow,
+            "--params", json.dumps(params, ensure_ascii=False),
+            "--project", self.project_id,
+            "--lifecycle", "none",
+            "--timeout", str(int(timeout_s)),
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.scripts_dir),
+                timeout=timeout_s + 30.0,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise WorkerTimeout(
+                f"ComfyAgentWorker.generate_video subprocess wall-clock exceeded "
+                f"{timeout_s + 30.0}s (CLI internal timeout was {timeout_s}s)"
+            ) from exc
+        except FileNotFoundError as exc:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: failed to spawn subprocess "
+                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+            ) from exc
+
+        stdout = (result.stdout or "").strip()
+        if not stdout:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: empty stdout (exit code {result.returncode}; "
+                f"stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+            )
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: stdout is not valid JSON "
+                f"(exit code {result.returncode}; first 500 chars: {stdout[:500]!r})"
+            ) from exc
+        if not isinstance(data, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: stdout JSON is not a dict (got {type(data).__name__})"
+            )
+        if not data.get("ok"):
+            error_msg = str(data.get("error", ""))
+            if "TimeoutError" in error_msg:
+                raise WorkerTimeout(
+                    f"ComfyAgentWorker.generate_video: ComfyUI reported TimeoutError: {error_msg}"
+                )
+            for marker in _UNSUPPORTED_ERROR_MARKERS:
+                if marker in error_msg:
+                    raise WorkerUnsupportedResponse(
+                        f"ComfyAgentWorker.generate_video: deterministic param error: {error_msg}"
+                    )
+            raise WorkerError(
+                f"ComfyAgentWorker.generate_video: comfyui_api returned ok=false "
+                f"(exit {result.returncode}, error: {error_msg})"
+            )
+        if "outputs" not in data or not isinstance(data["outputs"], dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate_video: stdout JSON missing 'outputs' field or "
+                f"not a dict (got {data.get('outputs')!r})"
+            )
+        outputs = data["outputs"]
+        # 三段表守门(video-mode:REQUIRED outputs.video non-empty;无 auxiliary;
+        # rejected outputs.images / glb / audio raise)
+        self._validate_outputs(outputs, comfy_workflow=comfy_workflow)
+
+        video_paths = outputs.get("video") or []
+        candidates: list[VideoCandidate] = []
+        for src_str in video_paths:
+            src = Path(src_str)
+            # F-Plan-4 round-2 path trust-boundary 防护(沿 audio G11 R2 fix)
+            if not src.is_file():
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_video: outputs.video path does not exist: {src}"
+                )
+            if src.is_symlink():
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_video: outputs.video path is a symlink, "
+                    f"refusing to follow: {src}"
+                )
+            # path-containment-hardening sandbox prefix gate(沿 audio path-containment
+            # follow-on R7-C disputed-permanent-drift 兑现)
+            self._assert_path_within_comfy_output_root(src, output_kind="video")
+            # D8 + round-2 F2 + round-3 PF3 sweep:扩展名 whitelist mp4-only
+            ext = src.suffix.lower().lstrip(".")
+            if ext not in self._VIDEO_FORMAT_WHITELIST:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_video: unsupported video format {ext!r}, "
+                    f"expected 'mp4' (webm follow-on `comfy-video-webm-adoption`; round-2 F2);"
+                    f"file: {src.name}"
+                )
+            video_bytes = src.read_bytes()
+            # round-2 F4 + round-3 PF2 BMFF strict 5-tuple 校验
+            # (1) 文件长度 >= 16 bytes(最少容纳 1 个 32-bit ftyp box)
+            if len(video_bytes) < 16:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_video: mp4 too short: {len(video_bytes)} bytes "
+                    f"(need >= 16 for minimal BMFF header; file: {src.name})"
+                )
+            # (2) ftyp box at offset 4
+            if video_bytes[4:8] != b"ftyp":
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_video: mp4 BMFF header mismatch: "
+                    f"offset 4-8 = {video_bytes[4:8]!r}, expected b'ftyp' "
+                    f"(file: {src.name})"
+                )
+            # (3) box_size sanity:reject box_size == 1 (largesize follow-on `video-bmff-largesize-support`)
+            box_size = int.from_bytes(video_bytes[0:4], "big")
+            if box_size == 1 or box_size < 8 or box_size > len(video_bytes):
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_video: mp4 BMFF first box_size={box_size} "
+                    f"out of range [8, {len(video_bytes)}] "
+                    f"(largesize box_size==1 deferred to follow-on `video-bmff-largesize-support`; "
+                    f"round-3 PF2;file: {src.name})"
+                )
+            # (4) major_brand non-empty / non-zero / non-spaces
+            major_brand = video_bytes[8:12]
+            if major_brand == b"\x00\x00\x00\x00" or major_brand == b"    ":
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.generate_video: mp4 BMFF major_brand is empty / "
+                    f"all-zeros / all-spaces: {major_brand!r} (file: {src.name})"
+                )
+            # D8 + D1:VideoCandidate format hardcoded "mp4"(round-2 F2 + round-3 PF3 sweep);
+            # 5 个 video metadata 顶层字段 None always(ComfyUI agent CLI 不暴露 video metadata;
+            # follow-on `video-metadata-parser` 用 ffprobe / mutagen 解析填充)
+            candidates.append(VideoCandidate(
+                data=video_bytes,
+                format="mp4",
+                metadata={
+                    "comfy_manifest": comfy_workflow,
+                    "comfy_params_snapshot": params_snapshot,
+                    "comfy_capability": "video",
+                    "comfy_original_filename": src.name,
+                    "comfy_subprocess_run_metadata": {
+                        "exit_code": result.returncode,
+                        "project_id": self.project_id,
+                        "seed": seed,
+                        "model_id": self.model_id,
+                    },
+                },
+                duration_seconds=None,
+                frame_count=None,
+                width=None,
+                height=None,
+                fps=None,
             ))
         return candidates
 

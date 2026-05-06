@@ -246,6 +246,19 @@
 | `duration_seconds` | `float \| None` | 本 change 永远 `None`(F-Plan-R5 留 follow-on `audio-metadata-parser`)|
 | `sample_rate` | `int \| None` | 本 change 永远 `None`(同上)|
 
+**VideoCandidate**(`comfy-agent-cli-video-adoption` v1.8,`providers/workers/video_worker.py`)
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `data` | bytes | video bytes payload |
+| `format` | `Literal["mp4"]` | mp4-only(round-2 F2 + round-3 PF3 sweep;webm follow-on `comfy-video-webm-adoption`);BMFF strict 5-tuple 校验(`len >= 16` + `data[4:8] == b"ftyp"` + `box_size in [8, len(data)]` reject `box_size == 1` + `data[8:12]` major_brand non-empty / non-zero / non-spaces;round-2 F4 + round-3 PF2)|
+| `metadata` | `dict[str, Any]` | worker-side raw metadata(进 `Artifact.metadata.worker_metadata` 嵌套字段);**不**含 `format`/`duration_seconds`/`frame_count`/`width`/`height`/`fps` 重复键(D8 single-source 沿 audio F-Plan-R7-A 同款) |
+| `duration_seconds` | `float \| None` | 本 change 永远 `None`(D8 留 follow-on `video-metadata-parser` 加 ffprobe / mutagen 解析)|
+| `frame_count` | `int \| None` | 本 change 永远 `None`(同上)|
+| `width` | `int \| None` | 本 change 永远 `None`(同上)|
+| `height` | `int \| None` | 本 change 永远 `None`(同上)|
+| `fps` | `float \| None` | 本 change 永远 `None`(同上)|
+
 ### 2.9 Review 对象族
 
 **ReviewNode**
@@ -678,12 +691,15 @@ def classify(exc: Exception) -> FailureMode
 | **`AudioWorkerTimeout`** (`comfy-agent-cli-audio-adoption` v1.7) | **`audio_worker_timeout`** | **abort_or_fallback** |
 | **`AudioWorkerUnsupportedResponse`** | **`audio_worker_unsupported`** | **abort_or_fallback** |
 | **`AudioWorkerError`**(generic;归类同 `audio_worker_unsupported` 因 internal retry 已 exhausted) | **`audio_worker_unsupported`** | **abort_or_fallback** |
+| **`VideoWorkerTimeout`** (`comfy-agent-cli-video-adoption` v1.8) | **`video_worker_timeout`** | **abort_or_fallback** |
+| **`VideoWorkerUnsupportedResponse`** | **`video_worker_unsupported`** | **abort_or_fallback** |
+| **`VideoWorkerError`**(generic;归类同 `video_worker_unsupported` 因 internal retry 已 exhausted) | **`video_worker_unsupported`** | **abort_or_fallback** |
 | `WorkerError` (image / comfy 等) | `worker_error` | fallback_model |
 | `BudgetExceededError`(合成) | `budget_exceeded` | escalate_human → stop |
 | `ue_path_conflict`(manifest 校验) | `ue_path_conflict` | human_review_required |
 | `OSError(ENOSPC)` | `disk_full` | rollback → stop |
 
-**分类顺序**:unsupported 子类在通用 Error 分支**之前**捕捉,避免被 `worker_error` 吞。同样,**mesh 子类**(`MeshWorkerTimeout` / `MeshWorkerError`)在通用 `WorkerTimeout` / `WorkerError` 之前 isinstance 检查 — 否则 mesh 会命中 generic mode 进 retry 链(TBD-007 root cause,见下方 §5.7.2)。**audio 子类**(`AudioWorkerUnsupportedResponse` / `AudioWorkerTimeout` / `AudioWorkerError`)同样在通用 worker_* 之前 + 在 mesh 之前 isinstance(F-Plan-R7-B + R4-F1 priority 修订模式;ABCs 不互为子类,显式顺序保险)— 经 `_generate_via_comfy_worker` 内部 retry exhausted 后 wrap,到 FailureModeMap 时已无重试预算,故 `audio_worker_*` 直接 `abort_or_fallback`,与 mesh_worker_* 同终态语义。
+**分类顺序**:unsupported 子类在通用 Error 分支**之前**捕捉,避免被 `worker_error` 吞。同样,**mesh 子类**(`MeshWorkerTimeout` / `MeshWorkerError`)在通用 `WorkerTimeout` / `WorkerError` 之前 isinstance 检查 — 否则 mesh 会命中 generic mode 进 retry 链(TBD-007 root cause,见下方 §5.7.2)。**audio 子类**(`AudioWorkerUnsupportedResponse` / `AudioWorkerTimeout` / `AudioWorkerError`)同样在通用 worker_* 之前 + 在 mesh 之前 isinstance(F-Plan-R7-B + R4-F1 priority 修订模式;ABCs 不互为子类,显式顺序保险)— 经 `_generate_via_comfy_worker` 内部 retry exhausted 后 wrap,到 FailureModeMap 时已无重试预算,故 `audio_worker_*` 直接 `abort_or_fallback`,与 mesh_worker_* 同终态语义。**video 子类**(`VideoWorkerUnsupportedResponse` / `VideoWorkerTimeout` / `VideoWorkerError`,自 `comfy-agent-cli-video-adoption` v1.8)D14 priority:**先于** audio / mesh / generic worker_* isinstance(沿 audio R4-F1 priority 修订模式;wrapped VideoWorker* 子类必须先于通用父类匹配,否则被抢先吞掉失去 video-specific decision)— 经 `_generate_via_comfy_worker` 内部 retry exhausted 后 wrap,Wan T2V 7-min 长生成 + BMFF strict 5-tuple 校验,故 `video_worker_*` 直接 `abort_or_fallback`,与 audio / mesh 同终态语义。
 
 #### 5.7.2 TBD-007 mesh 重试塌缩(2026-04-22)
 

@@ -9,6 +9,23 @@ S2→S3 transition:把 OpenSpec contract artifact 转为 execution plan + micro 
 
 **Input**: 必须指定 change name(`/forgeue:change-plan <id>`)。
 
+## Preflight Skill Cascade(D-SkillCascadeCheck)
+
+本命令 invoke `superpowers:writing-plans` SKILL(沿 Step 7);实施前 controller MUST 验证主 SKILL declared dependency 全 invoke。
+
+强制项(在 Step 7 invoke `writing-plans` 之前执行):
+
+```bash
+python tools/forgeue_skill_cascade_check.py \
+    --skill superpowers:writing-plans \
+    --invoked superpowers:brainstorming
+```
+
+- exit 0 → cascade OK
+- exit 5 → missing dependency → 命令 abort + 提示主动 invoke 缺失 SKILL 后 retry
+
+evidence frontmatter MUST 加 `skill_cascade_audit` 字段(对象,含 `invoked_skills` list + `cascade_check_pass_at` ISO 8601 timestamp)+ `runtime_enforcement_protocol_version: v1`;`forgeue_finish_gate.py::_check_skill_cascade` fence 守门 audit。
+
 **Steps**
 
 1. **环境检测** — `python tools/forgeue_env_detect.py --json`;读 `auto_codex_review` / `codex_plugin_available`;non-claude-code env 时 codex hook 降级 OPTIONAL,不阻断 archive。
@@ -55,9 +72,29 @@ S2→S3 transition:把 OpenSpec contract artifact 转为 execution plan + micro 
 - **evidence 不能成新规范源**:codex finding 暴露 contract 漏洞 → 回写到 design.md / proposal.md / tasks.md(`drift_decision: written-back-to-<artifact>` + 真实 commit);否则 `disputed-permanent-drift` 必有 ≥ 50 字 reason + design.md `## Reasoning Notes` anchor。
 - **必跑 writeback 检测**:`forgeue_change_state.py --writeback-check` exit 5 阻断 S3。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S2→S3(plan stage)** 阶段触发。Claude controller 默认按 design.md `D-AutonomyBoundary` + `D-FenceTaxonomy`(Fence #1-#6 trigger keyword 真源)决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_codex_concurred`):
+- 跑 codex `/codex:adversarial-review` design hook + 写 `review/design_cross_check.md`
+- 触发 Superpowers `writing-plans` 生成 `execution/execution_plan.md` + `micro_tasks.md`
+- 跑 `forgeue_change_state.py --writeback-check` 锚点检测
+- cross-check `disputed_open: 0` + writeback-check exit 0 → 自主推进 S3
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:本命令不涉及 archive / git push 等不可逆操作
+- **Fence #2 跨 change**:plan 涉及修改其他 active change 的 design.md / proposal.md → 升级确认
+- **Fence #3 review 冲突**:codex adversarial review 返回与 Claude 立场 disputed 且无法在 `design_cross_check.md` 内解决(`disputed_open > 0`) → 升级用户裁决
+- **Fence #4 用户约束**:用户指定特殊 plan 格式或限制 scope → 升级确认
+- **Fence #5 钱**:本命令不引入 vendor API paid call,无需升级
+- **Fence #6 安全**:本命令不 read `.env` 或敏感凭证
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-plan` 行)— hook 真源:`codex-plugin-cc /codex:adversarial-review + 写 cross-check`
 - `design.md` §3 Cross-check Protocol — A/B/C/D 模板 + Resolution enum + frontmatter 必含字段
-- `forgeue_integrated_ai_workflow.md` §B.4(codex stage hook)+ §D.5/§D.6(cross-check 模板复述)
+- `forgeue_integrated_ai_workflow.md` §B.4(codex stage hook)+ §E.5/§E.6(cross-check 模板复述;原 §D.5/§D.6 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`

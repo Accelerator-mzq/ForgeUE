@@ -16,6 +16,12 @@ _OP_ALLOW_ATTR: dict[str, str] = {
     "import_texture": "allow_import_texture",
     "import_audio": "allow_import_audio",
     "import_static_mesh": "allow_import_static_mesh",
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3 round-2 F1 修订:
+    # video import op kind 加 mapping;否则 is_op_allowed 走 unknown → deny 路径,
+    # ExportExecutor 给 video op 发 status="skipped" Evidence record。三处必须
+    # **同 commit** 改:此 entry + PermissionPolicy.allow_import_file_media_source +
+    # ExportExecutor._is_importable whitelist。
+    "import_file_media_source": "allow_import_file_media_source",
     "create_material_from_template": "allow_create_material",
     "create_sound_cue_from_template": "allow_create_sound_cue",
 }

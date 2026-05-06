@@ -357,6 +357,740 @@ inline comments next to the placeholder so future env-var renames are easy to au
 - **AND** Hunyuan 3D mesh provider falls back to FakeMeshWorker / Tripo3D /
   provider auth failure (existing behavior; outside this change's scope)
 
+### Requirement: ComfyUI video live smoke bundle is text-to-video with single generate / capability_ref="video.t2v" step
+
+The system SHALL ship `examples/comfy_local_smoke_video.json` as the canonical live smoke entry for the ComfyUI video capability. The bundle SHALL be **text-to-video** (per provider-routing design D7): it contains exactly one `Step` whose `type == StepType.generate` (the existing enum value, NOT a new step type) and `capability_ref == "video.t2v"`, with all manifest-specific parameters living inside `step.config.spec.comfy_params`:
+
+The bundle JSON SHALL use the canonical loader top-level three-section schema (sweep-mirror of audio Phase 2 schema: `task` / `workflow` (no `steps` nested) / `steps` array — mirrors `examples/comfy_local_smoke.json` / `comfy_local_smoke_mesh.json` / `comfy_local_smoke_audio.json` real schema; `src/framework/workflows/loader.py:34-36` reads `raw["task"]` + `raw["workflow"]` + `[s for s in raw["steps"]]`):
+
+- Top-level `task` object: `task_id`, `task_type: "asset_generation"`, `run_mode: "basic_llm"`, `title`, `input_payload.prompt`, `expected_output.artifact_types: ["video_asset"]`, `project_id`
+- Top-level `workflow` object: `workflow_id`, `name`, `version`, `entry_step_id: "step_video"`, `step_ids: ["step_video"]` (NO `steps` nested — `steps` is at top level)
+- Top-level `steps` array containing exactly one Step object:
+  - `step_id`: e.g. `"step_video"`
+  - `type`: `"generate"` (serialized from `StepType.generate`)
+  - `name`: human-readable
+  - `risk_level`: `"medium"`
+  - `capability_ref`: `"video.t2v"`
+  - `provider_policy`: `{"capability_required": "video.t2v", "models_ref": "video_local"}` (resolves to `comfy/local-video`)
+  - `retry_policy` (top-level Step field, OPTIONAL): `{"max_attempts": 2, "backoff": "fixed", "retry_on": ["timeout", "provider_error"]}` — sweep-mirror of audio Phase 2 schema lock: `RetryPolicy` schema in `src/framework/core/policies.py:25-30` only contains `max_attempts/backoff/retry_on`; the bundle SHALL NOT place `timeout_seconds` here
+  - `config`: executor-specific free-form dict containing:
+    - `num_candidates`: 1 (or > 1 — per-candidate loop in `generate_video` supports it; sweep-mirror of audio F-Plan-3 round-2)
+    - `seed`: same value as `comfy_params.seed` (or absent if random)
+    - `worker_timeout_s`: **600** (D3: Wan T2V manifest `estimated_time_s: 420` ≈ 7 分钟 + ComfyUI 启动 + 模型加载余量;sweep-mirror of audio Phase 2 `worker_timeout_s` placement at `step.config.worker_timeout_s`, NOT in `retry_policy`)
+    - `spec.comfy_workflow`: **`"Vedio/Wan2.1-T2V-1.3B_native_5sec"`** (D3 default; D5: `Vedio/` upstream拼写照实跟随,**不**做翻译;users MAY swap to `Vedio/Wan2.1-T2V-1.3B_native_teacache` for TeaCache-accelerated variant if custom node installed, or to `Vedio/Wan2.2-T2V-A14B_GGUF` for higher quality with 14+ GB VRAM)
+    - `spec.comfy_params`: `{<manifest-specific params from `python -m comfyui_api params --workflow Vedio/Wan2.1-T2V-1.3B_native_5sec`>}` — for the Wan 1.3B 5sec default, this includes `positive_prompt` (REQUIRED), `negative_prompt` (OPTIONAL, default `"blurry, low quality, distorted, watermark, worst quality, jpeg artifacts"` per manifest), `width` (OPTIONAL, default `832`), `height` (OPTIONAL, default `480`), `num_frames` (OPTIONAL, default `81`), `seed` (OPTIONAL, default `5042`), `steps` (OPTIONAL, default `25`), `filename_prefix` (OPTIONAL, default `"wan21_1.3b_5sec"`); the bundle SHALL NOT use `comfy_image_param_key` (text-to-video has no source image path, sweep-mirror of audio)
+    - `spec.comfy_lifecycle`: `"none"`
+
+The bundle MUST NOT inline a `workflow_graph` JSON. The bundle SHALL be a sibling file to `examples/comfy_local_smoke.json` (image-mode), `examples/comfy_local_smoke_mesh.json` (mesh-mode), and `examples/comfy_local_smoke_audio.json` (audio-mode), NOT a replacement. The single-step structure mirrors the audio bundle (text-to-something, no source bytes input).
+
+#### Scenario: examples/comfy_local_smoke_video.json declares text-to-video single step with video_local alias and canonical loader schema
+
+- **GIVEN** the post-change `examples/comfy_local_smoke_video.json` loaded via `framework.workflows.loader.load_task_bundle`
+- **WHEN** the loader reads the bundle structure
+- **THEN** (sweep-mirror of audio Phase 2: bundle has canonical top-level three-section schema) the JSON has top-level keys `task` + `workflow` + `steps` (NOT nested `workflow.steps[]`); `Task.model_validate(raw["task"])` parses cleanly; `Workflow.model_validate(raw["workflow"])` parses cleanly with `step_ids` listing one step (no `steps` nested under workflow); `[Step.model_validate(s) for s in raw["steps"]]` produces exactly one Step; the step's `type == StepType.generate` (`"generate"` in JSON); `step.capability_ref == "video.t2v"`; `step.provider_policy.models_ref == "video_local"`; `step.provider_policy.capability_required == "video.t2v"`; `step.retry_policy` if present contains only `max_attempts/backoff/retry_on` (no `timeout_seconds`); `step.config.worker_timeout_s == 600`; `step.config.spec` contains `comfy_workflow` (string starting with `"Vedio/"` — D5 upstream typo intentional), `comfy_params` (dict containing prompt key matching the manifest's expected schema, e.g. `positive_prompt` for Wan T2V), `comfy_lifecycle: "none"`, and contains NO `workflow_graph` field, NO `comfy_image_param_key` field; after `expand_model_refs`, the resolved `prepared_routes` contains exactly one route with `model="comfy/local-video"`
+
+#### Scenario: examples/comfy_local_smoke.json (image), comfy_local_smoke_mesh.json (mesh), comfy_local_smoke_audio.json (audio) are preserved unchanged
+
+- **GIVEN** the post-change repository tree
+- **WHEN** `examples/comfy_local_smoke.json`, `examples/comfy_local_smoke_mesh.json`, `examples/comfy_local_smoke_audio.json` are inspected
+- **THEN** all three prior smoke bundles exist unchanged at the same paths; all four bundles coexist and exercise different ComfyAgentWorker capability modes; users selecting between them via `--task examples/comfy_local_smoke.json` (image), `--task examples/comfy_local_smoke_mesh.json` (image-to-mesh), `--task examples/comfy_local_smoke_audio.json` (text-to-audio), or `--task examples/comfy_local_smoke_video.json` (text-to-video) get the corresponding capability path
+
+### Requirement: Live ComfyUI video smoke is gated behind agent-CLI video manifest availability + Wan model weights
+
+The system SHALL document in the bundle's loader-test smoke + in CLAUDE.md (ComfyUI section) that running `examples/comfy_local_smoke_video.json` end-to-end requires:
+
+1. ComfyUI installed under a host-specific path with at least one video workflow manifest available (default: `Vedio/Wan2.1-T2V-1.3B_native_5sec` — Wan 2.1 1.3B T2V with 5-second clip; alternative: `Vedio/Wan2.1-T2V-1.3B_native_teacache` requires TeaCache custom node; `Vedio/Wan2.2-T2V-A14B_GGUF` requires 14+ GB VRAM and longer generation time ≥30 min)
+2. `python -m comfyui_api list` output containing the manifest name referenced by the bundle (note: D5 upstream `Vedio/` typo — `list` output uses the same path)
+3. `FORGEUE_COMFY_SCRIPTS_DIR` pointing to that ComfyUI's `scripts/` directory; **NO** `FORGEUE_COMFY_INPUT_DIR` env var required (text-to-video has no source bytes path — that env var is mesh-specific)
+4. First run: ComfyUI auto-downloads Wan model weights from HuggingFace (Wan 2.1 1.3B ~3 GB; A14B ~14 GB+); subsequent runs use the cache; users SHOULD pre-warm ComfyUI to avoid `worker_timeout_s` exhaustion during first cold start
+5. `python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id video_smoke_<timestamp>`
+
+The offline loader-contract test SHALL still pass without any of those preconditions because the loader does not invoke any worker. CLAUDE.md SHALL be updated to reflect the four smoke bundles (image / mesh / audio / video) and to note that video smoke produces a `.mp4` file under `artifacts/<today>/<run_id>/<artifact_id>.mp4` (round-2 F2 + round-3 PF3 sweep:**mp4-only**,webm follow-on `comfy-video-webm-adoption`;the in-tree filename is `<artifact_id>.<format>` via `repo.put` + `file_suffix=f".{cand.format}"` which post-F2 evaluates to `.mp4` only, NOT the original ComfyUI filename — see artifact-contract spec).
+
+#### Scenario: comfy_local_smoke_video.json passes the offline loader-contract fence without a real ComfyUI
+
+- **GIVEN** a CI runner without ComfyUI installed and without `D:/AI/ComfyUI/scripts/`
+- **WHEN** `tests/integration/test_example_bundles_smoke.py` loads `examples/comfy_local_smoke_video.json` through `load_task_bundle`
+- **THEN** the bundle parses cleanly into a `TaskBundle`, no subprocess is spawned, and the smoke test asserts only loader-level invariants (`comfy_workflow` is a string starting with `"Vedio/"`, `comfy_params` is a dict containing at least one prompt-like key, `video_local` alias resolves to `comfy/local-video`, no `workflow_graph` field, no `comfy_image_param_key` field, `depends_on` is empty); mirrors the existing fence pattern for image / mesh / audio bundles
+
+#### Scenario: Live video smoke L2 evidence file is real video bytes under in-tree artifact path
+
+- **GIVEN** a host with ComfyUI + Wan 2.1 1.3B model weights cached + `FORGEUE_COMFY_SCRIPTS_DIR` configured + `python -m factory_v3 serve` running (ComfyUI pre-warmed)
+- **WHEN** the user runs `python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id video_smoke_<timestamp>`
+- **THEN** the resulting `artifacts/<today>/video_smoke_<timestamp>/<artifact_id>.mp4` file (round-2 F2 修订:mp4-only;webm follow-on): (1) exists, (2) has size > 1 MB (avoids 0-byte false positives; Wan 1.3B 5sec @ 832x480 typically produces 5-15 MB), (3) BMFF strict header validation (round-2 F4 + **round-3 PF2 修订**): `len(data) >= 16` AND `data[4:8] == b"ftyp"` AND `box_size = int.from_bytes(data[0:4], "big")` is in range `[8, len(data)]` (round-3 PF2:**reject `box_size == 1`** for 64-bit largesize, follow-on `video-bmff-largesize-support`) AND `data[8:12]` major_brand is non-empty / non-zero / non-spaces. The L2 evidence note `notes/live_smoke_video_<date>.md` SHALL record all four objective checks; subjective video quality is left to human spot-check. Frame count / duration / resolution checks are OUT OF SCOPE for this change — design D8 + this spec lock `VideoCandidate.duration_seconds=None / frame_count=None / width=None / height=None / fps=None always` because ComfyUI agent CLI does not expose video metadata; ForgeUE does not introduce ffprobe / mutagen parsing in this change scope; a follow-on `video-metadata-parser` change MAY add the duration / frame_count / resolution checks after introducing a parser dependency
+
+### Requirement: a2_video UE 真机 P4 acceptance via commandlet automation
+
+The system SHALL provide an `a2_video` UE 真机 P4 acceptance path documented in `docs/acceptance/acceptance_report.md` and exercised once on a UE 5.x install (sweep-mirror of `a2_mesh` 2026-04-23 UE 5.7.4 commandlet模式;D15 user决定走 commandlet 自动化,**not** GUI Python Console manual paste). The acceptance SHALL:
+
+- Run `python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id a2_video_<date>` to produce `artifacts/<today>/a2_video_<date>/<artifact_id>.mp4` + matching `manifest.json` / `import_plan.json` / `evidence.json`
+- Run `<UE_path>/Engine/Binaries/Win64/UnrealEditor-Cmd.exe <project>.uproject -ExecutePythonScript="<repo>/ue_scripts/run_import.py"` with `FORGEUE_RUN_FOLDER` env pointing to the artifact run folder (Bash 直接驱动,Claude 不需要用户手工点 Python Console)
+- Verify the resulting UE project tree contains:
+  - `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4` — the mp4 source file copied to UE Movies subdirectory (D12 packaging path分流)
+  - `<project_root>/Content/Generated/<run_id>/MS_<base>.uasset` — the FileMediaSource `.uasset` asset (NOT mp4-embedded; just a reference)
+- Append `evidence.json` with one record per import operation, status `success`
+- Documented evidence file: `notes/live_smoke_video_<date>.md` records (a) framework-side `artifacts/.../<artifact_id>.mp4` size + magic bytes check, (b) UE-side `Content/Movies/<run_id>/MS_<base>.mp4` existence + size, (c) UE-side `Content/Generated/<run_id>/MS_<base>.uasset` existence, (d) `unreal.FileMediaSource.cast(asset).get_editor_property("file_path")` resolved value matching the Movies path, (e) `Artifact.metadata.worker_metadata.comfy_capability == "video"` + producer = `comfy_agent_cli` + model = `comfy/local-video` for producer attribution
+
+#### Scenario: a2_video commandlet round-trip produces both `.mp4` source and `.uasset` reference
+
+- **GIVEN** a host with UE 5.x installed (UE 5.7+ recommended), `PythonScriptPlugin` enabled in the target `.uproject`, framework-side `artifacts/<today>/a2_video_<date>/` containing the prior `framework.run` outputs, and `FORGEUE_RUN_FOLDER` env set to that path
+- **WHEN** the operator invokes `UnrealEditor-Cmd.exe <project>.uproject -ExecutePythonScript="<repo>/ue_scripts/run_import.py"` from a Bash shell
+- **THEN** UE 加载 project,执行 `run_import.run()`,for the video entry: `domain_video.import_video_entry` copies the mp4 source to `Content/Movies/<run_id>/MS_<base>.mp4`, then invokes `unreal.FileMediaSourceFactory()` + `unreal.AssetTools.import_assets(...)` to create `Content/Generated/<run_id>/MS_<base>.uasset` whose `file_path` editor property resolves to the Movies path; `evidence.json` gets a `status="success"` record for this operation; the operator visually verifies via UE Editor Content Browser double-click on `MS_<base>.uasset` showing the FileMediaSource asset details panel with the file_path field populated; the `notes/live_smoke_video_<date>.md` evidence file documents all five checks above
+
+### Requirement: subagent-driven-development per-task evidence schema
+
+当用户调用 `/forgeue:change-apply-subagent <id>` 命令时,系统 SHALL 把 Superpowers `subagent-driven-development` skill 派发的每个 subagent return 内容固化为 OpenSpec change 内的 4 类 per-task evidence 文件,采用扁平命名 + frontmatter-indexed `evidence_type` 字段:
+
+| 文件路径 | `evidence_type` | 来源 subagent |
+|---|---|---|
+| `execution/task_<n>_implementer.md` | `subagent_implementer_report` | implementer subagent return |
+| `execution/task_<n>_spec_review.md` | `subagent_spec_review` | spec compliance reviewer return |
+| `execution/task_<n>_code_quality_review.md` | `subagent_code_quality_review` | code quality reviewer return |
+| `review/subagent_final_review.md` | `subagent_final_review` | final code reviewer return(全 task 完成后) |
+
+`<n>` SHALL 是 `execution/micro_tasks.md` 中 task 的递增编号(从 1 起)。每个文件 SHALL 携带完整的 12-key frontmatter(沿 `Active change evidence is captured under OpenSpec change subdirectories with writeback protocol` Requirement 的全部 frontmatter 约束),包括 `change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `drift_decision` / `writeback_commit` / `drift_reason` / `reasoning_notes_anchor` / `detected_env` / `triggered_by` / `codex_plugin_available`。
+
+`stage` 字段 SHALL 为 `S4`(对应实施阶段);通过 review 的 task evidence 允许"frontmatter + 一行 summary"轻量化形态(不强制复制 subagent return 全文),但未通过 review 的 task evidence MUST 包含完整的 issues 列表(`spec_review` 的 missing/extra/misunderstandings + file:line refs;`code_quality_review` 的 Critical/Important/Minor issues)以便后续 implementer 修复参照。
+
+#### Scenario: change-apply-subagent 派发完成后 4 类 evidence 落盘且 frontmatter 完整
+
+- GIVEN 一个 active OpenSpec change `<change-id>`,其 `execution/micro_tasks.md` 含 3 个 micro-task,用户调用 `/forgeue:change-apply-subagent <change-id>`
+- WHEN 主 session Claude 完成 Superpowers `subagent-driven-development` skill 派发流程,3 个 task 全部 implementer return DONE + spec_review ✅ + code_quality_review ✅
+- THEN `openspec/changes/<change-id>/execution/` 下产生 9 个文件 `task_1_implementer.md` / `task_1_spec_review.md` / `task_1_code_quality_review.md` / `task_2_*` / `task_3_*`,`openspec/changes/<change-id>/review/` 下产生 1 个文件 `subagent_final_review.md`,所有 10 个文件携带完整 12-key frontmatter,`evidence_type` 字段分别为 `subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`,`stage` 字段全部为 `S4`,`change_id` 全部为 `<change-id>`
+
+#### Scenario: spec_review 发现 missing requirement 时 evidence 包含完整 issues 列表
+
+- GIVEN 一个 active change,task 5 的 implementer subagent return DONE,但 spec compliance reviewer 发现 implementer 漏建造一个 requirement
+- WHEN 主 session Claude 把 spec_review return 落盘为 `execution/task_5_spec_review.md`
+- THEN 该 evidence 文件 body 包含完整的 `❌ Issues found` 段,列出 missing requirement 名称 + file:line refs;不允许只写"frontmatter + ❌ summary"轻量化形态(因为 implementer 后续修复需要参照该 issues 列表);frontmatter `evidence_type: subagent_spec_review`
+
+### Requirement: change-apply-subagent 命令直接 invoke Superpowers skill
+
+`/forgeue:change-apply-subagent` 命令 SHALL 直接 invoke `superpowers:subagent-driven-development` skill,不重写 / 不分叉 / 不复制 skill 内部的 3 个 prompt 模板(`implementer-prompt.md` / `spec-reviewer-prompt.md` / `code-quality-reviewer-prompt.md`)。ForgeUE 命令文件 SHALL NOT 在自身内容中引用、嵌入或镜像这些 prompt 模板的文本。
+
+主 session Claude 在 invoke skill 之前 SHALL 从 `openspec/changes/<id>/execution/micro_tasks.md` extract task list,从 `openspec/changes/<id>/execution/execution_plan.md` 提取 per-task context,**完整文本作为 prompt 内容传给 implementer subagent**(沿 `subagent-driven-development/SKILL.md` Red Flag "Make subagent read plan file (provide full text instead)")。subagent SHALL NOT 被授权读 `micro_tasks.md` / `execution_plan.md` 等 plan 文件。
+
+#### Scenario: change-apply-subagent.md 命令文件不包含 implementer-prompt 文本副本
+
+- GIVEN `.claude/commands/forgeue/change-apply-subagent.md` 命令文件
+- WHEN 用 `grep -F "You are implementing Task" .claude/commands/forgeue/change-apply-subagent.md` 或类似命令搜索 implementer-prompt 模板的标志性短语
+- THEN 命令文件中 SHALL NOT 出现该短语(因为 ForgeUE 不复制 / 不重写 Superpowers skill 内部 prompt);命令文件 SHALL 仅在 step 描述中说明"invoke `superpowers:subagent-driven-development` skill",并在后续 step 描述 evidence 收口协议
+
+#### Scenario: subagent prompt 包含完整 task 文本而非文件路径引用
+
+- GIVEN 一个 active change `<change-id>`,主 session Claude 准备派发 task 1 的 implementer subagent
+- WHEN 主 session Claude 构造 Task tool 的 prompt 参数
+- THEN prompt 字符串内容 SHALL 包含 `execution/micro_tasks.md` 中 task 1 的完整文本 + `execution/execution_plan.md` 中对应 task 1 的 context 段完整文本;prompt SHALL NOT 含有 `请读 openspec/changes/<id>/execution/micro_tasks.md` 这类引用 plan 文件路径的指令(沿 SKILL.md Red Flag);subagent 收到 prompt 后无需访问 plan 文件即可独立完成 task
+
+### Requirement: subagent token-budget tracker 是 informational 不是 enforcement
+
+系统 SHALL 提供 `tools/forgeue_subagent_budget.py` 工具用于追踪 `/forgeue:change-apply-subagent` 命令派发的 LLM token 消耗。该工具的所有 CLI 子命令(`--status` / `--record` / `--json`)始终以 `exit 0` 返回(I/O 异常返回 `exit 1` 例外),**不对 dispatch 流程做 hard gate / abort / auto fallback**。
+
+当累积消耗超过 `FORGEUE_SUBAGENT_BUDGET_WARN_USD`(default `2.0` USD,可通过环境变量 override)阈值时,工具 SHALL 在 stdout 输出 `[WARN] budget exceeded: $<X.XX> of $<Y.YY> (<Z>%)` 形式的警告行;但 `change-apply-subagent` 命令流程 SHALL 继续 dispatch,由用户根据 WARN 自行决定是否中断切换到 `/forgeue:change-apply-direct` 兜底路径。
+
+`/forgeue:change-apply-subagent` 命令 SHALL 在每次派发 implementer / spec_reviewer / code_quality_reviewer subagent 之后调用 `python tools/forgeue_subagent_budget.py --change <id> --record ...` 把该次 dispatch 的 token 消耗追加到 `verification/subagent_budget.log`(JSON Lines 格式)。
+
+#### Scenario: budget warn 阈值超出后 dispatch 继续不被阻断
+
+- GIVEN 用户在调 `/forgeue:change-apply-subagent <change-id>`,环境变量 `FORGEUE_SUBAGENT_BUDGET_WARN_USD=1.0`,前 5 个 task 已累积消耗 1.20 USD
+- WHEN 主 session Claude 调用 `python tools/forgeue_subagent_budget.py --change <change-id> --status` 在 task 6 dispatch 之前
+- THEN 工具 stdout 输出 `[WARN] budget exceeded: $1.20 of $1.00 (120%)` 警告行,`exit 0`;主 session Claude 继续 dispatch task 6 的 implementer subagent(命令流程不因 WARN 中断);`change-apply-subagent` 命令 step 流程 SHALL 不调用任何 abort / fallback 分支;用户在阅读控制台输出时看到 WARN 警告,可手工 Ctrl-C 中止后切换到 `/forgeue:change-apply-direct`(用户判断,不是工具自动)
+
+#### Scenario: budget tracker 与 ADR-007 vendor API 双扣边界根本不同
+
+- GIVEN ADR-007 在 `docs/requirements/SRS.md` 约束 framework 不得对 mesh.generation 等 vendor 外部 API 做静默重试,因为重试会双扣已完成 job
+- WHEN 把 LLM token 消耗(persist value-producing,不会双扣)纳入考虑
+- THEN ADR-009 在 `docs/requirements/SRS.md` SHALL 显式声明 token-budget tracker 与 ADR-007 是不同的安全边界:ADR-007 拦截 "重试时双扣已完成 job"(浪费),ADR-009 budget tracker 仅记录 "持续产生价值的 token 消耗"(打断 = 损失);框架 SHALL NOT 对 token cost 做 hard gate;ADR-009 描述 SHALL 包含与 ADR-007 的对比段说明边界不同
+
+### Requirement: Codex review default background dispatch policy
+
+`/codex:review` 与 `/codex:adversarial-review` 命令模板 SHALL default 到 background 模式分发,仅当**全部三个条件同时满足**时才走前台 wait 路径:
+
+- 变更范围 ≤ 2 files **且** 总 diff ≤ 50 lines(`git diff --shortstat` / `git diff --shortstat --cached` 实测)
+- 调用模式非 `adversarial-review`(adversarial 永远 background)
+- main session 下一动作必须依赖 review 结果(由 controller 显式判断)
+
+命令模板 SHALL 保留 `--wait` / `--background` 显式 flag 作为用户 override 通道,显式 flag 优先于 size estimation。
+
+#### Scenario: 大 scope 变更默认走 background
+
+- **WHEN** 用户 invoke `/codex:review` 且当前 working tree `git diff --shortstat` 显示 ≥ 3 files 或 ≥ 51 lines
+- **THEN** 命令直接走 background 路径(`Bash(..., run_in_background: true)`),不弹 `AskUserQuestion`
+- **AND** main session 在下一次需要 codex 输出前 SHALL 主动 BashOutput 拉结果
+
+#### Scenario: 极小 scope 变更走前台 wait
+
+- **WHEN** 用户 invoke `/codex:review` 且 working tree ≤ 2 files **且** ≤ 50 lines diff **且** 非 adversarial-review **且** controller 判定下一动作必须等结果
+- **THEN** 命令走前台 wait 路径,foreground node 调用 codex-companion.mjs
+- **AND** 不弹 `AskUserQuestion` 二选一
+
+#### Scenario: adversarial-review 永远 background
+
+- **WHEN** 用户 invoke `/codex:adversarial-review`(无论 scope 大小)
+- **THEN** 命令走 background 路径
+- **AND** 不弹 `AskUserQuestion`
+
+#### Scenario: 显式 flag override
+
+- **WHEN** 用户 invoke `/codex:review --wait`(显式要求前台)
+- **THEN** 命令走前台 wait,忽略 size estimation 默认
+- **AND** 不弹 `AskUserQuestion`
+
+#### Scenario: background launch 必须 capture job id(W4 writeback codex round 1 F4 finding)
+
+- **WHEN** 命令走 background 路径(D-DefaultBackground default 或 `--background` 显式)
+- **THEN** job id SHALL 从 codex-companion.mjs stdout 第一行 `Codex review started in the background. Job id: <id>` 解析并写入 `notes/<review_type>_active_jobs.txt`(per change_id)
+- **AND** 命令模板告知 main session "Run `/codex:status --wait <job>` and `/codex:result <job>` to consume verdict"
+
+#### Scenario: 未获取 codex result 不得写 concurred evidence(W4 writeback)
+
+- **WHEN** Claude 计划在 evidence frontmatter 写 `autonomy_decision: claude_codex_concurred` + `codex_review_ref: <path>`
+- **THEN** controller MUST 先 `/codex:status --wait <job>` 确认 job done **且** `/codex:result <job>` 拿完整 output 落 evidence
+- **AND** 若 ref evidence 未 finalize(round counter 未 increment / `disputed_open != 0` / `verdict` 字段缺)→ MUST 改为 `autonomy_decision: user_required` 升级到用户
+
+#### Scenario: 命令模板移除 "Do not call BashOutput" 矛盾文本(W4 writeback)
+
+- **WHEN** 静态扫 `.claude/commands/codex/{review,adversarial-review}.md`
+- **THEN** **不**含字符串 `Do not call BashOutput or wait for completion in this turn.`(原 plugin upstream text,与 default background 协议冲突)
+- **AND** 含字符串 `Main session MUST poll job before consuming verdict via /codex:status --wait + /codex:result.`(替换文本)
+
+### Requirement: Codex multi-round review same-subject context bridge
+
+Codex 同 `change_id` + 同 `review_type` 的多轮 review 中,round N+1 (N≥1) prompt SHALL 自动注入对 round N evidence 文件的 read 引用,使 codex 在 review 前理解上轮 verdict。**仅 same-task / same-change scope 共享上下文**,跨 task / 跨 change 绝不共享。
+
+实装路径:
+- Round 1 codex review 输出 SHALL 落 `openspec/changes/<change_id>/notes/codex_<review_type>_review_round1.md`
+- Round 2+ codex review prompt SHALL 包含 fence:`本次 review 是 round {N+1}(继承 round {N} verdict)。**强制要求**:开始 review 前 MUST 先读 openspec/changes/<change_id>/notes/codex_<review_type>_review_round{N}.md`
+- Round counter 状态 SHALL 落 `notes/codex_<review_type>_round_counter.txt`(每个 review subject 一份,sticky)
+
+约束:
+- Round 1 不引用任何上轮(无前置)
+- Round N+1 仅引用直接前驱 round N(不引用 round N-1 / N-2)
+- 跨 `change_id` 不共享(change A round 1 verdict 不进 change B 任何 round)
+- 跨 `review_type` 不共享(同 change 内 design_review round 1 verdict 不进 plan_review round 1)
+
+#### Scenario: round 1 review 不注入任何上轮 reference
+
+- **WHEN** 用户 invoke `/codex:review` 且 `notes/codex_<review_type>_round_counter.txt` 不存在或读出 0
+- **THEN** prompt 不包含 round-bridge fence
+- **AND** round counter 写入 1
+- **AND** codex output 落 `notes/codex_<review_type>_review_round1.md`
+
+#### Scenario: round 2 review 自动注入 round 1 reference
+
+- **WHEN** 用户 invoke `/codex:review` 且同 change_id + 同 review_type 的 round counter 读出 1
+- **THEN** prompt 首段包含 fence:`本次 review 是 round 2(继承 round 1 verdict)。**强制要求**:开始 review 前 MUST 先读 openspec/changes/<change_id>/notes/codex_<review_type>_review_round1.md`
+- **AND** round counter 增到 2
+- **AND** codex output 落 `notes/codex_<review_type>_review_round2.md`
+
+#### Scenario: 跨 change 不共享上下文
+
+- **WHEN** change A 完成 round 1 review 落 `notes/codex_<type>_review_round1.md` + counter=1,然后用户在 change B 第一次 invoke `/codex:review`
+- **THEN** change B prompt 不包含 change A round 1 reference
+- **AND** change B counter 从 1 起记(独立)
+- **AND** change A counter 文件不被 change B 修改
+
+#### Scenario: bridge violation 检测
+
+- **WHEN** round 2 codex output 中 raise 与 round 1 已 accepted finding 重叠的问题但无 `(承 round1-FN)` tag
+- **THEN** controller SHALL 在 evidence frontmatter 标注 `bridge_violation: true`
+- **AND** controller 评估是否 retry round 2 或升级 D-AutonomyBoundary fence #3(review 冲突)
+
+### Requirement: Workflow autonomy boundary fence
+
+ForgeUE Integrated AI Change Workflow controller(Claude main session) SHALL 默认走自主路径执行 routine workflow step。**仅 6 类 boundary 触发时** MUST 升级到用户拍板(2026-05-05 user feedback simplification — 原 fence #3 "Claude+Codex review 冲突" 已**删除**;Claude 独立 verify codex finding 后自主拍板,不再升级用户作中间裁判):
+
+1. **不可逆操作** — `git push` / `git push --force` / archive change(`mv openspec/changes/<id> archive/`)/ `git reset --hard` / `git branch -D` / 删除非 `/tmp/` 临时文件 / `git commit --amend` 已 push 的 commit
+2. **跨 change 决策** — 修改非本 change scope 的 D-decision / 修改其他 active change 的 contract artifact / 删除其他 change 的 evidence 文件
+3. **框架修改(framework modification)** — 修改 D-decision content / fence taxonomy / autonomy 协议自身 / Superpowers 集成边界 / codex 集成边界 / S0-S9 状态机定义
+4. **design.md 不匹配(design.md mismatch)** — 实施暴露的 contract 漏洞与 design.md text 矛盾(原 4 类 DRIFT 中的 `evidence_contradicts_contract` / `evidence_introduces_decision_not_in_contract` / `evidence_exposes_contract_gap` 类)
+5. **钱** — 任何 vendor API paid call(ADR-007 边界:Hunyuan3D / Tripo3D / 远端付费 LLM live 调用 / `--live-llm` flag dispatch)
+6. **Secret / 安全** — `.env` 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作 / mock production credentials 写文件系统
+
+(原 fence "用户先验显式约束" 隐含到 memory read 行为 — Claude controller 每 step 主动 read `MEMORY.md` / `<feedback>` saved memory + 遵守;不作为独立 fence trigger,但效果等价)
+
+每条 implementation evidence frontmatter MUST 含 `autonomy_decision` 字段,枚举(2026-05-05 简化):
+- `claude_autonomous` — **default**(routine step / Claude 独立 verify codex finding 后拍板)
+- `claude_codex_concurred` — 显式 codex 二次验证 + 一致(可选 verify path,不强制;若用 MUST 配 `codex_review_ref`)
+- `user_required` — 6 类 fence 触发(不可逆 / 跨 change / framework / design mismatch / 钱 / 安全)
+- `user_overrode` — 用户主动否决 Claude 推荐
+
+`autonomy_decision: claude_codex_concurred` 字段值 MUST 配套 `codex_review_ref` 字段(指向具体 round N evidence 文件)。`autonomy_decision: claude_autonomous`(default 路径)**不强制** `codex_review_ref` 字段。
+
+`forgeue_finish_gate.py` SHALL 含 `_check_autonomy_boundary` fence 守门 implementation evidence frontmatter `autonomy_decision` 字段必填且值合法(scope 限定 implementation evidence 类型,不强制 verify_report / doc_sync_report / superpowers_review / codex review 类输出 evidence)。
+
+#### Scenario: routine step Claude 自主执行(default 路径)
+
+- **WHEN** Claude 提案修改 evidence file 是 routine step(无 framework 修改 / design.md mismatch / 不可逆 / 钱 / 安全 触发)
+- **THEN** Claude 直接执行修改不弹 `AskUserQuestion`,**不强制** invoke codex review
+- **AND** evidence frontmatter 写入 `autonomy_decision: claude_autonomous`(不强制 `codex_review_ref`)
+
+#### Scenario: 显式 codex 二次验证后自主执行(可选 path)
+
+- **WHEN** Claude 显式 invoke `/codex:review` background 作为 second opinion + 解析 codex output + Claude 独立 verify finding 后自主决策
+- **THEN** evidence frontmatter 写入 `autonomy_decision: claude_codex_concurred` + `codex_review_ref: notes/<review_type>_round_N.md`
+- **AND** **不**因 codex verdict 与 Claude 不同而升级用户(Claude 自主 verify + 自主拍板)
+
+#### Scenario: 不可逆操作必须用户授权
+
+- **WHEN** Claude 计划走 `git push origin dev` / `archive change` / `git reset --hard`
+- **THEN** Claude MUST 先用 `AskUserQuestion` 请求授权
+- **AND** evidence frontmatter 标 `autonomy_decision: user_required`
+
+#### Scenario: 框架修改必须用户授权(简化协议新 fence)
+
+- **WHEN** Claude 计划修改 D-decision content / fence taxonomy / autonomy 协议 / Superpowers 集成边界 / codex 集成边界 / S0-S9 状态机定义
+- **THEN** Claude MUST 用 `AskUserQuestion` 列出修改 scope + 影响范围 + 推荐方案
+- **AND** evidence frontmatter 标 `autonomy_decision: user_required`
+
+#### Scenario: design.md mismatch 必须用户授权(简化协议新 fence)
+
+- **WHEN** Claude 实施暴露的 contract 漏洞与 design.md text 矛盾(原 4 类 DRIFT 子集:`contradicts_contract` / `introduces_decision_not_in_contract` / `exposes_contract_gap`)
+- **THEN** Claude MUST 用 `AskUserQuestion` 列出 mismatch 内容 + 推荐 reconcile path(改 design or 改 implementation)
+- **AND** evidence frontmatter 标 `autonomy_decision: user_required` + `drift_decision: <type>`
+
+#### Scenario: vendor API paid call 必须用户授权
+
+- **WHEN** Claude 计划走 `--live-llm` 启 mesh.generation / Hunyuan3D / Tripo3D / 任何 vendor API paid call
+- **THEN** Claude MUST 用 `AskUserQuestion` 列出预估 cost + provider + 失败回退
+- **AND** evidence frontmatter 标 `autonomy_decision: user_required`
+
+#### Scenario: secret 文件操作必须用户授权
+
+- **WHEN** Claude 计划写入 `.env` / `*api_key*` / `*credential*` / `*secret*` 类文件
+- **THEN** Claude MUST 用 `AskUserQuestion` 请求授权(包括 read-and-update)
+- **AND** evidence frontmatter 标 `autonomy_decision: user_required`
+
+#### Scenario: finish_gate 守门 autonomy_decision 字段(implementation evidence 限定)
+
+- **WHEN** `forgeue_finish_gate.py` 扫描 `execution/` / `review/` / `verification/` 内 evidence frontmatter
+- **THEN** **implementation evidence 类型**(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review` / `tdd_log` / `debug_log`)缺 `autonomy_decision` 字段 → exit 非 0 + 错误指明缺字段的 evidence 文件
+- **AND** non-implementation evidence(`verify_report` / `doc_sync_report` / `finish_gate_report` / `superpowers_review` / `codex_*_review` / `*_cross_check`)**不强制** `autonomy_decision` 字段(F7 spec/impl reconciliation;沿 design.md D-AutonomyBoundary "implementation evidence" 限定)
+- **AND** `autonomy_decision: claude_codex_concurred` 缺 `codex_review_ref` → exit 非 0
+- **AND** `autonomy_decision` 值不在合法枚举内 → exit 非 0
+- **AND** `claude_codex_concurred` 配套 `codex_review_ref` 路径不存在(`(change_root / codex_review_ref).is_file() == False`)→ exit 非 0
+- **AND** `codex_review_ref` 跨 change(不在当前 change_root 下,如 ref `archive/<other>/notes/...`)→ exit 非 0
+- **AND** `codex_review_ref` 自身 frontmatter `evidence_type` 不在 `{codex_adversarial_review, codex_design_review, codex_plan_review, codex_verification_review, codex_mixed_scope_review}` 之一 → exit 非 0
+- **AND** `codex_review_ref` 自身 frontmatter `disputed_open != 0`(round 未 finalize)→ exit 非 0
+
+#### Scenario: verdict normalization 判定 conflict(W3 writeback codex round 1 F3 finding)
+
+- **WHEN** controller 准备写 `autonomy_decision: claude_codex_concurred` evidence,先调用 `_check_verdict_normalization(claude_resolution_list, codex_top_verdict, codex_findings)` helper
+- **THEN** 按 design.md `D-FenceTaxonomy` Fence #3 Verdict Normalization 8 row 表 + 2 个 per-finding 维度判定 conflict
+- **AND** 不冲突路径(`approve` × `accepted-codex` / `approve` × `accepted-claude` / `approve` × `rejected` / `needs-attention` × `accepted-codex`)→ 自主路径,写 `claude_codex_concurred`
+- **AND** 冲突路径(`approve` × `disputed-open` / `needs-attention` × `accepted-claude` / `needs-attention` × `rejected` / `needs-attention` × `disputed-open` / 任何 finding `severity ∈ {critical, high}` × Claude `rejected` / writeback diff 与 codex 推荐方向相反)→ 升级 fence #3 用户,写 `user_required`
+
+### Requirement: Implementation parallel dispatch via `/forgeue:change-apply-parallel`
+
+ForgeUE Integrated AI Change Workflow SHALL 提供独立命令 `/forgeue:change-apply-parallel`,invoke `superpowers:dispatching-parallel-agents` SKILL,作为 multi-task implementation 的并行 dispatch 路径。Controller 显式判定 task 独立性(无 shared state / 无 sequential dependency / 无 file scope 交叉)后 route 到此命令。
+
+`/forgeue:change-apply-subagent` 命令 **保留默认 sequential**(`subagent-driven-development` SKILL),不内嵌自动 task independence routing(避免 LLM 误判 race condition)。
+
+evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `false`),表示 controller 是否声明 task 独立。`true` 时配套 `task_files_disjoint: <list of file path sets>` 字段(controller declaration),parallel dispatch 前 wrapper 自动 verify 文件 set 不交。
+
+**v2 升级(本 change,F4 round 1 codex inline writeback 后)**:dispatch 后**主 session 自动**在每个 implementer worktree 跑 actual changed-files 收集(`git diff --name-only -z <base_sha>..HEAD` + `git ls-files --others --exclude-standard -z` 合集,含 untracked file;原 `git diff --name-only` 漏 untracked)+ precondition `git status --porcelain=v1 -z` 校验 implementer worktree clean(否则降级)。任意两 implementer actual set 交集非空 → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: actual_file_overlap_detected` 或 `dirty_implementer_worktree`。详见新增 Requirement "Parallel dispatch actual file overlap detection"。
+
+#### Scenario: controller 显式声明 task 独立 + parallel dispatch
+
+- **WHEN** controller 准备 dispatch 多 task 且判定 task 独立
+- **THEN** controller MUST invoke `/forgeue:change-apply-parallel` 而不是 `change-apply-subagent`
+- **AND** evidence frontmatter `task_independence_assertion: true` + `task_files_disjoint: [<file-set-1>, <file-set-2>, ...]`(declaration)
+- **AND** parallel dispatch 前 wrapper 自动 verify declared file sets 不交,任意交集 → 命令 abort
+
+#### Scenario: file scope 交叉(declared)dispatch 前 abort
+
+- **WHEN** controller invoke `/forgeue:change-apply-parallel` 但 declared task file sets 实际有交集
+- **THEN** 命令在 dispatch 前自动 abort + 错误提示 "task A and task B have overlapping files: <files>"
+- **AND** controller MUST 改 task 划分 OR 切换到 `/forgeue:change-apply-subagent` sequential
+
+#### Scenario: actual file overlap detected dispatch 后自动降级 sequential(v2 新增)
+
+- **WHEN** declared file sets disjoint 通过初检 + dispatch 后实际 git diff 发现 implementer 间 file overlap
+- **THEN** 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt)
+- **AND** evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: actual_file_overlap_detected`
+
+#### Scenario: 默认 sequential 路径不变
+
+- **WHEN** controller invoke `/forgeue:change-apply-subagent`
+- **THEN** 命令路由 `subagent-driven-development` SKILL,sequential dispatch per-task
+- **AND** evidence frontmatter `task_independence_assertion: false`(默认值)
+
+### Requirement: Preflight Worktree runtime enforcement
+
+`/forgeue:change-apply-{subagent,parallel}` **两个**命令模板 SHALL 在 step 1 含 `## Preflight Worktree` section,要求 controller MUST 先 invoke `tools/forgeue_preflight_wrapper.py`(wrapper 自己用 `git worktree` subprocess 自管 worktree;F1 round 1 inline writeback,**不**依赖 SKILL invoke)才能进入 subagent dispatch 阶段。
+
+`/forgeue:change-apply-direct` **沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项不强制** Preflight Worktree(direct 路径定位 < 3 micro-task / budget 紧张的轻量 fallback,worktree 创建 + commit-before-worktree + squash merge 收尾的 ~10-20s 开销对轻量 task 不划算;archived 决策保留,本 change 不覆盖)。详见 archived `2026-05-05-enhance-workflow-automation-runtime-enforcement` design.md D-WorktreeEnforce / D-DirectWorktreeRefinement + 本 change design.md D-W1-ReceiptSchema / D-DispatchWrapperBoundary。
+
+实装路径(subagent / parallel only):
+- 命令模板首段显式声明 "MUST 调用 `python tools/forgeue_preflight_wrapper.py` 生成 receipt 才能进入 dispatch step"
+- wrapper 自己用 `git worktree` subprocess 自管 worktree(F1 round 1 inline writeback;**不**依赖 SKILL invoke)+ 强制 cwd 校验在 wrapper-managed worktree 内 + cascade check + 写 receipt JSON 到 `<change>/preflight_receipts/<receipt_id>.json`
+- 命令模板从 wrapper stdout capture receipt 相对路径,后续 LLM 把 receipt 内 `worktree_path` 复制到 evidence frontmatter `worktree_path`,把 receipt 相对路径写到 evidence frontmatter `worktree_receipt_path`
+- Preflight 失败(wrapper exit 非 0 / wrong-cwd / dirty worktree / cascade check 异常)→ 命令 abort + 详细错误信息
+- evidence frontmatter MUST 含 `worktree_path` 字段(non-null when `triggered_by_command` ∈ `{change-apply-subagent, change-apply-parallel}`)+ v2 时额外含 `worktree_receipt_path` 字段(`change-apply-direct` evidence 不强制)
+
+**v2 升级(本 change,F1 round 1 codex inline writeback 后)**:`forgeue_finish_gate.py::_check_worktree_path` fence 升级为 receipt cross-check — 校验 receipt 文件存在 + receipt JSON well-formed + receipt `is_isolated_worktree: true` + receipt 内 `worktree_path` == evidence frontmatter `worktree_path`(沿 D-DispatchWrapperBoundary)。v1 evidence(无 `worktree_receipt_path` 字段)沿 v1 fence 行为(仅校验 evidence frontmatter `worktree_path` non-null)。
+
+#### Scenario: change-apply-subagent 命令模板含 Preflight Worktree section + wrapper invocation
+
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-subagent.md`
+- **THEN** 文件内含 `## Preflight Worktree` section(精确匹配)
+- **AND** section 内含 `python tools/forgeue_preflight_wrapper.py` 字符串(wrapper invocation)
+- **AND** wrapper invocation 在任何 Skill(Task) dispatch step 之前
+- **AND** section 内**不含** `Skill(superpowers:using-git-worktrees)` 字符串(F1 round 1 inline writeback;wrapper 自管 worktree,SKILL 不再 invoke)
+
+#### Scenario: change-apply-parallel 命令模板含 Preflight Worktree section + wrapper invocation
+
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-parallel.md`
+- **THEN** 文件内含 `## Preflight Worktree` section(精确匹配)
+- **AND** section 内含 `python tools/forgeue_preflight_wrapper.py` 字符串(wrapper invocation)
+- **AND** section 内**不含** `Skill(superpowers:using-git-worktrees)` 字符串(F1 round 1 inline writeback)
+
+#### Scenario: change-apply-direct 沿 archived 第 5 项不强制 Preflight Worktree
+
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-direct.md`
+- **THEN** 文件**不需要**含 `## Preflight Worktree` section(沿 archived 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail 第 5 项)
+- **AND** direct 命令产生的 implementation evidence(`tdd_log` / `debug_log`)不强制 `worktree_path` / `worktree_receipt_path` frontmatter 字段
+
+#### Scenario: subagent / parallel implementation evidence 缺 worktree_path 字段 finish_gate 阻断
+
+- **WHEN** `forgeue_finish_gate.py` 扫描 implementation evidence(`subagent_implementer_report` 等)且 `triggered_by_command` 是 `change-apply-subagent` 或 `change-apply-parallel`
+- **THEN** 缺 `worktree_path` 字段 → exit 非 0 + 错误指明缺字段的 evidence 文件
+
+#### Scenario: v2 evidence receipt cross-check 通过
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2` + `worktree_receipt_path: preflight_receipts/<id>.json` + `worktree_path: <abs path>`
+- **THEN** finish_gate 读取 receipt JSON + 比较 receipt 内 `worktree_path` == evidence `worktree_path` + receipt `is_isolated_worktree: true`
+- **AND** 一致 → fence pass
+
+#### Scenario: v2 evidence receipt is_isolated_worktree false 阻断(F1 round 1 inline)
+
+- **WHEN** v2 evidence 的 receipt `is_isolated_worktree: false` 或缺失字段
+- **THEN** `_check_worktree_path` v2 fence exit 非 0
+- **AND** 错误信息指明 receipt 未声明 isolated worktree
+
+#### Scenario: v2 evidence receipt 不一致 finish_gate 阻断
+
+- **WHEN** v2 evidence 的 receipt 内 `worktree_path` ≠ evidence frontmatter `worktree_path`
+- **THEN** `_check_worktree_path` v2 fence exit 非 0
+- **AND** 错误信息指明 receipt 与 evidence 两侧 path 字符串
+
+#### Scenario: direct implementation evidence 缺 worktree_path 字段 finish_gate pass-through
+
+- **WHEN** `forgeue_finish_gate.py` 扫描 direct 命令产生的 implementation evidence(`tdd_log` / `debug_log`,`triggered_by_command: change-apply-direct`)
+- **THEN** 缺 `worktree_path` / `worktree_receipt_path` 字段不报错(沿 archived D-Worktree-Detail 第 5 项 fence pass-through)
+
+### Requirement: SKILL cascade enforcement via `forgeue_skill_cascade_check.py`
+
+ForgeUE SHALL 提供 stdlib-only 工具 `tools/forgeue_skill_cascade_check.py`,静态扫描 SKILL.md `## Integration` 段 / `Required workflow skills:` 列表 / `**Required:**` 标记,输出 controller 未 invoke 的 dependency SKILL 列表。
+
+`/forgeue:change-apply-*` 命令模板 SHALL 在每个 invoke SKILL 的 step **后**加 `## Preflight Skill Cascade` section,跑 `forgeue_skill_cascade_check.py` 验证 dependency 全 invoke。
+
+evidence frontmatter MUST 含 `skill_cascade_audit` 字段(对象,含已 invoke SKILL 列表 + cascade check pass timestamp)。
+
+`forgeue_finish_gate.py` SHALL 含 `_check_skill_cascade` fence 守门 implementation evidence frontmatter `skill_cascade_audit` 字段必填且 dependency 全 invoke。
+
+#### Scenario: forgeue_skill_cascade_check 静态扫 + 输出 missing dependency
+
+- **WHEN** 跑 `python tools/forgeue_skill_cascade_check.py --skill superpowers:subagent-driven-development --invoked superpowers:using-git-worktrees,test-driven-development,requesting-code-review,finishing-a-development-branch`
+- **THEN** 工具静态读 `subagent-driven-development` SKILL.md `## Integration` 段
+- **AND** 输出 missing dependency 列表(若有)+ exit 0(全 OK)/ exit 5(missing dependency)
+
+#### Scenario: 命令模板缺 Preflight Skill Cascade section finish_gate 间接阻断
+
+- **WHEN** 命令模板 invoke SKILL 但缺后续 cascade check call
+- **THEN** evidence `skill_cascade_audit` 字段会缺(因为没跑 check),finish_gate `_check_skill_cascade` exit 非 0
+
+#### Scenario: dependency 未 invoke 时命令 abort
+
+- **WHEN** controller invoke 主 SKILL 但跳过 dependency SKILL,然后命令 step 跑 cascade check
+- **THEN** cascade check exit 5 + 错误提示 missing dependency 列表
+- **AND** 命令 abort,提示 controller 主动 invoke missing dependency 后 retry
+
+### Requirement: Round 2+ fix subagent continuity
+
+`subagent-driven-development` 协议中,round 1 reviewer 找问题后 round 2 fix MUST 通过 `SendMessage` 给 same implementer subagent;round 2 reviewer re-review MUST 给 same reviewer subagent。
+
+evidence frontmatter MUST 含 `subagent_continuity` 字段(对象):
+```yaml
+subagent_continuity:
+  round_1_implementer_id: <agent-id>
+  round_2_fix_implementer_id: <agent-id>  # MUST same as round_1
+  round_1_reviewer_id: <agent-id>
+  round_2_review_reviewer_id: <agent-id>  # MUST same as round_1_reviewer
+```
+
+`forgeue_finish_gate.py` SHALL 含 `_check_round_fix_continuity` fence 守门 round 1 / round 2 agent ID 一致性。
+
+**v2 升级(本 change)**:`_check_round_fix_continuity` fence 升级为 ledger cross-check — 校验 evidence frontmatter `subagent_continuity` 中所有 agent_id 都在 `<change>/dispatch_ledger.jsonl` 中**有真实记录**(沿 D-DispatchWrapperBoundary 防 LLM 伪造 agent_id);ledger 缺失 → fail-closed。v1 evidence(无 `dispatch_ledger_path` 字段)沿 v1 fence 行为(仅校验 frontmatter 字段 round_1 == round_2 字符串相等)。
+
+#### Scenario: round 2 fix 用 same implementer agent ID(v1 + v2)
+
+- **WHEN** evidence frontmatter 含 `subagent_continuity` + `round_2_fix_implementer_id`
+- **THEN** `round_2_fix_implementer_id` MUST 等于 `round_1_implementer_id`,否则 `_check_round_fix_continuity` exit 非 0
+
+#### Scenario: round 2 reviewer 用 same reviewer agent ID(v1 + v2)
+
+- **WHEN** evidence frontmatter 含 `round_2_review_reviewer_id`
+- **THEN** `round_2_review_reviewer_id` MUST 等于 `round_1_reviewer_id`,否则 fence exit 非 0
+
+#### Scenario: v2 evidence ledger cross-check 通过
+
+- **WHEN** v2 evidence `subagent_continuity.round_1_implementer_id: ad79e93a40414763e` + `<change>/dispatch_ledger.jsonl` 中含此 agent_id 行(round=1, role=implementer)
+- **THEN** fence pass
+
+#### Scenario: v2 evidence ledger 缺失 agent_id 阻断
+
+- **WHEN** v2 evidence `subagent_continuity.round_1_implementer_id` 在 ledger 中**无对应行**(可能 LLM 手写 evidence frontmatter 但跳过 wrapper)
+- **THEN** `_check_round_fix_continuity` v2 fence exit 非 0
+- **AND** 错误信息指明 evidence agent_id 不在 ledger 中
+
+#### Scenario: v2 evidence dispatch_ledger.jsonl 文件缺失阻断
+
+- **WHEN** v2 evidence `dispatch_ledger_path: dispatch_ledger.jsonl` 但 `<change>/dispatch_ledger.jsonl` 文件不存在
+- **THEN** `_check_round_fix_continuity` v2 fence + `_check_dispatch_ledger` v2 fence 都 exit 非 0(双重守门)
+
+### Requirement: Task granularity declaration
+
+Controller in `/forgeue:change-apply-*` 命令调用时 MUST 显式声明 task 粒度,evidence frontmatter 加 `task_granularity` 字段,枚举 `phase` / `per-file` / `sub-task`。
+
+`forgeue_finish_gate.py` SHALL 含 `_check_task_granularity` fence 守门:
+- `task_granularity` 字段必填
+- 值在 enum 内
+- evidence 数量与粒度一致(若 declared `phase`,evidence 数量 = phase 数;若 `sub-task`,evidence 数量 = sub-task 数;`per-file` 介于二者之间)
+
+#### Scenario: phase-level granularity declaration
+
+- **WHEN** controller 把 P0(15 sub-task)打包为 1 个 implementation task dispatch
+- **THEN** evidence frontmatter `task_granularity: phase`
+- **AND** 该 phase 1 个 implementer + 1 spec_review + 1 code_quality 共 3 evidence(round 1 round 2 各算 1 evidence file 含 round_2 append 段或独立 round_2 file)
+
+#### Scenario: per-file granularity declaration
+
+- **WHEN** controller 把 P1(11 sub-task,涉及 9 命令模板 + 1 fence test 文件)按 file 划分为 10 implementation task dispatch
+- **THEN** evidence frontmatter `task_granularity: per-file` + 10 个 implementer evidence files
+
+#### Scenario: sub-task granularity declaration
+
+- **WHEN** controller 严格按 tasks.md 每个 `- [ ] X.Y` 1 implementer dispatch
+- **THEN** evidence frontmatter `task_granularity: sub-task` + 与 sub-task 数一致的 evidence files
+
+#### Scenario: granularity 与 evidence 数量不一致 finish_gate 阻断
+
+- **WHEN** evidence frontmatter declared `task_granularity: phase` 但实际 evidence 数量超过 phase 数
+- **THEN** `_check_task_granularity` exit 非 0 + 错误指明粒度声明 vs 实际 evidence 数量不一致
+
+### Requirement: Preflight wrapper receipt JSON contract
+
+ForgeUE SHALL 提供 stdlib-only 工具 `tools/forgeue_preflight_wrapper.py`,在任何 subagent dispatch 前由命令模板调用,wrapper **自己** 用 `git worktree` subprocess 创建 / 验证 isolated worktree(沿 design.md D-W1-ReceiptSchema 自管 worktree 算法,**不依赖** `superpowers:using-git-worktrees` SKILL — F1 round 1 codex inline writeback)+ 强制 cwd 校验在 wrapper-managed worktree 内(否则 fail-closed exit 6)+ 跑 `forgeue_skill_cascade_check.py` 内嵌 cascade 校验 + 写 machine-generated receipt JSON 到 `<change>/preflight_receipts/<receipt_id>.json`。
+
+Receipt JSON SHALL 含字段(13 个,F1 round 1 inline writeback 加 2 新字段 `is_isolated_worktree` + `worktree_action`):`receipt_id` / `change_id` / `protocol_version: v2` / `worktree_path`(绝对路径)/ `is_isolated_worktree`(bool;wrapper 自管 worktree 的物证)/ `worktree_action`(enum:created / reused;rejected_dirty / rejected_wrong_cwd 时 wrapper exit 6 不写 receipt)/ `base_sha` / `base_branch` / `cwd_at_invocation` / `skill_cascade_check`(对象,含 skill_invoked + exit_code + checked_at)/ `created_at` / `wrapper_version`。
+
+命令模板 `/forgeue:change-apply-{subagent,parallel}` SHALL 在 dispatch 前 wrapper invocation,**仅消费** receipt 路径(LLM 把 receipt 内 `worktree_path` 字符串复制到 evidence frontmatter `worktree_path` 字段;LLM 把 receipt 相对路径写到 evidence frontmatter `worktree_receipt_path` 字段);**不允许** LLM 直接手写 evidence frontmatter `worktree_path` 不经过 receipt(沿 D-DispatchWrapperBoundary)。
+
+#### Scenario: wrapper 自创 worktree + 写 receipt(F1 round 1 inline)
+
+- **WHEN** 跑 `python tools/forgeue_preflight_wrapper.py --change <change-id>`
+- **THEN** wrapper 用 `git worktree add <repo>/.worktrees/<change-id>` subprocess 自创 isolated worktree(若不存在;clean reused 路径见单独 scenario)
+- **AND** wrapper 跑 cascade check 校验 dependency 全 invoke
+- **AND** wrapper 写 receipt 到 `<change>/preflight_receipts/<receipt_id>.json`(JSON well-formed,含全 13 字段含 `is_isolated_worktree: true` + `worktree_action: created`)
+- **AND** wrapper stdout 输出 receipt 相对路径供命令模板 capture
+
+#### Scenario: wrapper 拒绝 wrong-cwd(F1 round 1 inline negative test)
+
+- **WHEN** 跑 wrapper 调用时 cwd 不在 wrapper-managed worktree 内(如 main repo 而非 `.worktrees/<change-id>/`)
+- **THEN** wrapper exit 6(`worktree_action: rejected_wrong_cwd`)
+- **AND** wrapper 不写 receipt
+- **AND** stderr 提示 "wrapper 必须在 isolated worktree 内调用"
+
+#### Scenario: wrapper 拒绝 dirty worktree(F1 round 1 inline negative test)
+
+- **WHEN** 跑 wrapper 调用时 wrapper-managed worktree 存在但 `git status --porcelain` 返回非空(dirty 或 untracked)
+- **THEN** wrapper exit 6(`worktree_action: rejected_dirty`)
+- **AND** wrapper 不写 receipt
+- **AND** stderr 提示 "wrapper-managed worktree dirty,请先 commit 或 reset"
+
+#### Scenario: receipt JSON schema 校验
+
+- **WHEN** 读取任意 wrapper 写的 receipt JSON
+- **THEN** JSON 解析无错
+- **AND** 含字段 `receipt_id` / `change_id` / `protocol_version: "v2"` / `worktree_path` / `is_isolated_worktree: true` / `worktree_action ∈ {created, reused}` / `base_sha` / `base_branch` / `cwd_at_invocation` / `skill_cascade_check` / `created_at` / `wrapper_version`
+- **AND** `worktree_path` 是绝对路径且文件系统存在
+- **AND** `skill_cascade_check.exit_code == 0`
+
+#### Scenario: receipt 缺失 finish_gate 阻断
+
+- **WHEN** evidence frontmatter `triggered_by_command: change-apply-subagent`(或 `change-apply-parallel`)+ `runtime_enforcement_protocol_version: v2` + `worktree_receipt_path: preflight_receipts/<id>.json` 但实际文件不存在
+- **THEN** `forgeue_finish_gate.py::_check_worktree_path` v2 fence exit 非 0
+- **AND** 错误信息指明 evidence 文件 + 缺失的 receipt 路径
+
+#### Scenario: receipt worktree_path 与 evidence frontmatter 不一致 finish_gate 阻断
+
+- **WHEN** receipt JSON `worktree_path` 字段 != evidence frontmatter `worktree_path` 字符串
+- **THEN** `_check_worktree_path` v2 fence exit 非 0
+- **AND** 错误信息指明 receipt 与 evidence 两侧 path 字符串
+
+### Requirement: Dispatch ledger append-only contract
+
+ForgeUE SHALL 提供 stdlib-only 工具 `tools/forgeue_dispatch_ledger.py`,提供子命令:
+- `append --change <id> --agent-id <id> --round <N> --role <role> [--task-subject-hash <sha256>]`:向 `<change>/dispatch_ledger.jsonl` append 一行 JSON
+- `verify --change <id>`:校验 ledger JSONL 每行 well-formed + timestamp 单调递增 + wrapper_version 字段非空
+
+`<change>/dispatch_ledger.jsonl` SHALL 是 append-only 文件,每行一个 JSON 记录,字段:`agent_id` / `round`(int)/ `role` / `task_subject_hash`(可空)/ `dispatched_at`(ISO8601)/ `parent_session_id`(可空)/ `wrapper_version`。
+
+命令模板 `/forgeue:change-apply-{subagent,parallel}` SHALL 在每次 Skill(Task) / Skill(SendMessage) 调用前先 wrapper append。命令模板**不暴露** ledger 文件路径给 LLM Read / Write / Edit tool(沿 D-DispatchWrapperBoundary 防 LLM 篡改)。
+
+evidence frontmatter SHALL 含 `dispatch_ledger_path` 字段,值固定为 `dispatch_ledger.jsonl`(相对 `<change>/`)。
+
+#### Scenario: wrapper append 写一行 JSONL
+
+- **WHEN** 跑 `python tools/forgeue_dispatch_ledger.py append --change <id> --agent-id ad79e93a40414763e --round 1 --role implementer --task-subject-hash sha256:abc...`
+- **THEN** 文件 `<change>/dispatch_ledger.jsonl` 末尾 append 一行 JSON
+- **AND** JSON 含字段 `agent_id` / `round: 1` / `role: "implementer"` / `task_subject_hash: "sha256:abc..."` / `dispatched_at`(当前 ISO8601)/ `wrapper_version`
+
+#### Scenario: ledger timestamp 单调性 verify
+
+- **WHEN** 跑 `python tools/forgeue_dispatch_ledger.py verify --change <id>`
+- **THEN** 工具校验所有行 `dispatched_at` 字段单调递增
+- **AND** 任意行 timestamp 倒流 → exit 非 0 + 错误指明行号
+
+#### Scenario: ledger 缺失 finish_gate 阻断
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2` + `dispatch_ledger_path: dispatch_ledger.jsonl` + `subagent_continuity` 字段 declared dispatch 但实际 `<change>/dispatch_ledger.jsonl` 文件不存在
+- **THEN** `forgeue_finish_gate.py::_check_dispatch_ledger` v2 fence exit 非 0
+- **AND** 错误信息指明缺失的 ledger 文件
+
+#### Scenario: ledger agent_id 集合 与 evidence subagent_continuity 不一致 finish_gate 阻断
+
+- **WHEN** evidence frontmatter `subagent_continuity.round_1_implementer_id: ad79e93a40414763e` 但 ledger 中**无**此 agent_id 行
+- **THEN** `_check_dispatch_ledger` fence exit 非 0
+- **AND** 错误信息指明 evidence agent_id 不在 ledger 中
+
+#### Scenario: ledger wrapper_version 字段缺失 finish_gate 阻断
+
+- **WHEN** ledger JSONL 任意行缺 `wrapper_version` 字段(可能 LLM 手工伪造行)
+- **THEN** `_check_dispatch_ledger` fence exit 非 0
+
+### Requirement: Parallel dispatch actual file overlap detection
+
+`/forgeue:change-apply-parallel` 命令模板 SHALL 在所有 implementer subagent commit 完成后,主 session 自动跑两步收集 **actual** changed-files set(F4 round 1 codex inline writeback — 原 `git diff --name-only` 漏 untracked file):
+
+**Precondition**:对每个 implementer worktree 跑 `git status --porcelain=v1 -z`;若返回非空(任何 dirty / untracked / staged 但 uncommitted file)→ 命令 abort + 自动降级 sequential + evidence frontmatter `degradation_reason: dirty_implementer_worktree`(implementer 漏 add 文件触发的 fail-closed 路径)。
+
+**Actual changed-files 收集**:在每个 clean implementer worktree 内合并:
+- `git diff --name-only -z <base_sha>..HEAD`(committed diff)
+- `git ls-files --others --exclude-standard -z`(untracked but ignored exclusion 后)
+- 解析 NUL-separated 输出为 file path set
+
+主 session SHALL 计算所有 implementer set intersection;intersection 非空 → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt,沿 user feedback `feedback_no_continue_prompts_between_phases.md`)。
+
+evidence frontmatter SHALL 含字段:
+- `task_files_actual`:list of `{implementer_agent_id, files: [...]}`(actual collection 后写;包含 untracked)
+- `degraded_to`:`null` 或 `change-apply-subagent`(降级时填)
+- `degradation_reason`:`null` / `actual_file_overlap_detected` / `dirty_implementer_worktree`
+
+`forgeue_finish_gate.py` SHALL 含 `_check_file_overlap_actual` v2 fence,校验:
+- evidence frontmatter `task_files_actual` 与 declared `task_files_disjoint` 一致(actual ⊆ declared 或者声明 + 错误回滚)
+- actual changed-files set 之间确实 disjoint(若 `degraded_to: null`)
+- `degraded_to: change-apply-subagent` 时改走 sequential 路径校验逻辑(4 类 evidence 完整性,跳过 disjoint 校验)
+
+#### Scenario: parallel dispatch 后主 session 收集 actual files(committed + untracked,F4 round 1 inline)
+
+- **WHEN** parallel 命令模板 dispatch N 个 implementer subagent + 全部 commit 完成 + worktree clean(precondition pass)
+- **THEN** 主 session 在每个 implementer worktree 跑 `git diff --name-only -z <base_sha>..HEAD` + `git ls-files --others --exclude-standard -z` 合集
+- **AND** evidence frontmatter `task_files_actual` 字段填入 N 个 `{implementer_agent_id, files: [...]}` 记录(含 untracked)
+
+#### Scenario: dirty implementer worktree 触发降级(F4 round 1 inline negative)
+
+- **WHEN** 任意 implementer worktree `git status --porcelain=v1` 返回非空(implementer 漏 commit / 漏 add 新文件)
+- **THEN** 命令 abort + 自动降级 sequential + evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: dirty_implementer_worktree`
+- **AND** Bash 写 `<change>/parallel_abort_dirty_<iso>.log` 含 implementer agent_id + dirty files 列表
+
+#### Scenario: actual disjoint 通过
+
+- **WHEN** N 个 implementer 的 actual changed-files set 两两 intersect 全部为空
+- **THEN** 命令继续走 spec_review / code_quality / final_review subagent
+- **AND** evidence frontmatter `degraded_to: null` + `task_independence_assertion: true`
+
+#### Scenario: actual overlap detected 自动降级 sequential
+
+- **WHEN** 任意两个 implementer 的 actual changed-files set 有交集
+- **THEN** 主 session 写 `<change>/parallel_abort_<iso>.log` 记录 overlap files + 涉及 agent_id
+- **AND** 命令自动 invoke `/forgeue:change-apply-subagent` sequential(无 user prompt)
+- **AND** evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: actual_file_overlap_detected`
+
+#### Scenario: declared task_files_disjoint 与 actual 不一致 finish_gate audit fail
+
+- **WHEN** evidence frontmatter `task_files_disjoint` 字段(declaration)与 `task_files_actual` 字段(实际 diff)不一致(如 implementer 改了未声明的文件)
+- **THEN** `_check_file_overlap_actual` v2 fence exit 非 0
+- **AND** 错误信息指明 declared vs actual 差异 file list
+
+### Requirement: v2 e2e integration test fixture(F5 round 1 codex inline writeback)
+
+ForgeUE SHALL 提供 `tests/integration/test_v2_e2e_synthetic_change.py` 集成测试 fixture(stdlib + pytest),在 archive 前必跑全绿,作为 archive 阻断 gate。
+
+fixture 必须覆盖 v2 协议端到端实跑(沿 design.md D-W4-IntegrationGate):
+- 用 `tmp_path` 创建 synthetic active change 目录
+- 跑 W1 wrapper 创建 worktree + 写 receipt
+- mock Skill(Task) 返回真实 agent_id 格式 + 跑 W3 ledger append + verify
+- 模拟 parallel 场景:2 implementer 各 commit + 跑 W2 actual diff + overlap 负例
+- 跑 finish_gate 全 6 fence on synthetic v2 evidence
+- 跑 v1 evidence 兼容 + legacy evidence pass-through 回归
+
+`forgeue_finish_gate.py` SHALL 在 archive 前跑 `pytest -q tests/integration/test_v2_e2e_synthetic_change.py` 全绿(原文件不在 archive blocker 集合,本 fixture 加入 P10.0 必过 gate)。
+
+#### Scenario: v2 e2e fixture 全链路通过
+
+- **WHEN** 跑 `pytest -q tests/integration/test_v2_e2e_synthetic_change.py`
+- **THEN** W1 wrapper / W2 actual diff / W3 ledger / finish_gate 全部 pass
+- **AND** synthetic overlap 负例正确触发自动降级 sequential
+- **AND** v1 evidence 兼容 + legacy pass-through 回归通过
+
+#### Scenario: archive 前 v2 e2e gate 不绿阻断
+
+- **WHEN** 跑 `pytest -q tests/integration/test_v2_e2e_synthetic_change.py` 不全绿
+- **THEN** archive 命令拒绝(P10.0 gate failed)
+- **AND** finish_gate report 含详细 fixture 失败原因
+
+### Requirement: Runtime enforcement protocol version v2 migration
+
+ForgeUE evidence frontmatter SHALL 在 v1 12-key 基础上加 v2-only 字段(仅当 `runtime_enforcement_protocol_version: v2` 时强制):
+- `worktree_receipt_path`:相对 `<change>/` 的 receipt JSON 路径(W1)
+- `dispatch_ledger_path`:固定值 `dispatch_ledger.jsonl`(W3)
+- `task_files_actual`:list(parallel only;sequential evidence 该字段为空 list)(W2)
+- `degraded_to` + `degradation_reason`:可空(W2 降级标识)
+- `pre_dispatch_metadata: advisory`(F2 round 1 inline writeback;诚实标注 agent_id 是 dispatch 后 capture,无 pre-dispatch 物证)
+- `ledger_forgery_resistance: advisory`(F3 round 1 inline writeback;诚实标注 well-formed forge 不阻断;follow-on `enhance-workflow-automation-ledger-binding` ship 后改为 cryptographic)
+
+`forgeue_finish_gate.py` 新增 fence(`_check_file_overlap_actual` / `_check_dispatch_ledger`)+ 升级 fence(`_check_worktree_path` v2 / `_check_round_fix_continuity` v2) **仅对** evidence frontmatter `runtime_enforcement_protocol_version: v2` 的文件生效。
+
+v1 evidence(含 `runtime_enforcement_protocol_version: v1`)沿用 v1 fence 行为(advisory + frontmatter audit);archived enhance-workflow-automation-runtime-enforcement evidence(v1)在本 change ship 后 replay finish_gate 不被 v2 fence 误杀。
+
+无 `runtime_enforcement_protocol_version` 字段的 legacy evidence(archived enhance-workflow-automation 等)继续 fence pass-through。
+
+#### Scenario: v2 evidence 触发 v2 fence
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2`
+- **THEN** finish_gate dispatch 6 个 fence(skill_cascade / round_fix_continuity v2 / task_granularity / worktree_path v2 / file_overlap_actual / dispatch_ledger)全部 enforce
+
+#### Scenario: v1 evidence 沿 v1 fence
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v1`
+- **THEN** finish_gate 仅 enforce v1 fence(skill_cascade / round_fix_continuity v1 / task_granularity / worktree_path v1)
+- **AND** 不 enforce file_overlap_actual / dispatch_ledger / worktree_path v2 加严
+
+#### Scenario: legacy evidence(无 protocol_version)pass-through
+
+- **WHEN** evidence frontmatter 无 `runtime_enforcement_protocol_version` 字段(legacy archived 如 2026-05-04-adopt-subagent-driven-development)
+- **THEN** finish_gate v1 / v2 fence 全部 pass-through
+- **AND** archived fixture replay 测试通过
+
+#### Scenario: archived enhance-workflow-automation-runtime-enforcement replay 兼容
+
+- **WHEN** finish_gate 跑 `python tools/forgeue_finish_gate.py --change archive/2026-05-05-enhance-workflow-automation-runtime-enforcement`
+- **THEN** v1 evidence 全部按 v1 fence 校验
+- **AND** v2 fence 不被触发(无 v2 字段 → pass-through)
+- **AND** 整个 archive 通过 finish_gate(不 false-block)
+
 ## Invariants
 
 - Bundle Artifact flow is end-to-end real objects — no mocks across Step boundaries (NFR-MAINT-005).

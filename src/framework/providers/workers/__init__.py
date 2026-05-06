@@ -23,6 +23,14 @@ from framework.providers.workers.mesh_worker import (
     MeshWorkerTimeout,
     Tripo3DWorker,
 )
+from framework.providers.workers.video_worker import (
+    FakeVideoWorker,
+    VideoCandidate,
+    VideoWorker,
+    VideoWorkerError,
+    VideoWorkerTimeout,
+    VideoWorkerUnsupportedResponse,
+)
 
 __all__ = [
     "AudioCandidate",
@@ -34,6 +42,7 @@ __all__ = [
     "FakeAudioWorker",
     "FakeComfyWorker",
     "FakeMeshWorker",
+    "FakeVideoWorker",
     "HunyuanMeshWorker",
     "ImageCandidate",
     "MeshCandidate",
@@ -41,6 +50,11 @@ __all__ = [
     "MeshWorkerError",
     "MeshWorkerTimeout",
     "Tripo3DWorker",
+    "VideoCandidate",
+    "VideoWorker",
+    "VideoWorkerError",
+    "VideoWorkerTimeout",
+    "VideoWorkerUnsupportedResponse",
     "WorkerError",
     "WorkerTimeout",
     "WorkerUnsupportedResponse",

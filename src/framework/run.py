@@ -29,6 +29,7 @@ from framework.runtime.executors import (
     GenerateImageEditExecutor,
     GenerateImageExecutor,
     GenerateMeshExecutor,
+    GenerateVideoExecutor,
     ReviewExecutor,
     SelectExecutor,
 )
@@ -120,6 +121,11 @@ def _build_orchestrator(
     # (F1 round-1 + F-Plan-R4-C round-4:沿用 StepType.generate 已有枚举,**不**新增 step type;
     # ComfyUI dispatch via executor-side model-id branch per spec/provider-routing pattern c)
     execs.register(GenerateAudioExecutor())
+    # OpenSpec change comfy-agent-cli-video-adoption Phase 3:
+    # `video.t2v` capability_ref → ExecutorRegistry `(StepType.generate, "video.t2v")` entry
+    # (沿 audio Phase 2 R3-A 模式:沿用 StepType.generate 已有枚举,**不**新增 step type;
+    # ComfyUI dispatch via executor-side model-id branch ("comfy/local-video"))
+    execs.register(GenerateVideoExecutor())
     execs.register(ExportExecutor())
 
     orch = Orchestrator(

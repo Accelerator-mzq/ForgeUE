@@ -32,9 +32,12 @@ S1 (scaffold)        proposal/design/tasks/specs 起草 + strict validate
   │ /forgeue:change-plan <id>                    ← S2→S3 关键 stage
   ▼
 S2-S3 (plan ready)   codex design hook + cross-check + writing-plans 产 plan
-  │ /forgeue:change-apply <id>                   ← 实施(bug 时 /forgeue:change-debug)
+  │ /forgeue:change-apply-subagent <id>          ← default;subagent-driven-development + 4 类 evidence + sequential dispatch
+  │ /forgeue:change-apply-parallel <id>          ← 并行(自 enhance-workflow-automation-runtime-enforcement);dispatching-parallel-agents;独立 task / file scope 不交叉时使用
+  │ /forgeue:change-apply-direct <id>            ← fallback;executing-plans + TDD(轻量 change / budget 紧张;主 worktree)
+  │ /forgeue:change-debug <id>                   ← bug 时
   ▼
-S4 (impl in progress)  TDD + executing-plans + 越界检测
+S4 (impl in progress)  TDD + subagent-driven-development / executing-plans + 越界检测
   │ /forgeue:change-verify <id>                  ← Level 0/1/2
   ▼
 S5 (verify ready)    verify_report 落盘
@@ -86,9 +89,9 @@ S9 (archived)
 ```
 
 **做什么**(4 步串联):
-1. **codex** `/codex:adversarial-review` design hook → `review/codex_design_review.md`(verbatim 完整保留)
+1. **codex** `/codex:adversarial-review`(默认 background dispatch,D-DefaultBackground)→ `review/codex_design_review.md`(verbatim 完整保留;round N+1 时 prompt 首段自动注入 round N reference,D-CodexContextBridge)
 2. **Superpowers** `writing-plans` → `execution/execution_plan.md` + `execution/micro_tasks.md`(引用 `tasks.md#X.Y` 锚点)
-3. **Claude** 写 cross-check matrix → `review/design_cross_check.md`(`## A` 冻结于 codex 调用前;A/B/C/D 4 段齐 + `disputed_open: 0`)
+3. **Claude** 写 cross-check matrix → `review/design_cross_check.md`(`## A` 冻结于 codex 调用前;A/B/C/D 4 段齐 + `disputed_open: 0`);按 D-AutonomyBoundary 判定 `autonomy_decision`(routine step 自主 → `claude_codex_concurred` / 6 类 fence 触发 → `user_required`)
 4. **`forgeue_change_state.py --writeback-check`** → 4 类 named DRIFT 检测(锚点 / 决策越界 / 接口字段 / 异常段)
 
 **关键检查**:
@@ -102,35 +105,89 @@ S9 (archived)
 - ✗ plan 引用 `tasks.md#99.1` 但 tasks 没 §99.1(`evidence_references_missing_anchor` DRIFT 阻断)
 - ✗ plan / cross-check 内偷偷加新决策不回写 design.md(`evidence_introduces_decision_not_in_contract` DRIFT 阻断)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook + §D.3 4 类 DRIFT
+**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook + §E.3 4 类 DRIFT(原 §D.3 在 enhance-workflow-automation change 后顺延)
 
 ---
 
-### 3.3 S3→S4-S5 实施
+### 3.3 S3→S4-S5 实施(自 `adopt-subagent-driven-development` change 起拆 subagent + direct;自 `enhance-workflow-automation-runtime-enforcement` change 起加 parallel — 三选一显式路由)
 
-**命令**:
+**命令**(根据 change 复杂度 + task 独立性显式选一,**不**走 env flag facade):
+
 ```bash
-/forgeue:change-apply <id>            # 主入口
-/forgeue:change-debug <id>            # bug 时显式调 systematic-debugging
+# default sequential 路径:多 micro-task / 需要强 review checkpoint
+/forgeue:change-apply-subagent <id>
+
+# 并行 dispatch 路径:多独立 task / file scope 不交叉 / 无 sequential dep
+/forgeue:change-apply-parallel <id>
+
+# fallback 路径:小 change(< 3 micro-task)/ budget 紧张(主 worktree)
+/forgeue:change-apply-direct <id>
+
+# bug 时显式调 systematic-debugging
+/forgeue:change-debug <id>
 ```
 
-**做什么**:
+**路由决策树**(沿 design.md D-ParallelDispatch / D-DirectWorktreeRefinement):
+
+```
+是否多 task?
+  yes → 是否独立 file scope + 无 sequential dependency?
+    yes → /forgeue:change-apply-parallel(并行 dispatch;借用 dispatching-parallel-agents SKILL)
+    no  → /forgeue:change-apply-subagent(sequential per-task,fresh subagent;subagent-driven-development SKILL)
+  no(单 task / 微调)→ /forgeue:change-apply-direct(executing-plans + TDD;主 worktree)
+```
+
+> **Preflight 三项**(自 `enhance-workflow-automation-runtime-enforcement` change 起,D-PreflightProtocol;subagent + parallel 命令 3 段,direct 命令 2 段):
+>
+> 1. **Preflight Worktree**(D-WorktreeEnforce):invoke `Skill(superpowers:using-git-worktrees)` + cwd 切换 + `worktree_path` frontmatter 字段;**direct 沿 D-DirectWorktreeRefinement 不强制**
+> 2. **Preflight Skill Cascade**(D-SkillCascadeCheck):跑 `tools/forgeue_skill_cascade_check.py` 验证主 SKILL declared dependency 全 invoke + `skill_cascade_audit` frontmatter 字段
+> 3. **Preflight Task Granularity**(D-TaskGranularityDeclaration):controller 显式声明 `task_granularity: phase|per-file|sub-task` + frontmatter 字段
+>
+> 任一 preflight fail → 命令 abort + 详细错误。evidence frontmatter 必加 `runtime_enforcement_protocol_version: v1` 标记触发 4 fence 生效;无此字段视为 legacy(fence pass-through)。
+
+**做什么(`change-apply-subagent` default 路径)**:
 - codex plan review hook → `review/codex_plan_review.md`
+- 主 session Claude 起 isolated worktree(REQUIRED `using-git-worktrees`;commit untracked artifacts → 起 worktree → cwd 切换;沿 design.md D-Worktree-Detail)
+- invoke Superpowers `subagent-driven-development` skill;每 task 派:
+  - implementer subagent(Task tool;prompt 含 task FULL TEXT + context;subagent **不**读 plan 文件)
+  - spec compliance reviewer subagent(独立验证 implementer 是否按 spec 做 + 不过度建造)
+  - code quality reviewer subagent(代码干净度 / 测试度 / 可维护度)
+- 全 task 完成后派 final reviewer subagent(整体 review 跨 task 一致性)
+- evidence 落盘:
+  - `execution/task_<n>_implementer.md`(`evidence_type: subagent_implementer_report`)
+  - `execution/task_<n>_spec_review.md`(`evidence_type: subagent_spec_review`)
+  - `execution/task_<n>_code_quality_review.md`(`evidence_type: subagent_code_quality_review`)
+  - `review/subagent_final_review.md`(`evidence_type: subagent_final_review`)
+- evidence frontmatter 必含 audit 字段 `triggered_by_command: change-apply-subagent`(沿 D-EvidenceSchema;`forgeue_finish_gate.py` 从此字段判定 dispatch mode)
+- token usage 写 evidence body `## Token usage` 段(`data_source: task_tool_return` / `manual_estimate`),由 `tools/forgeue_subagent_budget.py --record` 追踪
+- 越界检测 + writeback-check + 全 task done + Level 0 全绿 + finish_gate exit 0 后 squash merge / cherry-pick 回主分支 + `git worktree remove`
+
+**做什么(`change-apply-direct` fallback 路径)**:
+- 沿原 `executing-plans + TDD` 编排
 - Superpowers `executing-plans` 取 `execution/micro_tasks.md` 按部就班跑
 - Superpowers `test-driven-development` → `execution/tdd_log.md`(增量)
 - Superpowers `systematic-debugging`(bug 时)→ `execution/debug_log.md`
 - 越界检测:git diff 模块 vs design.md 接口字段
+- 不需要 worktree isolation;不派 subagent;不落 4 类 subagent evidence
 
 **关键检查**:
 - ✓ 每条 codex review / adversarial finding 修复 = **1 个新回归测试**(项目铁律)
 - ✓ 实施暴露 contract 漏洞 = 必须**回写**(design / tasks / proposal),evidence 不能成新规范源
 - ✓ 不调付费 provider 默认(env guard `{1,true,yes,on}`)
+- ✓ subagent path 每个 task 必有 spec_review + code_quality_review evidence;通过的 task 允许"frontmatter + 一行 summary"轻量化,未通过的 task MUST 完整 issues 列表
+- ✓ Token / cost 字段**不进** 12-key frontmatter,在 evidence body `## Token usage` 段记录
+- ✓ ADR-009 budget tracker 仅 informational + soft WARNING(`exit 0` 始终,**不**做 hard gate;用户保留判断权)
 
 **常见错误**:
 - ✗ 边写代码边改 design.md decisions(应当先回写 contract,确认 + commit 后再实施)
 - ✗ 修 codex finding 不补 fence test(下次回归没人守)
+- ✗ subagent path 跳过 step 6.5 commit untracked artifacts(`git worktree add` 不带 untracked 文件,subagent 看不到 contract;sequence 必须 commit → worktree → dispatch)
+- ✗ `change-apply-subagent` 命令文件复制 / 引用 Superpowers 内部 prompt 模板(沿 D-SkillInvoke;ForgeUE 仅做 evidence wrapper,不重写 skill 协议)
+- ✗ 使用 `FORGEUE_APPLY_MODE` env flag 切换路径(沿 D-Default 拒绝 env flag facade;两条命令独立显式声明)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.3 Superpowers 集成边界
+**深读**:`forgeue_integrated_ai_workflow.md` §B.3 Superpowers 集成边界 + §B.6 subagent-driven-development 集成边界
+
+**v2 wrapper 协议(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05)**:`/forgeue:change-apply-{subagent,parallel}` Preflight Worktree section 自动跑 `python tools/forgeue_preflight_wrapper.py`(wrapper 自管 isolated worktree + 写 13-field receipt;LLM 复制 worktree_path / receipt_path 到 evidence frontmatter,不直接写)+ post-dispatch ledger append(Skill(Task) 之后 capture 真实 agent_id → `python tools/forgeue_dispatch_ledger.py append`);**用户视角无需手工 invoke 工具,命令模板自动跑**。Parallel 命令额外跑 W2 actual diff(`git status --porcelain` precondition + `git diff -z` + `git ls-files --others -z` 合集,overlap 自动降级 sequential)。详见 `forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2。
 
 ---
 
@@ -144,6 +201,11 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 ```
 
 **做什么**:Level 0 必跑(`pytest -q` + offline-bundle-smoke);Level 1/2 默认 SKIP,env guard truthy 才跑
+
+**codex verification hook**(D-DefaultBackground):
+- `/codex:review --base <main>` 默认 background 启动 → `notes/verification_active_jobs.txt` 记 job id
+- main session 用 `/codex:status --wait <job>` + `/codex:result <job>` 轮询拿结果(不能在 result 未 finalize 前写 `claude_codex_concurred`)
+- **`autonomy_decision` 字段**:routine verify step 写 `claude_autonomous` 或 `claude_codex_concurred`(若走 codex 验证);verify 发现 6 类 fence 场景写 `user_required`
 
 **产出**:`verification/verify_report.md`(frontmatter `aligned_with_contract: true` + body summary `[OK]: N / [FAIL]: 0 / [SKIP]: M`)
 
@@ -164,17 +226,24 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 
 **做什么**:
 1. **Superpowers** `requesting-code-review` + `code-reviewer` subagent finalize → `review/superpowers_review.md`
-2. **codex** `/codex:adversarial-review` mixed scope(post-implementation)→ `review/codex_adversarial_review.md`
+2. **codex** `/codex:adversarial-review`(adversarial 永远 background,D-DefaultBackground)→ `review/codex_adversarial_review.md`(若是 round 2+,prompt 首段自动注入 round N-1 reference,D-CodexContextBridge)
+
+**autonomy_decision 字段**(evidence frontmatter 必填):
+- 大部分 S6 finding 处理:Claude 接受 codex finding → `claude_codex_concurred`
+- Claude 拒绝 codex finding 但 codex verdict `needs-attention` → fence #3 冲突 → `user_required`
+- 用户主动参与裁决 → `user_required` 或 `user_overrode`
 
 **关键检查**:
 - ✓ 每条 blocker **独立验证** TRUE 后才接受(verdict per item;沿 memory `feedback_verify_external_reviews`)
 - ✓ 用户裁决"全改"后,沿**双 commit 模式**(见 §5)落地
+- ✓ `/codex:status --wait <job>` + `/codex:result <job>` 拿完整 output 后才写 `concurred` evidence
 
 **常见错误**:
 - ✗ 把 codex 的 claim 当结论不验证 file:line(项目用户明确要求)
 - ✗ self-review 与 codex review 重合 finding 不分别记录(失去对照价值)
+- ✗ background job 未完成就写 `autonomy_decision: claude_codex_concurred`(必须先拿 result)
 
-**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook S6 mixed scope
+**深读**:`forgeue_integrated_ai_workflow.md` §B.4 codex stage hook S6 + §C Autonomy Boundary Protocol
 
 ---
 
@@ -194,7 +263,7 @@ FORGEUE_VERIFY_LIVE_PROVIDER=1 /forgeue:change-verify --level 2    # 要 paid pr
 
 **产出**:`verification/doc_sync_report.md`(unresolved DRIFT = 0)
 
-**深读**:`docs/ai_workflow/README.md` §4 主规则 + `forgeue_integrated_ai_workflow.md` §C
+**深读**:`docs/ai_workflow/README.md` §4 主规则 + `forgeue_integrated_ai_workflow.md` §D(Documentation Sync Gate;原 §C 在 enhance-workflow-automation change 后顺延)
 
 ---
 
@@ -283,7 +352,8 @@ git commit -m "docs: backfill writeback_commit in P<N> review evidence"
 | 起新 change | `/opsx:propose <id> "<desc>"` |
 | 看哪个 change 卡哪个 stage | `/forgeue:change-status` |
 | 写完 design 想跑 codex review | `/forgeue:change-plan <id>` |
-| 实施代码 + TDD + plan review | `/forgeue:change-apply <id>` |
+| 实施(default subagent path) | `/forgeue:change-apply-subagent <id>`(多 micro-task / 需要 review checkpoint) |
+| 实施(fallback direct path) | `/forgeue:change-apply-direct <id>`(轻量 change / budget 紧张) |
 | 测试挂了找不出原因 | `/forgeue:change-debug <id>` |
 | 跑测试 + 产 verify_report | `/forgeue:change-verify <id>` |
 | 全套 review(self + codex) | `/forgeue:change-review <id>` |
@@ -297,14 +367,14 @@ git commit -m "docs: backfill writeback_commit in P<N> review evidence"
 
 | 症状 | 优先看 |
 |---|---|
-| `evidence_missing` blocker(finish gate) | `forgeue_integrated_ai_workflow.md` §D.1 evidence 子目录 + §3.1 / §3.2 evidence 类型表 |
+| `evidence_missing` blocker(finish gate) | `forgeue_integrated_ai_workflow.md` §E.1 evidence 子目录(原 §D.1 顺延)+ §3.1 / §3.2 evidence 类型表 |
 | `evidence_references_missing_anchor` exit 5 | 检查 `execution/execution_plan.md` 引用的 `tasks.md#X.Y` 是否真存在;不存在则回写 tasks.md 加锚或删除引用 |
 | `aligned_false_no_drift` blocker | evidence frontmatter `aligned_with_contract: false` 必须配 `drift_decision`(写回 / disputed-permanent-drift)三选一 |
 | `writeback_commit_unrelated` blocker | `git show --stat <sha>` 看该 commit 是否真改了 frontmatter 声明的 artifact;不是则补 commit 或换 sha |
 | `disputed_drift_anchor_unresolved` blocker | `design.md` `## Reasoning Notes` 段加 `> Anchor: <slug>` + ≥ 20 词 / ≥ 60 非空白字符段落 |
 | `tasks_unchecked` blocker | 早期 §1-§8 task 真未做完;§9-§11 self-stage 自动豁免(stage-aware filter) |
 | `openspec_cli_missing` blocker | npm install -g @fastify/openspec;Windows 上 finish_gate 已用 `shutil.which` 解析 `.cmd` shim |
-| 不知道某 evidence frontmatter 该写啥 | `forgeue_integrated_ai_workflow.md` §D.2 12-key schema + 已 archived change `openspec/changes/archive/2026-04-27-fuse-openspec-superpowers-workflow/review/` 里取模板 |
+| 不知道某 evidence frontmatter 该写啥 | `forgeue_integrated_ai_workflow.md` §E.2 12-key schema(原 §D.2 顺延)+ 已 archived change `openspec/changes/archive/2026-04-27-fuse-openspec-superpowers-workflow/review/` 里取模板 |
 | Documentation Sync Gate `[DRIFT]` 不知怎么解 | `docs/ai_workflow/README.md` §4.3 提示词 → 输出 A/B/C/D 类裁决 |
 | Codex review claim 看不出真假 | 沿 ForgeUE memory `feedback_verify_external_reviews`:**逐条** `file:line` 独立对照代码,verdict per item;**不**把 claim 当结论 |
 

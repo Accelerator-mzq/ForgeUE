@@ -97,6 +97,7 @@ _RE_BACKTICKED_IDENT = re.compile(r"`([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)`")
 # Common failure-mode names the framework already knows; if a debug_log
 # mentions one that design.md does NOT, that is a contract gap.
 _KNOWN_FAILURE_KEYWORDS = (
+    # Framework runtime failure modes (sourced from FailureModeMap)
     "BudgetExceeded",
     "BudgetTracker",
     "WorkerTimeout",
@@ -107,6 +108,15 @@ _KNOWN_FAILURE_KEYWORDS = (
     "ComfyUIConnectionError",
     "UEExportFailure",
     "TransitionEngine",
+    # Subagent reviewer gap keywords (adopt-subagent-driven-development codex S6 round 2 F8 fix):
+    # Reviewer body 含这些关键词 + design.md 不含同款 → DRIFT_GAP(沿 tasks.md §5.5/§5.6 承诺)。
+    # 注意:**加冒号限定**触发 reviewer report finding 形式(如 "missing requirement: X")
+    # 而非 generic phrase reference(如 "无 missing requirement / 无 misunderstanding" 这种
+    # ✅ Spec compliant 反例描述);避免 reviewer 自然语言引用误判 false positive。
+    # 不含 severity tag("Critical issue" / "Important issue" 是 reviewer 分级标签不是 gap)
+    "missing requirement:",
+    "extra feature:",
+    "misunderstood:",
 )
 
 
@@ -366,7 +376,21 @@ def detect_drift_contra(
     for ev in evidence_files:
         fm, body = _common.parse_frontmatter(_read_text(ev))
         ev_type = fm.get("evidence_type", "")
-        if ev_type not in ("tdd_log", "debug_log", "implementation_log"):
+        # adopt-subagent-driven-development round 1 F3 fix: 4 subagent_*
+        # evidence types may carry def/class identifiers in fenced code
+        # blocks (implementer reports + reviewer references) and out-of-
+        # contract identifiers MUST trigger DRIFT exit 5 same as legacy
+        # tdd_log / debug_log / implementation_log. Detector logic itself
+        # unchanged — only the evidence_type allow-list is widened.
+        if ev_type not in (
+            "tdd_log",
+            "debug_log",
+            "implementation_log",
+            "subagent_implementer_report",
+            "subagent_spec_review",
+            "subagent_code_quality_review",
+            "subagent_final_review",
+        ):
             continue
         for block in _RE_PY_BLOCK.findall(body):
             for ident in _RE_PY_DEF.findall(block):
@@ -393,7 +417,19 @@ def detect_drift_gap(
     out: list[DriftRecord] = []
     for ev in evidence_files:
         fm, body = _common.parse_frontmatter(_read_text(ev))
-        if fm.get("evidence_type") not in ("debug_log", "tdd_log"):
+        # adopt-subagent-driven-development round 1 F3 fix: subagent reviewer
+        # bodies may surface failure-mode keywords (BudgetExceeded etc.) that
+        # design.md does NOT yet document — that is a real contract gap and
+        # MUST trigger DRIFT same as legacy debug_log / tdd_log. Allow-list
+        # widened; detector logic untouched.
+        if fm.get("evidence_type") not in (
+            "debug_log",
+            "tdd_log",
+            "subagent_implementer_report",
+            "subagent_spec_review",
+            "subagent_code_quality_review",
+            "subagent_final_review",
+        ):
             continue
         for kw in _KNOWN_FAILURE_KEYWORDS:
             if kw in body and kw not in design_text:

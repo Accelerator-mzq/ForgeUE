@@ -81,7 +81,112 @@ _REQUIRED_EVIDENCE_CLAUDE_PLUGIN: list[tuple[str, str]] = [
 ]
 
 
+# Conditional REQUIRED only when dispatch mode triggers subagent-style 4-class
+# evidence schema. Two commands trigger this mode:
+#   - ``change-apply-subagent``(default sequential per-task dispatch;
+#     adopt-subagent-driven-development round 1 F2 fix)
+#   - ``change-apply-parallel``(并行 dispatch,P6 codex round 1 F1 fix:
+#     enhance-workflow-automation-runtime-enforcement;parallel 命令模板
+#     `change-apply-parallel.md` L101-105 明确声明 dispatch implementer +
+#     spec_review + code_quality_review + final_review,与 subagent 同款 4
+#     类 evidence 协议;detector 必须把 parallel 也纳入)
+# Triggered when ANY evidence file under the change carries frontmatter
+# ``triggered_by_command`` with a value in ``_SUBAGENT_STYLE_DISPATCH_VALUES``.
+# The default paths use globs because per-task evidence is named ``task_<n>_*.md``.
+_REQUIRED_EVIDENCE_SUBAGENT: list[tuple[str, str]] = [
+    ("subagent_implementer_report", "execution/task_*_implementer.md"),
+    ("subagent_spec_review", "execution/task_*_spec_review.md"),
+    ("subagent_code_quality_review", "execution/task_*_code_quality_review.md"),
+    ("subagent_final_review", "review/subagent_final_review.md"),
+]
+
+
 _CROSS_CHECK_TYPES = frozenset({"design_cross_check", "plan_cross_check"})
+
+
+# ---------------------------------------------------------------------------
+# P0 enhance-workflow-automation:autonomy_decision enum + helper(W2 writeback)
+# ---------------------------------------------------------------------------
+
+# autonomy_decision 字段合法枚举值 — 对应 design.md D-AutonomyBoundary 四种决策状态
+_AUTONOMY_DECISION_VALUES: frozenset[str] = frozenset({
+    "claude_autonomous",       # 完全自主(无需 codex 验证的极小 step)
+    "claude_codex_concurred",  # Claude + Codex 一致 → 自主执行
+    "user_required",           # 边界 fence 触发 / 冲突 → 用户拍板
+    "user_overrode",           # 用户主动否决 Claude 推荐(rare)
+})
+
+# codex_review_ref 指向的 evidence 必须是这 5 类 codex review 类型之一
+_VALID_CODEX_REVIEW_REF_TYPES: frozenset[str] = frozenset({
+    "codex_adversarial_review",
+    "codex_design_review",
+    "codex_plan_review",
+    "codex_verification_review",
+    "codex_mixed_scope_review",
+})
+
+# implementation evidence 类型 — 这些类型必须填 autonomy_decision 字段
+# (design.md D-AutonomyBoundary:implementation evidence 必须填 autonomy_decision)
+# I-2 fix:提升为模块级 frozenset,避免在 check_frontmatter_protocol 循环内重建
+_IMPLEMENTATION_EV_TYPES: frozenset[str] = frozenset({
+    "subagent_implementer_report",
+    "subagent_spec_review",
+    "subagent_code_quality_review",
+    "subagent_final_review",
+    "tdd_log",
+    "debug_log",
+})
+
+# Frontmatter sentinel value indicating evidence was produced by the
+# subagent-driven-development command path. design.md D-EvidenceSchema +
+# round 1 F2 fix mandate the value be carried as a top-level audit field
+# beyond the standard 12-key schema.
+_DISPATCH_MODE_FIELD = "triggered_by_command"
+# Backward-compat alias(legacy 引用;archived enhance-workflow-automation 等
+# evidence frontmatter 使用 change-apply-subagent 单值)
+_DISPATCH_MODE_SUBAGENT_VALUE = "change-apply-subagent"
+# P6 codex round 1 F1 fix:dispatch detector 必须识别 subagent + parallel 双值
+# (parallel 命令模板声明同款 4 类 subagent_* evidence 协议)
+_SUBAGENT_STYLE_DISPATCH_VALUES: frozenset[str] = frozenset({
+    "change-apply-subagent",
+    "change-apply-parallel",
+})
+
+# enhance-workflow-automation-runtime-enforcement(D-ProtocolVersionMigration):
+# 4 fence(skill_cascade / round_fix_continuity / task_granularity /
+# worktree_path)仅对 frontmatter 含 `runtime_enforcement_protocol_version: v1`
+# 的 evidence 生效。legacy archived evidence(无此字段)→ fence pass-through,
+# 确保历史 change(enhance-workflow-automation 等)evidence audit replay 兼容。
+#
+# enhance-workflow-automation-executable-enforcement(D-FrontmatterSchemaExtension):
+# v2 协议在 v1 基础上严格增强:
+# - v2 fence(_check_worktree_path v2 / _check_round_fix_continuity v2 /
+#   _check_file_overlap_actual / _check_dispatch_ledger)仅对 v2 evidence 生效
+# - v1 fence 对 v1 + v2 evidence 都生效(v2 ⊇ v1,不是替换)
+# - legacy evidence(无字段)全 fence pass-through
+_RUNTIME_ENFORCEMENT_VERSION_FIELD = "runtime_enforcement_protocol_version"
+_RUNTIME_ENFORCEMENT_VERSION_VALUE = "v1"
+_RUNTIME_ENFORCEMENT_VERSION_VALUE_V2 = "v2"
+
+# task_granularity 字段合法枚举值(design.md D-TaskGranularityDeclaration)
+_TASK_GRANULARITY_VALUES: frozenset[str] = frozenset({"phase", "per-file", "sub-task"})
+
+# ISO 8601 timestamp 简化匹配:YYYY-MM-DDTHH:MM:SS[.fff][Z|+HH:MM|+HHMM]
+_ISO_TIMESTAMP_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?$"
+)
+
+# D-WorktreeEnforce + D-DirectWorktreeRefinement(2026-05-05 user 拍板):
+# implementation evidence 来自 change-apply-subagent / change-apply-parallel
+# 时触发 worktree_path 强校验。change-apply-direct 沿 archived
+# 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail 第 5 项
+# **不强制** worktree(direct 是 < 3 micro-task 轻量 fallback,worktree 创建
+# + squash merge 收尾 ~10-20s 开销不划算);_check_worktree_path fence 在
+# direct evidence 上 pass-through。
+_WORKTREE_REQUIRED_COMMANDS: frozenset[str] = frozenset({
+    "change-apply-subagent",
+    "change-apply-parallel",
+})
 
 # Subdirectories that require strict 12-key evidence (helpers in notes/ are
 # allowed to omit frontmatter; per F3-adv ``notes/`` is the helper bucket
@@ -244,6 +349,46 @@ def _validate_evidence_file(
     return blockers
 
 
+def _detect_subagent_dispatch_mode(change_dir: Path) -> bool:
+    """True iff any formal-evidence file carries ``triggered_by_command`` ∈ ``_SUBAGENT_STYLE_DISPATCH_VALUES``.
+
+    Per design.md D-EvidenceSchema "Dispatch mode 判定" segment + round 1
+    F2 fix (codex review): finish_gate must NOT depend on a separate marker
+    file (``notes/pre_p0/dispatch_mode.txt``) — that file is helper-tier and
+    silently absent on legitimate subagent runs would have bypassed the
+    gate. Instead the per-task evidence files emitted by
+    ``change-apply-subagent`` / ``change-apply-parallel`` MUST carry the
+    ``triggered_by_command`` frontmatter field, and finish_gate scans for
+    that signal directly.
+
+    P6 codex round 1 F1 fix(enhance-workflow-automation-runtime-enforcement):
+    detector 扩到 ``change-apply-parallel``(parallel 命令模板声明同款 4 类
+    subagent_* evidence 协议;原 detector 仅识别单字符串 ``change-apply-subagent``,
+    parallel run 即使缺 spec_review / code_quality_review / final_review 也
+    bypass REQUIRED check,与 parallel 命令 Guardrail 不一致)。
+
+    Scope: only formal evidence subdirs (notes/ helpers excluded — they may
+    quote the field in body prose as documentation example without
+    intending to dispatch). Single hit anywhere flips the change to
+    subagent-style mode.
+    """
+    for sub in _FORMAL_EVIDENCE_SUBDIRS:
+        sd = change_dir / sub
+        if not sd.is_dir():
+            continue
+        for p in sorted(sd.rglob("*.md")):
+            if not p.is_file():
+                continue
+            try:
+                text = p.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm, _ = _common.parse_frontmatter(text)
+            if fm.get(_DISPATCH_MODE_FIELD) in _SUBAGENT_STYLE_DISPATCH_VALUES:
+                return True
+    return False
+
+
 def check_evidence_completeness(
     change_dir: Path,
     *,
@@ -258,6 +403,12 @@ def check_evidence_completeness(
     with ``evidence_type: codex_verification_review``) — the type field is
     canonical, file paths are diagnostic. Per F8-adv, also validates
     frontmatter / body content for each found file.
+
+    Subagent dispatch mode (adopt-subagent-driven-development round 1 F2):
+    iff any formal evidence file frontmatter carries
+    ``triggered_by_command: change-apply-subagent``, the 4 subagent_*
+    evidence types are added to the REQUIRED set. Otherwise (direct mode /
+    legacy change) the 4 subagent_* types remain OPTIONAL.
     """
     if by_type is None:
         by_type = _scan_evidence_by_type(change_dir)
@@ -265,6 +416,9 @@ def check_evidence_completeness(
     required: list[tuple[str, str]] = list(_REQUIRED_EVIDENCE_BASE)
     if detected_env == "claude-code" and codex_plugin_available:
         required.extend(_REQUIRED_EVIDENCE_CLAUDE_PLUGIN)
+    subagent_mode = _detect_subagent_dispatch_mode(change_dir)
+    if subagent_mode:
+        required.extend(_REQUIRED_EVIDENCE_SUBAGENT)
     for ev_type, default_path in required:
         files = by_type.get(ev_type, [])
         if not files:
@@ -283,6 +437,56 @@ def check_evidence_completeness(
         # Validate each file claiming this type
         for p in files:
             blockers.extend(_validate_evidence_file(p, change_dir, expected_type=ev_type))
+    # adopt-subagent-driven-development codex S6 round 2 F7 fix:
+    # subagent dispatch mode 下额外验证每个 task_n 都有完整 implementer/spec_review/
+    # code_quality_review 三件套(per design.md D-EvidenceSchema)。原 detector 只检查
+    # evidence_type 存在,可被多 task change 仅交 task_1 三件套 + final review 绕过。
+    if subagent_mode:
+        blockers.extend(_check_per_task_triple(by_type))
+    return blockers
+
+
+def _check_per_task_triple(by_type: dict[str, list[Path]]) -> list[Blocker]:
+    """Per-task triple check (F7 fix): each task_<n> must have implementer +
+    spec_review + code_quality_review evidence. Extracts task_n set from
+    `task_<n>_*.md` filenames in 3 evidence_type buckets, then reports
+    per-task missing component as a separate blocker.
+    """
+    import re as _re
+
+    _RE_TASK_N = _re.compile(r"task_([\w.]+)_(?:implementer|spec_review|code_quality_review)")
+    triple_types = (
+        "subagent_implementer_report",
+        "subagent_spec_review",
+        "subagent_code_quality_review",
+    )
+    # Collect task_n per evidence_type bucket
+    task_n_by_type: dict[str, set[str]] = {t: set() for t in triple_types}
+    all_task_n: set[str] = set()
+    for ev_type in triple_types:
+        for p in by_type.get(ev_type, []):
+            m = _RE_TASK_N.search(p.name)
+            if m:
+                n = m.group(1)
+                task_n_by_type[ev_type].add(n)
+                all_task_n.add(n)
+    # For each task_n seen, verify all 3 types present
+    blockers: list[Blocker] = []
+    for task_n in sorted(all_task_n):
+        for ev_type in triple_types:
+            if task_n not in task_n_by_type[ev_type]:
+                blockers.append(
+                    Blocker(
+                        type="evidence_missing_per_task",
+                        detail=(
+                            f"per-task evidence missing: task_{task_n} expected "
+                            f"{ev_type} evidence at execution/task_{task_n}_*.md "
+                            "(D-EvidenceSchema requires implementer + spec_review + "
+                            "code_quality_review triple per task)"
+                        ),
+                        file=f"execution/task_{task_n}_*.md",
+                    )
+                )
     return blockers
 
 
@@ -594,6 +798,66 @@ def check_frontmatter_protocol(
                     )
                 )
 
+        # P0.5 autonomy_boundary fence:检查 autonomy_decision 字段 + codex_review_ref 4 类硬校验
+        # W2 writeback:仅对含 autonomy_decision 字段的 evidence 做 ref 4 类硬校验
+        # (若字段存在但值非法 / ref 硬校验失败则 block;字段缺失仅对 implementation evidence 报错)
+        ev_type = fm.get("evidence_type") or ""
+        # 对 implementation evidence 类型强制 autonomy_decision 字段
+        # 对其他类型只有在 autonomy_decision 字段已存在时才做硬校验(宽松模式)
+        if ev_type in _IMPLEMENTATION_EV_TYPES or "autonomy_decision" in fm:
+            for ab_err in _check_autonomy_boundary(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(
+                        type="autonomy_boundary_violation",
+                        detail=ab_err,
+                        file=rel,
+                    )
+                )
+
+        # enhance-workflow-automation-runtime-enforcement:v1 runtime fence
+        # (D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity /
+        # D-TaskGranularityDeclaration)。每 fence 内部 protocol gate
+        # `runtime_enforcement_protocol_version: v1`,legacy evidence 全
+        # pass-through。v2 evidence 同样触发 v1 fence(v2 ⊇ v1)。
+        for err in _check_skill_cascade(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="skill_cascade_violation", detail=err, file=rel)
+            )
+        for err in _check_round_fix_continuity(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="round_fix_continuity_violation", detail=err, file=rel)
+            )
+        for err in _check_task_granularity(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="task_granularity_violation", detail=err, file=rel)
+            )
+        for err in _check_worktree_path(ev, fm, change_dir):
+            blockers.append(
+                Blocker(type="worktree_path_violation", detail=err, file=rel)
+            )
+
+        # enhance-workflow-automation-executable-enforcement:v2 runtime fence
+        # (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
+        # v2 fence 仅对 `runtime_enforcement_protocol_version: v2` evidence 生效;
+        # v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
+        if _runtime_enforcement_v2_active(fm):
+            for err in _check_worktree_path_v2(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="worktree_path_v2_violation", detail=err, file=rel)
+                )
+            for err in _check_round_fix_continuity_v2(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="round_fix_continuity_v2_violation", detail=err, file=rel)
+                )
+            for err in _check_file_overlap_actual(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="file_overlap_actual_violation", detail=err, file=rel)
+                )
+            for err in _check_dispatch_ledger(ev, fm, change_dir):
+                blockers.append(
+                    Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
+                )
+
     return blockers, len(formal)
 
 
@@ -686,6 +950,892 @@ def _is_substantive_paragraph(text: str) -> bool:
     word_count = len(text.split())
     char_count = sum(1 for c in text if not c.isspace())
     return word_count >= 20 or char_count >= 60
+
+
+# ---------------------------------------------------------------------------
+# P0 enhance-workflow-automation:autonomy_boundary + verdict_normalization
+# helpers(W2 + W3 writeback codex round 1 F2 + F3 findings)
+# ---------------------------------------------------------------------------
+
+
+def _check_autonomy_boundary(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 evidence frontmatter 中 autonomy_decision 字段完整性与 ref 硬校验。
+
+    W2 writeback:codex round 1 F2 finding 要求 finish_gate 对每份 formal evidence
+    做 autonomy_decision 边界校验,防止 claude_codex_concurred 在无合法 codex review
+    证据支持的情况下绕过升级 fence。
+
+    检查结构:1 个字段存在前提 + 4 类 ref 硬校验(a/b/c/d)
+    - 前提:autonomy_decision 字段必须存在 + 值在 _AUTONOMY_DECISION_VALUES 内
+    - 4 类 ref 硬校验(仅 autonomy_decision == claude_codex_concurred 时触发):
+      a. codex_review_ref 路径存在(is_file())
+      b. ref 属于同 change(resolve 后路径以 change_root 为前缀,不跨 change)
+      c. ref evidence_type 在 _VALID_CODEX_REVIEW_REF_TYPES 白名单内
+      d. ref disputed_open == 0(review 已 finalize)
+
+    参数:
+    - evidence_path:被检查 evidence 文件的路径(用于错误消息中标识 file 来源)
+    - frontmatter:已解析的 evidence frontmatter dict
+    - change_root:本 change 的根目录(用于 ref 路径 resolve + 同 change scope 校验)
+
+    返回错误字符串列表(空 = 无问题)。
+    """
+    errors: list[str] = []
+    # I-3 fix:在错误消息中引用 evidence_path.name,提升错误可读性
+    ev_name = evidence_path.name
+
+    # 检查字段是否存在
+    if "autonomy_decision" not in frontmatter:
+        errors.append(
+            f"autonomy_decision field missing from evidence frontmatter in {ev_name} "
+            "(design.md D-AutonomyBoundary: every implementation evidence MUST carry this field)"
+        )
+        return errors  # 无字段就不继续 ref 校验
+
+    value = frontmatter["autonomy_decision"]
+
+    # 检查枚举合法性
+    if value not in _AUTONOMY_DECISION_VALUES:
+        valid_list = ", ".join(sorted(_AUTONOMY_DECISION_VALUES))
+        errors.append(
+            f"autonomy_decision={value!r} in {ev_name} is not a valid enum value "
+            f"(valid: {valid_list})"
+        )
+        return errors  # 枚举非法时不继续 ref 校验
+
+    # 仅 claude_codex_concurred 需要 codex_review_ref 4 类硬校验
+    if value != "claude_codex_concurred":
+        return errors
+
+    # (a) codex_review_ref 字段必须存在
+    ref_value = frontmatter.get("codex_review_ref")
+    if not ref_value or not isinstance(ref_value, str) or not ref_value.strip():
+        errors.append(
+            f"codex_review_ref field missing in {ev_name} — autonomy_decision: "
+            "claude_codex_concurred MUST carry a codex_review_ref pointing to the review "
+            "evidence file (design.md D-AutonomyBoundary Mitigation)"
+        )
+        return errors
+
+    ref_rel = ref_value.strip()
+
+    # (a-cont) ref 路径文件必须存在
+    # ref 路径解析:先尝试相对于 change_root,再尝试相对于 repo root(I-1 fix:三层 parent)
+    # 注意:Path.is_file() 会跟随 .. 符号链接,故先 is_file() 再 resolve() 确保一致性
+    ref_candidate = change_root / ref_rel
+    if ref_candidate.is_file():
+        ref_abs = ref_candidate.resolve()
+    else:
+        # I-1 fix:repo root = change_root 的三层 parent
+        # change_root = <repo>/openspec/changes/<change_id>
+        # parents:    <repo>/openspec/changes  → <repo>/openspec  → <repo>
+        # 之前误写两层 parent → 解析到 openspec/ 子目录,造成 openspec/openspec/... 双前缀 false blocker
+        repo_root = change_root.parent.parent.parent
+        ref_candidate_repo = repo_root / ref_rel
+        if not ref_candidate_repo.is_file():
+            errors.append(
+                f"codex_review_ref={ref_rel!r} in {ev_name} does not exist as a file "
+                f"(checked relative to change_root and repo root)"
+            )
+            return errors
+        ref_abs = ref_candidate_repo.resolve()
+
+    # (b) ref 必须属于同 change(resolve 后路径以 change_root.resolve() 为前缀,禁止跨 change)
+    # 先 resolve 两端路径,消除 .. 和 symlink,确保路径比较语义正确
+    change_root_resolved = change_root.resolve()
+    try:
+        ref_abs.relative_to(change_root_resolved)
+    except ValueError:
+        errors.append(
+            f"codex_review_ref={ref_rel!r} in {ev_name} resolves outside of change "
+            f"directory {change_root.name!r} — cross-change reference is forbidden "
+            "(design.md D-AutonomyBoundary: codex_review_ref must be within same change scope)"
+        )
+        return errors
+
+    # (c) ref evidence_type 必须是 codex review 类型之一
+    try:
+        ref_text = ref_abs.read_text(encoding="utf-8")
+    except OSError:
+        errors.append(
+            f"codex_review_ref={ref_rel!r} in {ev_name} cannot be read (file unreadable)"
+        )
+        return errors
+
+    ref_fm, _ = _common.parse_frontmatter(ref_text)
+    ref_ev_type = ref_fm.get("evidence_type") or ""
+    if ref_ev_type not in _VALID_CODEX_REVIEW_REF_TYPES:
+        valid_types = ", ".join(sorted(_VALID_CODEX_REVIEW_REF_TYPES))
+        errors.append(
+            f"codex_review_ref={ref_rel!r} in {ev_name} has evidence_type={ref_ev_type!r} "
+            f"which is not a codex review type (must be one of: {valid_types})"
+        )
+
+    # (d) ref disputed_open 必须为 0(review 已 finalize)
+    disputed_raw = ref_fm.get("disputed_open")
+    try:
+        disputed_count = int(disputed_raw) if disputed_raw is not None else 0
+    except (TypeError, ValueError):
+        disputed_count = 0
+    if disputed_count != 0:
+        errors.append(
+            f"codex_review_ref={ref_rel!r} in {ev_name} has disputed_open={disputed_count} "
+            "(not 0) — review must be finalized (disputed_open: 0) before evidence can "
+            "claim autonomy_decision: claude_codex_concurred"
+        )
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-runtime-enforcement:4 runtime fence
+# (D-WorktreeEnforce / D-SkillCascadeCheck / D-RoundFixContinuity /
+# D-TaskGranularityDeclaration)
+#
+# 调用结构:check_frontmatter_protocol 主循环遍历每份 formal evidence 时,在
+# autonomy_boundary fence 之后顺序调用以下 4 个 fence。每个 fence 返回 list[str]
+# 错误消息,主循环以独立 Blocker.type 包装(便于测试断言定位):
+#  - skill_cascade_violation
+#  - round_fix_continuity_violation
+#  - task_granularity_violation
+#  - worktree_path_violation
+#
+# Protocol gating(D-ProtocolVersionMigration F5 inline writeback):4 fence 仅
+# 对 frontmatter 含 `runtime_enforcement_protocol_version: v1` 的 evidence
+# 生效;legacy archived evidence 全 pass-through,确保 archived audit replay
+# 不被 false-block。
+# ---------------------------------------------------------------------------
+
+
+def _runtime_enforcement_active(frontmatter: dict) -> bool:
+    """检查 evidence 是否声明加载 runtime enforcement protocol v1 或 v2。
+
+    D-ProtocolVersionMigration:v1 fence(skill_cascade / round_fix_continuity /
+    task_granularity / worktree_path)对 v1 + v2 evidence 都生效(v2 ⊇ v1);
+    legacy evidence(无此字段)→ 全 fence pass-through。
+    """
+    version = frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD)
+    return version in (_RUNTIME_ENFORCEMENT_VERSION_VALUE, _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2)
+
+
+def _runtime_enforcement_v2_active(frontmatter: dict) -> bool:
+    """检查 evidence 是否声明加载 runtime enforcement protocol v2。
+
+    D-FrontmatterSchemaExtension(enhance-workflow-automation-executable-enforcement):
+    v2 fence(worktree_path v2 / round_fix_continuity v2 / file_overlap_actual /
+    dispatch_ledger)仅对 frontmatter 含 ``runtime_enforcement_protocol_version: v2``
+    的 evidence 生效;v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
+    """
+    return frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD) == _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2
+
+
+def _check_skill_cascade(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 implementation evidence frontmatter ``skill_cascade_audit`` 字段完整性。
+
+    D-SkillCascadeCheck(spec.md L66 + design.md L96):implementation evidence
+    必须含 ``skill_cascade_audit`` dict 字段(``invoked_skills`` list +
+    ``cascade_check_pass_at`` ISO timestamp);finish_gate 守门此协议确保
+    controller 已跑过 ``forgeue_skill_cascade_check.py`` 验证 SKILL dependency
+    全 invoke。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。仅对 implementation evidence 类型(_IMPLEMENTATION_EV_TYPES)强制。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+    ev_name = evidence_path.name
+
+    audit = frontmatter.get("skill_cascade_audit")
+    if audit is None:
+        errors.append(
+            f"skill_cascade_audit field missing from {ev_name} "
+            "(D-SkillCascadeCheck: implementation evidence MUST carry this field "
+            "after running tools/forgeue_skill_cascade_check.py)"
+        )
+        return errors
+    if not isinstance(audit, dict):
+        errors.append(
+            f"skill_cascade_audit in {ev_name} is not a mapping "
+            f"(got {type(audit).__name__})"
+        )
+        return errors
+
+    invoked = audit.get("invoked_skills")
+    if not isinstance(invoked, list):
+        errors.append(
+            f"skill_cascade_audit.invoked_skills in {ev_name} is missing or not a list "
+            f"(got {type(invoked).__name__})"
+        )
+
+    pass_at = audit.get("cascade_check_pass_at")
+    if not isinstance(pass_at, str) or not pass_at.strip():
+        errors.append(
+            f"skill_cascade_audit.cascade_check_pass_at in {ev_name} is missing or empty "
+            "(MUST be ISO 8601 timestamp string)"
+        )
+    elif not _ISO_TIMESTAMP_RE.match(pass_at.strip()):
+        errors.append(
+            f"skill_cascade_audit.cascade_check_pass_at={pass_at!r} in {ev_name} "
+            "is not a valid ISO 8601 timestamp (e.g. 2026-05-05T00:00:00Z)"
+        )
+
+    return errors
+
+
+def _check_round_fix_continuity(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 round 2 fix subagent ID 与 round 1 一致(同 implementer / 同 reviewer)。
+
+    D-RoundFixContinuity(spec.md L98):subagent-driven-development 协议中
+    round 1 reviewer 找问题后 round 2 fix MUST 通过 SendMessage 给 same
+    implementer subagent;round 2 reviewer re-review MUST 给 same reviewer
+    subagent。evidence frontmatter ``subagent_continuity`` dict 字段记录
+    round 1/2 agent ID,finish_gate 守门一致性。
+
+    字段缺失不作为错误(round 1 only 的 evidence 没有 round 2 数据);仅当
+    ``subagent_continuity`` 含 round_2_* 字段时才校验一致性。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_name = evidence_path.name
+
+    cont = frontmatter.get("subagent_continuity")
+    if cont is None:
+        return errors  # round 1 only evidence,无连续性数据,不算错误
+    if not isinstance(cont, dict):
+        errors.append(
+            f"subagent_continuity in {ev_name} is not a mapping "
+            f"(got {type(cont).__name__})"
+        )
+        return errors
+
+    round_1_impl = cont.get("round_1_implementer_id")
+    round_2_impl = cont.get("round_2_fix_implementer_id")
+    round_1_rev = cont.get("round_1_reviewer_id")
+    round_2_rev = cont.get("round_2_review_reviewer_id")
+
+    if round_2_impl is not None:
+        if not round_1_impl:
+            errors.append(
+                f"subagent_continuity in {ev_name} has round_2_fix_implementer_id "
+                "but round_1_implementer_id is missing"
+            )
+        elif round_1_impl != round_2_impl:
+            errors.append(
+                f"subagent_continuity in {ev_name}: round_1_implementer_id="
+                f"{round_1_impl!r} != round_2_fix_implementer_id={round_2_impl!r} "
+                "(D-RoundFixContinuity: round 2 fix MUST go to same implementer subagent)"
+            )
+
+    if round_2_rev is not None:
+        if not round_1_rev:
+            errors.append(
+                f"subagent_continuity in {ev_name} has round_2_review_reviewer_id "
+                "but round_1_reviewer_id is missing"
+            )
+        elif round_1_rev != round_2_rev:
+            errors.append(
+                f"subagent_continuity in {ev_name}: round_1_reviewer_id="
+                f"{round_1_rev!r} != round_2_review_reviewer_id={round_2_rev!r} "
+                "(D-RoundFixContinuity: round 2 re-review MUST go to same reviewer subagent)"
+            )
+
+    return errors
+
+
+def _check_task_granularity(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 implementation evidence frontmatter ``task_granularity`` 字段。
+
+    D-TaskGranularityDeclaration(spec.md L114):controller 调用
+    ``/forgeue:change-apply-*`` 时 MUST 显式声明 task 粒度,evidence frontmatter
+    加 ``task_granularity`` 字段,枚举 ``phase`` / ``per-file`` / ``sub-task``。
+    Declaration 让 task 粒度选择透明,后续 audit 可见。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。仅对 implementation evidence 类型强制。
+
+    本函数只校验字段必填 + 枚举合法性;evidence 数量与粒度一致性的 cross-file
+    校验留 cross-evidence layer(spec.md L138 Scenario,本 change 不接 —
+    follow-on 处理)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+    ev_name = evidence_path.name
+
+    granularity = frontmatter.get("task_granularity")
+    if granularity is None or (isinstance(granularity, str) and not granularity.strip()):
+        errors.append(
+            f"task_granularity field missing from {ev_name} "
+            "(D-TaskGranularityDeclaration: implementation evidence MUST declare "
+            "granularity as one of phase / per-file / sub-task)"
+        )
+        return errors
+
+    if granularity not in _TASK_GRANULARITY_VALUES:
+        valid = ", ".join(sorted(_TASK_GRANULARITY_VALUES))
+        errors.append(
+            f"task_granularity={granularity!r} in {ev_name} is not a valid enum value "
+            f"(valid: {valid})"
+        )
+
+    return errors
+
+
+def _check_worktree_path(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """检查 implementation evidence 来自 change-apply-* 命令时含 ``worktree_path`` 字段。
+
+    D-WorktreeEnforce(spec.md L40)+ D-DirectWorktreeRefinement(2026-05-05
+    user 拍板):implementation evidence 由 ``change-apply-subagent`` /
+    ``change-apply-parallel`` 命令 dispatch 时,evidence frontmatter MUST 含
+    ``worktree_path`` 字段(non-null)— 双层守门:命令模板 preflight(early
+    abort)+ finish_gate audit(late catch)。
+
+    ``change-apply-direct`` 沿 archived 2026-05-04-adopt-subagent-driven-development
+    D-Worktree-Detail 第 5 项不强制 worktree(direct 是 < 3 micro-task 轻量
+    fallback);direct evidence 在此 fence pass-through。
+
+    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
+    生效。仅对 implementation evidence + 来源命令在
+    ``_WORKTREE_REQUIRED_COMMANDS`` frozenset 内的强制(其他 stage evidence
+    如 verify_report 或 direct 命令的 tdd_log 不强制)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_active(frontmatter):
+        return errors
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+
+    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
+    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
+        return errors  # change-apply-direct / 非 change-apply-* / 手工 evidence 不强制
+
+    ev_name = evidence_path.name
+    worktree = frontmatter.get("worktree_path")
+    if worktree is None:
+        errors.append(
+            f"worktree_path field missing from {ev_name} "
+            f"(D-WorktreeEnforce: implementation evidence triggered by {triggered!r} "
+            "MUST carry worktree_path field non-null)"
+        )
+        return errors
+    if not isinstance(worktree, str) or not worktree.strip():
+        errors.append(
+            f"worktree_path in {ev_name} is empty or non-string "
+            f"(got {worktree!r})"
+        )
+
+    return errors
+
+
+# ---------------------------------------------------------------------------
+# enhance-workflow-automation-executable-enforcement:v2 runtime fence
+# (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
+#
+# 4 v2 fence,仅对 `runtime_enforcement_protocol_version: v2` evidence 生效:
+#  1. _check_worktree_path_v2  → Blocker.type: worktree_path_v2_violation
+#  2. _check_round_fix_continuity_v2 → Blocker.type: round_fix_continuity_v2_violation
+#  3. _check_file_overlap_actual → Blocker.type: file_overlap_actual_violation
+#  4. _check_dispatch_ledger   → Blocker.type: dispatch_ledger_violation
+#
+# Protocol gating(_runtime_enforcement_v2_active):仅 v2 evidence 触发;
+# v1 evidence pass-through;legacy(无字段)pass-through。
+# ---------------------------------------------------------------------------
+
+
+def _normalize_path_str(p: str) -> str:
+    """路径字符串标准化:替换反斜杠为正斜杠,去掉尾部分隔符,casefold(Windows 兼容)。
+
+    用于 receipt.worktree_path vs evidence frontmatter worktree_path 比较时
+    消除 Windows / POSIX 路径格式差异。
+    """
+    return p.replace("\\", "/").rstrip("/")
+
+
+def _check_worktree_path_v2(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """v2 worktree_path 升级校验:跨检 receipt JSON。
+
+    D-W1-ReceiptSchema(enhance-workflow-automation-executable-enforcement):
+    v2 evidence MUST 含 `worktree_receipt_path` 字段(non-null),finish_gate 读
+    receipt JSON 校验:
+    - receipt 文件存在(missing → error)
+    - receipt JSON well-formed(JSONDecodeError → error)
+    - receipt `worktree_path` == evidence frontmatter `worktree_path`(路径标准化后)
+    - receipt `is_isolated_worktree: true`(false 或缺失 → error)
+
+    本 fence 在 v1 fence(_check_worktree_path)通过之后执行额外 v2 校验。
+    仅对 implementation evidence + triggered 在 _WORKTREE_REQUIRED_COMMANDS 内有效。
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_type = frontmatter.get("evidence_type") or ""
+    if ev_type not in _IMPLEMENTATION_EV_TYPES:
+        return errors
+
+    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
+    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
+        return errors  # direct / 非 change-apply-* 不强制
+
+    ev_name = evidence_path.name
+
+    # v2 evidence MUST 含 worktree_receipt_path 字段
+    receipt_rel = frontmatter.get("worktree_receipt_path")
+    if receipt_rel is None or (isinstance(receipt_rel, str) and not receipt_rel.strip()):
+        errors.append(
+            f"worktree_receipt_path field missing from {ev_name} "
+            "(D-W1-ReceiptSchema v2: implementation evidence triggered by "
+            f"{triggered!r} MUST carry worktree_receipt_path field non-null)"
+        )
+        return errors
+
+    # 读 receipt 文件(<change>/<receipt_rel>)
+    receipt_path = change_root / str(receipt_rel).strip()
+    if not receipt_path.is_file():
+        errors.append(
+            f"worktree_receipt_path={receipt_rel!r} in {ev_name} does not exist "
+            f"(expected at {receipt_path})"
+        )
+        return errors
+
+    try:
+        receipt_text = receipt_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(
+            f"worktree_receipt_path={receipt_rel!r} in {ev_name} cannot be read: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    try:
+        receipt = json.loads(receipt_text)
+    except json.JSONDecodeError as exc:
+        errors.append(
+            f"worktree_receipt_path={receipt_rel!r} in {ev_name} is not valid JSON: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    # 校验 receipt.worktree_path == evidence frontmatter.worktree_path
+    receipt_wt = receipt.get("worktree_path") or ""
+    fm_wt = frontmatter.get("worktree_path") or ""
+    if _normalize_path_str(str(receipt_wt)) != _normalize_path_str(str(fm_wt)):
+        errors.append(
+            f"worktree_path mismatch for {ev_name}: receipt.worktree_path="
+            f"{receipt_wt!r} != evidence frontmatter worktree_path={fm_wt!r} "
+            "(D-W1-ReceiptSchema: receipt and evidence MUST agree on worktree path)"
+        )
+
+    # 校验 receipt.is_isolated_worktree == true
+    is_isolated = receipt.get("is_isolated_worktree")
+    if is_isolated is not True:
+        errors.append(
+            f"receipt is_isolated_worktree={is_isolated!r} for {ev_name} "
+            "(D-W1-ReceiptSchema: is_isolated_worktree MUST be true in receipt)"
+        )
+
+    return errors
+
+
+def _check_round_fix_continuity_v2(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """v2 round_fix_continuity 升级校验:cross-check 对 dispatch ledger。
+
+    D-W3-LedgerFormat + D-RoundFixContinuity(v2 升级):
+    v2 evidence MUST 含 `dispatch_ledger_path` 字段(non-null);
+    finish_gate 读 ledger JSONL 校验 evidence frontmatter `subagent_continuity`
+    中引用的所有 agent_id 都在 ledger 中有真实记录(agent_id 集合 ⊆ ledger agent_id 集合)。
+
+    缺失 `subagent_continuity` 字段时不报错(round 1 only evidence;沿 v1 语义)。
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_name = evidence_path.name
+
+    # v2 evidence MUST 含 dispatch_ledger_path 字段
+    ledger_rel = frontmatter.get("dispatch_ledger_path")
+    if ledger_rel is None or (isinstance(ledger_rel, str) and not ledger_rel.strip()):
+        errors.append(
+            f"dispatch_ledger_path field missing from {ev_name} "
+            "(D-W3-LedgerFormat v2: v2 evidence MUST carry dispatch_ledger_path field)"
+        )
+        return errors
+
+    # subagent_continuity 缺失时不做后续校验(round 1 only evidence pass-through)
+    cont = frontmatter.get("subagent_continuity")
+    if cont is None:
+        return errors
+    if not isinstance(cont, dict):
+        return errors  # v1 fence 已报错,v2 不重复
+
+    # 收集 subagent_continuity 中所有 agent_id(非 None / 非空)
+    continuity_agent_ids: set[str] = set()
+    for key in (
+        "round_1_implementer_id",
+        "round_2_fix_implementer_id",
+        "round_1_reviewer_id",
+        "round_2_review_reviewer_id",
+    ):
+        val = cont.get(key)
+        if val and isinstance(val, str) and val.strip():
+            continuity_agent_ids.add(val.strip())
+
+    if not continuity_agent_ids:
+        return errors  # 没有 agent_id 引用,不做 ledger 校验
+
+    # 读 ledger 文件
+    ledger_path = change_root / str(ledger_rel).strip()
+    if not ledger_path.is_file():
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} does not exist "
+            f"(expected at {ledger_path}; "
+            "D-W3-LedgerFormat: ledger MUST exist to cross-check agent_id)"
+        )
+        return errors
+
+    try:
+        ledger_text = ledger_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} cannot be read: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    # 收集 ledger 中所有 agent_id
+    ledger_agent_ids: set[str] = set()
+    for line_no, raw in enumerate(ledger_text.splitlines(), 1):
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue  # dispatch_ledger fence 会独立报 JSON 错误
+        aid = row.get("agent_id")
+        if aid and isinstance(aid, str) and aid.strip():
+            ledger_agent_ids.add(aid.strip())
+
+    # 校验引用的 agent_id 集合 ⊆ ledger agent_id 集合
+    missing_ids = continuity_agent_ids - ledger_agent_ids
+    if missing_ids:
+        sorted_missing = sorted(missing_ids)
+        errors.append(
+            f"subagent_continuity in {ev_name} references agent_id(s) "
+            f"{sorted_missing} that are NOT in dispatch ledger "
+            f"{ledger_rel!r} (D-RoundFixContinuity v2: all referenced agent_ids "
+            "MUST have real ledger records)"
+        )
+
+    return errors
+
+
+def _check_file_overlap_actual(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """W2 file overlap actual 校验:parallel 路径 actual diff ⊆ declared 且 disjoint。
+
+    D-W2-OverlapDetection(enhance-workflow-automation-executable-enforcement):
+    parallel evidence(triggered_by_command: change-apply-parallel)MUST 含
+    `task_files_actual` 字段(list of {implementer_agent_id, files: [...]})。
+
+    校验:
+    1. actual ⊆ declared(`task_files_actual` 中每个 implementer 的 files 集合
+       ⊆ `task_files_disjoint` 中对应 implementer 的 files 集合)
+    2. actual changed-files set 之间 disjoint(若 `degraded_to: null` — 未降级)
+       `degraded_to: change-apply-subagent` 时跳过 disjoint 校验(已降级 sequential 路径)
+
+    仅对 triggered_by_command: change-apply-parallel evidence 生效;sequential pass-through。
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_name = evidence_path.name
+
+    # 仅 parallel evidence 强制
+    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
+    if triggered != "change-apply-parallel":
+        return errors
+
+    # task_files_actual 字段必须存在(list)
+    actual_raw = frontmatter.get("task_files_actual")
+    if actual_raw is None:
+        errors.append(
+            f"task_files_actual field missing from {ev_name} "
+            "(D-W2-OverlapDetection: change-apply-parallel v2 evidence MUST carry "
+            "task_files_actual field)"
+        )
+        return errors
+
+    if not isinstance(actual_raw, list):
+        errors.append(
+            f"task_files_actual in {ev_name} is not a list "
+            f"(got {type(actual_raw).__name__})"
+        )
+        return errors
+
+    # 构建 actual: {agent_id -> set[file]}
+    actual_by_agent: dict[str, set[str]] = {}
+    for entry in actual_raw:
+        if not isinstance(entry, dict):
+            continue
+        agent_id = entry.get("implementer_agent_id") or ""
+        files = entry.get("files") or []
+        if not isinstance(files, list):
+            files = []
+        actual_by_agent[str(agent_id)] = set(str(f) for f in files)
+
+    # 构建 declared: {agent_id -> set[file]} from task_files_disjoint
+    declared_raw = frontmatter.get("task_files_disjoint") or []
+    declared_by_agent: dict[str, set[str]] = {}
+    if isinstance(declared_raw, list):
+        for entry in declared_raw:
+            if not isinstance(entry, dict):
+                continue
+            agent_id = entry.get("implementer_agent_id") or ""
+            files = entry.get("files") or []
+            if not isinstance(files, list):
+                files = []
+            declared_by_agent[str(agent_id)] = set(str(f) for f in files)
+
+    # 校验 actual ⊆ declared
+    for agent_id, actual_files in actual_by_agent.items():
+        declared_files = declared_by_agent.get(agent_id, set())
+        extra = actual_files - declared_files
+        if extra:
+            errors.append(
+                f"task_files_actual for agent {agent_id!r} in {ev_name} contains "
+                f"files not in task_files_disjoint declaration: {sorted(extra)} "
+                "(D-W2-OverlapDetection: actual changed files MUST be subset of "
+                "declared disjoint files)"
+            )
+
+    # 降级路径跳过 disjoint 校验
+    degraded_to = frontmatter.get("degraded_to")
+    if degraded_to == "change-apply-subagent":
+        return errors  # 已降级 sequential,不再校验 disjoint
+
+    # 校验 actual changed-files set 之间 disjoint
+    agents = sorted(actual_by_agent.keys())
+    for i, agent_a in enumerate(agents):
+        for agent_b in agents[i + 1:]:
+            overlap = actual_by_agent[agent_a] & actual_by_agent[agent_b]
+            if overlap:
+                errors.append(
+                    f"actual file overlap between agent {agent_a!r} and {agent_b!r} "
+                    f"in {ev_name}: overlapping files {sorted(overlap)} "
+                    "(D-W2-OverlapDetection: actual changed-files sets MUST be "
+                    "disjoint when degraded_to is null)"
+                )
+
+    return errors
+
+
+def _check_dispatch_ledger(
+    evidence_path: "Path",
+    frontmatter: dict,
+    change_root: "Path",
+) -> list[str]:
+    """W3 dispatch ledger 完整性校验。
+
+    D-W3-LedgerFormat(enhance-workflow-automation-executable-enforcement):
+    v2 evidence MUST 含 `dispatch_ledger_path` 字段;finish_gate inline 实施
+    ledger 校验(等价于 forgeue_dispatch_ledger.py verify 逻辑):
+    - ledger 文件存在
+    - 每行是合法 JSON
+    - 每行含 wrapper_version 字段(非空)
+    - dispatched_at 时间戳单调递增
+
+    新 Blocker.type: `dispatch_ledger_violation`
+    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
+
+    Inline 实施原因:import forgeue_dispatch_ledger 作为 module 易于测试,
+    无 subprocess 开销;forgeue_dispatch_ledger.py 无模块级副作用(只有
+    `if __name__ == "__main__": raise SystemExit(main())`)。
+
+    **Sync drift 警告**(P2 round 1 codex code_quality_review 提出):本 inline 实施
+    与 `forgeue_dispatch_ledger.cmd_verify` 有 2 处**有意差异**:
+    1. **空行处理**:本 inline 跳过空行(`raw_stripped` 后 `continue`);
+       `cmd_verify` 对空行调 `json.loads("")` 抛 `JSONDecodeError` 返回 EXIT_VERIFY_FAIL。
+       本 inline 更宽松 — 接受 ledger 文件尾部多余空行(append 工具写入后常见)。
+    2. **prev_ts 更新条件**:本 inline 仅当 `ts` non-empty 时更新 `prev_ts = ts`;
+       `cmd_verify` 无条件 `prev_ts = ts`(哪怕 `ts == ""`)。
+       本 inline 更严格 — `dispatched_at` 缺失行不会重置 prev_ts,后续单调性检查仍生效。
+
+    **若 forgeue_dispatch_ledger.cmd_verify 校验规则未来变更**(如加 `schema_version`
+    字段、改 timestamp 格式)→ 本 inline 实施**不会自动同步**,需手工 update。
+    Maintenance contract:每次改 `cmd_verify` MUST 同步 review 本函数。
+    """
+    errors: list[str] = []
+    if not _runtime_enforcement_v2_active(frontmatter):
+        return errors  # v1 / legacy evidence pass-through
+
+    ev_name = evidence_path.name
+
+    # dispatch_ledger_path 字段必须存在
+    ledger_rel = frontmatter.get("dispatch_ledger_path")
+    if ledger_rel is None or (isinstance(ledger_rel, str) and not ledger_rel.strip()):
+        errors.append(
+            f"dispatch_ledger_path field missing from {ev_name} "
+            "(D-W3-LedgerFormat: v2 evidence MUST carry dispatch_ledger_path field)"
+        )
+        return errors
+
+    ledger_path = change_root / str(ledger_rel).strip()
+    if not ledger_path.is_file():
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} does not exist "
+            f"(expected at {ledger_path})"
+        )
+        return errors
+
+    try:
+        ledger_text = ledger_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        errors.append(
+            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} cannot be read: "
+            f"{_common.console_safe(exc)}"
+        )
+        return errors
+
+    # inline verify(等价于 forgeue_dispatch_ledger.cmd_verify 逻辑)
+    prev_ts = ""
+    for line_no, raw in enumerate(ledger_text.splitlines(), 1):
+        raw_stripped = raw.strip()
+        if not raw_stripped:
+            continue  # 空行跳过
+        try:
+            payload = json.loads(raw_stripped)
+        except json.JSONDecodeError as exc:
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name} "
+                f"is not valid JSON: {_common.console_safe(exc)}"
+            )
+            return errors  # 无法继续解析后续行
+
+        # wrapper_version 字段必须存在且非空
+        wv = payload.get("wrapper_version")
+        if not wv:
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name} "
+                "is missing wrapper_version field "
+                "(D-W3-LedgerFormat: every ledger line MUST carry wrapper_version)"
+            )
+
+        # dispatched_at 时间戳必须单调递增
+        ts = payload.get("dispatched_at", "")
+        if prev_ts and ts < prev_ts:
+            errors.append(
+                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name}: "
+                f"timestamp {ts!r} is earlier than previous {prev_ts!r} "
+                "(D-W3-LedgerFormat: timestamps MUST be monotonically increasing)"
+            )
+        if ts:
+            prev_ts = ts
+
+    return errors
+
+
+def _check_verdict_normalization(
+    claude_resolution_list: list[str],
+    codex_top_verdict: str,
+    codex_findings: list[dict],
+) -> bool:
+    """判定 Codex top-level verdict 与 Claude resolution 列表是否冲突。
+
+    W3 writeback:codex round 1 F3 finding 要求按 design.md D-FenceTaxonomy
+    Fence #3 Verdict Normalization 表归一化映射判定冲突,而非字符串直接比较
+    (字符串比较在 90% 正常流程中误报)。
+
+    输入:
+    - claude_resolution_list:Claude B Matrix 中每条 finding 的 resolution 列表
+      值域:accepted-codex / accepted-claude / rejected / disputed-open
+    - codex_top_verdict:Codex 顶层 verdict(approve / needs-attention)
+    - codex_findings:Codex finding 列表,每个 dict 含 severity + resolution 字段
+
+    返回:
+    - True  = 不冲突(自主路径,可 claude_codex_concurred)
+    - False = 冲突(升级 fence #3,需要用户拍板)
+
+    8 row 归一化映射表(design.md D-FenceTaxonomy Fence #3):
+    approve + accepted-codex/accepted-claude/rejected → 不冲突
+    approve + disputed-open                           → 冲突
+    needs-attention + accepted-codex                  → 不冲突
+    needs-attention + accepted-claude/rejected/disputed-open → 冲突
+
+    Per-finding 维度(顶层一致仍可能冲突):
+    - severity ∈ {critical, high} + resolution=rejected → 冲突
+    """
+    # 高优先级 per-finding 检查:任一 finding severity critical/high + rejected → 冲突
+    # 优先于顶层 verdict 检查,防止 approve 顶层掩盖高危 finding 被拒绝
+    for finding in codex_findings:
+        sev = (finding.get("severity") or "").lower().strip()
+        res = (finding.get("resolution") or "").lower().strip()
+        if sev in ("critical", "high") and res == "rejected":
+            return False  # 高优先 finding 被拒 → 冲突
+
+    # 顶层 verdict 归一化映射表判定
+    verdict = (codex_top_verdict or "").lower().strip()
+    for resolution in claude_resolution_list:
+        res = (resolution or "").lower().strip()
+        if verdict == "approve":
+            # approve + disputed-open → 冲突;其余 → 不冲突
+            if res == "disputed-open":
+                return False
+        elif verdict == "needs-attention":
+            # needs-attention + accepted-codex → 不冲突;其余 → 冲突
+            if res != "accepted-codex":
+                return False
+        # 未知 verdict 保守处理:不断言冲突(让 controller 判断)
+
+    return True  # 无冲突检出
 
 
 # ---------------------------------------------------------------------------

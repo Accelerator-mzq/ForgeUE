@@ -672,3 +672,64 @@ aliases:
     # alias 顶层 kind 不在 alias 实例上(alias 是 model id list 容器);
     # kind 在 preferred[0] route 上
     assert alias.preferred[0].kind == "audio"
+
+
+def test_comfy_local_video_model_resolves_via_video_local_alias(tmp_path):
+    """alias video_local → comfy/local-video 全链路解析:
+    bundle 写 provider_policy.models_ref: "video_local"
+    → loader expand → ResolvedRoute(model="comfy/local-video", kind="video", pricing=None)
+    → GenerateVideoExecutor._should_use_comfy_worker_path 检测 → ComfyAgentWorker.generate_video dispatch。
+    OpenSpec change comfy-agent-cli-video-adoption Phase 3(沿 audio Phase 2 R3-A 模式:
+    `video.t2v` 是 capability_ref,**不**是新 step type;ExecutorRegistry `(StepType.generate, "video.t2v")`
+    精确匹配查找)。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local-video:
+    id: "comfy/local-video"
+    provider: comfy_api
+    kind: video
+    pricing: null
+aliases:
+  video_local:
+    preferred: ["comfy/local-video"]
+    fallback: []
+""")
+    reg = ModelRegistry.from_yaml(path)
+    alias = reg.resolve("video_local")
+    assert alias.name == "video_local"
+    assert len(alias.preferred) == 1
+    route = alias.preferred[0]
+    assert route.model == "comfy/local-video"
+    assert route.kind == "video"
+    assert route.pricing is None
+    assert route.api_key_env is None
+    assert route.api_base is None
+    assert alias.fallback == []
+
+
+def test_video_local_alias_kind_is_video(tmp_path):
+    """守门 video_local alias 解析后 ResolvedRoute.kind == "video"。
+    沿 audio Phase 2 R4-C 同款:`video.t2v` 是 Step.capability_ref,**不**是 step type 枚举;
+    ResolvedRoute.kind 是 modeling layer kind(per registry 三段式 schema),与
+    Step.type=StepType.generate 不冲突 — 两个不同维度(model kind vs step type)。"""
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api: {api_key_env: null, api_base: null}
+models:
+  comfy/local-video:
+    id: "comfy/local-video"
+    provider: comfy_api
+    kind: video
+    pricing: null
+aliases:
+  video_local:
+    preferred: ["comfy/local-video"]
+    fallback: []
+""")
+    reg = ModelRegistry.from_yaml(path)
+    alias = reg.resolve("video_local")
+    # alias 顶层 kind 不在 alias 实例上(alias 是 model id list 容器);
+    # kind 在 preferred[0] route 上
+    assert alias.preferred[0].kind == "video"

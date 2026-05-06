@@ -52,8 +52,26 @@ tags: [forgeue, workflow, status, readonly]
 - **evidence 不能成新规范源**:报告中 "writeback pending" 项需提示用户回写到 contract artifact(proposal.md / design.md / tasks.md / specs/<cap>/spec.md)。
 - **本命令不直接触发 `/codex:adversarial-review` / `/codex:review`**(本命令是只读 state listing,不属 stage review;若需 review 走 `/forgeue:change-{plan,apply,verify,review}` 对应 stage hook)。
 
+## Decision Delegation
+
+本命令在 ForgeUE Integrated AI Change Workflow **S0(只读查询)** 阶段触发。Claude controller 默认按 design.md `D-AutonomyBoundary` + `D-FenceTaxonomy`(Fence #1-#6 trigger keyword 真源)决策升级路径:
+
+**默认自主路径**(`autonomy_decision: claude_autonomous`):
+- 调 `forgeue_change_state.py` 查询 state / evidence / writeback status
+- 渲染状态报告并输出(只读,无写操作)
+
+**必须升级用户的 boundary fence**:
+- **Fence #1 不可逆**:本命令不涉及任何不可逆操作(纯只读)
+- **Fence #2 跨 change**:本命令不涉及跨 change 文档修改
+- **Fence #3 review 冲突**:本命令不触发 codex review hook
+- **Fence #4 用户约束**:用户明确指定特定输出格式 / 范围约束时升级确认
+- **Fence #5 钱**:本命令不引入 vendor API paid call,无需升级
+- **Fence #6 安全**:本命令不 read `.env` 或敏感凭证
+
+evidence frontmatter MUST 含 `autonomy_decision` 字段,值取自 `{claude_autonomous, claude_codex_concurred, user_required, user_overrode}`。`claude_codex_concurred` MUST 配套 `codex_review_ref` 字段。
+
 **References**
 
 - `design.md` §4 commands 表(`/forgeue:change-status` 行)— hook 真源:`调 forgeue_change_state`
-- `forgeue_integrated_ai_workflow.md` §B.1(状态机 S0-S9)+ §D.1(evidence 子目录结构)
+- `forgeue_integrated_ai_workflow.md` §B.1(状态机 S0-S9)+ §E.1(evidence 子目录结构;原 §D.1 在 enhance-workflow-automation change 后顺延)
 - backbone skill: `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`
