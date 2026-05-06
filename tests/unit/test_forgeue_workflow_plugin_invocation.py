@@ -42,9 +42,9 @@ def _is_deprecated(path: Path) -> bool:
 @pytest.fixture(scope="module")
 def cmd_files() -> list[Path]:
     files = sorted(p for p in _CMD_DIR.glob("change-*.md") if not _is_deprecated(p))
-    # 10 = 7 keep + change-apply-subagent + change-apply-direct + change-apply-parallel
-    # (自 enhance-workflow-automation-runtime-enforcement P2.3 加 parallel 命令)
-    assert len(files) == 10, f"expected exactly 10 active forgeue command files, found {len(files)}"
+    # 9 = 7 keep + change-apply-subagent + change-apply-direct
+    # retire-parallel-and-worktree-fully P3(2026-05-06):change-apply-parallel.md 整删,10 → 9
+    assert len(files) == 9, f"expected exactly 9 active forgeue command files, found {len(files)}"
     return files
 
 
@@ -127,15 +127,16 @@ def test_no_enable_review_gate_invocation(cmd_files):
 
 
 def test_expected_active_commands_present(cmd_files):
-    """Active(非 deprecated)命令名集合 = 10。
+    """Active(非 deprecated)命令名集合 = 9。
 
     历史:
     - 2026-05-04 ``adopt-subagent-driven-development`` task 2 把旧 ``change-apply``
       split 为 ``change-apply-subagent``(default subagent path,sequential)+
       ``change-apply-direct``(fallback direct path,主 worktree)
     - 2026-05-05 ``enhance-workflow-automation-runtime-enforcement`` P2.3 加
-      ``change-apply-parallel``(并行 dispatch 路径,invoke
-      ``superpowers:dispatching-parallel-agents`` SKILL),共 10 命令。
+      ``change-apply-parallel``(并行 dispatch 路径)
+    - **2026-05-06 ``retire-parallel-and-worktree-fully`` P3 整删 ``change-apply-parallel.md``**
+      (D-PostRetireParallelStrategy:parallel 路径不再支持),命令矩阵 10 → 9。
 
     旧 stub 保留 1 archive cycle 作 deprecation banner(见 design.md
     ``## Migration Plan``),通过 fixture tags-aware skip 排除。
@@ -146,7 +147,6 @@ def test_expected_active_commands_present(cmd_files):
         "change-plan",
         "change-apply-subagent",
         "change-apply-direct",
-        "change-apply-parallel",
         "change-debug",
         "change-verify",
         "change-review",
