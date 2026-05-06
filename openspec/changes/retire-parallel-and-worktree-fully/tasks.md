@@ -9,22 +9,32 @@
   - 前置校验 4 目录确实存在:`ls openspec/changes/archive/ | grep -E "runtime-enforcement|executable-enforcement|consent-gate|ledger-binding"`(应输出 4 行)
   - 4 个全 PASS 记到 `verification/baseline.md`(P5 完成后回归对比期望仍 PASS)
 
-## 2. P1 — 工具 + 命令文件整删除(integer file deletion via `git rm`)
+## 2. P1 — 测试 imports 清理 + fence 测试删除(test edit;reorder Option B step 1)
 
-- [ ] 2.1 `git rm tools/forgeue_preflight_wrapper.py`(W1 wrapper,~615 LOC)
-- [ ] 2.2 `git rm tools/forgeue_dispatch_ledger.py`(W3 ledger 工具,~600 LOC v3 升级后)
-- [ ] 2.3 `git rm tools/_forgeue_ledger_crypto.py`(ledger-binding v3 internal helper,~400 LOC,本周刚 ship)
-- [ ] 2.4 `git rm .claude/commands/forgeue/change-apply-parallel.md`(parallel 命令模板,~433 LOC)
-- [ ] 2.5 `git rm -r .claude/skills/subagent-driven-discipline/`(整 sister skill 目录;ADR-012 加的 Layer 2 wiring)
-- [ ] 2.6 `git rm tests/unit/test_dispatch_ledger.py`(W3 + ledger-binding v3 测试,47 case 整文件)
-- [ ] 2.7 `git rm tests/unit/test_preflight_wrapper.py`(W1 wrapper 测试,**实测确认存在**;沿 codex round 1 F4 inline writeback 修正,原误写 `test_forgeue_preflight_wrapper.py` 不存在 — 真实文件名无 `forgeue_` 前缀)
-- [ ] 2.8 检查 `tests/unit/test_forgeue_ledger_crypto.py` 是否存在;**实测确认不存在**(`ls tests/unit/ | grep -iE "ledger|crypto"` 仅返回 `test_dispatch_ledger.py`),P1.7.2 micro task 跳过
-- [ ] 2.9 提交 commit `feat(forgeue): retire-parallel-worktree P1 — 工具 + 命令文件整删除` 落 `8a42c71` 之后
+> **Reorder rationale**(P0 实施 writeback,2026-05-06):原 P1=file delete / P2=fence edit / P3=test edit 顺序会让 P1 commit 之后 `pytest --collect-only` fail(`tests/unit/test_forgeue_finish_gate.py:3411` 模块级 import `_forgeue_ledger_crypto` 在 crypto 文件被删后崩溃)。reorder 为 P1=test edit / P2=production edit / P3=file delete,每 commit 后 pytest collect 都过,git bisect 友好。
 
-## 3. P2 — `forgeue_finish_gate.py` + `forgeue_change_state.py` 内部 fence / helper / 常量删除
+- [ ] 2.1 `tests/unit/test_forgeue_finish_gate.py` 部分删除:
+  - [ ] 2.1.a 删除 module-level `_forgeue_ledger_crypto` import + sys.path 操作(line 3407-3411)
+  - [ ] 2.1.b 删除 `test_check_dispatch_ledger_*` 测试组(v1/v2/v3 全分支)
+  - [ ] 2.1.c 删除 `test_check_worktree_*` 测试组(`test_check_worktree_path` + `test_check_worktree_consent_outcome` + `test_check_worktree_mode_consistency`)
+  - [ ] 2.1.d 删除 `test_check_ledger_*` 测试组(`test_check_ledger_terminal_proof` + `test_check_ledger_forgery_resistance_consistency`)
+  - [ ] 2.1.e 删除 `test_check_archived_replay_path_*` 测试组
+  - [ ] 2.1.f 删除 `test_check_runtime_enforcement_protocol_version_validity_*` 测试组
+  - [ ] 2.1.g 删除 `v3_fence_evidence_setup` fixture(line 3414+ — 依赖 `_ledger_crypto_test` import,沿 P0 实施 writeback)
+  - [ ] 2.1.h 保留 ADR-010 advisory 测试 + ADR-011 v1 advisory 测试(skill_cascade / round_fix_continuity / task_granularity / autonomy_boundary)
+  - [ ] 2.1.i 验证文件仍可 collect:`python -m pytest tests/unit/test_forgeue_finish_gate.py --collect-only -q | tail -3`
+- [ ] 2.2 `tests/integration/test_v2_e2e_synthetic_change.py` 整文件 vs 部分删除:
+  - [ ] 2.2.a 实测 v2 path 占比:`grep -c "v2_protocol\|dispatch_ledger\|HMAC\|forgery_resistance\|protocol_version.*v2\|protocol_version.*v3" tests/integration/test_v2_e2e_synthetic_change.py` + `grep -c "^def test_" tests/integration/test_v2_e2e_synthetic_change.py`
+  - [ ] 2.2.b 若 > 80% case 用 v2 path → P3 阶段 `git rm`(本 P1 阶段先 Edit 删除模块级 v2 import 防止 collect fail)
+  - [ ] 2.2.c 若 ≤ 80% → 仅删除 v2 path case,保留 ADR-010 advisory baseline case
+- [ ] 2.3 `tests/unit/test_forgeue_change_state.py` 部分删除(仅删 5th DRIFT type 相关 case;保留 4 类 DRIFT 测试)
+- [ ] 2.4 验证 pytest collect 仍 PASS:`python -m pytest --collect-only -q 2>&1 | tail -3`(本 commit 前后 collect 数应一致 - N,N = 删除 case 总数)
+- [ ] 2.5 提交 commit `feat(forgeue): retire-parallel-worktree P1 — 测试 imports 清理 + fence 测试删除(pytest collect <N> → <M>)`
+
+## 3. P2 — `forgeue_finish_gate.py` + `forgeue_change_state.py` 内部 fence / helper / 常量删除(production code edit;reorder Option B step 2)
 
 - [ ] 3.1 `tools/forgeue_finish_gate.py` 删除 7 fence 函数:
-  - [ ] 3.1.a `_check_dispatch_ledger`(v1/v2/v3 全分支;沿 `Dispatch ledger append-only contract` REMOVED)
+  - [ ] 3.1.a `_check_dispatch_ledger`(v1/v2/v3 全分支 + 函数内 `from . import _forgeue_ledger_crypto` import line 2210/2216;沿 `Dispatch ledger append-only contract` REMOVED)
   - [ ] 3.1.b `_check_ledger_terminal_proof`(v3 fence;沿 `v3 ledger terminal proof` REMOVED)
   - [ ] 3.1.c `_check_ledger_forgery_resistance_consistency`(v3 fence;沿 `ledger_forgery_resistance frontmatter` REMOVED)
   - [ ] 3.1.d `_check_archived_replay_path_boundary`(v3 fence;沿 `Archived replay path boundary` REMOVED)
@@ -39,36 +49,37 @@
   - [ ] 3.3.a `_VALID_PROTOCOL_VERSIONS` 改为 `frozenset({"v1"})`(原 `frozenset({"v1", "v2", "v3"})`)
   - [ ] 3.3.b 删除 `_AUDIT_CONSISTENCY_MAP`(整常量)
   - [ ] 3.3.c 删除 `_WORKTREE_REQUIRED_COMMANDS`(整常量,ADR-013 已 retire 为空 frozenset 但仍占行)
-- [ ] 3.4 `tools/forgeue_finish_gate.py` 简化 dispatch matrix(`_runtime_enforcement_active` 主路由 + dispatch loop):
-  - [ ] 3.4.a 仅 accept `v1`;v2 / v3 / 任何 unknown value → 走 legacy pass-through 不报错(沿 D-ArchivedReplayCompat)
-  - [ ] 3.4.b 删除 dispatch loop 中 v2 fence 路由分支
-  - [ ] 3.4.c 删除 dispatch loop 中 v3 fence 路由分支
+- [ ] 3.4 `tools/forgeue_finish_gate.py` 改写 dispatch matrix(`_runtime_enforcement_active` 主路由 + dispatch loop;沿 D-ActiveVsArchivedReplayBoundary 物理路径分支):
+  - [ ] 3.4.a 加 helper `_is_archived_replay_path(evidence_path: Path) -> bool`(判断 evidence 是否物理在 `openspec/changes/archive/` 子树)
+  - [ ] 3.4.b 改 `_runtime_enforcement_active` 仅 accept `v1`;active 路径 + v2/v3/unknown → BLOCKER `unknown_protocol_version`;archived 路径 + 任何 value → legacy pass-through(沿 D-ActiveVsArchivedReplayBoundary 7-row 表)
+  - [ ] 3.4.c 删除 dispatch loop 中 v2 fence 路由分支
+  - [ ] 3.4.d 删除 dispatch loop 中 v3 fence 路由分支
 - [ ] 3.5 `tools/forgeue_change_state.py` 删除:
   - [ ] 3.5.a `detect_drift_archived_replay_path`(5th DRIFT type;回到 4 类 DRIFT taxonomy)
   - [ ] 3.5.b worktree-related drift detection(若存在 `detect_drift_worktree_*` 类函数)
   - [ ] 3.5.c DRIFT taxonomy enum 改回 4 类(`evidence_introduces_decision_not_in_contract` / `evidence_references_missing_anchor` / `evidence_contradicts_contract` / `evidence_exposes_contract_gap`)
 - [ ] 3.6 import smoke check:`python -c "from tools import forgeue_finish_gate, forgeue_change_state; print('ok')"` 必 `print ok`
-- [ ] 3.7 提交 commit `feat(forgeue): retire-parallel-worktree P2 — finish_gate + change_state fence/helper 删除`
+- [ ] 3.7 完整 pytest 实测:`python -m pytest -q 2>&1 | tail -5`,验证 P1 删除 fence 测试后 pytest 仍全 pass(无新 fail)
+- [ ] 3.8 提交 commit `feat(forgeue): retire-parallel-worktree P2 — finish_gate + change_state fence/helper/常量/dispatch matrix 删除`
 
-## 4. P3 — 测试删除 + grep audit + pytest 实测
+## 4. P3 — 工具 / 命令 / sister skill 文件删除 + grep audit + pytest 对账(file delete;reorder Option B step 3)
 
-- [ ] 4.1 `tests/unit/test_forgeue_finish_gate.py` 部分删除:
-  - [ ] 4.1.a 删除 `test_check_dispatch_ledger_*` 测试组(v1/v2/v3 全分支)
-  - [ ] 4.1.b 删除 `test_check_worktree_*` 测试组(`test_check_worktree_path` + `test_check_worktree_consent_outcome` + `test_check_worktree_mode_consistency`)
-  - [ ] 4.1.c 删除 `test_check_ledger_*` 测试组(`test_check_ledger_terminal_proof` + `test_check_ledger_forgery_resistance_consistency`)
-  - [ ] 4.1.d 删除 `test_check_archived_replay_path_*` 测试组
-  - [ ] 4.1.e 删除 `test_check_runtime_enforcement_protocol_version_validity_*` 测试组
-  - [ ] 4.1.f 保留 ADR-010 advisory 测试 + ADR-011 v1 advisory 测试(skill_cascade / round_fix_continuity / task_granularity / autonomy_boundary)
-  - [ ] 4.1.g 验证文件仍可 collect:`python -m pytest tests/unit/test_forgeue_finish_gate.py --collect-only -q | tail -3`
-- [ ] 4.2 `tests/integration/test_v2_e2e_synthetic_change.py` 整文件 vs 部分删除:
-  - [ ] 4.2.a 若整 fixture 都是 v2 path → `git rm tests/integration/test_v2_e2e_synthetic_change.py`
-  - [ ] 4.2.b 若仅部分 case 是 v2 path → 仅删除该部分 case;保留与 ADR-010 advisory baseline 相关 case
-  - [ ] 4.2.c 验证文件仍可 collect 或确认整删除生效
-- [ ] 4.3 `tests/unit/test_forgeue_change_state.py` 部分删除(仅删 5th DRIFT type 相关 case;保留 4 类 DRIFT 测试)
+- [ ] 4.1 工具文件删除:
+  - [ ] 4.1.a `git rm tools/forgeue_preflight_wrapper.py`(W1 wrapper,615 LOC)
+  - [ ] 4.1.b `git rm tools/forgeue_dispatch_ledger.py`(W3 ledger 工具,353 LOC)
+  - [ ] 4.1.c `git rm tools/_forgeue_ledger_crypto.py`(ledger-binding internal helper,507 LOC)
+- [ ] 4.2 命令模板 + skill 整文件 / 目录删除:
+  - [ ] 4.2.a `git rm .claude/commands/forgeue/change-apply-parallel.md`(parallel 命令模板,433 LOC)
+  - [ ] 4.2.b `git rm -r .claude/skills/subagent-driven-discipline/`(整 sister skill 目录;ADR-012 加的 Layer 2 wiring;747 LOC SKILL.md)
+- [ ] 4.3 测试文件整删除:
+  - [ ] 4.3.a `git rm tests/unit/test_dispatch_ledger.py`(W3 + ledger-binding v3 测试,1021 LOC)
+  - [ ] 4.3.b `git rm tests/unit/test_preflight_wrapper.py`(W1 wrapper 测试,902 LOC)
+  - [ ] 4.3.c 检查 `tests/unit/test_forgeue_ledger_crypto.py` 是否存在;**P0 实测确认不存在**,跳过(沿 codex round 1 F4 + P0 实施 writeback)
+  - [ ] 4.3.d 若 P1 实测 `test_v2_e2e_synthetic_change.py` v2 path > 80% → 此处 `git rm tests/integration/test_v2_e2e_synthetic_change.py`(P1 已 Edit 删除模块级 import 防 collect fail)
 - [ ] 4.4 grep audit `tests/`:`grep -rn 'dispatch_ledger\|_forgeue_ledger_crypto\|forgeue_preflight_wrapper\|change-apply-parallel\|ledger_forgery_resistance\|HMAC\|ledger_line_count\|ledger_final_hmac\|worktree_consent_outcome\|worktree_mode\|task_files_actual\|preflight.*receipt' tests/` 全清(允许残留:archived 历史 fixture / 注释中的 retire 描述)
-- [ ] 4.5 完整 pytest 实测:`python -m pytest -q 2>&1 | tail -5`,记录新 baseline 数(原 549,本 change 后期望 549 - N,N 由实测确认)落 `verification/p3_pytest_summary.md`
-- [ ] 4.6 baseline 数对账:P0 baseline - 期望删除 case 数 = P3 实测数;不一致写 drift 进 `verification/p3_baseline_diff.md` 并修
-- [ ] 4.7 提交 commit `feat(forgeue): retire-parallel-worktree P3 — 测试删除 + pytest baseline N → M(diff: <count>)`
+- [ ] 4.5 完整 pytest 实测:`python -m pytest -q 2>&1 | tail -5`,记录新 baseline 数(P0 实测 1746;期望 1746 - <P1 删除 case 数> + <P3 删除 case 数>)落 `verification/p3_pytest_summary.md`
+- [ ] 4.6 baseline 数对账:`P0 baseline 1746 - P1 删除 - P3 删除 = P3 实测`;不一致写 drift 进 `verification/p3_baseline_diff.md` 并修
+- [ ] 4.7 提交 commit `feat(forgeue): retire-parallel-worktree P3 — 工具/命令/skill/测试文件删除 + pytest baseline 1746 → <M>(diff: -<deleted>)`
 
 ## 5. P4 — 命令模板编辑(change-apply-{subagent,direct}.md)
 
