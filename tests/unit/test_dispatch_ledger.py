@@ -378,3 +378,241 @@ def test_cli_help_exit_0():
     assert result.returncode == 0
     assert "append" in result.stdout
     assert "verify" in result.stdout
+
+
+# =============================================================================
+# v3 cryptographic ledger binding 测试
+#
+# 沿 enhance-workflow-automation-ledger-binding change(round 1+2 codex inline writeback 后)
+# 涉及 D-decision:D-CanonicalJSON / D-HashChain / D-KeyLocation / D-KeyRotationHandling /
+# D-LedgerTerminalProof / D-Scope-F3-MergeWithP12.8(strict 11-field schema)。
+#
+# P1 phase scope:`tools/_forgeue_ledger_crypto.py` 内部函数(canonical / compute_hmac /
+# compute_key_id / load_or_init_key 各 case);P2/P3 phase 测试 cmd_append / cmd_verify /
+# finish_gate v3 fence 在后续 phase。
+# =============================================================================
+
+# import _forgeue_ledger_crypto module(沿 ForgeUE 测试 sys.path 风格)
+import hashlib
+import importlib
+
+_TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
+if str(_TOOLS_DIR) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_DIR))
+_crypto = importlib.import_module("_forgeue_ledger_crypto")
+
+
+# -----------------------------------------------------------------------------
+# canonical_payload 测试(D-CanonicalJSON)
+# -----------------------------------------------------------------------------
+
+
+def test_canonical_payload_excludes_hmac_includes_prev_hmac():
+    """canonical bytes 不含 hmac 字段,含 prev_hmac 字段(D-CanonicalJSON 核心 invariant)。"""
+    record = {
+        "agent_id": "abc1234567890def0",
+        "round": 1,
+        "role": "implementer",
+        "prev_hmac": "0" * 64,
+        "hmac": "deadbeef" * 8,  # 64 hex
+    }
+    canonical = _crypto.canonical_payload(record)
+    parsed = json.loads(canonical.decode("utf-8"))
+    assert "hmac" not in parsed
+    assert "prev_hmac" in parsed
+    assert parsed["prev_hmac"] == "0" * 64
+
+
+def test_canonical_payload_field_order_invariant():
+    """打乱 record 字段插入顺序,canonical bytes 相同(sort_keys=True 保证)。"""
+    r1 = {
+        "agent_id": "a", "round": 1, "role": "implementer",
+        "prev_hmac": "0" * 64, "hmac": "x" * 64,
+    }
+    r2 = {
+        "hmac": "x" * 64, "role": "implementer", "round": 1,
+        "prev_hmac": "0" * 64, "agent_id": "a",
+    }
+    assert _crypto.canonical_payload(r1) == _crypto.canonical_payload(r2)
+
+
+def test_canonical_payload_no_whitespace():
+    """canonical bytes 无 whitespace(separators=(",", ":");跨实现一致性)。"""
+    record = {"a": 1, "b": 2}
+    canonical = _crypto.canonical_payload(record).decode("utf-8")
+    assert canonical == '{"a":1,"b":2}'  # 无空格 + sort_keys
+
+
+def test_canonical_payload_unicode_utf8():
+    """canonical bytes UTF-8 encoded(ensure_ascii=False;与 ledger 文件 encoding 一致)。"""
+    record = {"role": "测试", "prev_hmac": "0" * 64}
+    canonical = _crypto.canonical_payload(record)
+    assert "测试".encode("utf-8") in canonical
+
+
+# -----------------------------------------------------------------------------
+# compute_hmac 测试(D-HashChain core)
+# -----------------------------------------------------------------------------
+
+
+def test_compute_hmac_deterministic():
+    """同 input 同 key 产生同 hmac(HMAC-SHA256 deterministic)。"""
+    key = b"test_key_32_bytes_long_dummy_!!!"  # exactly 32 bytes
+    record = {
+        "agent_id": "a", "round": 1, "role": "implementer",
+        "prev_hmac": "0" * 64,
+    }
+    h1 = _crypto.compute_hmac(key, record)
+    h2 = _crypto.compute_hmac(key, record)
+    assert h1 == h2
+    assert len(h1) == 64  # SHA256 hex
+    # hex format
+    assert all(c in "0123456789abcdef" for c in h1)
+
+
+def test_compute_hmac_key_sensitive():
+    """不同 key 产生不同 hmac(HMAC 安全性)。"""
+    record = {
+        "agent_id": "a", "round": 1, "role": "implementer",
+        "prev_hmac": "0" * 64,
+    }
+    h1 = _crypto.compute_hmac(b"key1" + b"\x00" * 28, record)
+    h2 = _crypto.compute_hmac(b"key2" + b"\x00" * 28, record)
+    assert h1 != h2
+
+
+def test_compute_hmac_record_sensitive():
+    """同 key 不同 record 产生不同 hmac(完整性保证)。"""
+    key = b"\x42" * 32
+    r1 = {"agent_id": "a", "round": 1, "role": "implementer", "prev_hmac": "0" * 64}
+    r2 = {"agent_id": "b", "round": 1, "role": "implementer", "prev_hmac": "0" * 64}
+    assert _crypto.compute_hmac(key, r1) != _crypto.compute_hmac(key, r2)
+
+
+# -----------------------------------------------------------------------------
+# compute_key_id 测试(D-KeyLocation;16-char fingerprint)
+# -----------------------------------------------------------------------------
+
+
+def test_compute_key_id_truncated_sha256():
+    """key_id == sha256(key)[:16](16 hex chars = 64-bit fingerprint)。"""
+    key = b"\x42" * 32
+    expected = hashlib.sha256(key).hexdigest()[:16]
+    actual = _crypto.compute_key_id(key)
+    assert actual == expected
+    assert len(actual) == 16
+    assert all(c in "0123456789abcdef" for c in actual)
+
+
+def test_compute_key_id_different_keys_produce_different_ids():
+    """不同 key 产生不同 key_id(fingerprint 区分性)。"""
+    k1 = b"\x42" * 32
+    k2 = b"\x43" * 32
+    assert _crypto.compute_key_id(k1) != _crypto.compute_key_id(k2)
+
+
+# -----------------------------------------------------------------------------
+# load_or_init_key 测试(D-KeyRotationHandling 6 状态)
+# -----------------------------------------------------------------------------
+
+
+def test_load_or_init_key_creates_file_if_missing(tmp_path: Path):
+    """首次 init:文件不存在 + secrets.token_bytes(32) + JSON 写入(D-KeyRotationHandling state 1)。"""
+    key_file = tmp_path / ".claude" / "forgeue_ledger_key"
+    key, key_id = _crypto.load_or_init_key(key_file)
+
+    # 返回值 sanity
+    assert len(key) == 32
+    assert len(key_id) == 16
+
+    # 文件落盘 + JSON schema
+    assert key_file.exists()
+    payload = json.loads(key_file.read_text(encoding="utf-8"))
+    assert payload["version"] == 1
+    assert len(payload["key_hex"]) == 64
+    assert "created_at" in payload
+    # key_hex 与返回 key bytes 对应
+    assert bytes.fromhex(payload["key_hex"]) == key
+
+
+def test_load_or_init_key_returns_existing(tmp_path: Path):
+    """已存在 + 二次调用返回相同 key_bytes / key_id(D-KeyRotationHandling state 2)。"""
+    key_file = tmp_path / ".claude" / "forgeue_ledger_key"
+    key1, kid1 = _crypto.load_or_init_key(key_file)
+    key2, kid2 = _crypto.load_or_init_key(key_file)
+    assert key1 == key2
+    assert kid1 == kid2
+
+
+def test_load_or_init_key_corrupted_raises_json(tmp_path: Path):
+    """JSON 损坏 → SystemExit(7)(D-KeyRotationHandling state 3 fail-closed)。"""
+    key_file = tmp_path / ".claude" / "forgeue_ledger_key"
+    key_file.parent.mkdir(parents=True)
+    key_file.write_text("{not valid json", encoding="utf-8")
+
+    import pytest
+    with pytest.raises(SystemExit) as excinfo:
+        _crypto.load_or_init_key(key_file)
+    assert excinfo.value.code == 7
+
+
+def test_load_or_init_key_corrupted_raises_short_key_hex(tmp_path: Path):
+    """key_hex 长度 ≠ 64 → SystemExit(7)(round 1 codex 测试 gap 补)。"""
+    key_file = tmp_path / ".claude" / "forgeue_ledger_key"
+    key_file.parent.mkdir(parents=True)
+    key_file.write_text(
+        json.dumps({
+            "version": 1,
+            "created_at": "2026-05-06T00:00:00+08:00",
+            "key_hex": "abc",  # length 3, not 64
+        }),
+        encoding="utf-8",
+    )
+
+    import pytest
+    with pytest.raises(SystemExit) as excinfo:
+        _crypto.load_or_init_key(key_file)
+    assert excinfo.value.code == 7
+
+
+def test_load_or_init_key_corrupted_raises_unknown_version(tmp_path: Path):
+    """version ≠ 1 → SystemExit(7)(D-KeyRotationHandling state 3)。"""
+    key_file = tmp_path / ".claude" / "forgeue_ledger_key"
+    key_file.parent.mkdir(parents=True)
+    key_file.write_text(
+        json.dumps({"version": 99, "created_at": "x", "key_hex": "0" * 64}),
+        encoding="utf-8",
+    )
+
+    import pytest
+    with pytest.raises(SystemExit) as excinfo:
+        _crypto.load_or_init_key(key_file)
+    assert excinfo.value.code == 7
+
+
+def test_load_or_init_key_corrupted_raises_invalid_hex(tmp_path: Path):
+    """key_hex 长度 64 但含非 hex 字符 → SystemExit(7)。"""
+    key_file = tmp_path / ".claude" / "forgeue_ledger_key"
+    key_file.parent.mkdir(parents=True)
+    key_file.write_text(
+        json.dumps({
+            "version": 1,
+            "created_at": "x",
+            "key_hex": "z" * 64,  # length 64 but invalid hex
+        }),
+        encoding="utf-8",
+    )
+
+    import pytest
+    with pytest.raises(SystemExit) as excinfo:
+        _crypto.load_or_init_key(key_file)
+    assert excinfo.value.code == 7
+
+
+def test_load_or_init_key_creates_claude_dir_if_missing(tmp_path: Path):
+    """~/.claude/ 不存在自动 mkdir(round 1 codex 测试 gap 补)。"""
+    nested = tmp_path / "deeply" / "nested" / ".claude" / "forgeue_ledger_key"
+    assert not nested.parent.exists()
+    key, key_id = _crypto.load_or_init_key(nested)
+    assert nested.exists()
+    assert nested.parent.exists()

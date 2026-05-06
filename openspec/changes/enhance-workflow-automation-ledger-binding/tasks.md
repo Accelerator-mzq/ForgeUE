@@ -128,8 +128,12 @@
   - `_check_round_fix_continuity` 加 v3 路径(在 v2 cross-check 基础上加 chain verify + terminal proof,沿 specs MODIFIED Requirement)
   - fence dispatch matrix 扩到 4 档(legacy / v1 / v2 / v3)+ unknown value BLOCKER;v3 fence 总数 = v2 6 fence + 4 新(terminal_proof + audit_consistency + protocol_version_validity + archived_replay_path_boundary)+ schema_strict 内嵌进 _check_dispatch_ledger v3 分支
   - `tools/forgeue_change_state.py --writeback-check` 加 `archived_replay_path_violation` 进 4 类 named DRIFT 检测之一(round 2 codex F1 inline writeback)
-- [ ] P3.3 跑 P3.1 + P2.1 + P1.1 测试 — verify 全过
-- [ ] P3.4 commit `feat(forgeue): forgeue_finish_gate.py — v3 fence dispatch + HMAC chain verify`
+- [ ] P3.3 加 forgeue_change_state.py `--writeback-check` 加 archived_replay_path_violation 检测(round 3 codex F3 inline writeback):
+  - 测试 `test_writeback_check_archived_replay_active_drift_via_change_state`(active change evidence 含 `ledger_archived_replay: true` → exit 5 + DRIFT)
+  - 实施:`tools/forgeue_change_state.py:_writeback_check` 扫 evidence frontmatter 检测此字段 + 校 evidence 路径含 `archive/` segment;不含 → drift entry `archived_replay_path_violation`(沿 D-ArchivedReplayPathBoundary writeback-check 早期 drift signal)
+  - 沿 round 2 codex F1 inline writeback 已经在 spec / tasks 提到,本 round 3 inline writeback 修补 micro plan 漏 micro-step 的 gap
+- [ ] P3.4 跑 P3.1 + P2.1 + P1.1 测试 — verify 全过
+- [ ] P3.5 commit `feat(forgeue): forgeue_finish_gate.py + forgeue_change_state.py — v3 fence dispatch + HMAC chain verify + writeback-check archived_replay drift (4 new fence + round 3 codex F3 inline writeback)`
 
 ## P4 — 命令模板 frontmatter 升级 + e2e fixture v3
 
@@ -216,3 +220,4 @@
   - **`enhance-workflow-automation-final-review-fence-strictness`**(archived `executable-enforcement` P12.7):**单独评估**(本 change F3 ledger terminal proof + F5 schema validation 是否已覆盖 P12.7 hygiene gap?P12.7 scope 是 SKIP stub vs dispatched evidence 区分,与 ledger 校验是 orthogonal)— action item:本 change ship 后实证下一个 active change 用 v3 + SKIP stub pattern 是否仍误通过;若 ship-later 实证 P12.7 hygiene gap 已闭合 → cancel,否则 P12.7 触发条件不变
 - [ ] P9.5 (follow-on tracking)`enhance-workflow-automation-os-keystore`(R1 mitigation;OS-level secret store):用 Windows DPAPI / Mac Keychain / Linux libsecret 替代 `~/.claude/forgeue_ledger_key` 文件存储;防 LLM 主动恶意 forge(本 change threat model 之外的攻击);触发条件:本 change ship 后实证 LLM 主动恶意 forge 实际发生(若 advisory layer + obscurity 足够 → 不必 ship)
 - [ ] P9.6 (follow-on tracking RETIRED)`enhance-workflow-automation-archived-replay-audit` — **本 change round 2 codex F1 inline writeback 已实施**(D-ArchivedReplayPathBoundary fence + spec ADDED Requirement "Archived replay path boundary" + tasks.md P3.1 测试 case 5 个);本 change ship 后**正式 cancel** P9.6 follow-on tracking(沿 round 2 codex F1 recommendation "Do not defer this to P9.6")
+- [ ] P9.7 (follow-on tracking)`enhance-workflow-automation-ledger-append-lock`(round 3 codex F4 inline writeback;design R3 + spec "Append serial invariant" follow-on):cmd_append cross-platform file lock(`fcntl` + `msvcrt`)+ 并发 append regression test;触发条件:本 change ship 后实证非 ForgeUE 工作流外部并发跑 wrapper(如 user 自己 script 并发 append)触发 race;本 change scope 内**不**实施(命令模板 main session 串行 append invariant 已防 ForgeUE 内部 race)

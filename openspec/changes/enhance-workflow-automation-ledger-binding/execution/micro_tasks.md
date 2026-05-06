@@ -518,7 +518,15 @@ import _forgeue_ledger_crypto as crypto
 WRAPPER_VERSION = "2.0"
 
 def cmd_append(args):
-    """v3 升级:加载 key + 读 prev_hmac + 算 hmac + 写 11 字段 + stdout [LEDGER] 行。"""
+    """v3 升级:加载 key + 读 prev_hmac + 算 hmac + 写 11 字段 + stdout [LEDGER] 行。
+
+    **并发 append invariant**(round 3 codex F4 inline writeback;沿 design.md R3 + spec
+    "Append serial invariant"):本函数**不**实施 cross-platform file lock(`fcntl` /
+    `msvcrt`);并发安全由命令模板 `/forgeue:change-apply-{subagent,parallel}` 的主 session
+    串行 append 提供(implementer subagent dispatch 之间 parallel,但 append 是主 session
+    跑,自然 serialize)。若 ship 后实证非 ForgeUE 工作流外部并发跑 wrapper 触发 race →
+    follow-on `enhance-workflow-automation-ledger-append-lock`(P9.7)。
+    """
     ledger = Path(args.ledger_path) if args.ledger_path else _default_ledger_path(args.change)
     ledger.parent.mkdir(parents=True, exist_ok=True)
 
@@ -594,17 +602,27 @@ def cmd_verify(args):
                 print(f"[ERROR] ledger {ledger} line {line_no}: not JSON: {exc}", file=sys.stderr)
                 return crypto.EXIT_VERIFY_FAIL
 
-    # 沿 ledger 行 protocol_version 字段 dispatch
-    has_v3 = any(line.get("protocol_version") == "v3" for line in lines)
-    if has_v3:
-        # v3 strict schema + chain + (optional terminal proof if flag provided)
+    # ANY v3 信号 dispatch(round 3 codex F1 inline writeback;防 LLM 改所有行 protocol_version 降级 v2 path)
+    # v3 信号:任一 v3 字段(hmac / prev_hmac / key_id)出现 OR wrapper_version=="2.0" OR protocol_version=="v3"
+    has_v3_signal = any(
+        ("hmac" in line) or ("prev_hmac" in line) or ("key_id" in line)
+        or (line.get("wrapper_version") == "2.0")
+        or (line.get("protocol_version") == "v3")
+        for line in lines
+    )
+    if has_v3_signal:
+        # v3 strict schema validation(round 3 codex F2 inline writeback:cmd_verify 不实施 terminal proof,
+        # terminal proof 由 finish_gate `_check_ledger_terminal_proof` fence 实施;cmd_verify 仅校
+        # strict schema + chain HMAC + key rotation;沿 spec MODIFIED "Dispatch ledger append-only contract"
+        # cmd_verify scope boundary)
+        # strict schema 内校 protocol_version 必须精确 "v3"(LLM 改 v2/v4/缺失 → schema_violation)
         sstatus, smsg = crypto.verify_strict_schema_v3(lines)
         if sstatus != "ok":
             print(f"[schema_violation] {smsg}", file=sys.stderr)
             return crypto.EXIT_VERIFY_FAIL
 
         key, _ = crypto.load_or_init_key()
-        # archived replay opt-in only via cmd_verify flag (CLI level);
+        # archived replay opt-in only via cmd_verify --allow-archived-replay flag (CLI level);
         # finish_gate 走 evidence frontmatter `ledger_archived_replay: true` 路径
         evidence_fm = {"ledger_archived_replay": True} if args.allow_archived_replay else None
         cstatus, cmsg = crypto.verify_chain_v3(key, lines, evidence_fm)
@@ -614,6 +632,7 @@ def cmd_verify(args):
         if cstatus != "ok":
             print(f"[{cstatus}] {cmsg}", file=sys.stderr)
             return crypto.EXIT_VERIFY_FAIL
+        # NOTE: terminal proof verify_terminal_proof() NOT called here;由 finish_gate 实施
     else:
         # v2 schema-only(沿现有 v2 verify;timestamp 单调 + wrapper_version 非空)
         # ... 沿 archived 现有逻辑
@@ -630,6 +649,8 @@ def main(argv=None):
     vp = sub.add_parser("verify", ...)
     vp.add_argument("--allow-archived-replay", action="store_true",
                     help="archived replay opt-in (only valid if ledger path in archive/ segment;沿 D-ArchivedReplayPathBoundary)")
+    # NOTE: NOT 加 --evidence-line-count / --evidence-final-hmac flag(round 3 codex F2 inline writeback:
+    # cmd_verify 不实施 terminal proof;terminal proof 由 finish_gate fence 实施)
     # ... existing args
 ```
 
@@ -721,11 +742,60 @@ def main(argv=None):
 - [ ] Run: `python -m pytest tests/unit/test_forgeue_finish_gate.py -k 'v3' -v`
   Expected: PASS(全 ~22 v3 case)
 
-### micro-P3.3 跑全套 + commit P3
+### micro-P3.3 加 forgeue_change_state.py 测试 + 实施(round 3 codex F3 inline writeback;沿 D-ArchivedReplayPathBoundary writeback-check 早期 drift signal)
+
+- [ ] Read `tools/forgeue_change_state.py:--writeback-check` 现有 4 类 named DRIFT 检测逻辑
+- [ ] Add test `test_writeback_check_archived_replay_active_drift_via_change_state` to `tests/unit/test_forgeue_change_state.py`(或现有相关测试文件;若不存在 search `test_forgeue_change_state*`):
+
+```python
+def test_writeback_check_archived_replay_active_drift_via_change_state(tmp_path):
+    """active change evidence 含 ledger_archived_replay: true → forgeue_change_state.py
+    --writeback-check exit 5 + DRIFT signal(沿 round 2 codex F1 + round 3 codex F3 inline writeback)。"""
+    # fixture: active change(非 archive/)evidence 含 ledger_archived_replay: true
+    change_root = tmp_path / "openspec" / "changes" / "test-change"
+    change_root.mkdir(parents=True)
+    evidence = change_root / "review" / "test.md"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text(
+        "---\n"
+        "change_id: test-change\n"
+        "stage: S5\n"
+        "evidence_type: review\n"
+        "ledger_archived_replay: true\n"  # ← drift signal in active change
+        "---\n"
+        "test\n",
+        encoding="utf-8",
+    )
+    # 跑 forgeue_change_state.py --writeback-check
+    result = subprocess.run(
+        [sys.executable, "tools/forgeue_change_state.py",
+         "--change", "test-change", "--writeback-check", "--json"],
+        capture_output=True, text=True, cwd=str(tmp_path),
+    )
+    assert result.returncode == 5, f"expected exit 5 (DRIFT detected), got {result.returncode}"
+    parsed = json.loads(result.stdout)
+    drifts = parsed.get("drifts", [])
+    assert any(d.get("type") == "archived_replay_path_violation" for d in drifts), \
+        f"expected archived_replay_path_violation drift, got: {drifts}"
+```
+
+- [ ] Run: `python -m pytest tests/unit/test_forgeue_change_state.py -k 'archived_replay' -v`
+  Expected: FAIL initially(forgeue_change_state.py 还没实施)
+- [ ] Edit `tools/forgeue_change_state.py:_writeback_check` 加 `archived_replay_path_violation` 检测分支:
+  - 扫 `<change>/**/*.md` 全 evidence 文件 frontmatter
+  - 检测 `ledger_archived_replay == True` 字段
+  - 校 evidence 文件路径 `Path.resolve()` 是否含 `archive/` segment
+  - 不含 → 加 drift entry `{"type": "archived_replay_path_violation", "file": <rel_path>, "detail": "active change evidence 含 ledger_archived_replay: true; 仅 archived (openspec/changes/archive/) evidence 允许此字段"}`
+  - 沿现有 DRIFT 4 类 named 模式(`evidence_introduces_decision_not_in_contract` / `evidence_references_missing_anchor` / `evidence_contradicts_contract` / `evidence_exposes_contract_gap`)— 此为第 5 类 drift,加进 _writeback_check 返回的 drifts list
+- [ ] Run: `python -m pytest tests/unit/test_forgeue_change_state.py -k 'archived_replay' -v`
+  Expected: PASS
+
+### micro-P3.4 跑全套 + commit P3
 
 - [ ] Run: `python -m pytest -q`(包含 P1+P2+P3 + 现有 549 case)
-  Expected: 全过(基线 549 + 本 change ~52 → 601;实际数以 pytest collect 为准)
-- [ ] Run: `git add tools/forgeue_finish_gate.py tests/unit/test_forgeue_finish_gate.py && git commit -m "feat(forgeue): forgeue_finish_gate.py — v3 fence dispatch + HMAC chain verify (4 new fence)"`
+  Expected: 全过(基线 549 + 本 change ~53 → 602;实际数以 pytest collect 为准)
+- [ ] Run: `git add tools/forgeue_finish_gate.py tools/forgeue_change_state.py tests/unit/test_forgeue_finish_gate.py tests/unit/test_forgeue_change_state.py && git commit -m "feat(forgeue): forgeue_finish_gate.py + forgeue_change_state.py — v3 fence dispatch + HMAC chain verify + writeback-check archived_replay drift (round 3 codex F3 inline writeback)"`
+- [ ] **Round 3 codex F3 inline writeback note**:P3 commit scope 加 `tools/forgeue_change_state.py`(原 plan 漏)+ regression test for writeback-check;沿 D-ArchivedReplayPathBoundary writeback-check 早期 drift signal,与 finish_gate fence 双重守门
 
 ---
 
@@ -743,6 +813,10 @@ def main(argv=None):
   - `ledger_final_hmac: <64 hex>`(同上)
   - **不写** `ledger_archived_replay`(default 不在;archived replay 时由 user 显式标 true)
 - [ ] Edit Step 10a:加"读 wrapper stdout `[LEDGER] line_count=<N> final_hmac=<hex>` + 复制到 evidence frontmatter `ledger_line_count` / `ledger_final_hmac` 字段"明确指令(沿 round 1 codex F3 inline writeback)
+- [ ] Edit Step 10a 同时加 **main session serial append invariant**(round 3 codex F4 inline writeback;沿 spec "Append serial invariant" + design R3):
+  - 显式声明:"主 session SHALL 顺序调 cmd_append wrapper(每次 Skill(Task) 返回后串行调一次),**不**并发调 wrapper"
+  - 沿 archived `executable-enforcement` Step 10a "post-dispatch capture 真实 agent_id" 同款 sequential 实施模式
+  - parallel 模式下 implementer subagent dispatch 之间 parallel,但主 session 收集 dispatch return + append wrapper 是 sequential — implementer dispatch parallel 与 append serial 不冲突
 - [ ] 加注释 `# v3 协议自 enhance-workflow-automation-ledger-binding change 起;line_count + final_hmac 复制自 wrapper stdout`
 
 ### micro-P4.2 升级 change-apply-parallel.md(同 P4.1)

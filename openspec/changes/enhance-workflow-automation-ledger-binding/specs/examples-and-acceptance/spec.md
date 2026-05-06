@@ -598,6 +598,53 @@ evidence frontmatter SHALL 含 `dispatch_ledger_path` 字段,值固定为 `dispa
 - **THEN** verify exit 7(`key_file_corrupted`)
 - **AND** stderr 打印 `[ERROR] key file corrupted at <path>: <reason>; backup + remove file to re-init`
 
+#### Scenario: cmd_verify v3 dispatch by ANY v3 fingerprint signal(round 3 codex F1 inline writeback)
+
+- **WHEN** ledger 任意行含 v3 信号字段任一(`hmac` / `prev_hmac` / `key_id`)OR `wrapper_version: "2.0"` OR `protocol_version: "v3"`
+- **THEN** cmd_verify SHALL 走 v3 strict validation 路径(strict 11-field schema + chain HMAC + key rotation),**不**降级到 v2 schema-only;此规则防 LLM hand-edit 全部行 protocol_version 字段企图绕 v3 fence
+- **AND** strict schema validation 校 `protocol_version` 字段必须精确 `"v3"`(若被改为 `"v2"` / `"v4"` / 缺失 → BLOCKER `[schema_violation]`)
+
+#### Scenario: cmd_verify v3 strict trigger via hmac field only(LLM 改 protocol_version 但漏改 hmac)
+
+- **WHEN** ledger 行含 `hmac` / `prev_hmac` / `key_id` 字段任一,但所有行 `protocol_version` 被改为 `"v2"` / 缺失
+- **THEN** cmd_verify trigger v3 strict validation(沿 ANY v3 信号 dispatch);strict schema 校 `protocol_version` 必须 `"v3"` → BLOCKER `[schema_violation]`
+- **AND** verify exit 5,error message prefix `[schema_violation] line <N>: field 'protocol_version' MUST be exactly 'v3', got <X>`
+
+#### Scenario: cmd_verify v3 strict trigger via wrapper_version 2.0(LLM 漏改 wrapper_version)
+
+- **WHEN** ledger 行 `wrapper_version: "2.0"` + 所有行 `protocol_version` 改 / 缺失 + 所有 v3 字段(hmac / prev_hmac / key_id)被删
+- **THEN** cmd_verify trigger v3 strict validation(`wrapper_version=2.0` 是 v3 信号之一);strict schema 校 v3 字段缺失 → BLOCKER `[schema_violation]`
+
+#### Scenario: cmd_verify pure v2 ledger(无 v3 信号)走 v2 schema-only
+
+- **WHEN** ledger 全行 7-字段 v2 schema(无 hmac / prev_hmac / key_id;`wrapper_version: "1.0"`;无 `protocol_version`)
+- **THEN** cmd_verify 走 v2 schema-only 路径(JSON well-formed + wrapper_version 非空 + timestamp 单调);不触发 v3 strict
+- **AND** verify exit 0(archived v2 ledger 完全 backward compatible)
+
+**cmd_verify scope boundary(round 3 codex F2 inline writeback;terminal proof 由 finish_gate 而非 cmd_verify 实施)**:
+
+`cmd_verify` SHALL 实施:strict 11-field schema validation(沿 D-Scope-F3-MergeWithP12.8)+ chain HMAC verify(沿 D-HashChain)+ key rotation 双路径(沿 D-KeyRotationHandling)+ ANY v3 信号 dispatch(round 3 codex F1)。
+
+`cmd_verify` SHALL **不**实施 terminal proof(`ledger_line_count` + `ledger_final_hmac` 与 evidence frontmatter cross-check)— 此责任由 `forgeue_finish_gate.py::_check_ledger_terminal_proof` fence 实施(沿 D-LedgerTerminalProof);finish_gate 是 evidence-aware fence locus,有 evidence frontmatter context;cmd_verify 是 standalone CLI verify 工具,无 evidence context,加 `--evidence-line-count` / `--evidence-final-hmac` flag 是工具职责过度扩展。
+
+**Append serial invariant**(round 3 codex F4 inline writeback):
+
+命令模板 `/forgeue:change-apply-{subagent,parallel}` SHALL **主 session 串行 append wrapper**(implementer subagent dispatch 之间 parallel,但 append 是主 session 跑 — Skill(Task) 返回后由 controller 主 session 调 wrapper,自然 serialize)。本 invariant 防并发 append race(同时读 prev_hmac → 写两行同 prev_hmac → chain 断)。
+
+`tools/forgeue_dispatch_ledger.py::cmd_append` 自身**不**强制 cross-platform file lock(`fcntl` / `msvcrt`);并发安全由命令模板 main session serial 提供。若 ship 后实证 race 实际发生(如非 ForgeUE 工作流外部并发跑 wrapper)→ 触发 follow-on `enhance-workflow-automation-ledger-append-lock`。
+
+#### Scenario: 命令模板 main session 串行 append invariant(round 3 codex F4 inline writeback)
+
+- **WHEN** `/forgeue:change-apply-parallel` dispatch N 个 implementer subagent(parallel)+ 每个 implementer 完成后回到主 session
+- **THEN** 主 session **顺序**调 cmd_append wrapper(每次 Skill(Task) 返回后串行调一次),**不**并发调 wrapper
+- **AND** ledger 行依次 append,prev_hmac 链接前一行 hmac;chain 完整无断
+
+#### Scenario: 外部并发 append(本 change scope 外)race 不被 fence 防御
+
+- **WHEN** 用户外部 script 在命令模板之外并发跑 `python tools/forgeue_dispatch_ledger.py append ...` 多次
+- **THEN** 可能产生并发 append race(沿 R3 deferred follow-on);本 change 不防御此场景
+- **AND** finish_gate verify chain 时若发现 chain 断 → BLOCKER(沿 chain_break);但 BLOCKER 后 user 需自己 debug 是不是外部 race
+
 ### Requirement: Round 2+ fix subagent continuity
 
 `subagent-driven-development` 协议中,round 1 reviewer 找问题后 round 2 fix MUST 通过 `SendMessage` 给 same implementer subagent;round 2 reviewer re-review MUST 给 same reviewer subagent。
