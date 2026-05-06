@@ -1,7 +1,7 @@
 ---
 change_id: enhance-workflow-automation-ledger-binding
 stage: S5
-evidence_type: verification
+evidence_type: verify_report
 contract_refs:
   - tasks.md#P5
   - design.md
@@ -11,7 +11,7 @@ detected_env: claude-code
 triggered_by: cli-flag
 codex_plugin_available: true
 triggered_by_command: change-verify
-runtime_enforcement_protocol_version: v2
+runtime_enforcement_protocol_version: v1
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_verification_review.md
 created_at: 2026-05-06T18:00:00+08:00

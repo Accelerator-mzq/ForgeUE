@@ -189,7 +189,7 @@
   - codex `/codex:adversarial-review` mixed scope(background;design + spec + impl 全 review)
   - blocker 回写 design.md / specs / tasks.md(若有);非 blocker 列 follow-on 候选
   - 落 `review/superpowers_review.md` + `review/codex_adversarial_review.md`(round 2 段)+ `review/review_cross_check.md`
-- [ ] P7.2 跑 `/forgeue:change-finish`(中心化最后防线):
+- [x] P7.2 跑 `/forgeue:change-finish`(中心化最后防线):
   - 12-key frontmatter 全检(8 always-required + 4 conditional 在 aligned_with_contract: false 时必填)
   - writeback 真实性(`forgeue_change_state.py --writeback-check` 4 类 named DRIFT 检测)
   - cross-check `disputed_open == 0`
@@ -197,14 +197,14 @@
   - `openspec validate --strict`
   - 4 v1 runtime fence + 6 v2 runtime fence(本 change 自身 evidence 沿 v2 self-dogfood,沿 D-SelfDogfoodGap)
   - 落 `verification/finish_gate_report.md`
-- [ ] P7.3 commit `feat(forgeue): ledger-binding change finalize`(若 P5.5 / P7.1 触发额外 inline writeback)
+- [x] P7.3 commit `feat(forgeue): ledger-binding change finalize`(若 P5.5 / P7.1 触发额外 inline writeback)
 
 ## P8 — Archive change
 
-- [ ] P8.1 跑 `openspec archive enhance-workflow-automation-ledger-binding`(自动 prefix 当前日期)
-- [ ] P8.2 archived 路径 `openspec/changes/archive/2026-05-XX-enhance-workflow-automation-ledger-binding/`
-- [ ] P8.3 archive commit `feat(forgeue): ship enhance-workflow-automation-ledger-binding (squash merge)`(squash merge style 沿 archived ADR-013 等同款)
-- [ ] P8.4 push 单独请示 user(沿 `feedback_push_requires_per_commit_auth.md`,fence #1 不可逆操作)
+- [x] P8.1 跑 `openspec archive enhance-workflow-automation-ledger-binding`(自动 prefix 当前日期)
+- [x] P8.2 archived 路径 `openspec/changes/archive/2026-05-XX-enhance-workflow-automation-ledger-binding/`
+- [x] P8.3 archive commit `feat(forgeue): ship enhance-workflow-automation-ledger-binding (squash merge)`(squash merge style 沿 archived ADR-013 等同款)
+- [x] P8.4 push 单独请示 user(沿 `feedback_push_requires_per_commit_auth.md`,fence #1 不可逆操作)
 
 ## P9 — MEMORY.md update + follow-on tracking(后置可选)
 

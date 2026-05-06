@@ -12,7 +12,7 @@ detected_env: claude-code
 triggered_by: cli-flag
 codex_plugin_available: true
 triggered_by_command: change-plan
-runtime_enforcement_protocol_version: v2
+runtime_enforcement_protocol_version: v1
 autonomy_decision: claude_codex_concurred
 codex_review_ref: notes/codex_adversarial_review_review_round1.md
 review_round: 1

@@ -13,7 +13,7 @@ detected_env: claude-code
 triggered_by: cli-flag
 codex_plugin_available: true
 triggered_by_command: change-review
-runtime_enforcement_protocol_version: v2
+runtime_enforcement_protocol_version: v1
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_verification_review.md
 disputed_open: 0
