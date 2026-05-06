@@ -6,7 +6,7 @@ ForgeUE 在 2026-05-04 至 2026-05-06 连续 ship 了 4 个 workflow automation 
 
 - **BREAKING** retire `/forgeue:change-apply-parallel` command(整 command 文件删除),subagent 并行 dispatch 路径不再支持;轻量 change 仍走 `change-apply-direct`,中重 change 走 `change-apply-subagent` 串行。
 - **BREAKING** 删除 `tools/forgeue_preflight_wrapper.py`(W1 wrapper)+ `tools/forgeue_dispatch_ledger.py`(W3 ledger 工具)+ `tools/_forgeue_ledger_crypto.py`(ledger-binding v3 internal helper,本周刚 ship);3 个文件共 ~1600 LOC。
-- **BREAKING** 删除 sister skill `.claude/skills/subagent-driven-discipline/`(ADR-012 加的 Layer 2 wiring),controller-side discipline 退回 Superpowers upstream `subagent-driven-development` SKILL 自身。
+- **BREAKING** 改写 sister skill `.claude/skills/subagent-driven-discipline/SKILL.md`(P3 实施 writeback 修正,沿 D-SisterSkillRewrite):**保留 directory + 主体 retire 无关内容**(§1 scenario taxonomy 除 parallel subtype / §2 cheap-model reliability / §3-main cross-scenario discipline / §4 failure recovery / §5 historical case studies / §6 pattern catalog / §7-§9 meta);删除 retire-related 段(§3 ADR-013 default narrative + parallel scenario subtype + ADR-011/012/013 / W1/W2/W3 / parallel dispatch case study);命令模板内 `MANDATORY invoke Skill(subagent-driven-discipline)` → `OPTIONAL invoke`(ADR-012 Layer 2 wiring 强制性 retire,但 skill 仍可被 controller 自由读取作为 model tier / cheap-model reliability prompt pattern 资源)。
 - **BREAKING** 删除 `forgeue_finish_gate.py` 内 7 个 worktree / ledger 相关 fence(`_check_dispatch_ledger` v2/v3 + `_check_ledger_terminal_proof` + `_check_ledger_forgery_resistance_consistency` + `_check_archived_replay_path_boundary` + `_check_worktree_path` + `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency`)+ helper(`_runtime_enforcement_v3_active`)+ 常量(`_VALID_PROTOCOL_VERSIONS` 简化为 `{v1}`,`_AUDIT_CONSISTENCY_MAP` 删)+ dispatch loop v2/v3 路由分支。
 - **BREAKING** 删除 `forgeue_change_state.py` 内 `detect_drift_archived_replay_path`(5th DRIFT type,回到 4 type taxonomy)+ worktree-related drift detection。
 - **BREAKING** 改写 `.claude/commands/forgeue/change-apply-subagent.md`:删 `Preflight Worktree` section + `Preflight Subagent Discipline` section + v2/v3 frontmatter 字段说明 + Step 10a stdout 解析;改回 v1 frontmatter only(沿 ADR-011 advisory 同款,不含 worktree / ledger / consent outcome 字段)。
@@ -33,7 +33,7 @@ ForgeUE 在 2026-05-04 至 2026-05-06 连续 ship 了 4 个 workflow automation 
 - `tools/forgeue_dispatch_ledger.py`(~600 LOC,整文件删)
 - `tools/_forgeue_ledger_crypto.py`(~400 LOC,整文件删)
 - `.claude/commands/forgeue/change-apply-parallel.md`(~433 LOC,整文件删)
-- `.claude/skills/subagent-driven-discipline/`(整目录删,~?LOC)
+- `.claude/skills/subagent-driven-discipline/SKILL.md`(部分 inside-file edit,sister skill rewrite,~150-300 LOC delete out of 747 LOC;沿 D-SisterSkillRewrite P3 writeback)
 - `tools/forgeue_finish_gate.py`(7 fence + helpers + 常量 + dispatch loop 分支删除,部分函数保留)
 - `tools/forgeue_change_state.py`(5th DRIFT type + worktree drift detection 删除)
 

@@ -161,16 +161,24 @@ grep -rni 'worktree\|dispatch_ledger\|forgeue_finish_gate\|forgeue_preflight_wra
 - (B) 保留 + 标 Superseded(选)。
 - (C) Superseded 改用单独 archive 段:**拒绝**,过度结构化,index 不需要。
 
-### D-SisterSkillRemoval:`subagent-driven-discipline` skill 处理
+### D-SisterSkillRewrite:`subagent-driven-discipline` skill 部分 retire(rewrite,非整删)
 
-**决定**:`.claude/skills/subagent-driven-discipline/` **整目录删除**(包括 SKILL.md + references/);Layer 2 wiring(命令模板内 `MANDATORY invoke Skill(subagent-driven-discipline)`)同步删除。Controller-side discipline 完全退回 Superpowers upstream `subagent-driven-development` SKILL 自身(其内含 controller judgment 指南)。
+**决定**(P3 实施 writeback,2026-05-06;**user push back 修正前判断**:"功能和 worktree 还有 parallel 没关系吧"):`.claude/skills/subagent-driven-discipline/SKILL.md`(747 LOC)**保留 directory**,**inside-file edit** 删 retire-related 段:
+- 删除 §3 Cross-Scenario Discipline 内 ADR-013 default narrative(line 224 area `## Working Directory(main repo cwd — ADR-013 default)` 整段及相邻 worktree consent policy 引用)
+- 删除 §1 / §3 内 Trigger Type 2 = parallel 相关行(parallel scenario subtype)
+- 删除 §5 Case Studies 内 explicit ADR-011/012/013 / W1/W2/W3 / parallel dispatch 历史 case study(若整 case 全 retire 相关 → 删整 case;若 case 含其他 retire 无关 lessons → 仅 prune)
+- **保留** §1 主体(scenario taxonomy 除 parallel subtype)/ §2 全(cheap-model reliability)/ §3 主体(cwd verify / cross-verify / cost framework — 通用基础设施)/ §4 全 / §6-§9 全
+- **修改** 命令模板内 `MANDATORY invoke Skill(subagent-driven-discipline)`(ADR-012 Layer 2 wiring)→ `OPTIONAL invoke`(controller 可自由 read 但不强制)
 
-**Why**:sister skill 是 ADR-012 加的 ForgeUE-level Layer 2 wiring,本身就属 retire scope;Superpowers upstream 自身已经覆盖 controller judgment(Trigger Type Matrix retrospect 部分),sister skill 的"重场景轻业务"细分价值在本 change retire 后无 active dispatcher 调用。
+实施位置:**P4 内部 edit**(沿 backbone skill rewrite 同款节奏);**P3 file-level deletion 跳过 sister skill 整目录**(原 P3 计划是 USER `git rm -r .claude/skills/subagent-driven-discipline/`,本决定 supersede 该 step)。
+
+**Why**:user 实施期 push back 揭示 sister skill 主体(model tier 选 / cheap-model prompt patterns / scenario taxonomy / cross-scenario discipline / failure recovery / pattern catalog / case studies)与 worktree/parallel **完全无关**。整删是 over-retire(同 D-BackboneSkillRewrite 同款 pattern — 文件含 retire-related 段不等于整文件应删,而是 inside-file rewrite 保留 retire-无关基础设施)。Layer 2 wiring(MANDATORY invoke)是 ADR-012 加的强制层,改成 OPTIONAL 即 retire wiring 强制性,但 skill 自身作为 controller 可读资源仍有价值(model tier 决策 / cheap-model reliability prompt patterns 在本 change retire 后仍是有效 controller-side judgment 工具)。
 
 **Alternatives considered**:
-- (A) 标 deprecated 留 directory:**拒绝**,deprecated skill 还会被 Skill autodiscover 列出,引入混淆。
-- (B) 整目录删除(选)。
-- (C) 内容 merge 进 Superpowers upstream `subagent-driven-development`:**拒绝**,改 upstream 是另一个独立决定,不在本 change scope。
+- (A) 整目录删除(原 D-SisterSkillRemoval):**拒绝**(P3 user push back),over-retire,丢失 §1 / §2 / §3-main / §4-§9 的 retire 无关基础设施;controller-side judgment 退回 Superpowers upstream 不能 1:1 cover sister skill 内 ForgeUE-specific scenario taxonomy 内容
+- (B) 标 deprecated 留 directory(无 edit):**拒绝**,留 retire-related 段会引入混淆(读者读到 ADR-013 / parallel section 误以为仍 active)
+- (C) 整目录保留 + inside-file rewrite + Layer 2 wiring 改 OPTIONAL(选):部分 retire,沿 D-BackboneSkillRewrite 同款 pattern
+- (D) 内容 merge 进 Superpowers upstream:**拒绝**,改 upstream 是独立决定,不在本 change scope
 
 ### D-PostRetireParallelStrategy:user 后续要并行如何走
 

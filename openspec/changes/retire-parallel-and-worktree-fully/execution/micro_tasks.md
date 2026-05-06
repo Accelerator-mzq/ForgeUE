@@ -410,16 +410,12 @@ wc -l .claude/commands/forgeue/change-apply-parallel.md
 
 - [ ] **P3.4.2** `git rm .claude/commands/forgeue/change-apply-parallel.md`
 
-### Step P3.5: 删除 sister skill 整目录
+### Step P3.5: ~~删除 sister skill 整目录~~ **SKIP**(沿 D-SisterSkillRewrite P3 writeback,2026-05-06)
 
-- [ ] **P3.5.1** 列目录内容
+> **Skip rationale**(user push back 2026-05-06):sister skill 主体(§1 scenario taxonomy / §2 cheap-model reliability / §3-main cross-scenario discipline / §4 failure recovery / §6-§9 meta)与 worktree/parallel **完全无关**。整删是 over-retire(沿 D-BackboneSkillRewrite 同款 pattern)。改为 **inside-file rewrite in P4**(删 retire-related 段保留主体 + 命令模板 MANDATORY → OPTIONAL invoke)。
 
-```bash
-ls -la .claude/skills/subagent-driven-discipline/
-```
-期望:含 SKILL.md(747 LOC)+ 可能 references/ 子目录。
-
-- [ ] **P3.5.2** `git rm -r .claude/skills/subagent-driven-discipline/`
+- [ ] **P3.5.1 SKIPPED** sister skill 不在 P3 file-level 删除 scope
+- [ ] **P3.5.2 SKIPPED** sister skill 不在 P3 file-level 删除 scope
 
 ### Step P3.6: 删除测试文件
 
@@ -567,6 +563,31 @@ grep -lnE "worktree_consent_outcome|worktree_mode|dispatch_ledger_path|ledger_fo
 ```
 
 期望:仅本 change scope 内 5 文件 hit;若发现 `change-finish.md` / `change-verify.md` 等含 hit → Edit 清理。
+
+### Step P4.4x: 改写 sister skill `.claude/skills/subagent-driven-discipline/SKILL.md`(沿 D-SisterSkillRewrite P3 writeback;2026-05-06 user push back 修正)
+
+**File:**
+- Modify: `.claude/skills/subagent-driven-discipline/SKILL.md`(747 LOC,~150-300 LOC retire-related delete)
+
+- [ ] **P4.4x.1** 删 §3 ADR-013 default narrative(line 224 area `## Working Directory(main repo cwd — ADR-013 default)` 整段 + 相邻 worktree consent policy 引用)
+
+通过 `grep -n "ADR-013\|main repo cwd\|worktree_consent" .claude/skills/subagent-driven-discipline/SKILL.md` 找位置。
+
+- [ ] **P4.4x.2** 删 §1 / §3 内 Trigger Type 2 = parallel scenario subtype 行(grep `Trigger Type 2\|parallel.*scenario` 查找)
+
+- [ ] **P4.4x.3** 删 §5 Case Studies 内 explicit ADR-011/012/013 / W1/W2/W3 / parallel dispatch 历史 case;若整 case 全 retire 相关 → 整 case 段删除;若 case 含其他 retire 无关 lessons → 仅 prune retire-related 段
+
+- [ ] **P4.4x.4** **保留**(verify 不动):§1 主体(scenario taxonomy 除 parallel subtype)/ §2 全(cheap-model reliability)/ §3 主体(cwd verify / cross-verify / cost framework — 通用基础设施)/ §4 全(failure recovery)/ §6 全(pattern catalog)/ §7-§9 全(meta)
+
+- [ ] **P4.4x.5** 实测改写后 retire hit 数
+
+```bash
+grep -cE 'change-apply-parallel|D-RestoreConsentGate|D-W[123]-|D-Parallel|D-Worktree|D-Consent|D-Already|worktree_consent_outcome|worktree_mode|forgeue_preflight_wrapper|forgeue_dispatch_ledger|_forgeue_ledger_crypto|HMAC|dispatching-parallel-agents|ADR-011|ADR-012|ADR-013' .claude/skills/subagent-driven-discipline/SKILL.md
+```
+
+期望:`0`(允许 historical narrative 在 §5 Case Studies 段提及历史 retire — narrative-only,不影响 active controller 协议)
+
+- [ ] **P4.4x.6** 实测 line 数变化:`wc -l .claude/skills/subagent-driven-discipline/SKILL.md`(期望 747 → ~450-600 LOC)
 
 ### Step P4.5: 改写 backbone skill `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`(沿 codex round 1 F1 inline writeback + design.md `D-BackboneSkillRewrite`)
 

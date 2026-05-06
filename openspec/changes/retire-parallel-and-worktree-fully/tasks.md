@@ -68,9 +68,9 @@
   - [ ] 4.1.a `git rm tools/forgeue_preflight_wrapper.py`(W1 wrapper,615 LOC)
   - [ ] 4.1.b `git rm tools/forgeue_dispatch_ledger.py`(W3 ledger 工具,353 LOC)
   - [ ] 4.1.c `git rm tools/_forgeue_ledger_crypto.py`(ledger-binding internal helper,507 LOC)
-- [ ] 4.2 命令模板 + skill 整文件 / 目录删除:
+- [ ] 4.2 命令模板整文件删除:
   - [ ] 4.2.a `git rm .claude/commands/forgeue/change-apply-parallel.md`(parallel 命令模板,433 LOC)
-  - [ ] 4.2.b `git rm -r .claude/skills/subagent-driven-discipline/`(整 sister skill 目录;ADR-012 加的 Layer 2 wiring;747 LOC SKILL.md)
+  - [ ] 4.2.b ~~`git rm -r .claude/skills/subagent-driven-discipline/`~~ **SKIP**(沿 D-SisterSkillRewrite P3 writeback;sister skill 改 inside-file rewrite 保留 directory + retire 无关主体,P4 阶段处理)
 - [ ] 4.3 测试文件整删除:
   - [ ] 4.3.a `git rm tests/unit/test_dispatch_ledger.py`(W3 + ledger-binding v3 测试,1021 LOC)
   - [ ] 4.3.b `git rm tests/unit/test_preflight_wrapper.py`(W1 wrapper 测试,902 LOC)
@@ -95,6 +95,15 @@
   - [ ] 5.2.a `Preflight Worktree` section(沿 D-DirectWorktreeRefinement 当时已不强制,但 doc 仍残留 mention)
 - [ ] 5.3 `.claude/commands/forgeue/change-apply.md`(deprecated stub)检查是否含 worktree / ledger / parallel mention,若有删除
 - [ ] 5.4 `.claude/commands/forgeue/change-finish.md` / `change-verify.md` / `change-doc-sync.md` / `change-status.md` / `change-plan.md` 检查是否含 v2/v3 frontmatter / ledger / worktree mention,若有删除
+- [ ] 5.5.x **改写 sister skill `.claude/skills/subagent-driven-discipline/SKILL.md`(沿 D-SisterSkillRewrite P3 writeback,2026-05-06 user push back 修正前判断)**:
+  - 5.5.x.a 删 §3 内 ADR-013 default narrative(line 224 area `## Working Directory(main repo cwd — ADR-013 default)` 整段及相邻 worktree consent policy 引用)
+  - 5.5.x.b 删 §1 / §3 内 Trigger Type 2 = parallel scenario subtype 行
+  - 5.5.x.c 删 §5 Case Studies 内 explicit ADR-011/012/013 / W1/W2/W3 / parallel dispatch 历史 case(若整 case 全 retire 相关 → 删整 case;若 case 含其他 retire 无关 lessons → 仅 prune)
+  - 5.5.x.d **保留** §1 主体(scenario taxonomy 除 parallel subtype)/ §2 全 / §3 主体 / §4 全 / §6-§9 全
+  - 5.5.x.e 命令模板内 `MANDATORY invoke Skill(subagent-driven-discipline)` → `OPTIONAL invoke`(P5.1 / P5.5 命令模板编辑同步处理)
+  - 5.5.x.f 实测改写后 retire hit 数 → 0:`grep -cE 'change-apply-parallel|D-RestoreConsentGate|D-W[123]-|D-Parallel|D-Worktree|D-Consent|D-Already|worktree_consent_outcome|worktree_mode' .claude/skills/subagent-driven-discipline/SKILL.md`
+  - 5.5.x.g 实测 line 数变化:`wc -l .claude/skills/subagent-driven-discipline/SKILL.md`(从 747 LOC 减至 ~450-600 LOC)
+
 - [ ] 5.5 **改写 backbone skill `.claude/skills/forgeue-integrated-change-workflow/SKILL.md`(沿 codex round 1 F1 inline writeback + design.md `D-BackboneSkillRewrite`)**:
   - 5.5.a 删除引用 `change-apply-parallel` 命令的所有行(line 47 / 102 / 142 等)
   - 5.5.b 删除引用 sister skill `subagent-driven-discipline` 的所有行(line 202 / 240 等)

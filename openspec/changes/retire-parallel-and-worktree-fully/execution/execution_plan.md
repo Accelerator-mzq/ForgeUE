@@ -54,7 +54,7 @@ created_at: 2026-05-06T10:26:44Z
 | 操作类型 | Actor | 适用 phase |
 |---------|-------|------------|
 | `git rm <file>`(file-level deletion)| **USER** | P3.1-P3.6(7 工具/命令/skill/测试文件)|
-| `git rm -r <directory>`(directory-level deletion)| **USER** | P3.5(sister skill 整目录)|
+| `git rm -r <directory>`(directory-level deletion)| **USER** | (P3 内无 directory-level 删除;原 sister skill `git rm -r` skip 沿 D-SisterSkillRewrite P3 writeback,改 P4 inside-file rewrite)|
 | `mv` 整目录到 archive/(directory-level state transition)| **USER** | P8.3.2 archive change |
 | `Edit` 删除文件**内**内容(sections / functions / lines / imports)| **CLAUDE** | P1(test imports + fence test 删除)、P2(fence/helper/常量/dispatch matrix 删除 + 改写)、P4(命令模板 sections + backbone skill retired 段)、P6(文档 stale residue 段)|
 | `Edit` 替换 / 添加文件**内**内容(spec delta Scenario / design D-decision / docs retire 描述 / dispatch matrix helper 添加)| **CLAUDE** | P2.4 / P5 / P6 / P7 / P8 |
@@ -108,7 +108,7 @@ evidence frontmatter 全部用 `runtime_enforcement_protocol_version: v1` + ADR-
 | `tools/forgeue_dispatch_ledger.py` | ~600 | W3 ledger 工具(v3 升级后) |
 | `tools/_forgeue_ledger_crypto.py` | ~400 | ledger-binding internal helper |
 | `.claude/commands/forgeue/change-apply-parallel.md` | ~433 | parallel 命令模板 |
-| `.claude/skills/subagent-driven-discipline/` | (整目录) | sister skill(Layer 2 wiring) |
+| ~~`.claude/skills/subagent-driven-discipline/`~~ | ~~(整目录)~~ | **SKIP** sister skill(沿 D-SisterSkillRewrite P3 writeback;改 P4 inside-file rewrite 删 retire-related 段保留主体)|
 | `tests/unit/test_dispatch_ledger.py` | (47 case) | W3 + ledger-binding v3 测试 |
 | `tests/unit/test_forgeue_preflight_wrapper.py` | (若存在) | W1 测试 |
 | `tests/unit/test_forgeue_ledger_crypto.py` | (若存在) | ledger-binding 测试 |
