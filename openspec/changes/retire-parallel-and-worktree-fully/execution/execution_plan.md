@@ -44,38 +44,40 @@ created_at: 2026-05-06T10:26:44Z
 >
 > Steps use checkbox (`- [ ]`) syntax for tracking。
 
-## USER-DRIVEN DELETION 约束(2026-05-06 user explicit instruction;Fence #4 用户约束)
+## DELETION ACTOR SPLIT 约束(2026-05-06 user explicit instruction;Fence #4 用户约束)
 
-> **user 原话**:"提前声明,所有删除动作只能我来做,你不要做"
+> **user 原话(初次)**:"提前声明,所有删除动作只能我来做,你不要做"
+> **user 原话(澄清,2026-05-06 second turn)**:"你理解错了,文件中删除内容你来做,删除文件,删除文件夹,我来做"
 
-**Actor split 协议**:
+**Actor split 协议**(沿 user clarified 边界):
 
 | 操作类型 | Actor | 适用 phase |
 |---------|-------|------------|
-| `git rm <file>`(file-level deletion) | **USER** | P1.1-P1.8(8 file)、P3.2(`test_v2_e2e_synthetic_change.py` 整删,若适用) |
-| `Edit` 删除文件内 sections / functions / lines(content-level deletion) | **USER** | P2.1-P2.5(7 fence + 2 helper + 3 常量)、P3.1.b/c/d/e(测试 case 删除)、P4.1.a-e + P4.2 + P4.5(命令模板 sections 删除 + backbone skill 删 retired 段)、P6.2.a-i(文档 stale residue 删除)|
-| `Edit` 替换内容(部分删 + 部分改写,如 dispatch matrix 改写)| **USER**(default;若纯改写无删除可商量)| P2.4(dispatch matrix 改写)、P2.5.3(DRIFT taxonomy enum 改回 4 类)|
-| `mv` 整目录到 archive/(状态转移性删除)| **USER** | P8.3.2 archive change |
-| `git rm -r <directory>` | **USER** | P1.5(sister skill 整目录) |
-| Verification commands(grep / pytest / `python tools/forgeue_finish_gate.py` / `wc -l` / `ls`)| **CLAUDE** | 全 phase 内 verify steps |
+| `git rm <file>`(file-level deletion)| **USER** | P3.1-P3.6(7 工具/命令/skill/测试文件)|
+| `git rm -r <directory>`(directory-level deletion)| **USER** | P3.5(sister skill 整目录)|
+| `mv` 整目录到 archive/(directory-level state transition)| **USER** | P8.3.2 archive change |
+| `Edit` 删除文件**内**内容(sections / functions / lines / imports)| **CLAUDE** | P1(test imports + fence test 删除)、P2(fence/helper/常量/dispatch matrix 删除 + 改写)、P4(命令模板 sections + backbone skill retired 段)、P6(文档 stale residue 段)|
+| `Edit` 替换 / 添加文件**内**内容(spec delta Scenario / design D-decision / docs retire 描述 / dispatch matrix helper 添加)| **CLAUDE** | P2.4 / P5 / P6 / P7 / P8 |
+| Verification commands(grep / pytest / `wc -l` / `ls` / `forgeue_finish_gate.py` 调用)| **CLAUDE** | 全 phase verify steps |
 | 写新 evidence 文件(verification/* / notes/* / review/*)| **CLAUDE** | P0/P5/P6/P7/P8 evidence collection |
-| 写新内容到现有文件(spec delta `## Modified Requirements` 加 Scenario / design.md 加 D-decision / docs 加 retire 描述)| **CLAUDE** | P5/P6/P7 evidence |
-| Git commits(每 phase 完成后)| **USER** | 默认 user(因 user 做主要工作,commit 由 user 决定 message + 时机);若 user 授权 Claude commit verification artifacts 则可由 Claude 做 |
 | `/codex:review` / `/codex:adversarial-review`(plugin invoke)| **CLAUDE** | P5 verify hook |
-| `forgeue_finish_gate.py` / `forgeue_change_state.py` / `forgeue_doc_sync_check.py` 工具调用 | **CLAUDE** | 全 phase 内 |
+| `forgeue_doc_sync_check.py` / `forgeue_change_state.py --writeback-check` 工具调用 | **CLAUDE** | 全 phase |
+| Git commits(每 phase 完成后)| **CLAUDE** | 沿 P0 user 已确认 "Claude commit"(content addition 或 content deletion 均 by Claude;file deletion phase 也由 Claude commit user 完成 git rm 后) |
+| `git push origin dev`(remote sync)| **USER** | Fence #1 不可逆;memory `feedback_push_requires_per_commit_auth` 每次单独请示 |
 
-**Hand-off 节奏**(每 phase):
-1. **CLAUDE**:写 phase brief(具体 `git rm` / `Edit` 命令清单 + 期望 verification 命令 + 验证标准)
-2. **USER**:执行 deletion 操作(逐 sub-task 或批量,user 自己决定节奏)+ commit
-3. **USER**:报告完成 + commit SHA(可以贴 git log / pytest output 让 Claude 验证)
-4. **CLAUDE**:跑 verification 命令(grep / pytest / finish_gate)+ 写 phase evidence 文件(若 phase 需要)
-5. **CLAUDE**:推下一 phase brief
+**核心边界**(user clarified):
+- **文件 / 目录** 维度删除(整文件 / 整目录从文件系统消失)→ **USER**
+- **文件内容** 维度删除(文件保留,内部内容变化)→ **CLAUDE**
+- 这意味着 P1 test edit / P2 production edit / P4 命令 + skill edit / P6 doc edit 全是 **CLAUDE 范围**(都是 inside-file Edit)
+- P3 的 git rm 是 **USER 范围**(file deletion);P3 内的 grep audit / pytest 验证仍是 CLAUDE
 
-**例外路径**:
-- P0 baseline 完全无删除 → CLAUDE 直接执行(全步骤)
-- P5/P7 evidence collection 完全无删除 → CLAUDE 直接执行
-- 当 phase 仅含 verification + writing 时,CLAUDE 一气呵成
-- 当 phase 主要是删除 / 替换 → USER 执行,CLAUDE 桥接
+**Hand-off 节奏修正**(每 phase):
+1. **CLAUDE**:写 phase brief(描述将做的 inside-file edits + 准 user 范围操作的命令)
+2. **CLAUDE**:执行 phase 内所有 inside-file edits(P1/P2/P4/P6 全 Claude 一气呵成)
+3. **CLAUDE**:跑 verification(pytest collect / grep audit / finish_gate)
+4. **若 phase 含 USER 范围操作**(P3 file delete / P8 archive mv):暂停推给 user
+5. **CLAUDE**:写 phase evidence 文件 + commit(包含 user 完成的 git rm)
+6. 推下一 phase
 
 ## Forward Dogfood(self-dogfood gap 决策,2026-05-06)
 
