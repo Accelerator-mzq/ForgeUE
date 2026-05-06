@@ -153,7 +153,8 @@ S9 (archived)
 
 **做什么(`change-apply-subagent` default 路径)**:
 - codex plan review hook → `review/codex_plan_review.md`
-- 主 session Claude 起 isolated worktree(REQUIRED `using-git-worktrees`;commit untracked artifacts → 起 worktree → cwd 切换;沿 design.md D-Worktree-Detail)
+- 主 session Claude **invoke `Skill(superpowers:using-git-worktrees)`** 沿 upstream cascade(ADR-013 D-RestoreConsentGate;Step 0 user-consent gate 决定路径 — **default decline → 主 repo cwd**(不起 worktree)/ opt-in `accepted` → skill_worktree 或 wrapper_worktree mode);evidence frontmatter `worktree_consent_outcome` + `worktree_mode` 必填
+- 仅 opt-in `accepted` 路径才需要 commit untracked artifacts → 起 worktree → cwd 切换(沿 design.md D-Worktree-Detail);default decline 路径直接在主 repo cwd 实施
 - invoke Superpowers `subagent-driven-development` skill;每 task 派:
   - implementer subagent(Task tool;prompt 含 task FULL TEXT + context;subagent **不**读 plan 文件)
   - spec compliance reviewer subagent(独立验证 implementer 是否按 spec 做 + 不过度建造)
@@ -166,7 +167,7 @@ S9 (archived)
   - `review/subagent_final_review.md`(`evidence_type: subagent_final_review`)
 - evidence frontmatter 必含 audit 字段 `triggered_by_command: change-apply-subagent`(沿 D-EvidenceSchema;`forgeue_finish_gate.py` 从此字段判定 dispatch mode)
 - token usage 写 evidence body `## Token usage` 段(`data_source: task_tool_return` / `manual_estimate`),由 `tools/forgeue_subagent_budget.py --record` 追踪
-- 越界检测 + writeback-check + 全 task done + Level 0 全绿 + finish_gate exit 0 后 squash merge / cherry-pick 回主分支 + `git worktree remove`
+- 越界检测 + writeback-check + 全 task done + Level 0 全绿 + finish_gate exit 0 后:**default decline 路径**(主 repo cwd)直接 `openspec archive` + commit;**opt-in accepted 路径**(worktree)squash merge / cherry-pick 回主分支 + `git worktree remove`(沿 ADR-013 mode-conditional)
 
 **做什么(`change-apply-direct` fallback 路径)**:
 - 沿原 `executing-plans + TDD` 编排
@@ -187,13 +188,26 @@ S9 (archived)
 **常见错误**:
 - ✗ 边写代码边改 design.md decisions(应当先回写 contract,确认 + commit 后再实施)
 - ✗ 修 codex finding 不补 fence test(下次回归没人守)
-- ✗ subagent path 跳过 step 6.5 commit untracked artifacts(`git worktree add` 不带 untracked 文件,subagent 看不到 contract;sequence 必须 commit → worktree → dispatch)
+- ✗ subagent path **opt-in accepted + worktree mode** 时跳过 step 6.5 commit untracked artifacts(`git worktree add` 不带 untracked 文件,subagent 看不到 contract;sequence 必须 commit → worktree → dispatch);**default decline 路径**(主 repo cwd)无此 step,subagent 直接看到主 repo 文件
 - ✗ `change-apply-subagent` 命令文件复制 / 引用 Superpowers 内部 prompt 模板(沿 D-SkillInvoke;ForgeUE 仅做 evidence wrapper,不重写 skill 协议)
 - ✗ 使用 `FORGEUE_APPLY_MODE` env flag 切换路径(沿 D-Default 拒绝 env flag facade;两条命令独立显式声明)
 
 **深读**:`forgeue_integrated_ai_workflow.md` §B.3 Superpowers 集成边界 + §B.6 subagent-driven-development 集成边界
 
-**v2 wrapper 协议(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05)**:`/forgeue:change-apply-{subagent,parallel}` Preflight Worktree section 自动跑 `python tools/forgeue_preflight_wrapper.py`(wrapper 自管 isolated worktree + 写 13-field receipt;LLM 复制 worktree_path / receipt_path 到 evidence frontmatter,不直接写)+ post-dispatch ledger append(Skill(Task) 之后 capture 真实 agent_id → `python tools/forgeue_dispatch_ledger.py append`);**用户视角无需手工 invoke 工具,命令模板自动跑**。Parallel 命令额外跑 W2 actual diff(`git status --porcelain` precondition + `git diff -z` + `git ls-files --others -z` 合集,overlap 自动降级 sequential)。详见 `forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2。
+**v2 wrapper 协议(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05;**ADR-013 update 2026-05-06 改 consent gate**)**:`/forgeue:change-apply-{subagent,parallel}` Preflight Worktree section invoke `Skill(superpowers:using-git-worktrees)` 沿 upstream cascade,Step 0 user-consent gate 决定是否调 wrapper:
+- **default decline → 主 repo cwd**(`worktree_mode: in_place`):**不**调 wrapper;evidence frontmatter `worktree_consent_outcome: declined` + `worktree_mode: in_place`(无 `worktree_path` / `worktree_receipt_path` 字段)
+- **opt-in accepted + wrapper_worktree mode**:命令模板自动跑 `python tools/forgeue_preflight_wrapper.py`(wrapper 自管 isolated worktree + 写 13-field receipt;LLM 复制 worktree_path / receipt_path 到 evidence frontmatter)
+- **opt-in accepted + skill_worktree mode**:Skill 自管 worktree(不调 wrapper);evidence frontmatter `worktree_consent_outcome: accepted` + `worktree_mode: skill_worktree`
+
+ADR-013 D-WrapperDeprecate:`tools/forgeue_preflight_wrapper.py` 标 deprecated 但 functional;**default decline 路径不再 mandatory invoke wrapper**。
+
+post-dispatch ledger append(沿 archived `executable-enforcement` F2 round 1 inline writeback;**与 worktree consent 解耦**):Skill(Task) 之后 capture 真实 agent_id → `python tools/forgeue_dispatch_ledger.py append`(主 session 串行 append wrapper);**v3 升级**(自 `enhance-workflow-automation-ledger-binding` change 起,2026-05-06):cmd_append 写 11 字段 v3 schema + stdout `[LEDGER] line_count=<N> final_hmac=<hex>`,LLM 复制到 evidence frontmatter `ledger_line_count` / `ledger_final_hmac`(沿 D-LedgerTerminalProof)。**用户视角无需手工 invoke 工具,命令模板自动跑**。
+
+Parallel 命令额外跑:
+- **declined + in_place** → 自动降级 sequential(沿 ADR-013 D-ParallelDeclineFallback;关闭 main repo + multi-implementer + W2 attribution 漏洞)
+- **accepted + worktree mode** → W2 actual diff(`git status --porcelain` precondition + `git diff -z` + `git ls-files --others -z` 合集,overlap 自动降级 sequential)
+
+详见 `forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2 + §C.9 ADR-013 + §C.10 v3 Cryptographic Ledger Binding。
 
 ---
 
