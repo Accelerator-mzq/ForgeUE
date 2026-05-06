@@ -395,6 +395,59 @@ ADR-011 D-WorktreeEnforce + ADR-012 D-W1-ReceiptSchema 累积 ForgeUE-level mand
 
 完整规则见 OpenSpec change `restore-superpowers-worktree-consent-gate/design.md` D-RestoreConsentGate / D-ConsentOutcomeStateMachine / D-AlreadyIsolatedInvariant / D-ParallelDeclineFallback / D-WrapperDeprecate / D-WrapperBugFixInScope / D-CrossArchiveADRSupersede 决策。
 
+### §C.10 Cryptographic Ledger Binding v3(自 `enhance-workflow-automation-ledger-binding` change 起,2026-05-06)
+
+升级 archived `enhance-workflow-automation-executable-enforcement` 的 advisory ledger 协议(`ledger_forgery_resistance: advisory`)为 cryptographic enforcement(`ledger_forgery_resistance: cryptographic`)— HMAC-SHA256 hash chain + key-rotation fail-closed + tail truncation 守门 + audit consistency 强 enum + strict 11-field schema validation + unknown protocol value 守门 + archived replay 路径限定。
+
+**Protocol matrix(扩到 4 档 + unknown BLOCKER)**:
+
+| evidence frontmatter `runtime_enforcement_protocol_version` | fence dispatch |
+|---|---|
+| 无字段(legacy) | 全 v1/v2/v3 fence pass-through(archived 更早 change replay 兼容) |
+| `v1` | 走 v1 fence(skill_cascade / round_fix_continuity / task_granularity / worktree_path / worktree_consent_outcome / worktree_mode_consistency / parallel_decline_fallback) |
+| `v2` | 走 v1 + v2 fence(advisory schema-only) |
+| `v3` | 走 v1 + v2 + v3 fence(v3 = v2 + HMAC chain + terminal proof + audit consistency + strict schema) |
+| 其他 present value(`v4` / typo / empty / null)| **BLOCKER `unknown_protocol_version`**(沿 D-RuntimeEnforcementProtocolVersionValidity;fence skip 必须由 absence 决定不能由 invalid value 决定) |
+
+**v3 fence 4 个**(本 change ship):
+- `_check_runtime_enforcement_protocol_version_validity`(round 2 codex F2 inline writeback;在所有 protocol-version-dependent fence 之前跑;unknown protocol → BLOCKER)
+- `_check_archived_replay_path_boundary`(round 2 codex F1 inline writeback;active path + `ledger_archived_replay: true` → BLOCKER `archived_replay_path_violation`;archive/ segment 路径限定物证驱动)
+- `_check_ledger_terminal_proof`(round 1 codex F3 inline writeback + D-LedgerTerminalProof;v3 evidence MUST 含 `ledger_line_count` + `ledger_final_hmac` + cross-check 实际 ledger 防 tail truncation)
+- `_check_ledger_forgery_resistance_consistency`(round 1 codex F4 inline writeback + D-FrontmatterAuditConsistency;v3 ↔ cryptographic / v2 ↔ advisory 强 enum)
+
+**HMAC key lifecycle**(沿 D-KeyLocation):
+- 文件路径:`~/.claude/forgeue_ledger_key`(JSON 单文件,跨 change 共享)
+- 首次 init:wrapper `secrets.token_bytes(32)` 自动生成 + `os.O_EXCL` 防 race + chmod 0600(Linux/Mac)
+- 6 lifecycle 状态:首次 init / 正常 load / 文件损坏 exit 7 / key_id mismatch active default fail-closed BLOCKER / archived replay opt-in WARN exit 6(`evidence frontmatter ledger_archived_replay: true` + cmd_verify `--allow-archived-replay` flag + ledger 路径含 archive/ segment 三重 explicit user opt-in)/ forge 同 ledger 内 key_id 不一致 BLOCKER
+
+**v3 ledger 行 schema(11 字段 strict)**:
+- 原 v2 7 字段 + `protocol_version: "v3"` + `key_id`(SHA256[:16] fingerprint)+ `prev_hmac`(64 hex chars,首行全 0)+ `hmac`(HMAC-SHA256 over canonical JSON)
+- canonical JSON 规则(沿 D-CanonicalJSON):排除 hmac + 含 prev_hmac + sort_keys + UTF-8
+
+**v3 evidence frontmatter 必填字段**(沿 spec MODIFIED + ADDED Requirement):
+- `runtime_enforcement_protocol_version: v3`
+- `ledger_forgery_resistance: cryptographic`(强 enum 与 protocol_version 绑定)
+- `ledger_line_count: <int>`(LLM 复制 wrapper stdout `[LEDGER] line_count=<N>` 行)
+- `ledger_final_hmac: <64 hex>`(LLM 复制 wrapper stdout `[LEDGER] ... final_hmac=<hex>` 行)
+- `dispatch_ledger_path: dispatch_ledger.jsonl`(沿 v2)
+- 不写 `ledger_archived_replay`(default;archived replay 时由 user 显式标 true,且 evidence MUST 在 archive/ 路径)
+
+**ANY v3 信号 dispatch**(round 3 codex F1 inline writeback):
+- cmd_verify 沿 ledger 行 ANY v3 信号(任一行含 hmac/prev_hmac/key_id 字段 OR `wrapper_version="2.0"` OR `protocol_version="v3"`)→ trigger v3 strict;否则 v2 schema-only legacy 路径
+- 防 LLM 改所有行 protocol_version 字段降级 v2 path attack;strict schema 校 protocol_version MUST 精确 `"v3"`
+
+**Append serial invariant**(round 3 codex F4 inline writeback):
+- 命令模板 `/forgeue:change-apply-{subagent,parallel}` 主 session **顺序** append wrapper(implementer subagent dispatch 之间 parallel,但 append 是主 session 串行);防并发 append race
+- 本 change 不实施 cross-platform file lock(`fcntl` / `msvcrt`);若实证非 ForgeUE 工作流外部并发跑 wrapper 触发 race → follow-on `enhance-workflow-automation-ledger-append-lock`
+
+**Threat model 边界**:
+- catch:unintentional controller drift / sloppy bypass / hand-edit ledger / 中间删行 / 删尾行(由 terminal proof catch)/ schema violation / unknown protocol value / archived replay misuse
+- **不**承担:LLM 主动恶意 forge(LLM 可读所有文件包括 `~/.claude/forgeue_ledger_key`);留 future `enhance-workflow-automation-os-keystore` follow-on 用 OS-level secret store(Windows DPAPI / Mac Keychain / Linux libsecret)
+
+**Self-dogfood gap**(沿 D-SelfDogfoodGap):本 change 自身 implementation evidence 沿 v2 advisory 协议(`runtime_enforcement_protocol_version: v2` + `ledger_forgery_resistance: advisory`);v3 fence 与 cmd_append v3 schema 同步 ship,本 change ship 后下一个 active change 起可用 v3。
+
+完整规则见 OpenSpec change `enhance-workflow-automation-ledger-binding/design.md` 15 D-decision(`Scope-F3Only` / `KeyLocation` / `ProtocolVersion` / `HashChain` / `CanonicalJSON` / `KeyRotationHandling` / `FenceDispatchMatrix` / `SelfDogfoodGap` / `DispatchPath` / `WrapperVersionBump` / `LedgerTerminalProof` / `FrontmatterAuditConsistency` / `Scope-F3-MergeWithP12.8` / `ArchivedReplayPathBoundary` / `RuntimeEnforcementProtocolVersionValidity`)。
+
 ---
 
 ## D. Documentation Sync Gate
