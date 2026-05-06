@@ -223,7 +223,7 @@ Claude controller 默认走自主路径 + 同步 invoke `/codex:review` 二次�
 4. **Claude verdict ≈ Codex verdict** → 直接执行,evidence frontmatter `autonomy_decision: claude_codex_concurred` + `codex_review_ref: <evidence 路径>`
 5. **Claude verdict ≠ Codex verdict** → 升级到用户决策,evidence frontmatter `autonomy_decision: user_required`
 
-**`autonomy_decision` 字段枚举**(每条 implementation evidence 必填):
+**`autonomy_decision` ∈ {`claude_autonomous`, `claude_codex_concurred`, `user_required`, `user_overrode`}**(每条 implementation evidence 必填;canonical = `tools/forgeue_finish_gate.py::_AUTONOMY_DECISION_VALUES`,由 `forgeue_enum_cross_ref_check.py` set-equality 守门):
 
 | 枚举值 | 含义 |
 |---|---|

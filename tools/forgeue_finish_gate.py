@@ -196,11 +196,10 @@ _WORKTREE_REQUIRED_COMMANDS: frozenset[str] = frozenset()
 _WORKTREE_CONSENT_OUTCOME_FIELD = "worktree_consent_outcome"
 _WORKTREE_MODE_FIELD = "worktree_mode"
 
-# NOTE(P2+ follow-on / I-2 P1 code_quality):本 enum 与 spec.md `Preflight Worktree
-# runtime enforcement` Requirement state machine table 必须同步;currently 无 fence
-# test 强 cross-ref(若 spec.md 加 5th outcome 如 `user_skipped`,本常量需手动同步;
-# 否则新 valid value 被 fence 误判 invalid)。沿 P0 m-2 + P1 I-2 deferred 至 P2+
-# enum cross-reference fence change 落地。
+# cross-ref 守门:本 enum 与 docs `<name> ∈ {…}` 由 ``tools/forgeue_enum_cross_ref_check.py``
+# 负责 set-equality diff(``_VALID_WORKTREE_CONSENT_OUTCOMES`` ↔
+# ``worktree_consent_outcome ∈ {…}``);加 5th outcome 时同时改 docs,工具会
+# 在下一次 ``/forgeue:change-doc-sync`` Step 4b 抓到 drift。
 _VALID_WORKTREE_CONSENT_OUTCOMES: frozenset[str] = frozenset({
     "declined",
     "accepted",

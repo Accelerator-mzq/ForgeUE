@@ -249,7 +249,7 @@ Claude 默认拍板 + 自动 invoke `/codex:review` 二次验证。**以下 6 �
 - `/forgeue:change-doc-sync` — Documentation Sync Gate(10 文档静态扫 + §4.3 提示词 + 应用 [REQUIRED])
 - `/forgeue:change-finish` — Finish Gate(中心化最后防线;12-key frontmatter + writeback 真实性 + cross-check `disputed_open == 0`)
 
-**9 个 stdlib-only 工具**(沿 design.md §5 Tool Design;自 `adopt-subagent-driven-development` change 起新增 `forgeue_subagent_budget.py`;自 `enhance-workflow-automation-runtime-enforcement` change 起新增 `forgeue_skill_cascade_check.py`;自 `enhance-workflow-automation-executable-enforcement` change 起新增 `forgeue_preflight_wrapper.py`(W1)+ `forgeue_dispatch_ledger.py`(W3)):
+**10 个 stdlib-only 工具**(沿 design.md §5 Tool Design;自 `adopt-subagent-driven-development` change 起新增 `forgeue_subagent_budget.py`;自 `enhance-workflow-automation-runtime-enforcement` change 起新增 `forgeue_skill_cascade_check.py`;自 `enhance-workflow-automation-executable-enforcement` change 起新增 `forgeue_preflight_wrapper.py`(W1)+ `forgeue_dispatch_ledger.py`(W3);2026-05-06 micro-bugfix 新增 `forgeue_enum_cross_ref_check.py`):
 
 - `tools/forgeue_env_detect.py` — 5 层 env 检测 + plugin 可用性启发式
 - `tools/forgeue_change_state.py` — state 推断 + `--writeback-check` 4 类 named DRIFT 检测(回写检测主力;DRIFT detector 扩 4 类 subagent evidence_type)
@@ -260,6 +260,7 @@ Claude 默认拍板 + 自动 invoke `/codex:review` 二次验证。**以下 6 �
 - `tools/forgeue_skill_cascade_check.py` — D-SkillCascadeCheck:静态扫 SKILL.md `## Integration` 段验证 dependency 全 invoke;8 root probe 链(CLI flag / env var / repo-local / Anthropic plugin cache 最新 version / 其他 plugin / Codex / `${CODEX_HOME}` / `.agents/skills`);命令模板 Preflight Skill Cascade section 调用
 - `tools/forgeue_preflight_wrapper.py`(W1;自 `enhance-workflow-automation-executable-enforcement` change 起)— D-W1-ReceiptSchema:wrapper 自管 isolated worktree(`git worktree add/list --porcelain` subprocess + cwd realpath 校验,不依赖 SKILL invoke);写 13-field receipt JSON(含 `is_isolated_worktree: true` + `worktree_action ∈ {created, reused}`)到 `<change>/preflight_receipts/<receipt_id>.json`;exit codes 0/5/6/7;`/forgeue:change-apply-{subagent,parallel}` Preflight Worktree section 自动调用
 - `tools/forgeue_dispatch_ledger.py`(W3;自 `enhance-workflow-automation-executable-enforcement` change 起)— D-W3-LedgerFormat:JSONL append-only ledger(`<change>/dispatch_ledger.jsonl`)+ `append`/`verify` 子命令 + 7 字段 + 6 VALID_ROLES enum;命令模板 post-dispatch capture 真实 agent_id(关闭 round 1 synthetic UUID 漏洞)
+- `tools/forgeue_enum_cross_ref_check.py`(2026-05-06 micro-bugfix)— canonical frozenset ↔ docs `<name> ∈ {…}` 描述 set-equality diff;AST 扫 `tools/*.py` 抽 `_VALID_*` / `*_VALUES` / `*_TYPES` / `*_COMMANDS` 字面声明,与 `CLAUDE.md` + `docs/ai_workflow/forgeue_integrated_ai_workflow.md` 中 5 个 mapped enum(`autonomy_decision` / `triggered_by_command` / `task_granularity` / `worktree_consent_outcome` / `worktree_mode`)做 diff;exit 0/2/1;`/forgeue:change-doc-sync` Step 4b 自动调用,DRIFT 阻断 S8。`--show-all` 诊断时显示未映射 advisory
 
 **12-key audit frontmatter**:每份 formal evidence(`execution/` / `review/` / `verification/`)必含 8 个 always-required key(`change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `detected_env` / `triggered_by` / `codex_plugin_available`)+ 4 个 conditional key(`drift_decision` / `writeback_commit` / `drift_reason` / `reasoning_notes_anchor`,在 `aligned_with_contract: false` 时必填);`notes/` helper 子目录不强制。
 
