@@ -18,7 +18,9 @@ findings_severity:
   high: 3
   medium: 1
   low: 0
-disputed_open: 4
+disputed_open: 0
+resolved_at: 2026-05-06T10:35:00Z
+resolution_summary: 4 finding 全 accepted-codex inline writeback;sender review/design_cross_check.md ## B/C/D + 4 D-decision additions (D-BackboneSkillRewrite + D-ActiveVsArchivedReplayBoundary + 2 已含)+ tasks.md/micro_tasks.md/spec delta 修正(F1+F2+F3+F4)
 runtime_enforcement_protocol_version: v1
 review_type: codex_adversarial_review
 review_round: 1

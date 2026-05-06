@@ -126,21 +126,25 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
 change_id: <change-id>
 stage: S4-S5
 evidence_type: subagent_implementer_report | subagent_spec_review | subagent_code_quality_review | subagent_final_review
-contract_refs: ["openspec/changes/<id>/tasks.md#X.Y", ...]
+contract_refs:
+  - openspec/changes/<id>/tasks.md#X.Y
+  # ... add more as needed (block-list YAML;_common.parse_frontmatter 不支持 flow-list `[...]`)
 aligned_with_contract: true | false
 detected_env: <env_detect_result>
 triggered_by: /forgeue:change-apply-subagent
 codex_plugin_available: true | false
 # --- 4 个 conditional key(仅 aligned_with_contract: false 时必填) ---
-drift_decision: written-back-to-design | written-back-to-tasks | written-back-to-proposal | unresolved-permanent-drift
-writeback_commit: <sha>(若 drift_decision != unresolved-permanent-drift)
+drift_decision: written-back-to-design | written-back-to-tasks | written-back-to-proposal | disputed-permanent-drift
+writeback_commit: <sha>(若 drift_decision != disputed-permanent-drift)
 drift_reason: <reason>
 reasoning_notes_anchor: <file>:<line>
 # --- v1 advisory audit 字段 ---
 runtime_enforcement_protocol_version: v1
 triggered_by_command: change-apply-subagent
 skill_cascade_audit:
-  invoked_skills: [superpowers:subagent-driven-development, ...]
+  invoked_skills:
+    - superpowers:subagent-driven-development
+    # ... add more as needed (block-list)
   cascade_check_pass_at: <ISO-8601-timestamp>
 task_granularity: phase | per-file | sub-task
 subagent_continuity:  # round 2+ fix 同 implementer / 同 reviewer 一致性

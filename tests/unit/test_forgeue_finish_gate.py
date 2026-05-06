@@ -1483,61 +1483,13 @@ def test_subagent_dispatch_mode_other_value_does_not_trigger_required(tmp_path):
     )
 
 
-def test_parallel_dispatch_mode_required_evidence_missing_blocks(tmp_path):
-    """P6 codex round 1 F1 fix(enhance-workflow-automation-runtime-enforcement):
-    ``triggered_by_command: change-apply-parallel`` MUST 同款触发 4 类
-    subagent_* evidence REQUIRED 强制。
-
-    原 detector 仅识别 ``change-apply-subagent``,parallel run 即使缺
-    spec_review / code_quality_review / final_review 也 bypass REQUIRED
-    check,与 ``.claude/commands/forgeue/change-apply-parallel.md`` L101-105
-    declared 同款 4 类 evidence 协议矛盾。本 fence 守门 detector 扩到 frozenset
-    ``_SUBAGENT_STYLE_DISPATCH_VALUES`` 覆盖 parallel。
-    """
-    b = make_complete_change(
-        tmp_path,
-        "fc-parallel-required",
-        with_codex=False,
-        with_cross_check=False,
-    )
-    # 仅写一个 implementer evidence 标 parallel dispatch — 其他 3 类故意缺
-    b.write_evidence(
-        "execution",
-        "task_1_implementer.md",
-        evidence_type="subagent_implementer_report",
-        stage="S4",
-        body="## Status: DONE\nparallel implementer return.\n",
-        extra_frontmatter={"triggered_by_command": "change-apply-parallel"},
-    )
-    report = fg.build_report(
-        repo=tmp_path,
-        change_id="fc-parallel-required",
-        detected_env="cursor",
-        codex_plugin_available=False,
-        no_validate=True,
-    )
-    assert report is not None
-    missing_details = [
-        bl.detail for bl in report.blockers if bl.type == "evidence_missing"
-    ]
-    joined = " ".join(missing_details)
-    for needed in (
-        "subagent_spec_review",
-        "subagent_code_quality_review",
-        "subagent_final_review",
-    ):
-        assert needed in joined, (
-            f"parallel dispatch mode MUST REQUIRE {needed!r}(沿 P6 codex round 1 F1 fix);"
-            f"missing from blockers: {missing_details!r}"
-        )
-
-
-def test_dispatch_mode_detector_recognizes_subagent_and_parallel():
-    """P6 F1 fix unit test:_SUBAGENT_STYLE_DISPATCH_VALUES frozenset 同时
-    含 change-apply-subagent + change-apply-parallel。"""
+def test_dispatch_mode_detector_recognizes_subagent_only():
+    """retire-parallel-and-worktree-fully P5 alignment fix unit test:
+    `_SUBAGENT_STYLE_DISPATCH_VALUES` frozenset 仅含 `change-apply-subagent`
+    (parallel command 已 P3 整删,沿 D-PostRetireParallelStrategy)。"""
     assert "change-apply-subagent" in fg._SUBAGENT_STYLE_DISPATCH_VALUES
-    assert "change-apply-parallel" in fg._SUBAGENT_STYLE_DISPATCH_VALUES
-    # Negative:其他 trigger 不在内
+    # Negative:parallel 已 retire
+    assert "change-apply-parallel" not in fg._SUBAGENT_STYLE_DISPATCH_VALUES
     assert "change-apply-direct" not in fg._SUBAGENT_STYLE_DISPATCH_VALUES
     assert "change-plan" not in fg._SUBAGENT_STYLE_DISPATCH_VALUES
 

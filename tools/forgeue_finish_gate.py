@@ -146,11 +146,12 @@ _DISPATCH_MODE_FIELD = "triggered_by_command"
 # Backward-compat alias(legacy 引用;archived enhance-workflow-automation 等
 # evidence frontmatter 使用 change-apply-subagent 单值)
 _DISPATCH_MODE_SUBAGENT_VALUE = "change-apply-subagent"
-# P6 codex round 1 F1 fix:dispatch detector 必须识别 subagent + parallel 双值
-# (parallel 命令模板声明同款 4 类 subagent_* evidence 协议)
+# retire-parallel-and-worktree-fully P5 alignment fix(2026-05-06):移除
+# `change-apply-parallel` 从 dispatch detector 集合(parallel command 已 P3 整删,
+# 不再有 evidence 含 `triggered_by_command: change-apply-parallel`;留 stale value
+# 会让恶意 / typo evidence bypass REQUIRED check)。
 _SUBAGENT_STYLE_DISPATCH_VALUES: frozenset[str] = frozenset({
     "change-apply-subagent",
-    "change-apply-parallel",
 })
 
 # enhance-workflow-automation-runtime-enforcement(D-ProtocolVersionMigration):
@@ -360,15 +361,13 @@ def _detect_subagent_dispatch_mode(change_dir: Path) -> bool:
     file (``notes/pre_p0/dispatch_mode.txt``) — that file is helper-tier and
     silently absent on legitimate subagent runs would have bypassed the
     gate. Instead the per-task evidence files emitted by
-    ``change-apply-subagent`` / ``change-apply-parallel`` MUST carry the
-    ``triggered_by_command`` frontmatter field, and finish_gate scans for
-    that signal directly.
+    ``change-apply-subagent`` MUST carry the ``triggered_by_command``
+    frontmatter field, and finish_gate scans for that signal directly.
 
-    P6 codex round 1 F1 fix(enhance-workflow-automation-runtime-enforcement):
-    detector 扩到 ``change-apply-parallel``(parallel 命令模板声明同款 4 类
-    subagent_* evidence 协议;原 detector 仅识别单字符串 ``change-apply-subagent``,
-    parallel run 即使缺 spec_review / code_quality_review / final_review 也
-    bypass REQUIRED check,与 parallel 命令 Guardrail 不一致)。
+    retire-parallel-and-worktree-fully P5 alignment fix(2026-05-06):
+    detector 收回到仅 ``change-apply-subagent``(parallel command 已 P3
+    整删,不再有 evidence 含 `triggered_by_command: change-apply-parallel`;
+    沿 D-PostRetireParallelStrategy)。
 
     Scope: only formal evidence subdirs (notes/ helpers excluded — they may
     quote the field in body prose as documentation example without

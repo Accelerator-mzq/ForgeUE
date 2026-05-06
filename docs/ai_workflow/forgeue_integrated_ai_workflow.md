@@ -316,7 +316,7 @@ Codex round N 输出顶层 `verdict ∈ {approve, needs-attention}`,Claude cross
 | `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp) |
 | `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict(round_1/2 implementer_id + reviewer_id 一致) |
 | `_check_task_granularity` | D-TaskGranularityDeclaration | `task_granularity` ∈ {phase, per-file, sub-task} |
-| `_check_worktree_path` | D-WorktreeEnforce | `worktree_path` non-null(仅当 `triggered_by_command` ∈ {change-apply-subagent, change-apply-parallel}) |
+| `_check_worktree_path` | D-WorktreeEnforce | `worktree_path` non-null(仅当 `triggered_by_command` ∈ {change-apply-subagent}) — **retired 2026-05-06 by `retire-parallel-and-worktree-fully` P2(整 fence 删除)** |
 
 **Protocol gating**(D-ProtocolVersionMigration):4 fence 仅对含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效;legacy archived evidence 全 pass-through,确保 archived `enhance-workflow-automation` 等历史 change replay 不被 false-block。
 

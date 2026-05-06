@@ -19,7 +19,7 @@ detected_env: claude-code
 triggered_by: /forgeue:change-plan retire-parallel-and-worktree-fully
 codex_plugin_available: true
 autonomy_decision: claude_codex_concurred
-codex_review_ref: review/codex_design_review.md
+codex_review_ref: notes/codex_adversarial_review_review_round1.md
 runtime_enforcement_protocol_version: v1
 skill_cascade_audit:
   invoked_skills:

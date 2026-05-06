@@ -84,7 +84,7 @@ _DEFAULT_DOC_TARGETS: tuple[str, ...] = (
 # 匹配如:
 #   `task_granularity` ∈ {phase, per-file, sub-task}
 #   worktree_mode ∈ {`in_place`, `skill_worktree`, `wrapper_worktree`}
-#   triggered_by_command ∈ {change-apply-subagent, change-apply-parallel}
+#   triggered_by_command ∈ {change-apply-subagent}
 #
 # `<name>` 必填(≥ 1 字符 [a-z_][a-z0-9_]*),前后允许可选 backtick;
 # `∈` 是 Unicode literal U+2208;
