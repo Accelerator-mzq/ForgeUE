@@ -32,14 +32,56 @@ created_at: 2026-05-06T10:26:44Z
 
 # retire-parallel-and-worktree-fully Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` to implement this plan task-by-task(本 change 走 `/forgeue:change-apply-subagent` 派 subagent 路径)。理由:
+> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task(本 change 走 `/forgeue:change-apply-direct` 直执路径)。
 >
-> 1. **工程量超 direct 适用边界**:~3000-4000 LOC + 30-50 测试 case + 12-15 文档 — 远超 CLAUDE.md `/forgeue:change-apply-direct` 描述的 "< 3 micro-task / budget 紧张" 适用域。
-> 2. **destructive wide retire 高风险面**:多 reviewer 守门(spec reviewer 对 spec delta REMOVED 完整性 / code quality reviewer 对 fence 删除 + import 链 + dispatch matrix 改写)对漏物检测有价值;codex round 1 F1(backbone skill 漏改)正是 controller 单点判断容易漏的类型,subagent spec reviewer 有机会更早 catch。
-> 3. **9 phase × 60+ checkbox**:subagent 标准切片粒度;每 phase 派 fresh implementer + spec reviewer + code quality reviewer + final reviewer,得到 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`),audit trail 完整。
-> 4. **无 self-reference 循环**:本 change retire 的是 `change-apply-subagent.md` 内 Preflight sections(整 section 删除)+ v2/v3 frontmatter 字段说明,**dispatch flow 主体(派 implementer + 2 reviewer + final reviewer)完全不动**。各 phase commit-by-commit forward progress,后续 phase 读改完的命令模板,不会回头自指。
+> **路径选择历史**(2026-05-06,本 change S3→S4 transition):
+> 1. 我最初推 direct,理由"self-reference 风险",user push back 修正为 subagent
+> 2. User 进一步 surface dogfood gap(命令协议 require v3 / sister skill / dispatch ledger 全是本 change retire 对象;subagent 协议在 P1 commit 后无法 strict 遵守)→ 决定走 direct + 提前声明 user-driven deletion 约束
+> 3. **最终路径 = `/forgeue:change-apply-direct`**,理由变成实用主义:
+>    - 无 subagent 协议自指困境(direct 仅依赖 `executing-plans` + TDD,不依赖 dispatch ledger / sister skill / v3 fence)
+>    - User-driven deletion 约束(见下)与 direct 单 actor 模式天然兼容
+>    - 损失:多 reviewer 守门(spec reviewer + code quality reviewer)— 由 codex `/codex:review --base main` P5 阶段 hook 部分补偿
 >
 > Steps use checkbox (`- [ ]`) syntax for tracking。
+
+## USER-DRIVEN DELETION 约束(2026-05-06 user explicit instruction;Fence #4 用户约束)
+
+> **user 原话**:"提前声明,所有删除动作只能我来做,你不要做"
+
+**Actor split 协议**:
+
+| 操作类型 | Actor | 适用 phase |
+|---------|-------|------------|
+| `git rm <file>`(file-level deletion) | **USER** | P1.1-P1.8(8 file)、P3.2(`test_v2_e2e_synthetic_change.py` 整删,若适用) |
+| `Edit` 删除文件内 sections / functions / lines(content-level deletion) | **USER** | P2.1-P2.5(7 fence + 2 helper + 3 常量)、P3.1.b/c/d/e(测试 case 删除)、P4.1.a-e + P4.2 + P4.5(命令模板 sections 删除 + backbone skill 删 retired 段)、P6.2.a-i(文档 stale residue 删除)|
+| `Edit` 替换内容(部分删 + 部分改写,如 dispatch matrix 改写)| **USER**(default;若纯改写无删除可商量)| P2.4(dispatch matrix 改写)、P2.5.3(DRIFT taxonomy enum 改回 4 类)|
+| `mv` 整目录到 archive/(状态转移性删除)| **USER** | P8.3.2 archive change |
+| `git rm -r <directory>` | **USER** | P1.5(sister skill 整目录) |
+| Verification commands(grep / pytest / `python tools/forgeue_finish_gate.py` / `wc -l` / `ls`)| **CLAUDE** | 全 phase 内 verify steps |
+| 写新 evidence 文件(verification/* / notes/* / review/*)| **CLAUDE** | P0/P5/P6/P7/P8 evidence collection |
+| 写新内容到现有文件(spec delta `## Modified Requirements` 加 Scenario / design.md 加 D-decision / docs 加 retire 描述)| **CLAUDE** | P5/P6/P7 evidence |
+| Git commits(每 phase 完成后)| **USER** | 默认 user(因 user 做主要工作,commit 由 user 决定 message + 时机);若 user 授权 Claude commit verification artifacts 则可由 Claude 做 |
+| `/codex:review` / `/codex:adversarial-review`(plugin invoke)| **CLAUDE** | P5 verify hook |
+| `forgeue_finish_gate.py` / `forgeue_change_state.py` / `forgeue_doc_sync_check.py` 工具调用 | **CLAUDE** | 全 phase 内 |
+
+**Hand-off 节奏**(每 phase):
+1. **CLAUDE**:写 phase brief(具体 `git rm` / `Edit` 命令清单 + 期望 verification 命令 + 验证标准)
+2. **USER**:执行 deletion 操作(逐 sub-task 或批量,user 自己决定节奏)+ commit
+3. **USER**:报告完成 + commit SHA(可以贴 git log / pytest output 让 Claude 验证)
+4. **CLAUDE**:跑 verification 命令(grep / pytest / finish_gate)+ 写 phase evidence 文件(若 phase 需要)
+5. **CLAUDE**:推下一 phase brief
+
+**例外路径**:
+- P0 baseline 完全无删除 → CLAUDE 直接执行(全步骤)
+- P5/P7 evidence collection 完全无删除 → CLAUDE 直接执行
+- 当 phase 仅含 verification + writing 时,CLAUDE 一气呵成
+- 当 phase 主要是删除 / 替换 → USER 执行,CLAUDE 桥接
+
+## Forward Dogfood(self-dogfood gap 决策,2026-05-06)
+
+evidence frontmatter 全部用 `runtime_enforcement_protocol_version: v1` + ADR-010 baseline 字段(与 S2/S3 evidence 一致)。**不写** v3 字段(`worktree_consent_outcome` / `worktree_mode` / `worktree_path` / `worktree_receipt_path` / `dispatch_ledger_path` / `task_files_actual` / `degraded_to` / `degradation_reason` / `pre_dispatch_metadata` / `ledger_forgery_resistance` / `ledger_line_count` / `ledger_final_hmac` 全部 12 字段)。
+
+理由:本 change 是 wide retire,evidence 应反映 post-retire baseline;沿 ledger-binding 当时"self-dogfood gap 用 v2 advisory"同款 pattern,只是方向相反(他们用 OLDER v2,本 change 用 POST-retire v1)。
 
 **Goal:** Wide retire ADR-011 + ADR-012 + ADR-013 + ledger-binding 全部引入物(~3000-4000 LOC delete + ~30-50 测试 case 删除 + ~12-15 文档 stale residue 清理),ForgeUE-level worktree / parallel dispatch / dispatch ledger / sister skill 强制层完全删除,行为退回 ADR-010 advisory baseline + Superpowers upstream `using-git-worktrees` SKILL 自家 consent gate。
 
