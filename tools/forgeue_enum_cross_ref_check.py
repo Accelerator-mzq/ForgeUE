@@ -462,8 +462,8 @@ def run(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "ForgeUE enum cross-reference fence — verify _VALID_* frozenset "
-            "(canonical) agrees with `<name> ∈ {…}` doc occurrences."
+            "ForgeUE enum cross-reference fence -- verify _VALID_* frozenset "
+            "(canonical) agrees with '<name> in {...}' doc occurrences."
         )
     )
     parser.add_argument(
@@ -491,8 +491,8 @@ def main(argv: list[str] | None = None) -> int:
         "--show-all",
         action="store_true",
         help=(
-            "also print unmapped canonical advisories(默认抑制;诊断时打开,"
-            "看哪些 frozenset 故意没纳管 cross-ref)"
+            "also print unmapped canonical advisories (suppressed by default; "
+            "enable for diagnostic to see which frozensets intentionally lack cross-ref)"
         ),
     )
     args = parser.parse_args(argv)
