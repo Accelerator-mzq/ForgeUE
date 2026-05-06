@@ -33,7 +33,7 @@ S1 (scaffold)        proposal/design/tasks/specs 起草 + strict validate
   ▼
 S2-S3 (plan ready)   codex design hook + cross-check + writing-plans 产 plan
   │ /forgeue:change-apply-subagent <id>          ← default;subagent-driven-development + 4 类 evidence + sequential dispatch
-  │ /forgeue:change-apply-parallel <id>          ← 并行(自 enhance-workflow-automation-runtime-enforcement);dispatching-parallel-agents;独立 task / file scope 不交叉时使用
+  │ ~~/forgeue:change-apply-parallel <id>~~      ← **RETIRED 2026-05-06**(沿 retire-parallel-and-worktree-fully;parallel dispatch 路径不再支持)
   │ /forgeue:change-apply-direct <id>            ← fallback;executing-plans + TDD(轻量 change / budget 紧张;主 worktree)
   │ /forgeue:change-debug <id>                   ← bug 时
   ▼
@@ -117,8 +117,8 @@ S9 (archived)
 # default sequential 路径:多 micro-task / 需要强 review checkpoint
 /forgeue:change-apply-subagent <id>
 
-# 并行 dispatch 路径:多独立 task / file scope 不交叉 / 无 sequential dep
-/forgeue:change-apply-parallel <id>
+# 并行 dispatch 路径:RETIRED 2026-05-06(沿 retire-parallel-and-worktree-fully;parallel 路径不再支持)
+# /forgeue:change-apply-parallel <id>  ← retired
 
 # fallback 路径:小 change(< 3 micro-task)/ budget 紧张
 /forgeue:change-apply-direct <id>
@@ -130,11 +130,11 @@ S9 (archived)
 **路由决策树**:
 
 ```
-是否多 task?
-  yes → 是否独立 file scope + 无 sequential dependency?
-    yes → /forgeue:change-apply-parallel(并行 dispatch)
-    no  → /forgeue:change-apply-subagent(sequential per-task,fresh subagent)
-  no(单 task / 微调)→ /forgeue:change-apply-direct(executing-plans + TDD)
+是否多 micro-task / 需要 spec compliance 强约束?
+  yes → /forgeue:change-apply-subagent(sequential per-task,fresh subagent + 4 类 evidence)
+  no(< 3 micro-task / budget 紧张)→ /forgeue:change-apply-direct(executing-plans + TDD)
+
+# 注:`/forgeue:change-apply-parallel` 已在 retire-parallel-and-worktree-fully(2026-05-06)整 retire — parallel dispatch 路径不再支持(沿 D-PostRetireParallelStrategy);若后续需要并行需重新 propose 独立 change。
 ```
 
 **命令交互**(subagent / parallel 路径):
