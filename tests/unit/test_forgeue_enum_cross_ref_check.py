@@ -45,8 +45,13 @@ def test_real_repo_baseline_no_drift():
     )
 
 
-def test_real_repo_baseline_canonical_count_at_least_5_mapped():
-    """守门已 mapped 的 5 个核心 enum 不被误删。"""
+def test_real_repo_baseline_canonical_count_at_least_3_mapped():
+    """守门已 mapped 的 3 个核心 enum 不被误删。
+
+    retire-parallel-and-worktree-fully P2 update(2026-05-06):原 5 个核心 enum 中
+    `_VALID_WORKTREE_CONSENT_OUTCOMES` + `_VALID_WORKTREE_MODES` 已 retired(对应 ADR-013
+    worktree consent gate 整层删除);剩 3 个 v1 advisory baseline enum。
+    """
     report = fec.run(_REPO)
     mapped = [c for c in report.canonical if c.doc_field]
     mapped_names = {c.constant for c in mapped}
@@ -54,8 +59,6 @@ def test_real_repo_baseline_canonical_count_at_least_5_mapped():
         "_AUTONOMY_DECISION_VALUES",
         "_SUBAGENT_STYLE_DISPATCH_VALUES",
         "_TASK_GRANULARITY_VALUES",
-        "_VALID_WORKTREE_CONSENT_OUTCOMES",
-        "_VALID_WORKTREE_MODES",
     }
     missing = expected_at_least - mapped_names
     assert not missing, f"core mapped canonical missing: {missing}"
