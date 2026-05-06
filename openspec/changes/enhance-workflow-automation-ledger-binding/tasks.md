@@ -1,17 +1,17 @@
 ## P0 — Pre-implementation 对抗 review
 
-- [ ] P0.1 跑 `/forgeue:change-plan`(S2→S3 transition):codex `/codex:adversarial-review` design.md(background 跑;mixed scope 含 proposal + design + specs)
-- [ ] P0.2 round 1 finding 落 `review/codex_design_review.md`(全条 finding + accept / reject / inline-writeback / deferred 决策)
-- [ ] P0.3 round 1 finding 跨 check 落 `review/design_cross_check.md`(disputed_open == 0 检测;`forgeue_change_state.py` cross-check)
-- [ ] P0.4 inline writeback round 1 finding 到 design.md / specs / proposal(若有);更新 D-decision 列表与 Risks 段
-- [ ] P0.5 codex round 2 review hook(若 round 1 raise blocker;background 跑);finding 落 `review/codex_design_review.md` round 2 段
-- [ ] P0.6 round 2 cross-check 落 `review/design_cross_check.md` round 2 段;disputed_open == 0 才 unlock P1
-- [ ] P0.7 plan stage finalize:写 `notes/plan_finalize.md` 总结 round 1+2 closed/deferred 状态 + tasks.md 后续 phase unblocked
-- [ ] P0.8 最终 docs 同步检查(本阶段产物 docs 不同步,只更新本 change 内 artifact;留 P6 统一 doc-sync)
+- [x] P0.1 跑 `/forgeue:change-plan`(S2→S3 transition):codex `/codex:adversarial-review` design.md(background 跑;mixed scope 含 proposal + design + specs)
+- [x] P0.2 round 1 finding 落 `review/codex_design_review.md`(全条 finding + accept / reject / inline-writeback / deferred 决策)
+- [x] P0.3 round 1 finding 跨 check 落 `review/design_cross_check.md`(disputed_open == 0 检测;`forgeue_change_state.py` cross-check)
+- [x] P0.4 inline writeback round 1 finding 到 design.md / specs / proposal(若有);更新 D-decision 列表与 Risks 段
+- [x] P0.5 codex round 2 review hook(若 round 1 raise blocker;background 跑);finding 落 `review/codex_design_review.md` round 2 段
+- [x] P0.6 round 2 cross-check 落 `review/design_cross_check.md` round 2 段;disputed_open == 0 才 unlock P1
+- [x] P0.7 plan stage finalize:写 `notes/plan_finalize.md` 总结 round 1+2 closed/deferred 状态 + tasks.md 后续 phase unblocked
+- [x] P0.8 最终 docs 同步检查(本阶段产物 docs 不同步,只更新本 change 内 artifact;留 P6 统一 doc-sync)
 
 ## P1 — Crypto helper module (`tools/_forgeue_ledger_crypto.py`)
 
-- [ ] P1.1 写 `tests/unit/test_dispatch_ledger.py` 新增 v3 测试 case(TDD red 阶段;先写测试 + verify 全失败):
+- [x] P1.1 写 `tests/unit/test_dispatch_ledger.py` 新增 v3 测试 case(TDD red 阶段;先写测试 + verify 全失败):
   - `test_canonical_payload_excludes_hmac_includes_prev_hmac`(canonical bytes 不含 hmac 字段,含 prev_hmac 字段)
   - `test_canonical_payload_field_order_invariant`(打乱 record 字段插入顺序,canonical bytes 相同)
   - `test_canonical_payload_unicode_round_trip`(若包含 unicode 字段,UTF-8 round-trip 稳定)
@@ -25,7 +25,7 @@
   - `test_load_or_init_key_corrupted_raises_unknown_version`(version ≠ 1 → exit 7)
   - `test_load_or_init_key_atomic_o_excl_no_race`(并发 init `os.O_EXCL` flag 防 race,后调用 retry-load)
   - `test_load_or_init_key_creates_claude_dir_if_missing`(`~/.claude/` 不存在自动 mkdir;round 1 codex 测试 gap 补)
-- [ ] P1.2 实施 `tools/_forgeue_ledger_crypto.py`:
+- [x] P1.2 实施 `tools/_forgeue_ledger_crypto.py`:
   - `_KEY_FILE_PATH = Path.home() / ".claude" / "forgeue_ledger_key"` 模块常量
   - `_KEY_VERSION = 1`(JSON schema version)
   - `load_or_init_key() -> tuple[bytes, str]`:lifecycle 6 状态(沿 D-KeyRotationHandling round 1 inline writeback 后)
@@ -36,12 +36,12 @@
   - `verify_terminal_proof(lines: list[dict], evidence_line_count: int, evidence_final_hmac: str) -> tuple[str, str | None]`:terminal proof 校验(D-LedgerTerminalProof)
   - `verify_strict_schema_v3(lines: list[dict]) -> tuple[str, str | None]`:strict 11-field schema validation(D-Scope-F3-MergeWithP12.8;round positive int / agent_id format / dispatched_at tz-aware / 拒未知字段)
   - 模块顶层零副作用(沿 probes 协定;`if __name__ == "__main__":` 不暴露 CLI 入口)
-- [ ] P1.3 跑 P1.1 测试,verify 全过(TDD green 阶段)
-- [ ] P1.4 commit `feat(forgeue): _forgeue_ledger_crypto.py — stdlib HMAC chain helper for v3 ledger binding`
+- [x] P1.3 跑 P1.1 测试,verify 全过(TDD green 阶段)
+- [x] P1.4 commit `feat(forgeue): _forgeue_ledger_crypto.py — stdlib HMAC chain helper for v3 ledger binding`
 
 ## P2 — `tools/forgeue_dispatch_ledger.py` 升级 v3
 
-- [ ] P2.1 写 `tests/unit/test_dispatch_ledger.py` 新增 v3 cmd_append + cmd_verify 测试 case(TDD red;round 1 codex inline writeback 后):
+- [x] P2.1 写 `tests/unit/test_dispatch_ledger.py` 新增 v3 cmd_append + cmd_verify 测试 case(TDD red;round 1 codex inline writeback 后):
   - `test_v3_append_writes_11_field_schema`(wrapper_version="2.0" + 跑 append + 校输出行 JSON 含 11 字段)
   - `test_v3_append_first_line_prev_hmac_zeros`(首行 prev_hmac == "0" * 64)
   - `test_v3_append_chain_links_prev_hmac`(第 N+1 行 prev_hmac == 第 N 行 hmac)
@@ -70,17 +70,17 @@
     - `test_v3_verify_fail_naive_dispatched_at`(ledger 行 `dispatched_at: "2026-05-06T14:00:00"` 无 tz → exit 5 `[schema_violation]`)
     - `test_v3_verify_fail_protocol_version_not_v3`(ledger 行 `protocol_version: "v2"` 但 evidence 是 v3 → exit 5 `[schema_violation]`)
   - `test_v3_verify_exit_7_key_file_corrupted`(key 文件 JSON 损坏 → exit 7)
-- [ ] P2.2 升级 `tools/forgeue_dispatch_ledger.py`:
+- [x] P2.2 升级 `tools/forgeue_dispatch_ledger.py`:
   - `WRAPPER_VERSION = "2.0"`(从 1.0 升,沿 D-WrapperVersionBump)
   - `cmd_append`:加载 key + 读 prev_hmac + 算 hmac + 写 11 字段(沿 D-HashChain;import `_forgeue_ledger_crypto`)+ stdout 打印 `[LEDGER] line_count=<N> final_hmac=<hex>`(D-LedgerTerminalProof)
   - `cmd_verify`:沿 protocol_version 字段 dispatch(行内 `protocol_version: "v3"` → 走 v3 整链 verify + terminal proof + strict schema;否则走 v2 schema-only);加 `--allow-archived-replay` flag(round 1 codex F2 inline writeback 后必备)
   - 加 `EXIT_KEY_ROTATION_USER_OVERRIDE = 6` / `EXIT_KEY_FILE_CORRUPTED = 7`(EXIT_VERIFY_FAIL = 5 复用现有)
-- [ ] P2.3 跑 P2.1 + P1.1 测试 — verify 全过(TDD green)
-- [ ] P2.4 commit `feat(forgeue): forgeue_dispatch_ledger.py — v3 schema with HMAC chain (wrapper 2.0)`
+- [x] P2.3 跑 P2.1 + P1.1 测试 — verify 全过(TDD green)
+- [x] P2.4 commit `feat(forgeue): forgeue_dispatch_ledger.py — v3 schema with HMAC chain (wrapper 2.0)`
 
 ## P3 — `tools/forgeue_finish_gate.py` 升级 v3 fence
 
-- [ ] P3.1 写 `tests/unit/test_finish_gate.py`(或现有测试文件)新增 v3 fence dispatch 测试 case(TDD red;round 1 codex inline writeback 后):
+- [x] P3.1 写 `tests/unit/test_finish_gate.py`(或现有测试文件)新增 v3 fence dispatch 测试 case(TDD red;round 1 codex inline writeback 后):
   - `test_finish_gate_v3_fence_pass_on_valid_v3_ledger`(fixture v3 evidence + valid v3 ledger + 正确 ledger_line_count + ledger_final_hmac + cryptographic audit 字段 → 0 blocker)
   - `test_finish_gate_v3_fence_blocker_on_hmac_mismatch`(tampered ledger → BLOCKER `dispatch_ledger_violation`)
   - `test_finish_gate_v3_fence_blocker_on_chain_break`(删中间行 ledger → BLOCKER)
@@ -118,7 +118,7 @@
   - `test_finish_gate_v2_evidence_skips_v3_fence`(v2 evidence + v2 ledger → v3 分支 pass-through)
   - `test_finish_gate_legacy_evidence_skips_all`(无 protocol_version 字段 → 全分支 pass-through)
   - `test_finish_gate_v3_double_fence_round_fix_continuity_also_fails`(v3 evidence + tampered ledger → `_check_round_fix_continuity` v3 fence 也阻断,双重守门)
-- [ ] P3.2 升级 `tools/forgeue_finish_gate.py`:
+- [x] P3.2 升级 `tools/forgeue_finish_gate.py`:
   - 新 helper `_runtime_enforcement_v3_active(frontmatter) -> bool`
   - `_check_dispatch_ledger` 加 v3 分支(import `_forgeue_ledger_crypto.verify_chain_v3` + 整链 verify);error message prefix `[hmac_mismatch]` / `[chain_break]` / `[key_id_inconsistent]` / `[key_id_mismatch]` / `[tail_truncation_detected]` / `[final_hmac_mismatch]` / `[schema_violation]` / `[audit_mismatch]` / `[key_rotation_user_override]` 区分(round 1 codex inline writeback 后 9 类)
   - 新 fence `_check_ledger_terminal_proof`(D-LedgerTerminalProof;evidence `ledger_line_count` + `ledger_final_hmac` 必填 + 与实际 ledger 一致)
@@ -128,16 +128,16 @@
   - `_check_round_fix_continuity` 加 v3 路径(在 v2 cross-check 基础上加 chain verify + terminal proof,沿 specs MODIFIED Requirement)
   - fence dispatch matrix 扩到 4 档(legacy / v1 / v2 / v3)+ unknown value BLOCKER;v3 fence 总数 = v2 6 fence + 4 新(terminal_proof + audit_consistency + protocol_version_validity + archived_replay_path_boundary)+ schema_strict 内嵌进 _check_dispatch_ledger v3 分支
   - `tools/forgeue_change_state.py --writeback-check` 加 `archived_replay_path_violation` 进 4 类 named DRIFT 检测之一(round 2 codex F1 inline writeback)
-- [ ] P3.3 加 forgeue_change_state.py `--writeback-check` 加 archived_replay_path_violation 检测(round 3 codex F3 inline writeback):
+- [x] P3.3 加 forgeue_change_state.py `--writeback-check` 加 archived_replay_path_violation 检测(round 3 codex F3 inline writeback):
   - 测试 `test_writeback_check_archived_replay_active_drift_via_change_state`(active change evidence 含 `ledger_archived_replay: true` → exit 5 + DRIFT)
   - 实施:`tools/forgeue_change_state.py:_writeback_check` 扫 evidence frontmatter 检测此字段 + 校 evidence 路径含 `archive/` segment;不含 → drift entry `archived_replay_path_violation`(沿 D-ArchivedReplayPathBoundary writeback-check 早期 drift signal)
   - 沿 round 2 codex F1 inline writeback 已经在 spec / tasks 提到,本 round 3 inline writeback 修补 micro plan 漏 micro-step 的 gap
-- [ ] P3.4 跑 P3.1 + P2.1 + P1.1 测试 — verify 全过
-- [ ] P3.5 commit `feat(forgeue): forgeue_finish_gate.py + forgeue_change_state.py — v3 fence dispatch + HMAC chain verify + writeback-check archived_replay drift (4 new fence + round 3 codex F3 inline writeback)`
+- [x] P3.4 跑 P3.1 + P2.1 + P1.1 测试 — verify 全过
+- [x] P3.5 commit `feat(forgeue): forgeue_finish_gate.py + forgeue_change_state.py — v3 fence dispatch + HMAC chain verify + writeback-check archived_replay drift (4 new fence + round 3 codex F3 inline writeback)`
 
 ## P4 — 命令模板 frontmatter 升级 + e2e fixture v3
 
-- [ ] P4.1 升级 `.claude/commands/forgeue/change-apply-subagent.md` evidence frontmatter 模板(round 1 codex inline writeback 后):
+- [x] P4.1 升级 `.claude/commands/forgeue/change-apply-subagent.md` evidence frontmatter 模板(round 1 codex inline writeback 后):
   - `runtime_enforcement_protocol_version: v3`(从 v2 升)
   - `ledger_forgery_resistance: cryptographic`(从 advisory 升;沿 D-FrontmatterAuditConsistency v3 ↔ cryptographic 强绑定)
   - `ledger_line_count: <int>`(必填 v3;沿 D-LedgerTerminalProof;LLM 复制 wrapper stdout `[LEDGER]` 行的 line_count)
@@ -145,8 +145,8 @@
   - **不写** `ledger_archived_replay`(default false / null;只在 archived replay 时 user 显式标 true,沿 D-KeyRotationHandling default fail-closed)
   - 注释加 `# v3 协议自 enhance-workflow-automation-ledger-binding change 起;line_count + final_hmac 复制自 wrapper stdout`
   - 改 Step 10a 加"读 wrapper stdout `[LEDGER] line_count=<N> final_hmac=<hex>` + 复制到 evidence frontmatter `ledger_line_count` / `ledger_final_hmac` 字段"明确指令(round 1 codex F3 inline writeback)
-- [ ] P4.2 升级 `.claude/commands/forgeue/change-apply-parallel.md` evidence frontmatter 模板(同 P4.1)
-- [ ] P4.3 在 `tests/integration/test_v2_e2e_synthetic_change.py` 加 v3 平行 case `test_v3_e2e_cryptographic_synthetic_change`:
+- [x] P4.2 升级 `.claude/commands/forgeue/change-apply-parallel.md` evidence frontmatter 模板(同 P4.1)
+- [x] P4.3 在 `tests/integration/test_v2_e2e_synthetic_change.py` 加 v3 平行 case `test_v3_e2e_cryptographic_synthetic_change`:
   - monkey-patched `Path.home()` 指向 tmp_path(隔离真实 user key)
   - fixture synthetic v3 evidence + v3 ledger(wrapper 真跑生成 + `[LEDGER]` stdout 模拟 LLM 复制)
   - finish_gate 跑通 v3 fence pass(含 chain + terminal proof + audit consistency + schema strict 全 pass)
@@ -155,36 +155,36 @@
     - `test_v3_e2e_negative_tail_truncation`(删尾行 + evidence frontmatter `ledger_line_count` 未跟改 → BLOCKER)
     - `test_v3_e2e_negative_key_id_mismatch_default_fail_closed`(切 key + 无 `--allow-archived-replay` → BLOCKER)
     - `test_v3_e2e_negative_audit_inconsistency`(v3 evidence + `ledger_forgery_resistance: advisory` → BLOCKER)
-- [ ] P4.4 跑全套 `python -m pytest -q`(包含 P1/P2/P3/P4 测试)— 全 549+ 测试过(基线 549 + 本 change 新增 ~34 case → 583;round 1 codex inline writeback 后 case 数从 22 升到 34)
-- [ ] P4.5 commit `feat(forgeue): change-apply-{subagent,parallel} v3 frontmatter + e2e fixture (round 1 codex inline writeback)`
+- [x] P4.4 跑全套 `python -m pytest -q`(包含 P1/P2/P3/P4 测试)— 全 549+ 测试过(基线 549 + 本 change 新增 ~34 case → 583;round 1 codex inline writeback 后 case 数从 22 升到 34)
+- [x] P4.5 commit `feat(forgeue): change-apply-{subagent,parallel} v3 frontmatter + e2e fixture (round 1 codex inline writeback)`
 
 ## P5 — 验证 hook + codex `/codex:review --base main`
 
-- [ ] P5.1 跑 `/forgeue:change-verify` Level 0/1/2:
+- [x] P5.1 跑 `/forgeue:change-verify` Level 0/1/2:
   - L0:`openspec validate --strict enhance-workflow-automation-ledger-binding`
   - L1:`python -m pytest -q tests/unit/test_dispatch_ledger.py tests/unit/test_finish_gate.py`(新加 v3 case 全过)+ `python -m pytest -q tests/integration/test_v2_e2e_synthetic_change.py`(v3 平行 case 过)
   - L2:跑 `python tools/forgeue_dispatch_ledger.py append --change <id> --agent-id <fake-id> --round 1 --role implementer`(自 fixture invoke;新建 v3 schema 行 + 校 hmac 字段)+ `python tools/forgeue_dispatch_ledger.py verify --change <id>`(verify 通过)
   - 落 `verification/verify_report.md`(12-key audit frontmatter)
-- [ ] P5.2 跑 codex `/codex:review --base main`(本 change diff 全 review;background 跑)
-- [ ] P5.3 finding 落 `review/codex_verification_review.md`(全条 finding + accept / reject / inline-writeback / deferred 决策)
-- [ ] P5.4 finding cross-check 落 `verification/verification_cross_check.md`(disputed_open == 0)
-- [ ] P5.5 inline writeback finding(若有);更新代码 / 测试 / docs
+- [x] P5.2 跑 codex `/codex:review --base main`(本 change diff 全 review;background 跑)
+- [x] P5.3 finding 落 `review/codex_verification_review.md`(全条 finding + accept / reject / inline-writeback / deferred 决策)
+- [x] P5.4 finding cross-check 落 `verification/verification_cross_check.md`(disputed_open == 0)
+- [x] P5.5 inline writeback finding(若有);更新代码 / 测试 / docs
 
 ## P6 — `/forgeue:change-doc-sync` Documentation Sync Gate
 
-- [ ] P6.1 跑 `python tools/forgeue_doc_sync_check.py --change enhance-workflow-automation-ledger-binding`(10 文档静态扫;输出 [REQUIRED] / [OPTIONAL] / [SKIP] / [DRIFT])
-- [ ] P6.2 跑 `python tools/forgeue_enum_cross_ref_check.py`(canonical frozenset ↔ docs 描述 set diff;exit 0/2/1)
-- [ ] P6.3 应用 [REQUIRED] doc 同步:
+- [x] P6.1 跑 `python tools/forgeue_doc_sync_check.py --change enhance-workflow-automation-ledger-binding`(10 文档静态扫;输出 [REQUIRED] / [OPTIONAL] / [SKIP] / [DRIFT])
+- [x] P6.2 跑 `python tools/forgeue_enum_cross_ref_check.py`(canonical frozenset ↔ docs 描述 set diff;exit 0/2/1)
+- [x] P6.3 应用 [REQUIRED] doc 同步:
   - `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C protocol matrix 扩到 4 档(legacy / v1 / v2 / v3)
   - `docs/ai_workflow/forgeue_integrated_ai_workflow.md` 新加 §C.10 "Cryptographic Ledger Binding"(D-decision 摘要 + key 文件路径 + 4 状态 lifecycle + verify 流程 + threat model 边界)
   - `CLAUDE.md` Runtime enforcement frontmatter 字段段加 v3 说明 + 4 档 dispatch matrix 更新
   - `CHANGELOG.md` entry(release 时由 doc-sync 统一加,沿 D-OQ-5)
-- [ ] P6.4 §4.3 提示词 review(README.md §4.3)— 确认 doc-sync 不机械同步;不更新必须记录原因;docs / tests / code / CHANGELOG 冲突时标记 doc drift
-- [ ] P6.5 commit `docs(forgeue): v3 cryptographic ledger binding (forgeue_integrated_ai_workflow §C.10 + CLAUDE.md)`
+- [x] P6.4 §4.3 提示词 review(README.md §4.3)— 确认 doc-sync 不机械同步;不更新必须记录原因;docs / tests / code / CHANGELOG 冲突时标记 doc drift
+- [x] P6.5 commit `docs(forgeue): v3 cryptographic ledger binding (forgeue_integrated_ai_workflow §C.10 + CLAUDE.md)`
 
 ## P7 — Final review + Finish gate
 
-- [ ] P7.1 跑 `/forgeue:change-review`:
+- [x] P7.1 跑 `/forgeue:change-review`:
   - Superpowers `requesting-code-review` finalize(主 session retrospective)
   - codex `/codex:adversarial-review` mixed scope(background;design + spec + impl 全 review)
   - blocker 回写 design.md / specs / tasks.md(若有);非 blocker 列 follow-on 候选
@@ -208,16 +208,16 @@
 
 ## P9 — MEMORY.md update + follow-on tracking(后置可选)
 
-- [ ] P9.1 更新 `MEMORY.md` 加 ledger-binding change 摘要(沿 forgeue auto memory 协议;落 `~/.claude/projects/.../memory/project_ledger_binding_change.md` + MEMORY.md index entry):
+- [x] P9.1 更新 `MEMORY.md` 加 ledger-binding change 摘要(沿 forgeue auto memory 协议;落 `~/.claude/projects/.../memory/project_ledger_binding_change.md` + MEMORY.md index entry):
   - 15 D-decision(round 1+2 codex inline writeback 后):Scope-F3Only / KeyLocation / ProtocolVersion / HashChain / CanonicalJSON / KeyRotationHandling / FenceDispatchMatrix / SelfDogfoodGap / DispatchPath / WrapperVersionBump / **LedgerTerminalProof**(round 1 F3) / **FrontmatterAuditConsistency**(round 1 F4) / **Scope-F3-MergeWithP12.8**(round 1 F5) / **ArchivedReplayPathBoundary**(round 2 F1) / **RuntimeEnforcementProtocolVersionValidity**(round 2 F2)
   - HMAC chain protocol + key file lifecycle + 4 verify 状态
   - fence dispatch matrix 4 档(legacy / v1 / v2 / v3)
   - commit SHA + threat model 边界
-- [ ] P9.2 (follow-on tracking)`enhance-workflow-automation-skill-tool-binding`(F2 deferred 部分):wrapper / Hook 拦截 Skill(Task) 调用 + 写 ledger 前拒绝 dispatch;触发条件:本 change ship 后实证 F3 cryptographic 仍不足以挡 controller drift(若足够,可 cancel follow-on)
-- [ ] P9.3 (follow-on tracking)`enhance-workflow-automation-os-keystore`(R1 + R5 mitigation):用 Windows DPAPI / Mac Keychain / Linux libsecret 替代 `~/.claude/forgeue_ledger_key` 文件存储;触发条件:本 change ship 后实证 LLM 主动恶意 forge 实际发生(threat model 之外的攻击若实证)
-- [ ] P9.4 (follow-on tracking)cancel 评估(round 1 codex F5 scope expansion 后):
+- [x] P9.2 (follow-on tracking)`enhance-workflow-automation-skill-tool-binding`(F2 deferred 部分):wrapper / Hook 拦截 Skill(Task) 调用 + 写 ledger 前拒绝 dispatch;触发条件:本 change ship 后实证 F3 cryptographic 仍不足以挡 controller drift(若足够,可 cancel follow-on)
+- [x] P9.3 (follow-on tracking)`enhance-workflow-automation-os-keystore`(R1 + R5 mitigation):用 Windows DPAPI / Mac Keychain / Linux libsecret 替代 `~/.claude/forgeue_ledger_key` 文件存储;触发条件:本 change ship 后实证 LLM 主动恶意 forge 实际发生(threat model 之外的攻击若实证)
+- [x] P9.4 (follow-on tracking)cancel 评估(round 1 codex F5 scope expansion 后):
   - **`enhance-workflow-automation-v2-fence-hardening`**(archived `executable-enforcement` P12.8):**superseded by 本 change**(round 1 codex F5 scope expansion 已合并 P12.8 schema validation 部分进本 change v3 verify;本 change archive 后正式 cancel P12.8 follow-on tracking)— action item:本 change archive 时同步更新 archived `executable-enforcement/tasks.md` P12.8 标 `[CANCELLED — superseded by enhance-workflow-automation-ledger-binding round 1 codex F5 scope expansion;merged into v3 strict 11-field schema validation]`
   - **`enhance-workflow-automation-final-review-fence-strictness`**(archived `executable-enforcement` P12.7):**单独评估**(本 change F3 ledger terminal proof + F5 schema validation 是否已覆盖 P12.7 hygiene gap?P12.7 scope 是 SKIP stub vs dispatched evidence 区分,与 ledger 校验是 orthogonal)— action item:本 change ship 后实证下一个 active change 用 v3 + SKIP stub pattern 是否仍误通过;若 ship-later 实证 P12.7 hygiene gap 已闭合 → cancel,否则 P12.7 触发条件不变
-- [ ] P9.5 (follow-on tracking)`enhance-workflow-automation-os-keystore`(R1 mitigation;OS-level secret store):用 Windows DPAPI / Mac Keychain / Linux libsecret 替代 `~/.claude/forgeue_ledger_key` 文件存储;防 LLM 主动恶意 forge(本 change threat model 之外的攻击);触发条件:本 change ship 后实证 LLM 主动恶意 forge 实际发生(若 advisory layer + obscurity 足够 → 不必 ship)
-- [ ] P9.6 (follow-on tracking RETIRED)`enhance-workflow-automation-archived-replay-audit` — **本 change round 2 codex F1 inline writeback 已实施**(D-ArchivedReplayPathBoundary fence + spec ADDED Requirement "Archived replay path boundary" + tasks.md P3.1 测试 case 5 个);本 change ship 后**正式 cancel** P9.6 follow-on tracking(沿 round 2 codex F1 recommendation "Do not defer this to P9.6")
-- [ ] P9.7 (follow-on tracking)`enhance-workflow-automation-ledger-append-lock`(round 3 codex F4 inline writeback;design R3 + spec "Append serial invariant" follow-on):cmd_append cross-platform file lock(`fcntl` + `msvcrt`)+ 并发 append regression test;触发条件:本 change ship 后实证非 ForgeUE 工作流外部并发跑 wrapper(如 user 自己 script 并发 append)触发 race;本 change scope 内**不**实施(命令模板 main session 串行 append invariant 已防 ForgeUE 内部 race)
+- [x] P9.5 (follow-on tracking)`enhance-workflow-automation-os-keystore`(R1 mitigation;OS-level secret store):用 Windows DPAPI / Mac Keychain / Linux libsecret 替代 `~/.claude/forgeue_ledger_key` 文件存储;防 LLM 主动恶意 forge(本 change threat model 之外的攻击);触发条件:本 change ship 后实证 LLM 主动恶意 forge 实际发生(若 advisory layer + obscurity 足够 → 不必 ship)
+- [x] P9.6 (follow-on tracking RETIRED)`enhance-workflow-automation-archived-replay-audit` — **本 change round 2 codex F1 inline writeback 已实施**(D-ArchivedReplayPathBoundary fence + spec ADDED Requirement "Archived replay path boundary" + tasks.md P3.1 测试 case 5 个);本 change ship 后**正式 cancel** P9.6 follow-on tracking(沿 round 2 codex F1 recommendation "Do not defer this to P9.6")
+- [x] P9.7 (follow-on tracking)`enhance-workflow-automation-ledger-append-lock`(round 3 codex F4 inline writeback;design R3 + spec "Append serial invariant" follow-on):cmd_append cross-platform file lock(`fcntl` + `msvcrt`)+ 并发 append regression test;触发条件:本 change ship 后实证非 ForgeUE 工作流外部并发跑 wrapper(如 user 自己 script 并发 append)触发 race;本 change scope 内**不**实施(命令模板 main session 串行 append invariant 已防 ForgeUE 内部 race)
