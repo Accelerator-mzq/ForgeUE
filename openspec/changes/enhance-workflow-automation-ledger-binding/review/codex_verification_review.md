@@ -19,7 +19,7 @@ codex_verdict: needs-attention
 findings_count: 3
 findings_severity: P1=1, P2=2
 drift_decision: written-back-to-tools/forgeue_finish_gate.py
-writeback_commit: pending
+writeback_commit: fdfc91a
 drift_reason: P1 [critical, 本 change scope] _runtime_enforcement_active 漏 v3 导致 v3 evidence 跳过 v1 fence;P2 finding × 2 (comfy_worker.py + run_import.py) 是 dev 分支其他历史 commit 范围,与本 change 解耦
 reasoning_notes_anchor: design.md#reasoning-notes
 created_at: 2026-05-06T18:30:00+08:00
