@@ -4,37 +4,21 @@
 
 ## P0. Baseline + 24 项 backfill 准备
 
-- [ ] P0.1 跑 baseline:`python -m pytest -q`(retire P5 + fix-finish-gate-archived-replay-compat 后基线 **1753 PASS**;记录在 verification/baseline.md)
-- [ ] P0.2 `python tools/forgeue_finish_gate.py --change centralize-followon-backlog-registry --json`(启动状态 / 当前 fence 通过情况)
-- [ ] P0.3 `python tools/forgeue_change_state.py --change centralize-followon-backlog-registry --json`(starting state S0)
-- [ ] P0.4 准备 22 项 active backfill + 3 项 archived.md tombstone 数据源(adapted for fix-finish-gate-archived-replay-compat `88a8aec` merge):
-  - 7 项 workflow-protocol(从 archived `tasks.md P11/P12 + verification/baseline.md + review/codex_*` 提取;**原 9 项 - 2 项 closed by 88a8aec**)
-  - 9 项 requirements-tbd-pointer(从 `docs/requirements/SRS.md` §7.3 提取 9 个 active TBD)
-  - 6 项 capability-boundary(grep `docs/design/LLD.md` + `CLAUDE.md` ComfyUI section 找 `留 follow-on` 内联注释)
-  - 3 项 archived.md 首批 tombstone(`enhance-workflow-automation-v2-fence-hardening` 8a42c71 + `fix-finish-gate-section-regex-for-p-prefixed` 88a8aec + `fix-openspec-validate-archived-change-support` 88a8aec)
-- [ ] P0.5 写 `verification/baseline.md`(含 P0 baseline pytest 结果 + 22 + 3 项 backfill 数据源 + finish_gate / change_state 启动状态)
+- [x] P0.1 跑 baseline:`python -m pytest -q`(实测 1589 PASS + 1 pre-existing fail `test_real_cross_check_files_have_evidence_type` + 1 skipped;dogfood 暴露 `fix-cross-check-format-test-enum-extension` follow-on 加进 backfill)
+- [x] P0.2 `python tools/forgeue_finish_gate.py --change centralize-followon-backlog-registry --json`(90 blocker 全 `tasks_unchecked` 类,P0 baseline 预期;P7 应 PASS)
+- [x] P0.3 `python tools/forgeue_change_state.py --change centralize-followon-backlog-registry --json`(state S3,DRIFT 0)
+- [x] P0.4 准备 23 项 active backfill + 3 项 archived.md tombstone 数据源(详见 verification/baseline.md `## P0.4`)
+- [x] P0.5 写 `verification/baseline.md`(已落盘)
 
 ## P1. Registry 文件创建
 
-- [ ] P1.1 创建 `openspec/backlog/` 目录(沿 OpenSpec `changes/` / `specs/` 同级)
-- [ ] P1.2 写 `openspec/backlog/README.md`:registry 协议说明 + schema header + 与 SRS §7.3 双源关系 + active.md / archived.md 关系 + cross-link 同步策略(沿 design.md D-CrossLinkSync)
-- [ ] P1.3 写 `openspec/backlog/active.md`:schema header + 7 项 workflow-protocol entries(原 9 项 - 2 项 closed by 88a8aec)
-  - P1.3.1 entry: `fix-video-export-path-split-d12-violation`
-  - P1.3.2 entry: `fix-run-import-skipped-filter-permission-only`
-  - P1.3.3 entry: `enhance-workflow-automation-handoff-persistence`
-  - P1.3.4 entry: `add-forgeue-brainstorm-stage`
-  - P1.3.5 entry: `enhance-workflow-automation-finishing-branch`
-  - P1.3.6 entry: `enhance-workflow-automation-final-review-fence-strictness`
-  - P1.3.7 entry: `analyze-superpowers-skills-openspec-integration-gaps`
-- [ ] P1.4 续写 `openspec/backlog/active.md`:9 项 requirements-tbd-pointer entries(每条 1 行 pointer,不复制 SRS 内容)
-  - TBD-001 / TBD-002 / TBD-003 / TBD-004 / TBD-005 / TBD-010 / TBD-011 / TBD-012 / TBD-013
-- [ ] P1.5 续写 `openspec/backlog/active.md`:6 项 capability-boundary entries
-  - `audio-metadata-parser` / `video-metadata-parser` / `comfy-video-webm-adoption` / `comfy-video-v2v-adoption` / `comfy-video-image-sequence-adoption` / `video-bmff-largesize-support`
-- [ ] P1.6 写 `openspec/backlog/archived.md`:schema header + 3 项首批 tombstone 记录:
-  - `enhance-workflow-automation-v2-fence-hardening` cancelled-superseded by `enhance-workflow-automation-ledger-binding`(commit `8a42c71`)
-  - `fix-finish-gate-section-regex-for-p-prefixed` cancelled-completed: `88a8aec`(closed by `fix-finish-gate-archived-replay-compat`)
-  - `fix-openspec-validate-archived-change-support` cancelled-completed: `88a8aec`(同上;短期 mitigation skip 路径已实施)
-- [ ] P1.7 改 `docs/requirements/SRS.md` §7.3 表 header:加 cross-link note 指向 `openspec/backlog/active.md`(workflow-protocol + capability-boundary 类);保留 §7.3 表本体不动(双源)
+- [x] P1.1 创建 `openspec/backlog/` 目录
+- [x] P1.2 写 `openspec/backlog/README.md`(协议 + schema + 双源关系 + cancel 协议 + fence 守门)
+- [x] P1.3 写 `openspec/backlog/active.md` 8 workflow-protocol entries(P1.3.1-P1.3.8 全 entries 落盘)
+- [x] P1.4 续写 9 requirements-tbd-pointer entries(TBD-001/002/003/004/005/010/011/012/013)
+- [x] P1.5 续写 6 capability-boundary entries(audio-metadata-parser / video-metadata-parser / comfy-video-webm-adoption / comfy-video-v2v-adoption / comfy-video-image-sequence-adoption / video-bmff-largesize-support)
+- [x] P1.6 写 `openspec/backlog/archived.md` 3 first-batch tombstones(8a42c71 + 88a8aec + 88a8aec)
+- [x] P1.7 改 `docs/requirements/SRS.md` §7.3 加 cross-link header note(指向 `openspec/backlog/active.md` + 提及 `_check_srs_registry_consistency` fence 守门)
 
 ## P2. `_check_followon_continuity` fence 实装(round 1 codex F1+F2 inline writeback,scope 扩)
 

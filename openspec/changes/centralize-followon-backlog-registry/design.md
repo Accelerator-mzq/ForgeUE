@@ -98,11 +98,11 @@ User 拍板 A + C 组合(`openspec/backlog/active.md` 集中 registry + `_check_
 
 **rationale**:propose 阶段 backlog 状态尚未 finalize(用户在 brainstorming);apply 阶段 backlog 是动态(继承决定可能延期到 archive 前才定);archive 是唯一稳定时机。沿 v1 advisory 3 fence 同款思路(advisory fence 也都在 archive 阶段)。
 
-### D-BackfillScope(22 项一次性 backfill;adapted for fix-finish-gate-archived-replay-compat merge `88a8aec`)
+### D-BackfillScope(23 项一次性 backfill;adapted for fix-finish-gate-archived-replay-compat merge `88a8aec` + P0.1 dogfood 暴露 1 systemic gap 案例)
 
 沿 user 拍板决策 3(a)。**Sync update 2026-05-07**:fix-finish-gate-archived-replay-compat 合入 dev(commit `88a8aec`)关闭原 backfill list 中 2 项;本 change `tasks.md` P0 phase 完成 22 项 active backfill + 3 项 archived.md 首批 tombstone:
 
-- **Workflow protocol active**(7 项,缩自原 9 项;新建 entry 入 active.md):
+- **Workflow protocol active**(8 项;原 9 - 2 closed by `88a8aec` + 1 P0.1 dogfood 暴露 systemic gap 案例;新建 entry 入 active.md):
   1. `fix-video-export-path-split-d12-violation`(retire P5 codex F3)
   2. `fix-run-import-skipped-filter-permission-only`(retire P5 codex F4)
   3. `enhance-workflow-automation-handoff-persistence`(enhance-workflow-automation P5 round 2 F6)
@@ -110,6 +110,7 @@ User 拍板 A + C 组合(`openspec/backlog/active.md` 集中 registry + `_check_
   5. `enhance-workflow-automation-finishing-branch`(runtime-enforcement P11.6)
   6. `enhance-workflow-automation-final-review-fence-strictness`(executable-enforcement P12.7;场景变化但 gap 仍存)
   7. `analyze-superpowers-skills-openspec-integration-gaps`(restore-consent-gate P12.4;scope 6→5,剔 dispatching-parallel-agents)
+  8. `fix-cross-check-format-test-enum-extension`(retire-parallel-and-worktree-fully `verification/verify_report.md` L72 标记;archived ledger-binding `review_cross_check.md` `evidence_type: review_cross_check` 不在 `test_real_cross_check_files_have_evidence_type` enum;**本 change P0.1 baseline 实测 dogfood 暴露**:retire 期 P12 tracking 漏标 → fence 阶段 2 兜底源 unable to catch — 正是 centralize 协议设计要 catch 的 systemic gap 案例,本 change 自暴露 + 自纳入 active 验证协议有效)
 - **Requirements TBD pointer**(9 项,1 行 pointer):TBD-001 / TBD-002 / TBD-003 / TBD-004 / TBD-005 / TBD-010 / TBD-011 / TBD-012 / TBD-013
 - **Capability boundary**(6 项,新建 entry):`audio-metadata-parser` / `video-metadata-parser` / `comfy-video-webm-adoption` / `comfy-video-v2v-adoption` / `comfy-video-image-sequence-adoption` / `video-bmff-largesize-support`
 

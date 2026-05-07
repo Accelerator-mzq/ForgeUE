@@ -8,7 +8,7 @@ The system SHALL maintain a centralized follow-on backlog registry at `openspec/
 
 - **GIVEN** the change `centralize-followon-backlog-registry` has shipped
 - **WHEN** a reader opens `openspec/backlog/active.md`
-- **THEN** the file SHALL contain a schema header block describing the 8 fields, followed by exactly 22 H3 entries: 7 workflow-protocol class + 9 requirements-tbd-pointer class + 6 capability-boundary class
+- **THEN** the file SHALL contain a schema header block describing the 8 fields, followed by exactly 23 H3 entries: 8 workflow-protocol class + 9 requirements-tbd-pointer class + 6 capability-boundary class
 - **AND** each entry SHALL carry all 8 schema fields (priority MAY be empty); `status` SHALL be exactly `active` for every entry in the active registry
 - **AND** SRS §7.3 TBD table SHALL carry a cross-link header note pointing to `openspec/backlog/active.md` for workflow-protocol + capability-boundary class follow-ons
 

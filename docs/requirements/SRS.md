@@ -510,6 +510,8 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 
 ### 7.3 未决事项
 
+> **Cross-link**:本表是 requirements-tbd 类 backlog;workflow-protocol + capability-boundary 类 follow-on backlog 见 [`openspec/backlog/active.md`](../../openspec/backlog/active.md)(自 `centralize-followon-backlog-registry` change 启用,2026-05-07)。SRS §7.3 active TBD(`status ∈ {❌, ⚠️ baseline, ⏳}`)与 active.md `category: requirements-tbd-pointer` entries 集合等价,由 `tools/forgeue_finish_gate.py::_check_srs_registry_consistency` fence archive 阶段守门。
+
 | 编号 | 事项 | 目标决议日期 |
 | --- | --- | --- |
 | TBD-001 | `bridge_execute` 模式启用条件 | manifest_only 稳定运行 3 个月后评估 |
