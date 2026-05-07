@@ -1,3 +1,6 @@
 {"timestamp": "2026-05-07T17:43:53+08:00", "task_n": 21, "subagent_type": "implementer", "tokens_input": 46000, "tokens_output": 11000, "model": "claude-sonnet-4-6", "usd": 0.31}
 {"timestamp": "2026-05-07T18:00:34+08:00", "task_n": 21, "subagent_type": "spec_review", "tokens_input": 62000, "tokens_output": 26000, "model": "claude-sonnet-4-6", "usd": 0.58}
 {"timestamp": "2026-05-07T18:09:39+08:00", "task_n": 21, "subagent_type": "code_quality_review", "tokens_input": 37000, "tokens_output": 16000, "model": "claude-sonnet-4-6", "usd": 0.35}
+{"timestamp": "2026-05-07T18:22:10+08:00", "task_n": 22, "subagent_type": "implementer", "tokens_input": 37000, "tokens_output": 16000, "model": "claude-sonnet-4-6", "usd": 0.35}
+{"timestamp": "2026-05-07T18:37:37+08:00", "task_n": 22, "subagent_type": "spec_review", "tokens_input": 57000, "tokens_output": 24000, "model": "claude-sonnet-4-6", "usd": 0.53}
+{"timestamp": "2026-05-07T18:37:37+08:00", "task_n": 22, "subagent_type": "code_quality_review", "tokens_input": 37000, "tokens_output": 16000, "model": "claude-sonnet-4-6", "usd": 0.35}
