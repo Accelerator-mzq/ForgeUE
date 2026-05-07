@@ -2755,3 +2755,39 @@ def test_parse_archived_md_extracts_tombstone(tmp_path):
 def test_parse_archived_md_missing_file_returns_empty(tmp_path):
     from tools.forgeue_finish_gate import _parse_archived_md
     assert _parse_archived_md(tmp_path / "nonexistent.md") == {}
+
+
+# ---------------------------------------------------------------------------
+# P2.b Helper 1: _get_change_baseline_commit
+# ---------------------------------------------------------------------------
+
+import subprocess as _sp
+
+
+def _git(repo, *args):
+    """在给定 repo 目录中运行 git 命令,返回 CompletedProcess。"""
+    return _sp.run(["git", *args], cwd=repo, capture_output=True, text=True, check=False)
+
+
+def test_get_change_baseline_commit_returns_archive_dir_commit(tmp_path):
+    from tools.forgeue_finish_gate import _get_change_baseline_commit
+    # 初始化 git repo + 创建 archive 目录 + commit
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@test")
+    _git(tmp_path, "config", "user.name", "test")
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-05-07-foo"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "proposal.md").write_text("# Foo proposal", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    commit_result = _git(tmp_path, "commit", "-q", "-m", "feat: add foo archive")
+    assert commit_result.returncode == 0
+    expected_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    # 验证 helper 返回该 commit sha
+    actual_sha = _get_change_baseline_commit(tmp_path)
+    assert actual_sha == expected_sha
+
+
+def test_get_change_baseline_commit_no_archive_returns_none(tmp_path):
+    from tools.forgeue_finish_gate import _get_change_baseline_commit
+    _git(tmp_path, "init", "-q")
+    assert _get_change_baseline_commit(tmp_path) is None

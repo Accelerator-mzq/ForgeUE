@@ -1567,6 +1567,35 @@ def _parse_archived_md(archived_md_path: "Path") -> "dict[str, dict]":
 
 
 # ---------------------------------------------------------------------------
+# P2.b Self-diff helpers — centralize-followon-backlog-registry
+# ---------------------------------------------------------------------------
+
+
+def _get_change_baseline_commit(repo: "Path | None" = None) -> "str | None":
+    """解析 self-diff baseline commit(= 最新 archived change 目录最近被 touch 的 commit)。
+
+    Round 2 F1-r2 fix:不使用 git log -1 -- active.md,
+    因为该命令会随当前 change 的 commits 漂移,导致漏检已提交的删除。
+    取 latest archived change 目录的最近 commit 作为稳定 baseline。
+
+    返回 sha string;无 archive / git 调用失败 → 返回 None。
+    """
+    repo = repo or Path.cwd()
+    # 找最新 archived change 目录(P2.a 已实施)
+    latest_archived = _find_latest_archived_change(repo)
+    if latest_archived is None:
+        return None
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%H", "--", str(latest_archived)],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha if sha else None
+
+
+# ---------------------------------------------------------------------------
 # openspec validate --strict
 # ---------------------------------------------------------------------------
 
