@@ -1138,3 +1138,359 @@ def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest
     ]
     assert not permission_skipped, \
         f"F1 sweep failure:import_file_media_source op 被 PermissionPolicy skip,records={permission_skipped}"
+
+
+# ---------------------------------------------------------------------------
+# OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase C.1
+# P4 integration cases (4 fences) — 与 Phase B 5 unit fence(test_domain_video_no_copy)
+# 在 integration layer 对齐 cover spec MODIFIED domain_video Requirement Scenarios。
+# ---------------------------------------------------------------------------
+
+
+def _build_video_bundle_via_export(
+    tmp_path: Path, run_id: str, ue_asset_name: str = "OpeningScene",
+) -> tuple[Path, Path]:
+    """复用 helper:走 framework `ExportExecutor` 真实 pipeline 一遍,得到
+    `<ue_project>/Content/Generated/<run_id>/{manifest,import_plan,evidence}.json`
+    + `<ue_project>/Content/Movies/<run_id>/MS_<base>.mp4`(Phase A.5 框架 drop)。
+
+    返回 `(ue_project, run_folder)`,后续 case 可在此基础上 mutate manifest /
+    删 mp4 / 改 source_uri 注入 4 类 fence 场景。
+    """
+    ue_project = _fake_ue_project(tmp_path)
+    reg = get_backend_registry(artifact_root=str(tmp_path / "_artifacts"))
+    repo = ArtifactRepository(backend_registry=reg)
+    vid = repo.put(
+        artifact_id=f"{run_id}_video_01",
+        # 最小合法 BMFF mp4 header(沿既有 P4 video fixture pattern)
+        value=b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42",
+        artifact_type=ArtifactType(
+            modality="video", shape="mp4", display_name="video_asset",
+        ),
+        role=ArtifactRole.intermediate, format="mp4", mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id=run_id, step_id="step_video", provider="comfy_agent_cli",
+                             model="comfy/local-video"),
+        metadata={"ue_asset_name": ue_asset_name},
+        file_suffix=".mp4",
+    )
+    target = UEOutputTarget(
+        project_name=ue_project.name, project_root=str(ue_project),
+        asset_root="/Game/Generated/Video", asset_naming_policy="house_rules",
+    )
+    task = Task(
+        task_id=run_id, task_type=TaskType.ue_export, run_mode=RunMode.production,
+        title="C.1 video", input_payload={}, expected_output={},
+        project_id=f"proj_{run_id}", ue_target=target,
+    )
+    step = Step(
+        step_id="step_export", type=StepType.export, name="export",
+        risk_level=RiskLevel.low, capability_ref="ue.export",
+    )
+    from datetime import datetime, timezone
+
+    from framework.core.task import Run
+    run = Run(
+        run_id=run_id, task_id=run_id, project_id=f"proj_{run_id}", status=RunStatus.running,
+        started_at=datetime.now(timezone.utc), workflow_id=f"wf_{run_id}", trace_id="tr",
+    )
+    ExportExecutor().execute(StepContext(
+        run=run, task=task, step=step, repository=repo,
+        upstream_artifact_ids=[vid.artifact_id],
+    ))
+    run_folder = ue_project / "Content" / "Generated" / run_id
+    return ue_project, run_folder
+
+
+def _build_video_stub_unreal(monkeypatch) -> tuple[types.ModuleType, list]:
+    """构造 stub `unreal` 模块(沿既有 line 877 / line 605 pattern);返回
+    `(unreal_stub, create_asset_calls)`,后者用于断言 AssetTools.create_asset 调用次数。
+    """
+    unreal_stub = types.ModuleType("unreal")
+    create_asset_calls: list[dict] = []
+
+    class _FakeFileMediaSource:
+        def __init__(self):
+            self._props: dict = {}
+
+        def set_editor_property(self, key, value):
+            self._props[key] = value
+
+        def get_editor_property(self, key):
+            return self._props.get(key)
+
+        def get_outer(self):
+            return self
+
+    class _FakeFileMediaSourceFactoryNew:
+        pass
+
+    class _FakeAssetTools:
+        @classmethod
+        def create_asset(cls, asset_name, package_path, asset_class, factory):
+            create_asset_calls.append({
+                "asset_name": asset_name, "package_path": package_path,
+            })
+            return _FakeFileMediaSource()
+
+    class _FakeAssetToolsHelpers:
+        @staticmethod
+        def get_asset_tools():
+            return _FakeAssetTools
+
+    class _FakeEditorAssetLibrary:
+        folders: list[str] = []
+
+        @classmethod
+        def does_directory_exist(cls, p):
+            return p in cls.folders
+
+        @classmethod
+        def make_directory(cls, p):
+            cls.folders.append(p)
+
+        @staticmethod
+        def save_loaded_asset(asset):
+            return True
+
+    unreal_stub.FileMediaSource = _FakeFileMediaSource
+    unreal_stub.FileMediaSourceFactoryNew = _FakeFileMediaSourceFactoryNew
+    unreal_stub.AssetToolsHelpers = _FakeAssetToolsHelpers
+    unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
+    monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
+    return unreal_stub, create_asset_calls
+
+
+def _import_run_import_fresh(monkeypatch):
+    """加 ue_scripts/ 到 sys.path + 清缓存 + 返 run_import 模块。"""
+    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
+    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    for mod in [
+        "run_import", "manifest_reader", "evidence_writer",
+        "domain_texture", "domain_audio", "domain_mesh", "domain_video",
+    ]:
+        sys.modules.pop(mod, None)
+    import run_import  # noqa: E402
+    return run_import
+
+
+def test_p4_export_drops_video_mp4_to_content_movies_directly(tmp_path: Path):
+    """Phase C.1 Case 1:framework `ExportExecutor` drop 后:
+    1. mp4 物理存在于 `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4`
+    2. `Content/Generated/<run_id>/` 下**不**含 raw `*.mp4`(F-C 修复:mp4 不再 leak)
+    3. manifest entry source_uri 指向 `Content/Movies/<run_id>/MS_<base>.mp4`
+    4. evidence drop record `target_object_path` 反映实际 Movies/ 路径
+
+    本 fence 端到端守门 D12 路径分流前移到 framework 的核心契约
+    (spec MODIFIED domain_video Requirement Scenario 2 + Phase A F-C)。
+    """
+    run_id = "run_p4_c1_drop_movies"
+    ue_project, run_folder = _build_video_bundle_via_export(
+        tmp_path, run_id, ue_asset_name="OpeningScene",
+    )
+
+    # 1. mp4 物理存在于 Content/Movies/<run_id>/MS_OpeningScene.mp4
+    movies_mp4 = ue_project / "Content" / "Movies" / run_id / "MS_OpeningScene.mp4"
+    assert movies_mp4.is_file(), \
+        f"Phase A.5 framework 必须把 mp4 drop 到 Content/Movies/<run_id>/, 实际不存在 {movies_mp4}"
+    assert len(movies_mp4.read_bytes()) > 0, "drop 的 mp4 不能是空文件"
+
+    # 2. Content/Generated/<run_id>/ 下不含 raw *.mp4 文件(F-C 修复关键)
+    generated_dir = ue_project / "Content" / "Generated" / run_id
+    leaked_mp4s = list(generated_dir.glob("*.mp4"))
+    assert leaked_mp4s == [], (
+        f"F-C 违反:mp4 不应 leak 到 Content/Generated/<run_id>/, "
+        f"实际 leak 文件:{leaked_mp4s}"
+    )
+
+    # 3. manifest entry source_uri 指向 Content/Movies/<run_id>/MS_OpeningScene.mp4
+    manifest_json = json.loads((run_folder / "manifest.json").read_text(encoding="utf-8"))
+    video_entries = [e for e in manifest_json["assets"] if e["asset_kind"] == "file_media_source"]
+    assert len(video_entries) == 1, \
+        f"manifest 必须含 1 个 file_media_source entry,实际 {len(video_entries)}"
+    expected_source_uri = f"Content/Movies/{run_id}/MS_OpeningScene.mp4"
+    assert video_entries[0]["source_uri"] == expected_source_uri, (
+        f"source_uri 单源契约违反:期望 {expected_source_uri!r},"
+        f"实际 {video_entries[0]['source_uri']!r}"
+    )
+
+    # 4. evidence drop_file record `target_object_path` 反映 Movies/ 路径
+    ev = load_evidence(run_folder / "evidence.json")
+    drop_records = [e for e in ev if e.kind == "drop_file"]
+    video_drops = [
+        e for e in drop_records
+        if e.target_object_path and "Movies" in e.target_object_path
+        and e.target_object_path.endswith(".mp4")
+    ]
+    assert len(video_drops) == 1, (
+        f"期望 1 条 drop_file 记录指向 Movies/ 路径,"
+        f"实际 drop_records={[(e.kind, e.target_object_path) for e in drop_records]}"
+    )
+    # POSIX-style relative path(沿 Phase A.6 export.py L102-125 契约)
+    assert video_drops[0].target_object_path.replace("\\", "/") == expected_source_uri, (
+        f"drop_file target_object_path 与 manifest source_uri 不一致:"
+        f"drop={video_drops[0].target_object_path!r} vs manifest={expected_source_uri!r}"
+    )
+
+
+def test_p4_domain_video_returns_failed_when_mp4_missing(tmp_path: Path, monkeypatch):
+    """Phase C.1 Case 2:防御路径 — `entry["source_uri"]` 指向的物理 mp4 不存在
+    → `domain_video.import_video_entry` return failed,evidence.json 含 1 条
+    `status="failed"` record + error 提及 "not found" / "missing"。
+
+    场景:framework drop race / mp4 被 user 误删 / 跨 run 引用过期 path 等。
+    本 fence 与 unit `test_domain_video_returns_failed_when_source_mp4_missing` 对齐。
+    """
+    run_id = "run_p4_c2_mp4_missing"
+    ue_project, run_folder = _build_video_bundle_via_export(
+        tmp_path, run_id, ue_asset_name="GhostScene",
+    )
+    # 故意删除 framework drop 的 mp4(模拟 user 误删 / race condition)
+    movies_mp4 = ue_project / "Content" / "Movies" / run_id / "MS_GhostScene.mp4"
+    assert movies_mp4.is_file(), "fixture 前置:framework drop mp4 必须存在"
+    movies_mp4.unlink()
+    assert not movies_mp4.exists()
+
+    # Stub unreal + 加 ue_scripts 路径 + 跑 run_import.run
+    _, create_asset_calls = _build_video_stub_unreal(monkeypatch)
+    # 监听 evidence baseline(framework seed 已写 drop_file + create_folder)
+    evidence_before = load_evidence(run_folder / "evidence.json")
+
+    run_import = _import_run_import_fresh(monkeypatch)
+    run_import.run(run_folder=run_folder)
+
+    # 断言 UE-side 新增 evidence record:1 条 import_file_media_source failed
+    evidence_after = load_evidence(run_folder / "evidence.json")
+    ue_records = evidence_after[len(evidence_before):]
+    failed = [
+        e for e in ue_records
+        if e.kind == "import_file_media_source" and e.status == "failed"
+    ]
+    assert len(failed) == 1, (
+        f"期望 1 条 import_file_media_source failed record,"
+        f"实际 ue_records={[(e.kind, e.status, e.error) for e in ue_records]}"
+    )
+    err_msg = (failed[0].error or "").lower()
+    assert ("not found" in err_msg) or ("missing" in err_msg), (
+        f"failed.error 应提及 'not found' 或 'missing',实际:{failed[0].error!r}"
+    )
+    # AssetTools.create_asset MUST NOT 被调(校验前置失败短路)
+    assert create_asset_calls == [], (
+        f"mp4 missing 时 create_asset 不应被调,实际 calls={create_asset_calls}"
+    )
+
+
+def test_p4_domain_video_rejects_non_d12_source_uri(tmp_path: Path, monkeypatch):
+    """Phase C.1 Case 3:source_uri 不以 `Content/Movies/` 起首(legacy /
+    hand-edit / re-run 残留)→ `domain_video.import_video_entry` return failed,
+    error 含 "D12" 或 "Movies/<run_id>/<filename>.mp4 layout" 字样。
+
+    spec MODIFIED domain_video Requirement Scenario 4(round 1 codex F3)。
+    本 fence 与 unit `test_domain_video_rejects_non_d12_source_uri` 对齐。
+    """
+    run_id = "run_p4_c3_non_d12"
+    ue_project, run_folder = _build_video_bundle_via_export(
+        tmp_path, run_id, ue_asset_name="LegacyScene",
+    )
+    # mutate manifest:把 source_uri 从 D12 Movies/ 改成 Generated/(legacy 路径)
+    manifest_path = run_folder / "manifest.json"
+    manifest_json = json.loads(manifest_path.read_text(encoding="utf-8"))
+    legacy_source_uri = f"Content/Generated/{run_id}/MS_LegacyScene.mp4"
+    for entry in manifest_json["assets"]:
+        if entry["asset_kind"] == "file_media_source":
+            entry["source_uri"] = legacy_source_uri
+    manifest_path.write_text(json.dumps(manifest_json), encoding="utf-8")
+    # 物理建文件让"路径不存在"不抢先短路 D12 校验:在 Generated/ 下放一份副本
+    legacy_mp4 = ue_project / "Content" / "Generated" / run_id / "MS_LegacyScene.mp4"
+    legacy_mp4.parent.mkdir(parents=True, exist_ok=True)
+    legacy_mp4.write_bytes(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42")
+
+    # Stub unreal + 跑 run_import.run
+    _, create_asset_calls = _build_video_stub_unreal(monkeypatch)
+    evidence_before = load_evidence(run_folder / "evidence.json")
+
+    run_import = _import_run_import_fresh(monkeypatch)
+    run_import.run(run_folder=run_folder)
+
+    evidence_after = load_evidence(run_folder / "evidence.json")
+    ue_records = evidence_after[len(evidence_before):]
+    failed = [
+        e for e in ue_records
+        if e.kind == "import_file_media_source" and e.status == "failed"
+    ]
+    assert len(failed) == 1, (
+        f"期望 1 条 import_file_media_source failed record(non-D12 source_uri),"
+        f"实际 ue_records={[(e.kind, e.status, e.error) for e in ue_records]}"
+    )
+    err_msg = failed[0].error or ""
+    assert ("D12" in err_msg) or ("Movies" in err_msg) or ("layout" in err_msg.lower()), (
+        f"failed.error 应提及 'D12' / 'Movies' / 'layout',实际:{err_msg!r}"
+    )
+    # create_asset 不应被调(D12 校验前置失败)
+    assert create_asset_calls == [], (
+        f"non-D12 source_uri 校验失败时不应调 create_asset,实际 calls={create_asset_calls}"
+    )
+
+
+def test_p4_domain_video_returns_failed_on_source_target_mismatch(tmp_path: Path, monkeypatch):
+    """Phase C.1 Case 4:source_uri 反推 (run_id, ue_name) 与 target_object_path
+    反推不等(manifest bug / hand-edit / re-run race)→ `domain_video.import_video_entry`
+    return failed,error 含 "mismatch" + 双 (run_id, ue_name) tuple values。
+
+    spec MODIFIED domain_video Requirement Scenario 5(round 1 codex F3)。
+    本 fence 与 unit `test_domain_video_returns_failed_on_source_target_mismatch` 对齐。
+    """
+    run_id = "run_p4_c4_mismatch"
+    ue_project, run_folder = _build_video_bundle_via_export(
+        tmp_path, run_id, ue_asset_name="Scene1",  # framework drop 出 MS_Scene1
+    )
+    # mutate manifest 注入 mismatch:source_uri 用 run_a/MS_Scene1,target 用 run_b/MS_Scene2
+    manifest_path = run_folder / "manifest.json"
+    manifest_json = json.loads(manifest_path.read_text(encoding="utf-8"))
+    mismatched_source_uri = "Content/Movies/run_a/MS_Scene1.mp4"
+    mismatched_target = "/Game/Generated/T/run_b/MS_Scene2"
+    for entry in manifest_json["assets"]:
+        if entry["asset_kind"] == "file_media_source":
+            entry["source_uri"] = mismatched_source_uri
+            entry["target_object_path"] = mismatched_target
+            entry["target_package_path"] = mismatched_target
+    manifest_path.write_text(json.dumps(manifest_json), encoding="utf-8")
+    # source 物理建文件防止"missing"短路 mismatch 校验
+    src_mp4 = ue_project / "Content" / "Movies" / "run_a" / "MS_Scene1.mp4"
+    src_mp4.parent.mkdir(parents=True, exist_ok=True)
+    src_mp4.write_bytes(b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42")
+
+    # Stub unreal + 跑 run_import.run
+    _, create_asset_calls = _build_video_stub_unreal(monkeypatch)
+    evidence_before = load_evidence(run_folder / "evidence.json")
+
+    run_import = _import_run_import_fresh(monkeypatch)
+    run_import.run(run_folder=run_folder)
+
+    evidence_after = load_evidence(run_folder / "evidence.json")
+    ue_records = evidence_after[len(evidence_before):]
+    failed = [
+        e for e in ue_records
+        if e.kind == "import_file_media_source" and e.status == "failed"
+    ]
+    assert len(failed) == 1, (
+        f"期望 1 条 import_file_media_source failed record(mismatch),"
+        f"实际 ue_records={[(e.kind, e.status, e.error) for e in ue_records]}"
+    )
+    err_msg = failed[0].error or ""
+    # error 必须含 "mismatch" 字样 + 双 tuple 值(便于 debug;沿 domain_video.py L88-93)
+    assert "mismatch" in err_msg.lower(), \
+        f"failed.error 应提及 'mismatch',实际:{err_msg!r}"
+    # 双 tuple 值具体性 — domain_video 拼 "source=(run_id, ue_name) vs target=(run_id, ue_name)"
+    assert "run_a" in err_msg and "run_b" in err_msg, (
+        f"failed.error 应同时含 source run_id 'run_a' 和 target run_id 'run_b',"
+        f"实际:{err_msg!r}"
+    )
+    assert "MS_Scene1" in err_msg and "MS_Scene2" in err_msg, (
+        f"failed.error 应同时含 source ue_name 'MS_Scene1' 和 target ue_name 'MS_Scene2',"
+        f"实际:{err_msg!r}"
+    )
+    # create_asset 不应被调(mismatch 校验前置失败)
+    assert create_asset_calls == [], (
+        f"mismatch 校验失败时不应调 create_asset,实际 calls={create_asset_calls}"
+    )
