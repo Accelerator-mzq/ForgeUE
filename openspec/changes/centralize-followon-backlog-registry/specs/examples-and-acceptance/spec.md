@@ -76,6 +76,58 @@ The system SHALL provide a finish-gate fence `_check_followon_continuity` in `to
 - **WHEN** `_check_followon_continuity` runs `git diff <prior_sha> HEAD -- openspec/backlog/active.md` and detects the removal, then searches `archived.md` for `<followon-Y>` entry
 - **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_missing_for_<followon-Y> (active.md entry removed but archived.md has no tombstone row)` and exits with code 2
 
+#### Scenario: active.md self-diff baseline anchors to last archive commit not active.md path commit (round 2 codex F1-r2 fix)
+
+- **GIVEN** the latest archived change is at `openspec/changes/archive/<YYYY-MM-DD>-<prior-id>/` with archive commit `<prior_archive_sha>`
+- **AND** during the current change, an early commit `<early_change_commit>` has REMOVED entry `### \`<followon-Z>\`` from `active.md` AND failed to write a tombstone to `archived.md`
+- **AND** no later commits in the current change have modified `active.md`
+- **WHEN** `_check_followon_continuity` resolves the baseline by `_find_latest_archived_change()` + `git log -1 --format=%H -- openspec/changes/archive/<YYYY-MM-DD>-<prior-id>/` (returning `<prior_archive_sha>`), NOT by `git log -1 -- openspec/backlog/active.md` (which would incorrectly return `<early_change_commit>` and miss the removal)
+- **THEN** the fence detects that `<followon-Z>` was present in `git show <prior_archive_sha>:openspec/backlog/active.md` but absent in `HEAD:openspec/backlog/active.md`, finds no tombstone for `<followon-Z>` in `archived.md`, and emits `[FAIL] _check_followon_continuity: tombstone_missing_for_<followon-Z>` exiting with code 2
+
+#### Scenario: tombstone with mismatched archived_in_change fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** the current active change is `<current-id>`
+- **AND** `active.md` self-diff detected that entry `<followon-W>` was removed
+- **AND** `archived.md` has a corresponding tombstone block but `archived_in_change: some-other-change-id` (not `<current-id>`)
+- **WHEN** `_check_followon_continuity` parses the tombstone fields and validates `archived_in_change` against the current change context
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_archived_in_change_mismatch_<followon-W> (got: some-other-change-id, expected: <current-id>)` and exits with code 2
+
+#### Scenario: tombstone with empty or invalid registry_entry_snapshot fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** the current change has removed `### \`<followon-V>\`` from `active.md` and appended a tombstone to `archived.md` with `registry_entry_snapshot: {}` (empty object) OR malformed JSON OR missing one of the 8 schema fields
+- **WHEN** `_check_followon_continuity` parses the tombstone's `registry_entry_snapshot` field as JSON
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_snapshot_invalid_<followon-V> (reason: empty object | malformed JSON | missing field <name>)` and exits with code 2
+
+#### Scenario: tombstone snapshot field values disagree with baseline active.md entry fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** baseline `active.md` (at last archive commit) had entry `<followon-U>` with `category: workflow-protocol` and `priority: high`
+- **AND** current change removed the entry and appended tombstone with `registry_entry_snapshot: {"id":"<followon-U>","category":"capability-boundary","priority":null,...}` (snapshot disagrees with baseline)
+- **WHEN** `_check_followon_continuity` cross-references snapshot fields against baseline active.md entry
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_snapshot_mismatch_<followon-U> (snapshot.category=capability-boundary but baseline.category=workflow-protocol)` and exits with code 2
+
+#### Scenario: tombstone cancellation_reason disagrees with tasks.md cancel tag fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** the current change `tasks.md` declares `- [x] P12.X (follow-on tracking): <followon-T> [cancelled-superseded by some-new-change]`
+- **AND** the corresponding `archived.md` tombstone has `cancellation_reason: cancelled-not-applicable: out-of-scope (...)`
+- **WHEN** `_check_followon_continuity` cross-references tombstone `cancellation_reason` against tasks.md cancel tag
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_cancellation_reason_mismatch_<followon-T> (tombstone says cancelled-not-applicable but tasks.md says cancelled-superseded)` and exits with code 2
+
+#### Scenario: cancelled-completed with commit not touching follow-on source fails fence (round 2 codex F3-r2 fix)
+
+- **GIVEN** the current change `tasks.md` declares `- [x] P12.X (follow-on tracking): <followon-S> [cancelled-completed: deadbee1234567890]`
+- **AND** the follow-on entry in active.md has `source: archived/2026-04-22-foo/tasks.md` and no `contract_refs`
+- **AND** `git diff-tree --no-commit-id --name-only -r deadbee1234567890` returns `["docs/unrelated/foo.md"]` (does NOT touch `archived/2026-04-22-foo/tasks.md`)
+- **WHEN** `_check_followon_continuity` validates the cancelled-completed tag (Step 3.4 commit-touches check)
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: cancel_commit_does_not_touch_followon_or_provide_evidence_<followon-S>` and exits with code 2
+
+#### Scenario: cancelled-completed with evidence escape hatch passes fence (round 2 codex F3-r2 fix)
+
+- **GIVEN** the current change `tasks.md` declares `- [x] P12.X (follow-on tracking): <followon-R> [cancelled-completed: deadbee1234567890 evidence: notes/cross-cutting-rationale.md]`
+- **AND** `git diff-tree` shows commit does NOT touch the follow-on source / contract_refs (e.g. cross-cutting refactor)
+- **AND** `Path("openspec/changes/<current-id>/notes/cross-cutting-rationale.md").exists()` returns True
+- **WHEN** `_check_followon_continuity` falls through to Step 3.5 (evidence escape hatch)
+- **THEN** the fence accepts the entry as resolved and proceeds to the next gate
+
 ### Requirement: `_check_srs_registry_consistency` blocker fence enforces SRS §7.3 ↔ active.md set equivalence
 
 The system SHALL provide a finish-gate fence `_check_srs_registry_consistency` in `tools/forgeue_finish_gate.py` that runs during the `/forgeue:change-finish` Preflight stage alongside `_check_followon_continuity` (round 1 codex F3 inline writeback). The fence SHALL parse `docs/requirements/SRS.md` §7.3 TBD table, extract every TBD-XXX row whose status field is one of `❌` / `⚠️ baseline` / `⏳` (i.e. active TBD), and compare the set against `openspec/backlog/active.md` entries with `category: requirements-tbd-pointer`. The two sets MUST be equal (set equality, not subset). On mismatch, the fence SHALL emit `[FAIL] _check_srs_registry_consistency: srs_registry_set_mismatch (added: ..., removed: ...)` and exit with code 2. Additionally, when SRS §7.3 status changes from active to ✅ (complete), the corresponding `requirements-tbd-pointer` entry in active.md MUST be migrated to archived.md as `cancelled-completed` within the same archive commit; otherwise the fence SHALL emit `[FAIL] _check_srs_registry_consistency: srs_completed_tbd_still_active_in_registry (TBD-XXX)` and exit with code 2.

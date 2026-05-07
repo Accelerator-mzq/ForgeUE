@@ -45,12 +45,22 @@
 - [ ] P2.a.3 加 helper `_parse_registry_md(active_md_path)`:解析 `openspec/backlog/active.md` H3 entries + 8 字段 schema(沿 既有 `_parse_yaml_subset` 同款 stdlib-only 风格)
 - [ ] P2.a.4 加 helper `_parse_archived_md(archived_md_path)`:解析 `openspec/backlog/archived.md` H3 tombstone entries + 4 字段(`archived_at_commit` / `archived_in_change` / `cancellation_reason` / `registry_entry_snapshot`)
 
-### P2.b — fence 阶段 1:active.md self-diff(round 1 F1)
+### P2.b — fence 阶段 1:active.md self-diff(round 1 F1 + round 2 F1-r2 + F2-r2 fix)
 
-- [ ] P2.b.1 加 helper `_get_prior_archive_commit_for_active_md()`:`subprocess.run(["git", "log", "-1", "--format=%H", "--", "openspec/backlog/active.md"])` 取 active.md 上一 archive commit sha
-- [ ] P2.b.2 加 helper `_get_active_md_at_commit(commit)`:`subprocess.run(["git", "show", "<commit>:openspec/backlog/active.md"])` 读历史版本
+- [ ] P2.b.1 加 helper `_get_change_baseline_commit()`(**round 2 F1-r2 fix** — 原 `_get_prior_archive_commit_for_active_md` 用 `git log -1 -- active.md` 已被 codex round 2 challenge 漏检已提交删除;改用上一 archive commit 锚定):
+  - `_find_latest_archived_change()` 找最新 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` 目录
+  - `subprocess.run(["git", "log", "-1", "--format=%H", "--", str(latest_archived_dir)])` 取该目录最近 touched commit(即上一 ship squash merge commit)
+  - 返回此 sha 作 baseline;不跟随 active.md 漂移
+- [ ] P2.b.2 加 helper `_get_active_md_at_commit(commit)`:`subprocess.run(["git", "show", "<commit>:openspec/backlog/active.md"])` 读历史版本(若 baseline 不含 active.md → 退化为空 dict)
 - [ ] P2.b.3 加 helper `_diff_registry_entries(prior, current)`:返回 added / removed / status_changed entry id 集合
-- [ ] P2.b.4 fence 主流程 active.md self-diff 校验:对每个 removed / status_changed-to-cancelled entry,在 archived.md 中查 tombstone 行;缺 → BLOCKER `tombstone_missing_for_<id>`
+- [ ] P2.b.4 加 helper `_validate_tombstone_consistency(tombstone, baseline_entry, current_change_id, tasks_cancel_tag)`(**round 2 F2-r2 fix**)— 5 项一致性校验:
+  - tombstone.id 与 H3 标题 + baseline_entry.id 匹配
+  - tombstone.snapshot 是 valid JSON object 且含 8 schema 字段
+  - tombstone.snapshot 字段值与 baseline_entry 一致
+  - tombstone.archived_in_change 等于 current_change_id
+  - tombstone.cancellation_reason 与 tasks_cancel_tag 类型 + ref 一致
+  - 任一不一致返回 BLOCKER reason str
+- [ ] P2.b.5 fence 主流程 active.md self-diff 校验:对每个 removed / status_changed-to-cancelled entry,调用 P2.b.4 helper 校验 tombstone consistency;缺 → BLOCKER `tombstone_missing_for_<id>`,不一致 → 具体 BLOCKER reason
 
 ### P2.c — fence 阶段 2:archived tasks.md 兜底源
 
@@ -60,7 +70,14 @@
 
 - [ ] P2.d.1 加 helper `_validate_cancel_tag_superseded(tag)`:解析 `[cancelled-superseded by <new-change-id>]` tag 提取 id;`Path("openspec/changes/<id>").exists() OR Path("openspec/changes/archive").glob("*-<id>")` 任一 → PASS;否则返回 BLOCKER reason
 - [ ] P2.d.2 加 helper `_validate_cancel_tag_not_applicable(tag)`:解析 `[cancelled-not-applicable: <reason>]` tag 提取 reason 第一 token;match 5 类 enum(`retire-superseded` / `out-of-scope` / `scope-changed` / `obsolete` / `infeasible`)→ PASS;否则返回 BLOCKER reason
-- [ ] P2.d.3 加 helper `_validate_cancel_tag_completed(tag)`:解析 `[cancelled-completed: <commit-ref>]` tag 提取 commit-ref;`subprocess.run(["git", "rev-parse", "--verify", "<commit-ref>"])` exit 0 → PASS;否则返回 BLOCKER reason
+- [ ] P2.d.3 加 helper `_validate_cancel_tag_completed(tag, followon_entry)`(**round 2 F3-r2 fix** — strict commit-touches + escape hatch):
+  - 解析 tag 格式:`[cancelled-completed: <commit-ref>]` OR `[cancelled-completed: <commit-ref> evidence: <path>]`
+  - Step 3.1:`subprocess.run(["git", "rev-parse", "--verify", "<commit-ref>"])` exit 0 → 进 step 3.2;否则 BLOCKER `cancel_commit_not_found`
+  - Step 3.2:`subprocess.run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "<commit-ref>"])` 取 touched_files
+  - Step 3.3:从 followon_entry 取 `source` + `contract_refs` 字段,构成 relevant_paths 集合
+  - Step 3.4:`touched_files ∩ relevant_paths ≠ ∅` → PASS
+  - Step 3.5:否则解析 tag 是否含 `evidence: <path>` 子段,`Path("<path>").exists()` → PASS(escape hatch)
+  - Step 3.6:都不通过 → BLOCKER `cancel_commit_does_not_touch_followon_or_provide_evidence`
 - [ ] P2.d.4 fence 主流程 cancel ref strict validation 校验:对每个 cancelled-* declaration 调对应 helper,汇总 BLOCKER
 
 ### P2.e — archived.md tombstone append-only 校验(round 1 F1 衍生)
@@ -162,5 +179,5 @@
 - [ ] P12.5 (follow-on tracking placeholder):若 P5 codex review 暴露 fence 边界条件未覆盖,新 follow-on `fix-followon-continuity-fence-historical-replay`(归档不动原则,不重写历史 archived change tasks.md;若 fence 误报阻断 archived change replay 走独立 follow-on 修)
 - [ ] P12.6 (follow-on tracking placeholder):`automate-followon-registry-srs-sync`(若实证手工同步 registry ↔ SRS §7.3 cross-link 成本高,启动自动化脚本;round 1 codex F3 inline writeback 已升级为 fence enforce 静态校验,自动化脚本仍可作 ergonomics 提升 — 留 follow-on)
 - [ ] P12.7 (follow-on tracking placeholder):`prioritize-followon-backlog`(若 user 实证手工挑 follow-on 困难,加 priority 评估机制;沿 design.md Non-Goal)
-- [ ] P12.8 (follow-on tracking placeholder,round 1 F2 inline writeback 衍生):`tighten-cancel-completed-commit-touches-validation` — `cancel_completed` commit ref 校验当前仅 git rev-parse exit 0(commit 存在性);若实证 controller 用任意 unrelated commit ref 绕过 fence,启动 follow-on 加 commit-touches-related-files 校验(`git diff --name-only <commit>` vs `contract_refs` 交集非空);trade-off 偏宽松(过严会卡死有效 cross-cutting commit 场景),留升级路径
+- [x] P12.8 (follow-on tracking) [cancelled-completed-by-this-change: round 2 F3-r2 inline writeback]:**`tighten-cancel-completed-commit-touches-validation`** — round 2 codex F3-r2 challenge 后拉回 current scope(原 round 1 决议留 follow-on 被实证不耐:任何 doc-only / unrelated commit 都通过 fence 是语义绕过非 ergonomics);本 change P2.d.3 helper 实施 strict commit-touches + `evidence: <path>` escape hatch;follow-on 实施完成于本 change archive commit
 - [ ] P12.9 (follow-on tracking placeholder,round 1 F2 inline writeback 衍生):`expand-cancel-not-applicable-reason-enum` — 当前 5 类 reason enum(`retire-superseded` / `out-of-scope` / `scope-changed` / `obsolete` / `infeasible`)若实证不足,启动 follow-on 扩 enum;沿 retire-parallel-and-worktree-fully + ledger-binding + executable-enforcement 期实证典型场景,5 类应足够,但留扩展路径

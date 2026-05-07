@@ -78,7 +78,7 @@ User 拍板 A + C 组合(`openspec/backlog/active.md` 集中 registry + `_check_
   - **inherited**:`- [x] P12.X (follow-on tracking):**<followon-id>**(沿前一 change 继承)— ...`(checkbox checked + 显式声明继承)
   - **cancelled-superseded**:`- [x] P12.X (follow-on tracking):**<followon-id>** [cancelled-superseded by <new-change-id>] — ...`;**fence 校验**(round 1 F2):`<new-change-id>` 必须解析存在 — `Path("openspec/changes/<id>").exists() OR Path("openspec/changes/archive").glob("*-<id>")` 任一为真,否则 BLOCKER `cancel_ref_not_found`
   - **cancelled-not-applicable**:`- [x] P12.X (follow-on tracking):**<followon-id>** [cancelled-not-applicable: <reason>] — ...`;**fence 校验**(round 1 F2):`<reason>` 必须前缀来自 5 类 enum:`retire-superseded` / `out-of-scope` / `scope-changed` / `obsolete` / `infeasible`;允许冒号后补充 free-form 文字(如 `[cancelled-not-applicable: out-of-scope (本 change 不修无关 bug)]`),否则 BLOCKER `cancel_reason_not_in_enum`
-  - **cancelled-completed**:`- [x] P12.X (follow-on tracking):**<followon-id>** [cancelled-completed: <commit-ref>] — ...`;**fence 校验**(round 1 F2):`subprocess.run(["git", "rev-parse", "--verify", "<commit-ref>"])` exit 0 — commit 存在性,否则 BLOCKER `cancel_commit_not_found`;**不**校验 commit 触达特定文件(过严会卡死有效 cross-cutting commit;留 follow-on `tighten-cancel-completed-commit-touches-validation`)
+  - **cancelled-completed**:`- [x] P12.X (follow-on tracking):**<followon-id>** [cancelled-completed: <commit-ref>] — ...` OR `[cancelled-completed: <commit-ref> evidence: <path>]`(round 2 F3-r2 fix:加 `evidence:` escape hatch);**fence 校验**(round 1 F2 + round 2 F3-r2):`git rev-parse --verify` 存在性 + `git diff-tree --no-commit-id --name-only -r` 触达文件 vs follow-on `source` / `contract_refs` 集合 intersect;非空 → PASS;否则需 `evidence: <path>` 显式 escape hatch 且 `Path.exists()` → PASS;都不通过 → BLOCKER `cancel_commit_does_not_touch_followon_or_provide_evidence`
 - 无声明 → fence BLOCKER + 列出未声明 follow-on id;archive 阻断
 - **同 archive cycle 原子迁移**(round 1 F1):active.md → archived.md 必须在同一 archive cycle 完成,不能留到下一 archive(否则 tombstone 缺失);finish_gate 调用 archive 前必须见到所有 cancelled-* status 已迁移
 - registry 中对应 entry status 同步更新(inherited status 在 active.md 不变;cancelled-* 移到 archived.md tombstone)
@@ -90,7 +90,7 @@ User 拍板 A + C 组合(`openspec/backlog/active.md` 集中 registry + `_check_
 - (B) blocker(无 cancel 协议)— 拒绝(retire 类被卡死)
 - (C) blocker + cancel 协议 + free-form reason — 拒绝(round 1 codex F2 challenge:syntactic seal 让 controller hand-edit drift 仍可绕过)
 - (D) blocker + cancel 协议 + strict validation(选;round 1 F2 inline writeback)
-- commit 触达校验:推迟到 follow-on `tighten-cancel-completed-commit-touches-validation`(过严会卡死有效 cross-cutting commit;trade-off 偏宽松 + 留升级路径)
+- commit 触达校验:**round 2 F3-r2 拉回 current scope**(原 round 1 留 follow-on 决策被 codex round 2 challenge:任意 doc-only / unrelated commit 都通过 fence 是语义绕过非 ergonomics;Claude 接受 strict commit-touches + escape hatch 折中;follow-on `tighten-cancel-completed-commit-touches-validation` 标 cancelled-completed-by-this-change)
 
 ### D-FenceLocation(fence 触发位置:archive only)
 
@@ -147,12 +147,22 @@ followon_continuity:
 
 `_check_followon_continuity` 实现走 stdlib-only(沿 ForgeUE 8 工具同款约束),加 git subprocess 调用(沿 finish_gate 既有 git 调用模式);分 4 阶段:
 
-**阶段 1 — active.md self-diff(主源,round 1 F1)**:
-1. `subprocess.run(["git", "log", "-1", "--format=%H", "--", "openspec/backlog/active.md"])` 取 active.md 上一 commit sha
-2. `subprocess.run(["git", "show", "<prior_sha>:openspec/backlog/active.md"])` 读上一版本内容
-3. 解析当前版本 + 上一版本各自 H3 entries + status 字段(用 `_parse_registry_md` helper,新写;沿 既有 `_parse_yaml_subset` 同款 stdlib-only 风格)
-4. 计算 entry-set diff:added / removed / status_changed
-5. 对每个 removed / status_changed-to-cancelled-* entry,在 archived.md 中查 tombstone 行(`id` + `archived_at_commit` + `archived_in_change` 字段);缺 → BLOCKER `tombstone_missing_for_<id>`
+**阶段 1 — active.md self-diff(主源,round 1 F1 + round 2 F1-r2 fix)**:
+
+> **round 2 F1-r2 fix**(2026-05-07):baseline 不能用 `git log -1 -- active.md`(active.md 最新 path commit)— controller 早期 commit 删 entry 后该 commit 即 baseline,后续 diff 为空,已提交删除被漏检。改用**上一 archive commit**作 baseline(沿 last_archive_commit 正确语义)。
+
+1. `_find_latest_archived_change()` 返回 `openspec/changes/archive/<YYYY-MM-DD>-<id>/` Path(沿 D-FenceParseStrategy 阶段 2 同款 helper 复用)
+2. `subprocess.run(["git", "log", "-1", "--format=%H", "--", str(latest_archived_dir)])` 取该 archive 目录最近 touched commit(即上一 ship 的 squash merge commit)作 `<baseline_sha>`
+3. `subprocess.run(["git", "show", "<baseline_sha>:openspec/backlog/active.md"])` 读 baseline 版本内容(若 active.md 在 baseline 不存在 — 即首次启用本协议 — 退化为空 dict)
+4. 解析当前版本 + baseline 版本各自 H3 entries + status 字段(用 `_parse_registry_md` helper,新写;沿 既有 `_parse_yaml_subset` 同款 stdlib-only 风格)
+5. 计算 entry-set diff:added / removed / status_changed
+6. 对每个 removed / status_changed-to-cancelled-* entry,在 archived.md 中查 tombstone 行 + 解析 `registry_entry_snapshot` JSON 校验**5 项一致性**(round 2 F2-r2 fix):
+   - `id` 与 H3 标题匹配 + 与原 active.md entry id 一致
+   - `snapshot` 是 valid JSON object 且含 8 schema 字段(`id` / `source` / `description` / `trigger` / `category` / `retire-impact-status` / `priority` / `status`)
+   - `snapshot` 字段值与 baseline active.md 中该 entry 一致(防 controller 写错快照)
+   - `archived_in_change` 等于当前 change id
+   - `cancellation_reason` 与本 change tasks.md 中该 entry cancel tag 类型 + ref 一致
+7. 任一不一致 → BLOCKER + 列具体不一致字段(沿 v1 advisory fence 出错信息风格)
 
 **阶段 2 — archived tasks.md 兜底源**:
 1. 找 `openspec/changes/archive/` 下最新 change(沿 archive 目录命名 `YYYY-MM-DD-<id>` + git log 最新 archive commit 双重锁定)
@@ -162,7 +172,13 @@ followon_continuity:
 **阶段 3 — cancel ref strict validation(round 1 F2,对每个 cancelled-* declaration)**:
 1. **cancelled-superseded**:解析 `[cancelled-superseded by <new-change-id>]` tag 提取 id;`Path("openspec/changes/<id>").exists() OR Path("openspec/changes/archive").glob("*-<id>")` 任一 → PASS;否则 BLOCKER `cancel_ref_not_found_<id>_superseded_by_<bad-ref>`
 2. **cancelled-not-applicable**:解析 `[cancelled-not-applicable: <reason>]` tag 提取 reason 第一 token(冒号到第一空格 / 行尾 / 括号);match 5 类 enum → PASS;否则 BLOCKER `cancel_reason_not_in_enum_<id>_got_<bad-reason>`
-3. **cancelled-completed**:解析 `[cancelled-completed: <commit-ref>]` tag 提取 commit-ref;`subprocess.run(["git", "rev-parse", "--verify", "<commit-ref>"])` exit 0 → PASS;否则 BLOCKER `cancel_commit_not_found_<id>_got_<bad-ref>`
+3. **cancelled-completed**(round 1 F2 + round 2 F3-r2 fix):tag 格式扩展为 `[cancelled-completed: <commit-ref>]` OR `[cancelled-completed: <commit-ref> evidence: <path>]`;校验顺序:
+   - **Step 3.1**:解析 commit-ref 子段;`subprocess.run(["git", "rev-parse", "--verify", "<commit-ref>"])` exit 0 → 进 step 3.2;否则 BLOCKER `cancel_commit_not_found_<id>_got_<bad-ref>`
+   - **Step 3.2**:`subprocess.run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "<commit-ref>"])` 取 commit 触达文件集合 `touched_files`
+   - **Step 3.3**:解析 follow-on entry 的 `source` 字段 + `contract_refs` 字段(从 active.md / archived.md 当时 entry 状态取);构成 `relevant_paths` 集合
+   - **Step 3.4**:若 `touched_files ∩ relevant_paths ≠ ∅` → PASS(commit 触达 follow-on 主路径)
+   - **Step 3.5**:否则解析 tag 是否含 `evidence: <path>` 子段;`Path("<path>").exists()` → PASS(escape hatch:cross-cutting commit 显式 evidence 路径)
+   - **Step 3.6**:都不通过 → BLOCKER `cancel_commit_does_not_touch_followon_or_provide_evidence_<id>_got_<bad-ref>`
 
 **阶段 4 — 输出汇总**:全 PASS → fence exit 0;任一 BLOCKER → exit 2 + 列所有 BLOCKER reason(沿 v1 advisory fence 出错信息风格)
 
@@ -186,13 +202,20 @@ followon_continuity:
 - **archived_at_commit**: <git sha,40 字符 lower-case hex>
 - **archived_in_change**: <change-id,触发归档的 change>
 - **cancellation_reason**: <one of: cancelled-superseded by <ref> | cancelled-not-applicable: <enum>+free-form | cancelled-completed: <commit-ref> | inherited-then-completed>
-- **registry_entry_snapshot**: <原 active.md entry 8 字段拷贝,JSON 单行;留 trace 用,fence 不解析>
+- **registry_entry_snapshot**: <原 active.md entry 8 字段拷贝,JSON 单行;**fence 解析校验**(round 2 F2-r2 fix):必须 valid JSON object + 含 8 schema 字段 + 字段值与 baseline active.md entry 一致;不一致 → BLOCKER `tombstone_snapshot_mismatch_<id>`>
 ```
 
 **append-only 强约束**:
 - 删除 archived.md 既有行 → fence BLOCKER `archived_md_history_lost`(沿 git diff `git diff <commit> -- openspec/backlog/archived.md` 检测删除行)
 - 改 archived.md 既有 entry 字段 → fence BLOCKER `archived_md_immutable_field_modified`(沿 git diff per-line 检测)
 - 仅允许新 entry append 到文件末尾
+
+**新 entry 校验**(round 2 F2-r2 fix;沿 D-FenceParseStrategy 阶段 1 第 6 步同款 5 项一致性校验):
+- `id` 与 H3 标题匹配 + 与 active.md baseline 中被删除 entry 的 id 一致(若 status_changed-to-cancelled,与 baseline status=active 时的 id 一致)
+- `archived_at_commit` 是 valid 40-char hex sha;`subprocess.run(["git", "rev-parse", "--verify", "<sha>"])` exit 0
+- `archived_in_change` 等于当前 active change id(防 controller 写错指向别的 change)
+- `cancellation_reason` 与本 change tasks.md 中该 entry cancel tag 类型 + ref 一致(防 controller tag 与 tombstone reason 漂移)
+- `registry_entry_snapshot` 是 valid JSON object 且 8 字段齐全(`id` / `source` / `description` / `trigger` / `category` / `retire-impact-status` / `priority` / `status`),字段值与 baseline active.md entry 一致
 
 **rationale**:tombstone protocol 是 F1 fix 的关键支撑 — active.md 删 entry 必须有 archived.md 对应行,否则 fence 不能区分"controller hand-edit drift 偷偷删"vs "正当 cancel 已记录";append-only 保证历史完整性(沿 ledger-binding 期 append-only 语义同款,但简化无 HMAC chain — retire 后回到 v1 advisory baseline,本 change 不引入 cryptographic enforcement);schema 4 字段控制简洁,实施成本低。
 

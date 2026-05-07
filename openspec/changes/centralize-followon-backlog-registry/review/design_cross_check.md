@@ -226,3 +226,112 @@ writeback 实施完成 commit `125eae1`(单 batch;含 sync adjustments for fix-f
 
 `## A` 冻结的 5 期望 codex challenge surface 中,F1 + F2 是 codex 真贡献(`## A.5` Claude 未预期 surface);F3 + F4 也命中 obvious fix。round 1 验证 codex review hook 价值 — 若没跑 codex,本 change 会以"换文档位置"伪 fix 状态 ship。
 
+---
+
+## F. Round 2 codex Findings × Resolution
+
+Round 2 codex `/codex:adversarial-review` job `b876734jn`(2026-05-07T16:48:00Z)verdict `needs-attention`,3 finding 全 [承 round1-F1] / [承 round1-F2] 标识(显式承接 round 1 同源,不重复 raise)。
+
+| ID | P | Finding | file:line | Independent Verify | Resolution | writeback_commit |
+|---|---|---|---|---|---|---|
+| **F1-r2** | P1 high | active.md self-diff 基线选错(用 `git log -1 -- active.md` 而非上一 archive commit;已提交删除被 baseline 跟着移动而漏检) | `execution/micro_tasks.md:342` (helper `_get_prior_archive_commit_for_active_md`) + `design.md` D-FenceParseStrategy 阶段 1 步骤 1 | ✅ TRUE — micro_tasks 实施 baseline 是 active.md 最新 commit;controller 早期 commit 删 entry 后 baseline 跟随漂移,后续 diff 为空 | **accepted-codex** | (待 fix commit) |
+| **F2-r2** | P1 high | tombstone `registry_entry_snapshot` design 写"留 trace,fence 不解析";controller 删 active.md entry 后 append 任意 placeholder tombstone(`{}` snapshot / 错 archived_in_change / 错 cancellation_reason)即通过 fence | `design.md:189` (`registry_entry_snapshot ... 留 trace 用,fence 不解析`)+ `specs/...` 4 字段 scenario 仅校字段存在 | ✅ TRUE — tombstone fence 退化成"删除必须有一行看似墓碑的文本";完整性 / id 匹配 / 字段一致性 / cancellation_reason ↔ tasks.md tag 一致性均无校验 | **accepted-codex** | (待 fix commit) |
+| **F3-r2** | P2 med | `cancelled-completed` 仅 git rev-parse 存在性,任何 doc-only / unrelated commit 都通过;round 1 F2 留 follow-on 的 commit-touches 校验是 trade-off bypass 而非 ergonomics | `design.md:81 + 93` (`不校验 commit 触达特定文件,留 follow-on tighten-cancel-completed-commit-touches-validation`)+ `specs/...:25-28` | ✅ TRUE — round 1 留 follow-on 的决策让 cancelled-completed 沦为 typo-only check | **disputed-pending(user 拍板;scope expansion)** | (待 user 决议) |
+
+### F.1 Independent file:line verification
+
+| ID | Codex claim | Claude verify | Verdict |
+|---|---|---|---|
+| F1-r2 | micro_tasks.md baseline = `git log -1 -- active.md` | Read `execution/micro_tasks.md:342` 实测 helper 实装 `_get_prior_archive_commit_for_active_md` body `["git", "log", "-1", "--format=%H", "--", "openspec/backlog/active.md"]` — codex claim 准确;design.md L138 写了 baseline 概念但 micro_tasks 实施漂偏 | ✅ TRUE |
+| F2-r2 | design.md `registry_entry_snapshot ... 留 trace 用,fence 不解析` | Read `design.md:189` 实测原文一致;spec.md tombstone scenario 只校 4 字段存在,无 snapshot 解析 + 一致性校验 | ✅ TRUE |
+| F3-r2 | design.md `不校验 commit 触达特定文件` + 留 follow-on | Read `design.md:81 + 93` 实测原文一致;spec.md scenario `valid commit ref passes`(L25-28)只校 git rev-parse exit 0 | ✅ TRUE |
+
+### F.2 Resolution disposition
+
+- **F1-r2 + F2-r2 accepted-codex**(Claude 自主):design implementation correctness fix,**非 scope 调整**;round 1 F1 立场翻转主体(active.md hard source-of-truth + tombstone protocol)成立,只是补 implementation 漏洞(baseline anchoring + snapshot 校验)— 自主 inline writeback
+- **F3-r2 disputed-pending**(升级 user):虽然是 design implementation issue,但承 round 1 F2 我推荐"commit-touches 留 follow-on"是 Claude implementation choice;user round 1 (a) accept 时未显式 dispose 此 trade-off。Codex round 2 给两个 fix option:
+  - **(α) 拉回 current scope:strict commit-touches + evidence escape hatch**(commit 触达 follow-on `source` / `contract_refs` / `registry entry` / `evidence: <path>` 之一即 PASS;后者用 escape hatch 处理 cross-cutting commit)
+  - **(β) cancelled-completed 降级 advisory-only**(不阻断 fence,变 WARN)
+  - **(γ) 沿 round 1 决议保留 follow-on**(disputed-permanent-drift,需 ≥50 字 reason + design.md `## Reasoning Notes` anchor)
+
+### F.3 Round 2 disputed_open
+
+- F1-r2 + F2-r2 accept;F3-r2 disputed-pending → **disputed_open: 1**
+- S3 推 apply 阻断条件触发(disputed_open > 0 阻断;沿 design.md §3 Cross-check Protocol)
+
+### F.4 升级 user 拍板请求(F3-r2 scope decision)
+
+详见 `## G. Escalation to User round 2` 段。
+
+---
+
+## G. Escalation to User — round 2 F3-r2(`cancelled-completed` commit-touches scope)
+
+### G.1 现状
+
+Round 1 决议留 follow-on `tighten-cancel-completed-commit-touches-validation`(scope expansion 顾虑:过严卡死 cross-cutting commit)。Round 2 codex 复议:任何 doc-only / unrelated commit 都通过 fence,round 1 strict validation 在 cancelled-completed 路径仍是语义绕过。
+
+### G.2 3 个 option
+
+**(α) 拉回 current scope:strict commit-touches + evidence escape hatch**
+
+实现:
+- 解析 follow-on entry `source` / `contract_refs` 字段
+- `subprocess.run(["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_ref])` 取 commit 触达文件
+- 与 follow-on `source` / `contract_refs` 集合 intersect;非空 → PASS
+- 否则检 tag 是否含 `evidence: <path>` 子段(如 `[cancelled-completed: <commit-ref> evidence: notes/cross-cutting-rationale.md]`),`Path.exists()` → PASS
+- 都不通过 → BLOCKER `cancel_commit_does_not_touch_followon_or_provide_evidence`
+
+成本:~30-50 LOC fence + 1 helper + 2 spec scenario;tag 格式语法扩展(`evidence:` sub-tag)
+
+**(β) cancelled-completed 降级 advisory-only**
+
+实现:
+- fence 校 git rev-parse 存在 → PASS;不存在 → WARN(advisory)而非 BLOCKER
+- 不引入 commit-touches 校验
+- spec 改 `cancelled-completed` 描述为 advisory-only
+
+成本:~10 LOC fence 调整 + 1 spec edit;不引入新校验逻辑
+
+**(γ) 沿 round 1 决议保留 follow-on(disputed-permanent-drift)**
+
+实现:
+- design.md 加 `## Reasoning Notes` `cancel-completed-commit-touches-deferred` anchor + ≥50 字 rationale
+- evidence frontmatter `drift_decision: disputed-permanent-drift`
+- 实施 follow-on `tighten-cancel-completed-commit-touches-validation`(沿原计划)
+
+成本:无 fence 改动;evidence 额外字段 + Reasoning Notes anchor 写作
+
+### G.3 Trade-off 对比
+
+| 维度 | (α) strict + escape | (β) advisory | (γ) defer follow-on |
+|---|---|---|---|
+| 防 controller drift | 强(commit 必须触达相关文件 + escape hatch 显式) | 弱(advisory 不阻断) | 弱(沿 round 1 现状) |
+| 实施成本 | 中(~30-50 LOC + escape hatch parser) | 低(~10 LOC) | 0(本 change 内) |
+| Cross-cutting commit 兼容 | 好(escape hatch 显式说 evidence) | 好(无校验) | 不适用 |
+| Scope 扩张 | +1 fence helper + 1 spec field + 2 scenario | 0(只是降级语义) | 0 |
+| 与 round 1 F2 立场协调 | 强化(strict 完整) | 削弱(strict 退一步) | 保留(strict 留 follow-on 实施) |
+
+### G.4 Claude 推荐:**(α)**
+
+理由:
+- round 1 F2 立场已是"strict validation 防 hand-edit drift",(β) advisory 退一步会让 round 1 F2 决议自相矛盾
+- (γ) 留 follow-on 实证不耐 — round 2 codex 再次 challenge,说明守门 gap 在 hand-edit cancelled-completed 路径上仍开放
+- (α) escape hatch 处理 cross-cutting commit 风险 — 用户必须显式提供 evidence path,而非"任意 commit ref 都通过"
+- 实施成本 ~30-50 LOC 在本 change scope 可控
+- 沿 round 1 同款 stdlib-only(`git diff-tree --name-only` + `Path.exists()`)
+
+### G.5 接受 (α) 后的 scope 影响
+
+| 维度 | F1-r2 + F2-r2 accept 后 | + F3-r2 (α) accept |
+|---|---|---|
+| 4 deliverable 数 | 4(不变) | 4(不变;commit-touches 是 fence 内部强化) |
+| Fence LOC | +50(F1-r2 baseline fix + F2-r2 snapshot validation) | +30-50(F3-r2 commit-touches + escape hatch) |
+| Test case | +3-5(F1-r2 baseline + F2-r2 snapshot scenarios) | +2(F3-r2 commit-touches + escape hatch scenarios) |
+| Spec scenario | +3 | +2 |
+| Tag schema 扩展 | 0 | `evidence: <path>` sub-tag |
+| 工作量 | +0.3 day | +0.3-0.5 day |
+
+请你拍 (α) / (β) / (γ)。
+
+

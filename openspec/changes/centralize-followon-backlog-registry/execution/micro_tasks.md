@@ -334,17 +334,35 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## P2.b — Fence 阶段 1:active.md self-diff(F1 fix)
+## P2.b — Fence 阶段 1:active.md self-diff(F1 + F1-r2 + F2-r2 fix)
 
-### tasks.md#P2.b.1-P2.b.4
+### tasks.md#P2.b.1-P2.b.5
 
-- [ ] **Step 1: 写 test**(`test_check_followon_continuity_active_md_deletion_without_tombstone_blocks`,沿 spec.md scenario "active.md entry deletion without archived.md tombstone fails fence")
-- [ ] **Step 2-4 红→绿**:实装 `_get_prior_archive_commit_for_active_md` + `_get_active_md_at_commit` + `_diff_registry_entries` + 主流程 self-diff 校验
+- [ ] **Step 1: 写 test**(沿 spec.md scenarios "active.md entry deletion without tombstone" + "self-diff baseline anchors to last archive commit"):
 
 ```python
-def _get_prior_archive_commit_for_active_md(repo: Path) -> str | None:
+def test_followon_continuity_baseline_anchors_to_archive_commit_not_active_md_path(tmp_path, monkeypatch):
+    """Round 2 F1-r2 fix: baseline must come from latest archive directory commit,
+    not from `git log -1 -- active.md` (which would track active.md mods and miss
+    early-commit deletions in the current change)."""
+    # Setup: tmp git repo + archived dir + active.md with entry-X
+    # Simulate early-commit deletion of entry-X from active.md without tombstone
+    # Run fence; expect tombstone_missing_for_entry-X BLOCKER
+    ...
+```
+
+- [ ] **Step 2-4 红→绿**:实装 `_get_change_baseline_commit` + `_get_active_md_at_commit` + `_diff_registry_entries` + `_validate_tombstone_consistency` + 主流程 self-diff 校验
+
+```python
+def _get_change_baseline_commit(repo: Path) -> str | None:
+    """Round 2 F1-r2 fix: baseline = last archive commit (anchor to archived dir
+    last touched commit), NOT active.md path commit (which drifts when current
+    change commits modify active.md)."""
+    latest_archived = _find_latest_archived_change(repo)
+    if latest_archived is None:
+        return None
     result = subprocess.run(
-        ["git", "log", "-1", "--format=%H", "--", "openspec/backlog/active.md"],
+        ["git", "log", "-1", "--format=%H", "--", str(latest_archived)],
         cwd=repo, capture_output=True, text=True, check=False,
     )
     sha = result.stdout.strip()
@@ -369,15 +387,48 @@ def _diff_registry_entries(prior: dict, current: dict) -> dict[str, list[str]]:
             and current[id_].get("status", "").startswith("cancelled-")
         ],
     }
+
+def _validate_tombstone_consistency(
+    tombstone: dict,
+    baseline_entry: dict,
+    current_change_id: str,
+    tasks_cancel_tag: dict,
+) -> str | None:
+    """Round 2 F2-r2 fix: 5-point consistency check for tombstone vs baseline + cancel tag."""
+    import json
+    if tombstone.get("id") != baseline_entry.get("id"):
+        return f"tombstone_id_mismatch_got_{tombstone.get('id')}_expected_{baseline_entry.get('id')}"
+    snapshot_raw = tombstone.get("registry_entry_snapshot", "")
+    try:
+        snapshot = json.loads(snapshot_raw) if isinstance(snapshot_raw, str) else snapshot_raw
+    except json.JSONDecodeError:
+        return f"tombstone_snapshot_invalid_{tombstone.get('id')}_malformed_json"
+    if not isinstance(snapshot, dict):
+        return f"tombstone_snapshot_invalid_{tombstone.get('id')}_not_object"
+    required = {"id", "source", "description", "trigger", "category", "retire-impact-status", "priority", "status"}
+    missing = required - set(snapshot.keys())
+    if missing:
+        return f"tombstone_snapshot_invalid_{tombstone.get('id')}_missing_field_{','.join(sorted(missing))}"
+    for field in ("category", "source"):  # critical fields that must match baseline
+        if snapshot.get(field) != baseline_entry.get(field):
+            return f"tombstone_snapshot_mismatch_{tombstone.get('id')}_{field}_got_{snapshot.get(field)}_baseline_{baseline_entry.get(field)}"
+    if tombstone.get("archived_in_change") != current_change_id:
+        return f"tombstone_archived_in_change_mismatch_{tombstone.get('id')}_got_{tombstone.get('archived_in_change')}_expected_{current_change_id}"
+    expected_reason_prefix = tasks_cancel_tag.get("type")  # cancelled-superseded | cancelled-not-applicable | cancelled-completed
+    if not tombstone.get("cancellation_reason", "").startswith(expected_reason_prefix):
+        return f"tombstone_cancellation_reason_mismatch_{tombstone.get('id')}_tombstone_{tombstone.get('cancellation_reason')}_tasks_{expected_reason_prefix}"
+    return None
 ```
 
 ### Commit P2.b
 
 ```bash
-git commit -m "feat(forgeue): centralize-followon-backlog-registry P2.b — fence stage 1 active.md self-diff (F1 fix)
+git commit -m "feat(forgeue): centralize-followon-backlog-registry P2.b — fence stage 1 active.md self-diff + tombstone consistency (F1 + F1-r2 + F2-r2 fix)
 
-Tasks: tasks.md#P2.b.1 P2.b.2 P2.b.3 P2.b.4
-Codex round 1 F1 inline writeback (active.md hard source-of-truth)
+Tasks: tasks.md#P2.b.1 P2.b.2 P2.b.3 P2.b.4 P2.b.5
+- Round 1 F1: active.md hard source-of-truth + tombstone protocol
+- Round 2 F1-r2: baseline anchors to last archive commit (not active.md path commit)
+- Round 2 F2-r2: 5-point tombstone consistency check (id + snapshot 8-fields + archived_in_change + cancellation_reason vs tasks tag)
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -468,21 +519,61 @@ def _validate_cancel_tag_not_applicable(reason: str) -> str | None:
     return f"cancel_reason_not_in_enum_got_{first_token}"
 ```
 
-### tasks.md#P2.d.3 `_validate_cancel_tag_completed`(git rev-parse)
+### tasks.md#P2.d.3 `_validate_cancel_tag_completed`(round 2 F3-r2 fix:strict commit-touches + escape hatch)
 
-- [ ] **Step 1: 写 test**(沿 spec scenario "cancelled-completed with invalid commit ref")
+- [ ] **Step 1: 写 test**(沿 spec scenarios "cancelled-completed with commit not touching follow-on source fails" + "cancelled-completed with evidence escape hatch passes")
 - [ ] **Step 2-4 红→绿**:
 
 ```python
-def _validate_cancel_tag_completed(commit_ref: str, repo: Path | None = None) -> str | None:
+def _validate_cancel_tag_completed(
+    tag: str,
+    followon_entry: dict,
+    repo: Path | None = None,
+) -> str | None:
+    """Round 2 F3-r2 fix: strict commit-touches + evidence escape hatch.
+
+    tag format: '<commit-ref>' OR '<commit-ref> evidence: <path>'
+    """
     repo = repo or Path.cwd()
+    parts = tag.split(" evidence: ", maxsplit=1)
+    commit_ref = parts[0].strip()
+    evidence_path = parts[1].strip() if len(parts) == 2 else None
+
+    # Step 3.1: commit existence
     result = subprocess.run(
         ["git", "rev-parse", "--verify", commit_ref],
         cwd=repo, capture_output=True, text=True, check=False,
     )
-    if result.returncode == 0:
-        return None
-    return f"cancel_commit_not_found_got_{commit_ref}"
+    if result.returncode != 0:
+        return f"cancel_commit_not_found_got_{commit_ref}"
+
+    # Step 3.2: get touched files
+    diff_tree = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_ref],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    touched_files = set(diff_tree.stdout.strip().split("\n")) if diff_tree.returncode == 0 else set()
+
+    # Step 3.3: relevant paths from follow-on entry
+    relevant_paths = set()
+    if followon_entry.get("source"):
+        relevant_paths.add(followon_entry["source"].strip())
+    contract_refs = followon_entry.get("contract_refs", [])
+    if isinstance(contract_refs, list):
+        relevant_paths.update(p.strip() for p in contract_refs)
+
+    # Step 3.4: commit-touches intersection
+    if touched_files & relevant_paths:
+        return None  # PASS
+
+    # Step 3.5: evidence escape hatch
+    if evidence_path:
+        if (repo / evidence_path).exists():
+            return None  # PASS via escape
+        return f"cancel_evidence_path_not_found_{commit_ref}_evidence_{evidence_path}"
+
+    # Step 3.6: BLOCKER
+    return f"cancel_commit_does_not_touch_followon_or_provide_evidence_got_{commit_ref}"
 ```
 
 ### tasks.md#P2.d.4 fence 主流程 cancel 校验
