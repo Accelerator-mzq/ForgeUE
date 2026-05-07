@@ -613,20 +613,76 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## P2.f — fence dispatch loop register
+## P2.f — fence dispatch loop register(round 3 codex F2-r3 inline writeback:TDD 端到端守门)
 
-### tasks.md#P2.f.1-P2.f.2
+### tasks.md#P2.f.1-P2.f.5
 
-- [ ] 在 `tools/forgeue_finish_gate.py` 主 dispatch loop 寻找 v1 advisory 3 fence register 处(沿 既有 `_check_skill_cascade` 等 register 模式)
-- [ ] append `("_check_followon_continuity", _check_followon_continuity)` to register tuple
-- [ ] fence 输出统一格式 [PASS] / [FAIL] + reason list
+- [ ] **Step 1: 写 failing TDD 红灯 test**(tests/unit/test_forgeue_finish_gate.py append):
+
+```python
+def test_check_followon_continuity_runs_via_build_report(tmp_path, monkeypatch):
+    """Round 3 F2-r3 fix: end-to-end fence-register guardrail. If
+    _check_followon_continuity is not registered into build_report dispatch
+    loop, helper unit tests still pass but the fence is silently no-op'd
+    at archive-stage finish_gate (false-green risk)."""
+    # Setup: tmp git repo + fixture change with active.md entry-X removed without tombstone
+    ...
+    result = subprocess.run(
+        ["python", "tools/forgeue_finish_gate.py", "--change", "<fixture-id>", "--json"],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 2  # BLOCKER
+    assert "_check_followon_continuity" in result.stdout
+    assert "tombstone_missing_for_entry-X" in result.stdout
+
+def test_check_srs_registry_consistency_runs_via_build_report(tmp_path, monkeypatch):
+    """Same end-to-end guardrail for SRS↔registry consistency fence."""
+    # Setup: SRS §7.3 has TBD-XXX active but active.md missing pointer
+    ...
+    result = subprocess.run(
+        ["python", "tools/forgeue_finish_gate.py", "--change", "<fixture-id>", "--json"],
+        capture_output=True, text=True
+    )
+    assert result.returncode == 2
+    assert "_check_srs_registry_consistency" in result.stdout
+    assert "srs_registry_set_mismatch" in result.stdout
+
+def test_followon_fences_remain_registered():
+    """Regression guard: prevent register tuple from being silently
+    removed by future refactors."""
+    from tools.forgeue_finish_gate import _FENCE_REGISTRY  # or equivalent
+    fence_names = {name for name, _fn in _FENCE_REGISTRY}
+    assert "_check_followon_continuity" in fence_names
+    assert "_check_srs_registry_consistency" in fence_names
+```
+
+- [ ] **Step 2: 跑测试期望 fail**:`pytest tests/unit/test_forgeue_finish_gate.py::test_check_followon_continuity_runs_via_build_report -v` 期望 fail(fence 未 register)
+
+- [ ] **Step 3: 在 `tools/forgeue_finish_gate.py` 主 dispatch loop 注册两 fence**(沿 既有 `_check_skill_cascade` 等 register 模式):
+
+```python
+# In _FENCE_REGISTRY tuple (or equivalent dispatch loop):
+("_check_followon_continuity", _check_followon_continuity),
+("_check_srs_registry_consistency", _check_srs_registry_consistency),
+```
+
+- [ ] **Step 4: 跑测试期望 PASS**:相同命令 + `test_check_srs_registry_consistency_runs_via_build_report` + `test_followon_fences_remain_registered` 全 PASS(green)
+
+- [ ] **Step 5: fence 输出统一格式**:[PASS] / [FAIL] + reason list(沿 v1 advisory fence 出错信息风格)
 
 ### Commit P2.f
 
 ```bash
-git commit -m "feat(forgeue): centralize-followon-backlog-registry P2.f — register _check_followon_continuity in finish_gate dispatch loop
+git commit -m "feat(forgeue): centralize-followon-backlog-registry P2.f — register followon fences with TDD end-to-end guardrail (round 3 F2-r3 inline writeback)
 
-Tasks: tasks.md#P2.f.1 P2.f.2
+Tasks: tasks.md#P2.f.1 P2.f.2 P2.f.3 P2.f.4 P2.f.5
+
+- TDD red→green: fence_register guardrail tests prove fences run via build_report
+- Register _check_followon_continuity + _check_srs_registry_consistency
+- Anti-regression test: assert both fences remain in dispatch tuple
+
+Round 3 F2-r3 inline writeback (full CLI fixture exercises both new fences;
+prevents implementer forgetting register from causing false-green at P5.3).
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -638,8 +694,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ### tasks.md#P2.g.1-P2.g.4
 
 - [ ] **Step 1: 写 test**(沿 spec scenarios "SRS adds new TBD without registry pointer" + "SRS TBD completes but registry pointer remains active")
-- [ ] **Step 2-4 红→绿**:实装 `_parse_srs_tbd_table` + `_check_srs_registry_consistency` fence
-- [ ] register fence 进 dispatch loop
+- [ ] **Step 2-4 红→绿**:实装 `_parse_srs_tbd_table` + `_check_srs_registry_consistency` fence(register 由 P2.f.3 一并完成 — round 3 F2-r3 inline writeback)
 
 ### Commit P2.g
 
@@ -709,7 +764,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ### tasks.md#P4.1-P4.6
 
-- [ ] P4.1 改 `change-finish.md` `## Preflight` 段加 followon continuity check 子段
+- [ ] P4.1 改 `change-finish.md` `## Preflight` 段加 followon continuity check 子段:调 aggregate `python tools/forgeue_finish_gate.py --change <id>`(沿既有 fence dispatch loop;两 fence P2.f register 后 build_report 自动 run;**round 3 F1-r3 inline writeback** — 删原 `--check-followon-continuity` 专用 flag 避免 argparse 失败)
 - [ ] P4.2-P4.3 改 `change-status.md` 加 `### Followon Backlog` block + Steps 调 `--list-followon-*`
 - [ ] P4.4-P4.5 改 `change-apply-{subagent,direct}.md` evidence frontmatter 模板加 `followon_continuity` 字段(可空)
 - [ ] P4.6 跑 `pytest tests/unit/test_forgeue_workflow_plugin_invocation.py` 确认命令模板 markdown lint 不破

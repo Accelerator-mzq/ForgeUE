@@ -163,19 +163,26 @@ P0 (baseline) ─→ P1 (registry files) ─→ P2.a (helpers) ─→ P2.b ... P
 - dispatch flow 主体被动 — 本 change 实施期 controller 仍用旧版命令模板执行,新命令模板/fence 仅在本 change archive 后下次 change 才生效,commit-by-commit forward progress 成立 → subagent dispatch 安全;
 - subagent 模式带来的 4 类 per-task evidence(implementer / spec_review / code_quality_review / final_review)对 fence implementation correctness(round 2 实证 F1-r2 baseline anchor / F2-r2 snapshot consistency 都是 implementation gap)有显著价值。
 
-**Phase 决策表**(per `superpowers:subagent-driven-development` skill):
+**Phase 决策表**(per `superpowers:subagent-driven-development` skill;**round 3 codex F3-r3 inline writeback** — 修原表 P1 行同时勾两列的矛盾;每 phase 单 canonical mode):
 
-| Phase | 拆 sub-task 派 subagent | 走 direct(controller 主流程) |
+| Phase | Mode | Rationale |
 |---|---|---|
-| P0 baseline | direct(只是数据汇总,无设计 / 实装) | ✓ |
-| P1 registry 文件创建 | subagent dispatch — 22 entries 写入颗粒度 | ✓ |
-| P2.a-P2.h fence 实装 + tests | **subagent dispatch**(每 helper / fence stage / test batch 派 implementer + spec_review + code_quality_review;final_review 在 phase 末) | |
-| P3 change_state 子命令 | subagent dispatch | |
-| P4 命令模板更新 | direct(纯 .md 编辑,无 implementation 决策) | ✓ |
-| P5 verify | direct(L0/L1/L2 + codex review hook 是 controller 主流程) | ✓ |
-| P6 doc sync gate | direct(沿 forgeue:change-doc-sync 编排;single-doc 决策不需 dispatch) | ✓ |
-| P7 retrospective + cross-check + finish_gate | direct | ✓ |
-| P8 archive | direct(USER 范围) | ✓ |
+| P0 baseline | **direct** | 纯数据汇总(pytest baseline + backfill 数据源整理),无设计 / 实装 |
+| P1 registry 文件创建 | **direct** | 纯 .md 写入(active.md 22 entries + archived.md 3 tombstone + README + SRS cross-link),无 implementation 决策 / 无算法逻辑 |
+| P2.a Markdown helpers | **subagent** | 4 helpers stdlib 解析逻辑,需 spec compliance + code quality review |
+| P2.b active.md self-diff(F1 + F1-r2 + F2-r2) | **subagent** | 5 helpers + 主流程,implementation correctness 关键(round 2 实证 baseline anchor + tombstone consistency 是 implementation gap) |
+| P2.c archived tasks.md fallback | **subagent** | fence 兜底源 — 与 P2.b 主源协同,需 spec review |
+| P2.d cancel ref strict(F2 + F3-r2) | **subagent** | 4 helpers + commit-touches escape hatch,F3-r2 拉回 scope 后 implementation 复杂度提升 |
+| P2.e archived.md append-only | **subagent** | git diff per-line 分析 + 5 项 tombstone consistency,需 code quality review |
+| P2.f fence dispatch loop register | **subagent** | TDD 端到端守门(round 3 F2-r3 inline writeback);先红再绿;含防回归测试 |
+| P2.g SRS↔registry consistency fence(F3) | **subagent** | 独立 fence 实装 + SRS §7.3 表解析 + register 由 P2.f 一并 cover |
+| P2.h Unit tests | **subagent** | ~16 case 覆盖 fence + helper + tombstone schema |
+| P3 change_state 子命令 | **subagent** | argparse 扩展 + list helper + unit test;沿 P2 同款 implementation rigor |
+| P4 命令模板更新 | **direct** | 纯 .md 编辑,无 implementation 决策(spec compliance 已在 P2 phase 测试守门;改动 4 命令模板 + frontmatter 字段添加是 cosmetic 文档更新) |
+| P5 verify | **direct** | L0/L1/L2 + codex review hook 是 controller 主流程 |
+| P6 doc sync gate | **direct** | 沿 forgeue:change-doc-sync 编排;single-doc 决策不需 dispatch |
+| P7 retrospective + cross-check + finish_gate | **direct** | controller 主流程 wrap-up |
+| P8 archive | **direct** | USER 范围;Fence #1 不可逆 |
 
 详细 step-by-step micro-tasks 见 [`execution/micro_tasks.md`](micro_tasks.md)。subagent dispatch 协议见 `superpowers:subagent-driven-development` skill。
 

@@ -85,17 +85,24 @@
 - [ ] P2.e.1 加 helper `_check_archived_md_append_only(prior_sha)`:`subprocess.run(["git", "diff", "<prior_sha>", "HEAD", "--", "openspec/backlog/archived.md"])` 输出 per-line 分析,deletion line 触及 existing entry block → BLOCKER `archived_md_history_lost`;modification line 触及 existing entry 4 字段 → BLOCKER `archived_md_immutable_field_modified`
 - [ ] P2.e.2 fence 主流程 archived.md append-only 校验
 
-### P2.f — fence dispatch loop register
+### P2.f — fence dispatch loop register(round 3 codex F2-r3 inline writeback:TDD 端到端守门)
 
-- [ ] P2.f.1 在 `tools/forgeue_finish_gate.py` 主 dispatch loop 注册 `_check_followon_continuity`(沿 v1 advisory 3 fence 同款 register 模式)
-- [ ] P2.f.2 fence 输出统一格式:全 PASS → exit 0;任一 BLOCKER → exit 2 + 列所有 BLOCKER reason
+- [ ] P2.f.1 **TDD 红灯**:加 end-to-end fence register 守门测试 `tests/unit/test_forgeue_finish_gate.py::test_check_followon_continuity_runs_via_build_report` + `test_check_srs_registry_consistency_runs_via_build_report`:
+  - fixture:构造 active.md 删 entry 无 tombstone(`_check_followon_continuity` 应触发 BLOCKER)+ SRS-registry mismatch fixture(`_check_srs_registry_consistency` 应触发 BLOCKER)
+  - 调 `tools/forgeue_finish_gate.py --change <fixture-id> --json`
+  - 断言 exit code == 2 + JSON 输出含 `_check_followon_continuity` + `_check_srs_registry_consistency` fence 名 + 对应 BLOCKER reason
+  - 此时 fence 未 register → 测试 fail(red)
+- [ ] P2.f.2 在 `tools/forgeue_finish_gate.py` 主 dispatch loop 注册 `_check_followon_continuity` + `_check_srs_registry_consistency`(沿 v1 advisory 3 fence 同款 register 模式)
+- [ ] P2.f.3 fence 输出统一格式:全 PASS → exit 0;任一 BLOCKER → exit 2 + 列所有 BLOCKER reason
+- [ ] P2.f.4 跑 P2.f.1 测试 → 期望 PASS(green;fence 真 wired into build_report)
+- [ ] P2.f.5 加防回归测试 `test_followon_fences_remain_registered`:assert `tools/forgeue_finish_gate.py` 主 dispatch loop register tuple 含两 fence(round 3 codex F2-r3 防"未注册会假绿"长期 risk)
 
 ### P2.g — 新增 SRS↔registry consistency fence(round 1 F3 inline writeback)
 
 - [ ] P2.g.1 加 helper `_parse_srs_tbd_table(srs_md_path)`:解析 `docs/requirements/SRS.md` §7.3 TBD 表,返回 `{tbd_id: status}` dict(status ∈ `❌` / `⚠️ baseline` / `⏳` / `✅`)
 - [ ] P2.g.2 加 fence `_check_srs_registry_consistency`:active.md 中 `category: requirements-tbd-pointer` entries 集合 vs SRS §7.3 active TBD(status ≠ `✅`)集合,等价集合校验;不等 → BLOCKER `srs_registry_set_mismatch`
 - [ ] P2.g.3 fence 加 SRS 状态变化检测:SRS §7.3 状态从 active 变 `✅` → 对应 registry pointer 必须同步标 `cancelled-completed` 移到 archived.md;否则 BLOCKER `srs_completed_tbd_still_active_in_registry`
-- [ ] P2.g.4 在 `tools/forgeue_finish_gate.py` 主 dispatch loop 注册 `_check_srs_registry_consistency`
+- [ ] P2.g.4 register 由 P2.f.2 一并完成(P2.f.1 TDD red 同时覆盖两 fence,P2.f.2 同 commit register 两 fence;沿 round 3 codex F2-r3 inline writeback 端到端守门)
 
 ### P2.h — Unit 测试(scope 扩 7-10 → 15-20 case)
 
@@ -115,7 +122,7 @@
 
 ## P4. 命令模板更新
 
-- [ ] P4.1 改 `.claude/commands/forgeue/change-finish.md` `## Preflight` section 加 `## Preflight Followon Continuity` 子段:调 `python tools/forgeue_finish_gate.py --check-followon-continuity --change <id>`(blocker)
+- [ ] P4.1 改 `.claude/commands/forgeue/change-finish.md` `## Preflight` section 加 `## Preflight Followon Continuity` 子段:调 aggregate `python tools/forgeue_finish_gate.py --change <id>`(沿既有 fence dispatch loop;两 fence `_check_followon_continuity` + `_check_srs_registry_consistency` 在 P2.f register 后自动 run;blocker;**round 3 codex F1-r3 inline writeback** — 删除原"专用 flag `--check-followon-continuity`"沿 codex 推荐 (a) 简化路径,避免 argparse 失败 + 入口分叉)
 - [ ] P4.2 改 `.claude/commands/forgeue/change-status.md` `## Output Format` section 加 `### Followon Backlog` block:列 inherited 计数 + cancelled 分类计数 + 与 active registry diff
 - [ ] P4.3 改 `.claude/commands/forgeue/change-status.md` `## Steps` section 加 step:调 `python tools/forgeue_change_state.py --change <id> --list-followon-inherited --list-followon-cancelled --json` 提取数据
 - [ ] P4.4 改 `.claude/commands/forgeue/change-apply-subagent.md` evidence frontmatter 模板:加 `followon_continuity` 字段(可空 — 仅 archive 阶段强制)
