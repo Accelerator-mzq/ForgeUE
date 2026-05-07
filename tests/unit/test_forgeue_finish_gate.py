@@ -2674,3 +2674,56 @@ def test_find_latest_archived_change_empty_archive_returns_none(tmp_path):
 def test_find_latest_archived_change_no_archive_dir_returns_none(tmp_path):
     from tools.forgeue_finish_gate import _find_latest_archived_change
     assert _find_latest_archived_change(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# P2.a Helper 3: _parse_registry_md
+# ---------------------------------------------------------------------------
+
+
+def test_parse_registry_md_extracts_entries(tmp_path):
+    from tools.forgeue_finish_gate import _parse_registry_md
+    registry = tmp_path / "active.md"
+    registry.write_text("""# Active Follow-on Backlog
+
+### `entry-a`
+
+- **source**: archived/foo/tasks.md
+- **description**: foo desc
+- **trigger**: foo trigger
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: high
+- **status**: active
+
+### `entry-b`
+
+- **source**: SRS.md §7.3
+- **description**: bar desc
+- **category**: requirements-tbd-pointer
+- **status**: active
+""", encoding="utf-8")
+    entries = _parse_registry_md(registry)
+    assert set(entries.keys()) == {"entry-a", "entry-b"}
+    assert entries["entry-a"]["status"] == "active"
+    assert entries["entry-a"]["category"] == "workflow-protocol"
+    assert entries["entry-a"]["priority"] == "high"
+    assert entries["entry-b"]["category"] == "requirements-tbd-pointer"
+
+
+def test_parse_registry_md_missing_file_returns_empty(tmp_path):
+    from tools.forgeue_finish_gate import _parse_registry_md
+    assert _parse_registry_md(tmp_path / "nonexistent.md") == {}
+
+
+def test_parse_registry_md_partial_fields_tolerant(tmp_path):
+    from tools.forgeue_finish_gate import _parse_registry_md
+    registry = tmp_path / "active.md"
+    registry.write_text("""### `partial-entry`
+
+- **source**: somewhere
+- **status**: active
+""", encoding="utf-8")
+    entries = _parse_registry_md(registry)
+    assert entries["partial-entry"]["status"] == "active"
+    assert entries["partial-entry"].get("description") is None
