@@ -1943,6 +1943,49 @@ def render_report_md(report: FinishGateReport) -> str:
 
 
 # ---------------------------------------------------------------------------
+# P2.d — cancel tag strict validation (round 1 F2 + round 2 F3-r2)
+# ---------------------------------------------------------------------------
+
+# cancelled-not-applicable reason 允许的枚举值(5 类)
+_VALID_CANCEL_REASON_PREFIXES: frozenset[str] = frozenset({
+    "retire-superseded",
+    "out-of-scope",
+    "scope-changed",
+    "obsolete",
+    "infeasible",
+})
+
+
+def _validate_cancel_tag_superseded(change_id: str, repo: "Path | None" = None) -> "str | None":
+    """Round 1 F2 fix: validate cancelled-superseded ref by change-id existence.
+
+    Active 路径:`openspec/changes/<change_id>/` 目录存在 → PASS。
+    Archive 路径:`openspec/changes/archive/*-<change_id>/` glob 任一匹配 → PASS。
+    两条路径均不存在 → return BLOCKER reason str。
+
+    Returns:
+        None — PASS(change_id 解析到 active 或 archived 路径)
+        str  — BLOCKER reason string
+    """
+    repo = repo or Path.cwd()
+    change_id = (change_id or "").strip()
+    # 空 change_id → 特殊 BLOCKER
+    if not change_id:
+        return "cancel_ref_empty_superseded_by"
+    # 检查 active 路径
+    active_path = repo / "openspec" / "changes" / change_id
+    if active_path.is_dir():
+        return None
+    # 检查 archive glob 路径(*-<change_id> 前缀形式)
+    archive_root = repo / "openspec" / "changes" / "archive"
+    if archive_root.is_dir():
+        archive_pattern = archive_root.glob(f"*-{change_id}")
+        if any(p.is_dir() for p in archive_pattern):
+            return None
+    return f"cancel_ref_not_found_superseded_by_{change_id}"
+
+
+# ---------------------------------------------------------------------------
 # P2.c — fence 阶段 2 archived tasks.md 兜底源
 # ---------------------------------------------------------------------------
 

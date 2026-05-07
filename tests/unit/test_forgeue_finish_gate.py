@@ -3054,3 +3054,72 @@ def test_check_archived_tasks_fallback_no_prior_unchecked_returns_empty(tmp_path
     current_dir.mkdir(parents=True)
     (current_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
     assert _check_archived_tasks_fallback("current", tmp_path) == {}
+
+
+# ---------------------------------------------------------------------------
+# P2.d.1 — _validate_cancel_tag_superseded (round 1 F2)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_cancel_tag_superseded_active_path_pass(tmp_path):
+    """Change-id 对应 active openspec/changes/<id>/ 目录存在 → PASS(return None)。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_superseded
+
+    # 建立 active change 目录
+    active_dir = tmp_path / "openspec" / "changes" / "new-feature-x"
+    active_dir.mkdir(parents=True)
+
+    result = _validate_cancel_tag_superseded("new-feature-x", repo=tmp_path)
+    assert result is None
+
+
+def test_validate_cancel_tag_superseded_archive_path_pass(tmp_path):
+    """Change-id 对应 openspec/changes/archive/*-<id>/ 目录 → PASS(return None)。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_superseded
+
+    # 建立 archive 目录(带日期前缀)
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-05-01-old-feature-x"
+    archive_dir.mkdir(parents=True)
+
+    result = _validate_cancel_tag_superseded("old-feature-x", repo=tmp_path)
+    assert result is None
+
+
+def test_validate_cancel_tag_superseded_not_found_blocker(tmp_path):
+    """Change-id 两条路径均不存在 → return BLOCKER reason str。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_superseded
+
+    # 确保路径不存在
+    (tmp_path / "openspec" / "changes").mkdir(parents=True)
+
+    result = _validate_cancel_tag_superseded("ghost-change-id", repo=tmp_path)
+    assert result == "cancel_ref_not_found_superseded_by_ghost-change-id"
+
+
+def test_validate_cancel_tag_superseded_empty_id_blocker(tmp_path):
+    """空 change_id → return empty_superseded BLOCKER。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_superseded
+
+    result = _validate_cancel_tag_superseded("", repo=tmp_path)
+    assert result == "cancel_ref_empty_superseded_by"
+
+
+def test_validate_cancel_tag_superseded_whitespace_only_blocker(tmp_path):
+    """仅空白字符 change_id → strip 后空 → return empty BLOCKER。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_superseded
+
+    result = _validate_cancel_tag_superseded("   ", repo=tmp_path)
+    assert result == "cancel_ref_empty_superseded_by"
+
+
+def test_validate_cancel_tag_superseded_archive_multiple_matches_pass(tmp_path):
+    """archive/ 下多个前缀目录时,只要有一个 glob 匹配 change_id 即通过。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_superseded
+
+    # 建立两个 archive 目录,只有其中一个匹配
+    archive_root = tmp_path / "openspec" / "changes" / "archive"
+    (archive_root / "2026-04-01-unrelated").mkdir(parents=True)
+    (archive_root / "2026-05-01-target-change").mkdir(parents=True)
+
+    result = _validate_cancel_tag_superseded("target-change", repo=tmp_path)
+    assert result is None
