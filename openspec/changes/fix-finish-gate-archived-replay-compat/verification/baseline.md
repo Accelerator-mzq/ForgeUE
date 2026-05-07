@@ -61,7 +61,7 @@ autonomy_decision: claude_autonomous
 2. **openspec_validate_failed (5 / 31 = 16.1%)**
    - 所有 5 个 archived change 都触发 `openspec validate --strict` 失败
    - 错误信息：`Unknown item 'archive/...'` — openspec CLI 不支持 archive 前缀路径
-   - **root cause**: `run_openspec_validate` 内 openspec validate 命令无 archived-specific 逻辑，**预期 P3 impl 修复**（沿 design.md D-ArchivedPathDetection + D-SkipArchive）
+   - **root cause**: `run_openspec_validate` 内 openspec validate 命令无 archived-specific 逻辑，**预期 P3 impl 修复**（沿 design.md D-DispatchPathDetection + D-OpenSpecValidateArchiveSkip）
 
 3. **writeback_commit_unrelated (1 / 31 = 3.2%)**
    - retire-parallel-and-worktree-fully archived change 存在 writeback_commit 指向与实际修改文件不一致
@@ -76,6 +76,6 @@ autonomy_decision: claude_autonomous
 
 ### 下阶段预期（P2-P4）
 
-- **P2 design**: 扩 regex 至 P10+ 编号，引入 archived-path detection logic（D-ArchivedPathDetection）
+- **P2 design**: 扩 regex 至 P10+ 编号，引入 archived-path detection logic（D-DispatchPathDetection）
 - **P3 verify**: 消除 25 个 tasks_unchecked + 5 个 openspec_validate_failed，保留 writeback 检测（真实性）
 - **P4 implementation**: 修复 tool 代码，完整验证 31 blocker 全消后上线

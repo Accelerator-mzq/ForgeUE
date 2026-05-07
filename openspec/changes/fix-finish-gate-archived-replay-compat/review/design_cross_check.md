@@ -38,13 +38,14 @@ disputed_open: 0
 - **In-scope modules**:`tools/forgeue_finish_gate.py` 单文件 2 处改动 + `tests/unit/test_forgeue_finish_gate.py` 加 7 case + `CHANGELOG.md` `[Unreleased]` Fixed 1 条。
 - **Out-of-scope**:其他 `tools/*` / `src/framework/**` / `docs/` 五件套 / `openspec/specs/examples-and-acceptance/spec.md` active baseline / 其他 active change(沿 design.md Non-Goals)。
 
-### A.2 3 D-decision 立场(Claude approve)
+### A.2 4 D-decision 立场(Claude approve;round 1 codex F2 inline writeback 后加 D-PerFormatThreshold)
 
 | D-decision | Claude 立场 | 关键 rationale |
 |------------|------------|----------------|
-| **D-RegexExtension** | `r"^##\s+P?(\d+)(?:\.|\s+—)\s+"` 单 regex 双格式 | 单 regex 简洁;`P?` optional 不破 active backward-compat;`(?:\.|\s+—)` non-capturing alternation 显式两选一,避免 over-permissive(如 `\W+` 通吃);capture group 永远 integer。Alternatives A/B/C 均拒绝(详 design.md)。 |
-| **D-OpenSpecValidateArchiveSkip** | archive/ 路径下 skip subprocess + 写 rationale warning(**非** BLOCKER) | upstream openspec CLI 不感知 archive/ 路径 = 强制 invoke 必 fail = 噪声非真实违规;skip + warning 保留 audit trail;长期方案给上游 CLI 提 PR 留 follow-on `enhance-openspec-cli-archived-change-support`。Alternatives A/B/C/D 均拒绝(详 design.md)。 |
-| **D-DispatchPathDetection** | `"archive" in Path(change_dir).parts` segment exact match | OS-aware tuple split 跨 Windows/POSIX 稳定;不 false-positive 命中 active change 名含 `archive` 子串(如假想 `add-archive-feature`);invariant 稳定性高于 `change_dir.parent.name == "archive"`。Alternatives A/B 均拒绝。 |
+| **D-RegexExtension**(round 1 修订)| `r"^##\s+(P)?(\d+)(?:\.|\s+—)\s+"` 单 regex **双 capture group**(group(1) = "P" or None / group(2) = section integer)| 单 regex 简洁;`(P)?` optional 暴露 P-prefix 标识 → per-format threshold 选择(沿 D-PerFormatThreshold);`(?:\.|\s+—)` non-capturing alternation 显式两选一,避免 over-permissive(如 `\W+` 通吃)。Alternatives A/B/C/D 均拒绝(详 design.md)。 |
+| **D-PerFormatThreshold**(round 1 codex F2 新增)| active 格式 ≥9(`_SELF_STAGE_SECTION_THRESHOLD = 9`)+ archived 格式 ≥10(`_SELF_STAGE_SECTION_THRESHOLD_ARCHIVED = 10`)| archived P-num 与 active section-num 跨 change 不严格对齐;实测 archived `## P9 — Documentation Sync Gate` workflow prerequisite + `## P9 — MEMORY.md update(后置可选)` self-stage 同 P9 编号 ambiguous,统一 ≥9 会把 prerequisite stage unchecked 静默 skip。Alternatives A/B/C/D 均拒绝(详 design.md)。 |
+| **D-OpenSpecValidateArchiveSkip** | archive/ 路径下 skip subprocess + 写 rationale warning(**非** BLOCKER)| upstream openspec CLI 不感知 archive/ 路径 = 强制 invoke 必 fail = 噪声非真实违规;skip + warning 保留 audit trail;长期方案给上游 CLI 提 PR 留 follow-on `enhance-openspec-cli-archived-change-support`。Alternatives A/B/C/D 均拒绝(详 design.md)。 |
+| **D-DispatchPathDetection**(round 1 修订)| `change_dir.is_relative_to(_common.archive_dir(repo))` repo-relative + segment-precise 检测 | repo-relative + segment-precise 检测,**不**用 `"archive" in change_dir.parts`(round 1 F1 实证不安全:repo 父目录路径含 `archive` segment 时 active change 被误判 archived);Alternatives A/B/C 均拒绝。 |
 
 ### A.3 Spec scenario 7 项立场
 
@@ -88,7 +89,7 @@ Claude 主动列出可能被 codex 挑战的点 + 立场:
 ### A.7 锚点 + writeback 预期
 
 本 change 实施过程不预期 writeback drift:
-- design.md 3 D-decision 已写齐
+- design.md 4 D-decision 已写齐(round 1 codex F2 inline writeback 后加 D-PerFormatThreshold)
 - specs.md 7 scenario 已写齐(2 ADDED Requirements 各 N 个 scenario)
 - tasks.md 28 task 已写齐(P0-P11)
 - 实施过程暴露的 contract gap → return back to controller(implementer subagent 不自行回写;沿 D-TaskInput)

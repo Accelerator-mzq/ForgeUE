@@ -29,7 +29,7 @@ section number ≥ threshold 的 `[ ]` 行视为 self-stage,不阻断 finish_gat
 - **GIVEN** archived change tasks.md 含 `## P10 — Archive` 后跟 `- [ ] 10.1 /opsx:archive`,以及 `## P11 — Documentation Sync footer` 后跟 `- [ ] 11.1 sync gate items closed`
 - **WHEN** `forgeue_finish_gate.py::_check_tasks_unchecked` 跑(`change_dir = openspec/changes/archive/2026-MM-DD-<id>/`)
 - **THEN** regex 命中 section 10 + 11
-- **AND** §10.1 + §11.1 unchecked 行均识别为 self-stage(10/11 ≥ 9)→ 不报 blocker
+- **AND** §10.1 + §11.1 unchecked 行均识别为 self-stage(10/11 ≥ 10,archived format threshold)→ 不报 blocker
 - **AND** archived 4 change finish_gate replay `tasks_unchecked` blocker 总数从 25 → 0
 
 #### Scenario: 假阴性边界守门 — `## 1.5 sub-section` 不命中

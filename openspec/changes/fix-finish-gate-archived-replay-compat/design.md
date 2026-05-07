@@ -85,23 +85,6 @@
 - (C) 把 archive/ 路径下 openspec validate failure 降级为 WARN 不 BLOCKER:**拒绝**,WARN 仍是噪声;skip + rationale 更干净,且与 D-V1ProtocolBoundary `_runtime_enforcement_active: v1` 设计一致(有些 fence 在某些 evidence 上下文不适用就 explicit skip,不降级)。
 - (D) `_runtime_enforcement_active = False`(对所有 archived 路径 skip 全部 fence):**拒绝**,scope 过大;本 change 仅修两 fence,其他 fence 在 archived replay 时仍应跑(评估 evidence frontmatter / cross-check / writeback truthiness 等)。
 
-### D-OpenSpecValidateArchiveSkip:archive/ 路径下 openspec validate 调用 skip 策略
-
-**决定**:`forgeue_finish_gate.py` 在 invoke `openspec validate <id> --strict` 前检测 `change_dir` 是否含 `archive/` segment(沿 `Path.parts` contains `"archive"`);若是则 skip subprocess invocation 并写 rationale 注释 evidence 到 finish_gate report(标 `openspec_validate_skipped: archive_path_unsupported_by_upstream_cli`),**不**生成 `openspec_validate_failed` blocker。Active change 路径行为 unchanged(继续 invoke + 失败时 BLOCKER)。
-
-**Why**:
-
-- archive/ 路径是 ForgeUE 自家物理布局(`openspec/changes/archive/<YYYY-MM-DD-id>/`),upstream openspec CLI 不感知 — 强制 invoke 必 fail,blocker 是噪声不是真实违规
-- skip + rationale 评论保留 audit trail(finish_gate report 可见原因);若 user 想验 archived change validity 可手工 cd 到 archive 目录跑 `openspec` CLI(短期解决方案)
-- 长期方案是给 upstream openspec CLI 提 PR(留 follow-on),本 change 先解封 archived replay 路径
-
-**Alternatives considered**:
-
-- (A) 给 upstream openspec CLI 提 PR 让其识别 `openspec/changes/archive/<dated-id>/`:**拒绝(本 change scope 外)**,跨 repo + release 节奏不可控;留 `enhance-openspec-cli-archived-change-support` follow-on 若决定推上游。
-- (B) finish_gate 自己实现 archived spec validation(读 spec.md + 解析 markdown structure):**拒绝**,重 implement 上游 CLI 行为是大 scope;archive 是 frozen 状态,validation 价值低。
-- (C) 把 archive/ 路径下 openspec validate failure 降级为 WARN 不 BLOCKER:**拒绝**,WARN 仍是噪声;skip + rationale 更干净,且与 D-V1ProtocolBoundary `_runtime_enforcement_active: v1` 设计一致(有些 fence 在某些 evidence 上下文不适用就 explicit skip,不降级)。
-- (D) `_runtime_enforcement_active = False`(对所有 archived 路径 skip 全部 fence):**拒绝**,scope 过大;本 change 仅修两 fence,其他 fence 在 archived replay 时仍应跑(评估 evidence frontmatter / cross-check / writeback truthiness 等)。
-
 ### D-DispatchPathDetection:archive 路径检测方式(round 1 codex F1 修订)
 
 **决定**(round 1 codex F1 inline writeback 修订):用 `change_dir.is_relative_to(_common.archive_dir(repo))` 检测 — repo-relative + segment-precise。**不**用 `"archive" in Path(change_dir).parts`(round 1 F1 实证不安全:repo 父目录路径含 `archive` segment 时 active change 被误判 archived,openspec validate 静默 skip 漏报真 BLOCKER)。
