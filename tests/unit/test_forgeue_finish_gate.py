@@ -2984,3 +2984,73 @@ def test_validate_tombstone_consistency_critical_field_mismatch_blocks():
     cancel_tag = {"type": "cancelled-completed"}
     err = _validate_tombstone_consistency(tombstone, baseline, "current-change", cancel_tag)
     assert err is not None and "snapshot_mismatch" in err and "category" in err
+
+
+# ---------------------------------------------------------------------------
+# P2.c — fence 阶段 2 archived tasks.md 兜底源
+# ---------------------------------------------------------------------------
+
+def test_check_archived_tasks_fallback_detects_missing_inherited(tmp_path):
+    """Round 1 F1 fence stage 2 fallback: prior archived tasks.md unchecked
+    item must be declared (inherited or cancelled-*) in current tasks.md."""
+    from tools.forgeue_finish_gate import _check_archived_tasks_fallback
+    # 建 archive 目录及 tasks.md,含两个 follow-on tracking 未勾选项
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-05-07-prior"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "tasks.md").write_text(
+        "# Tasks\n\n## P12 (follow-on tracking)\n"
+        "- [ ] P12.1 (follow-on tracking): **followon-x** — desc\n"
+        "- [ ] P12.2 (follow-on tracking): **followon-y** — desc\n",
+        encoding="utf-8",
+    )
+    # current tasks.md 只继承了 followon-x,漏了 followon-y
+    current_dir = tmp_path / "openspec" / "changes" / "current"
+    current_dir.mkdir(parents=True)
+    (current_dir / "tasks.md").write_text(
+        "# Tasks\n\n## P12 (follow-on tracking)\n"
+        "- [x] P12.1 (follow-on tracking): **followon-x** [cancelled-completed: abc1234] — desc\n",
+        encoding="utf-8",
+    )
+    result = _check_archived_tasks_fallback("current", tmp_path)
+    assert result == {"missing_inherited": ["followon-y"]}
+
+
+def test_check_archived_tasks_fallback_all_inherited_returns_empty(tmp_path):
+    """所有 prior unchecked 项都在 current tasks.md 中声明 → 返回 {}。"""
+    from tools.forgeue_finish_gate import _check_archived_tasks_fallback
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-05-07-prior"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "tasks.md").write_text(
+        "## P12 (follow-on tracking)\n"
+        "- [ ] P12.1 (follow-on tracking): **followon-x** — desc\n",
+        encoding="utf-8",
+    )
+    current_dir = tmp_path / "openspec" / "changes" / "current"
+    current_dir.mkdir(parents=True)
+    (current_dir / "tasks.md").write_text(
+        "## P12 (follow-on tracking)\n"
+        "- [ ] P12.1 (follow-on tracking): **followon-x** (沿前一 change 继承) — desc\n",
+        encoding="utf-8",
+    )
+    assert _check_archived_tasks_fallback("current", tmp_path) == {}
+
+
+def test_check_archived_tasks_fallback_no_archive_returns_empty(tmp_path):
+    """无 archive 目录 → _find_latest_archived_change 返回 None → 兜底源返回 {}。"""
+    from tools.forgeue_finish_gate import _check_archived_tasks_fallback
+    assert _check_archived_tasks_fallback("any-change", tmp_path) == {}
+
+
+def test_check_archived_tasks_fallback_no_prior_unchecked_returns_empty(tmp_path):
+    """Latest archive 无 follow-on tracking section(如 micro-bugfix)→ no-op 返回 {}。"""
+    from tools.forgeue_finish_gate import _check_archived_tasks_fallback
+    archive_dir = tmp_path / "openspec" / "changes" / "archive" / "2026-05-07-bugfix"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "tasks.md").write_text(
+        "# Tasks\n\n## P0 baseline\n- [x] 1.1 baseline\n",
+        encoding="utf-8",
+    )
+    current_dir = tmp_path / "openspec" / "changes" / "current"
+    current_dir.mkdir(parents=True)
+    (current_dir / "tasks.md").write_text("# Tasks\n", encoding="utf-8")
+    assert _check_archived_tasks_fallback("current", tmp_path) == {}

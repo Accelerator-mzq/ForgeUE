@@ -1943,6 +1943,53 @@ def render_report_md(report: FinishGateReport) -> str:
 
 
 # ---------------------------------------------------------------------------
+# P2.c — fence 阶段 2 archived tasks.md 兜底源
+# ---------------------------------------------------------------------------
+
+
+def _check_archived_tasks_fallback(
+    current_change_id: str, repo: "Path | None" = None
+) -> "dict[str, list[str]]":
+    """Fence stage 2 fallback source (round 1 F1):
+    扫描最新 archived change tasks.md follow-on tracking section 的 unchecked 项,
+    要求 current change tasks.md 中每项都已声明(继承或 cancelled-*)。
+
+    若无 archive 基线 / 无 follow-on tracking section / 文件缺失 → 返回 {}(tolerant)。
+    archive-stage finish_gate 决定 {} 是否视为 pass。
+
+    Returns:
+        {} — 无漏继承项(通过)或无法获取基线(no-op)
+        {"missing_inherited": [<followon-id>, ...]} — 漏继承的 prior unchecked 项列表
+    """
+    repo = repo or Path.cwd()
+    # 阶段 1:找最新 archived change 目录(复用 P2.a helper)
+    latest_archived = _find_latest_archived_change(repo)
+    if latest_archived is None:
+        return {}
+    # 阶段 2:读 prior tasks.md,提取 follow-on tracking section
+    prior_tasks_md = latest_archived / "tasks.md"
+    if not prior_tasks_md.is_file():
+        return {}
+    prior = _extract_followon_tracking_section(prior_tasks_md)
+    prior_unchecked: "set[str]" = set(prior.get("unchecked", []))
+    if not prior_unchecked:
+        return {}
+    # 阶段 3:读 current tasks.md,收集所有已声明项(unchecked + resolved ids)
+    current_tasks_md = repo / "openspec" / "changes" / current_change_id / "tasks.md"
+    if not current_tasks_md.is_file():
+        # current tasks.md 不存在 → 全部 prior unchecked 都漏继承
+        return {"missing_inherited": sorted(prior_unchecked)}
+    current = _extract_followon_tracking_section(current_tasks_md)
+    current_declared: "set[str]" = set(current.get("unchecked", []))
+    # resolved 列表项是 dict,从中提取 id 字段
+    for item in current.get("resolved", []):
+        current_declared.add(item.get("id", ""))
+    # 阶段 4:计算漏继承(prior unchecked 中未在 current 声明的)
+    missing = prior_unchecked - current_declared
+    return {"missing_inherited": sorted(missing)} if missing else {}
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
