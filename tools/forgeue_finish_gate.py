@@ -2574,10 +2574,16 @@ def _parse_tbd_pointer_entries(active_md_path: "Path") -> "dict[str, dict]":
     text = active_md_path.read_text(encoding="utf-8")
     entries: dict[str, dict] = {}
     headings = list(_TBD_POINTER_HEADING_RE.finditer(text))
+    # P2.h dogfood 暴露 fix:body 必须在下一 H2/H3 (任意 case) 处截止,
+    # 否则最后一个 TBD entry body 会 bleed 到后续 lowercase section 致 category 字段被覆盖
+    next_section_re = re.compile(r"^#{2,3}\s+", re.MULTILINE)
     for i, h in enumerate(headings):
         tbd_id = h.group("id")
         body_start = h.end()
-        body_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        next_tbd = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        # 同时受 next H2/H3 boundary 约束
+        next_section_match = next_section_re.search(text, body_start, next_tbd)
+        body_end = next_section_match.start() if next_section_match else next_tbd
         body = text[body_start:body_end]
         entry: dict = {"id": tbd_id}
         for fm in _TBD_POINTER_FIELD_RE.finditer(body):

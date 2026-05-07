@@ -142,19 +142,14 @@ class TestActiveMdSchema:
             )
 
     def test_active_md_tbd_pointer_count(self, active_md: Path):
-        """active.md 至少含 8 条 requirements-tbd-pointer entries(P0.4 backfill 9 SRS TBDs)。
+        """active.md 含 9 条 requirements-tbd-pointer entries(P0.4 backfill SRS TBDs)。
 
-        Parser limitation note:_parse_tbd_pointer_entries 的 body boundary 计算使用
-        _TBD_POINTER_HEADING_RE 匹配的相邻 TBD headings 截止 body。active.md 中
-        Requirements-tbd-pointer section 排在首位(其他 lowercase sections 在后),
-        最后一个 TBD entry(TBD-013)的 body 延伸至文件末(包含 Workflow-protocol /
-        Capability-boundary 所有字段),导致 category 被 bleed 覆盖为 'capability-boundary',
-        被 filter OUT(不等于 'requirements-tbd-pointer')。实际文件有 9 条 TBD entries,
-        parser 可稳定识别 8 条。阈值 >= 8 反映此 parser limitation(非数据错误)。
-        Follow-on fix:修改 _parse_tbd_pointer_entries body boundary 在 H2 '## ' 处截止。"""
+        Parser body-boundary fix(2026-05-07 P2.h dogfood)— `_parse_tbd_pointer_entries`
+        body boundary 现在受下一 H2/H3 (任意 case) 约束,防 last TBD entry body bleed
+        到 lowercase section 致 category 被覆盖。Threshold 从 ≥ 8 升回 ≥ 9。"""
         tbd_entries = _parse_tbd_pointer_entries(active_md)
-        assert len(tbd_entries) >= 8, (
-            f"TBD pointer entries 数量为 {len(tbd_entries)},期望 >= 8(parser limitation: TBD-013 body bleed)"
+        assert len(tbd_entries) >= 9, (
+            f"TBD pointer entries 数量为 {len(tbd_entries)},期望 >= 9(P0.4 backfill SRS TBDs)"
         )
 
     def test_active_md_total_entry_count_matches_p0_backfill(self, active_md: Path):
