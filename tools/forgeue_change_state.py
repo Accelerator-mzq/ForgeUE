@@ -523,6 +523,46 @@ def collect_frontmatter_issues(
 
 
 # ---------------------------------------------------------------------------
+# Follow-on backlog helpers (P3: list_followon_inherited / list_followon_cancelled)
+# ---------------------------------------------------------------------------
+
+# inherited 条目匹配:checkbox(checked or unchecked)+ followon-id + "(沿前一 change 继承)" 文字
+_FOLLOWON_INHERITED_RE = re.compile(
+    r"^-\s+\[[\sx]\]\s+P\d+(?:\.\d+)?(?:\s+\(follow-on\s+tracking\))?\s*[:：]\s*\*\*(?P<id>[a-z0-9-]+)\*\*"
+    r"[^\n]*?(?:沿前一\s*change\s*继承|inherited\s+from\s+prior)",
+    re.MULTILINE,
+)
+
+# follow-on tracking section heading(与 forgeue_finish_gate._FOLLOWON_SECTION_HEADING_RE 同款)
+_FOLLOWON_SECTION_HEADING_RE_CS = re.compile(
+    r"^##\s+(?:P\d+\s*[—\-]?\s*|Phase\s+\d+\s+|\d+\.\s+P\d+\s+[—\-]\s+).*\(?follow-on\s+tracking\)?",
+    re.MULTILINE,
+)
+
+
+def list_followon_inherited(change_dir: Path) -> list[str]:
+    """提取 <change_dir>/tasks.md follow-on tracking section 中含 "(沿前一 change 继承)" 的条目 id 列表。
+
+    供 /forgeue:change-status 命令渲染 '### Followon Backlog' section 调用。
+    无 follow-on tracking section / tasks.md 不存在 → 返回 [](容错)。
+    """
+    tasks_md = change_dir / "tasks.md"
+    if not tasks_md.is_file():
+        return []
+    text = tasks_md.read_text(encoding="utf-8")
+    # 定位 follow-on tracking section
+    section_match = _FOLLOWON_SECTION_HEADING_RE_CS.search(text)
+    if not section_match:
+        return []
+    section_start = section_match.start()
+    next_h2 = re.search(r"^##\s+", text[section_match.end():], re.MULTILINE)
+    section_end = section_match.end() + next_h2.start() if next_h2 else len(text)
+    section_text = text[section_start:section_end]
+    # 提取含 inherited 声明的条目 id
+    return [m.group("id") for m in _FOLLOWON_INHERITED_RE.finditer(section_text)]
+
+
+# ---------------------------------------------------------------------------
 # Top-level orchestration
 # ---------------------------------------------------------------------------
 

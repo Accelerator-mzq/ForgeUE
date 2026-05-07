@@ -819,3 +819,56 @@ def test_subagent_drift_cli_exits_5(tmp_path):
     data = json.loads(proc.stdout)
     types = [d["type"] for d in data["drifts"]]
     assert fcs.DRIFT_CONTRA in types
+
+
+# ---------------------------------------------------------------------------
+# P3 Sub-task 1: list_followon_inherited
+# ---------------------------------------------------------------------------
+
+
+def test_list_followon_inherited_extracts_inherited_entries(tmp_path):
+    """有 inherited 标记的条目被正确提取,cancelled 条目不混入。"""
+    from tools.forgeue_change_state import list_followon_inherited
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """# Tasks
+
+## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **followon-a** (沿前一 change 继承) — desc
+- [x] P12.2 (follow-on tracking): **followon-b** [cancelled-completed: abc1234] — desc
+- [ ] P12.3 (follow-on tracking): **followon-c** (沿前一 change 继承) — desc unchecked but inherited
+- [x] P12.4 (follow-on tracking): **followon-d** [cancelled-superseded by some-id] — desc
+""",
+        encoding="utf-8",
+    )
+    result = list_followon_inherited(change_dir)
+    assert "followon-a" in result
+    assert "followon-c" in result
+    assert "followon-b" not in result  # cancelled-completed, 不是 inherited
+    assert "followon-d" not in result  # cancelled-superseded, 不是 inherited
+
+
+def test_list_followon_inherited_empty_when_no_inherited(tmp_path):
+    """无 inherited 文字时返回空列表。"""
+    from tools.forgeue_change_state import list_followon_inherited
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **only-cancelled** [cancelled-completed: abc] — desc
+""",
+        encoding="utf-8",
+    )
+    assert list_followon_inherited(change_dir) == []
+
+
+def test_list_followon_inherited_no_tasks_md_returns_empty(tmp_path):
+    """tasks.md 不存在时容错返回空列表。"""
+    from tools.forgeue_change_state import list_followon_inherited
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    assert list_followon_inherited(change_dir) == []
