@@ -752,15 +752,15 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 > Owner: implementation_type_4(integration);L2 用户 loop
 
-### C.1 修改 `tests/integration/test_p4_ue_manifest_only.py`(tasks.md#3.1)
+### C.1 修改 `tests/integration/test_p4_ue_manifest_only.py`(tasks.md#3.1;round 2 codex F2 同步:tasks.md 已加 2 case)
 
-#### C.1.1 重命名既有 case + 加新 case
+#### C.1.1 重命名既有 case + 加新 case(共 5 case 完整覆盖 spec MODIFIED Scenarios)
 
 - [ ] 既有 `test_p4_domain_video_copies_mp4_to_content_movies_subdir` 重构为 `test_p4_domain_video_creates_file_media_source_uasset_without_copying_mp4_file_path_from_source_uri`(reflect new contract)
 - [ ] 加 `test_p4_export_drops_video_mp4_to_content_movies_directly`(framework drop 后 mp4 已在 Movies/<run_id>/MS_<base>.mp4)
 - [ ] 加 `test_p4_domain_video_returns_failed_when_mp4_missing`(防御路径)
-- [ ] 加 `test_p4_domain_video_rejects_non_d12_source_uri`(round 1 codex F3 D12 layout fence)
-- [ ] 加 `test_p4_domain_video_returns_failed_on_source_target_mismatch`(round 1 codex F3 mismatch fence)
+- [ ] 加 `test_p4_domain_video_rejects_non_d12_source_uri`(round 1 codex F3 D12 layout fence;承 round1-F3 spec MODIFIED 第 4 Scenario)
+- [ ] 加 `test_p4_domain_video_returns_failed_on_source_target_mismatch`(round 1 codex F3 mismatch fence;承 round1-F3 spec MODIFIED 第 5 Scenario)
 
 #### C.1.2 跑 test PASS
 
@@ -813,11 +813,40 @@ Tasks: tasks.md#3.2
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
 
-### C.3(选)P4 真机 commandlet evidence(tasks.md#3.3)
+### C.3 P4 真机 commandlet evidence(round 2 codex F1 修订:**finish 前必需**,**不**再 optional)
 
-- [ ] 若 user 装 UE 5.x:终端 UE Python Console 跑 `exec(open('<repo>/ue_scripts/run_import.py').read())`(指 cluster2_l2_<HHMMSS> run folder 通过 `FORGEUE_RUN_FOLDER` env)
-- [ ] 实证:domain_video 不 copy + FileMediaSource asset 创建 + .uasset file_path 引用 Movies/<run_id>/MS_<base>.mp4
-- [ ] 落 `verification/p4_real_ue.md`(若用户跑了)
+沿 `CLAUDE.md` §手工验收 + L161-167:本 change 改 `ue_scripts/domain_video.py` FileMediaSource API / file_path 派生 / no-copy / mismatch fence,UE 5.x commandlet 路径行为 stub-unreal + L2 不替代。
+
+#### C.3.1 路径选择(根据 user 本机 UE 环境)
+
+**路径 A — User 本机有 UE 5.x**:
+- [ ] 用户操作:UE Python Console 跑:
+  ```python
+  import os
+  os.environ["FORGEUE_RUN_FOLDER"] = r"<project_root>\Content\Generated\cluster2_l2_<HHMMSS>"
+  exec(open(r"<repo>/ue_scripts/run_import.py").read())
+  ```
+- [ ] 实证:
+  - `domain_video.import_video_entry` 实际**不**调 `shutil.copy2`(检 `Content/Movies/<run_id>/MS_<base>.mp4` 由 framework drop 写入,没被 UE 端 copy 覆盖)
+  - `unreal.AssetTools.create_asset(asset_class=unreal.FileMediaSource)` 真实创建 `.uasset` at `Content/Generated/<run_id>/MS_<base>.uasset`
+  - FileMediaSource asset 的 `file_path` editor property 读出值 = `Movies/<run_id>/MS_<base>.mp4`(从 source_uri 派生,沿 round 1 codex F3)
+  - mismatch fence:若手工编辑 evidence.json 让 source_uri 与 target_object_path mismatch + 重跑 run_import,实证 domain_video 返 `status="failed"` + error 含 "mismatch"
+- [ ] 落 `verification/p4_real_ue.md`(12-key audit frontmatter:`p4_real_ue_status: completed` + UE 5.x 版本 + run_id + asset_path 截图 / commandlet 输出 log)
+
+**路径 B — User 本机无 UE 5.x**:
+- [ ] Claude 显式标 `autonomy_decision: user_required` blocker
+- [ ] 落 `verification/p4_real_ue.md` placeholder evidence:
+  - frontmatter `p4_real_ue_status: blocked-user-environment`
+  - `autonomy_decision: user_required`
+  - body 段说明 user 当前无 UE 5.x;path A 待用户后续触发(可标 follow-on `complete-p4-real-ue-evidence-for-cluster2`)
+- [ ] **本 change 不能进 finish/archive 阶段**;active.md `fix-video-export-path-split-d12-violation` + `fix-run-import-skipped-filter-permission-only` 维持 active 状态(不 retire);用户后续完成 P4 实测后再走 archive
+
+#### C.3.2 finish_gate 协议
+
+- finish_gate 守门:`verification/p4_real_ue.md` MUST 存在 + frontmatter 含 `p4_real_ue_status` 字段
+- `completed` 状态 → 正常 archive
+- `blocked-user-environment` + `autonomy_decision: user_required` + user 显式 acknowledge → finish gate WARN(non-blocker;允许 archive 但 active.md 维持 follow-on)
+- `blocked-user-environment` + 无 user acknowledge → finish gate BLOCKER(防止 silent skip P4 evidence)
 
 ---
 

@@ -76,7 +76,7 @@ skill_cascade_audit:
   - `tests/unit/test_evidence_writer_skip_reason.py`(2 case;tasks.md#2.6)
   - `tests/unit/test_domain_video_no_copy.py`(5 case;tasks.md#2.7)
 - **Modify**:
-  - `tests/integration/test_p4_ue_manifest_only.py`(既有 `test_p4_domain_video_*` 重命名 + 加 3 新 case;tasks.md#3.1)
+  - `tests/integration/test_p4_ue_manifest_only.py`(既有 `test_p4_domain_video_*` 重命名 + 加 4 新 case;tasks.md#3.1;round 2 codex F2 修订:加 mismatch + non-d12 2 case 与 spec MODIFIED Scenarios 完整 sync)
 
 ### Doc sync(Phase D)
 
@@ -120,7 +120,8 @@ skill_cascade_audit:
 
 - [ ] tasks.md 1.1-1.10 全 pass(Phase A unit fence)
 - [ ] tasks.md 2.1-2.7 全 pass(Phase B UE-side fence)
-- [ ] tasks.md 3.1 integration test pass(`test_p4_ue_manifest_only.py` 新 + 修订 case)
+- [ ] tasks.md 3.1 integration test pass(`test_p4_ue_manifest_only.py` 5 case;含 round 2 codex F2 加的 mismatch + non-d12 2 case)
+- [ ] tasks.md 3.3 P4 真机 commandlet evidence(round 2 codex F1 修订:必需 evidence;路径 A user-local UE 5.x 实测 / 路径 B blocked-user-environment + autonomy_decision: user_required)
 - [ ] tasks.md 3.2 L2 live smoke 实证 framework drop 后 mp4 在 `Content/Movies/<run_id>/MS_<base>.mp4` + `.uasset` 在 `Content/Generated/<run_id>/MS_<base>.uasset` + `Content/Generated/<run_id>/` 下不再有 raw `.mp4` 垃圾
 - [ ] `python -m pytest -q` 1576 → ~1594(新 18 fence case 增加;无回归)
 - [ ] tasks.md 4.1-4.11 doc sync 全 pass(`forgeue_doc_sync_check.py --change` exit 0)

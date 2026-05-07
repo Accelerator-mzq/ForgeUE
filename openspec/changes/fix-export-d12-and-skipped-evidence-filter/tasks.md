@@ -50,14 +50,20 @@
   - `test_domain_video_returns_failed_on_source_target_mismatch`(round 1 codex F3:source_uri 与 target_object_path 反推 (run_id, ue_name) 不等返 failed)
   - `test_domain_video_returns_failed_when_source_mp4_missing`(防御路径)
 
-## 3. Phase C — Integration + L2 evidence
+## 3. Phase C — Integration + L2 evidence + P4 真机 evidence(round 2 codex F1+F2 修订)
 
-- [ ] 3.1 修改 `tests/integration/test_p4_ue_manifest_only.py`:
-  - 既有 `test_p4_domain_video_copies_mp4_to_content_movies_subdir` 重构为 `test_p4_domain_video_creates_file_media_source_uasset_without_copying_mp4`(reflect new contract)
+- [ ] 3.1 修改 `tests/integration/test_p4_ue_manifest_only.py`(round 2 codex F2 修订:与 spec MODIFIED Scenarios + micro_tasks C.1.1 完整 sync):
+  - 既有 `test_p4_domain_video_copies_mp4_to_content_movies_subdir` 重构为 `test_p4_domain_video_creates_file_media_source_uasset_without_copying_mp4_file_path_from_source_uri`(reflect new contract)
   - 加 `test_p4_export_drops_video_mp4_to_content_movies_directly`(framework drop 后 mp4 已在 Movies/<run_id>/,domain_video 不再 copy)
-  - 加 `test_p4_domain_video_returns_failed_when_mp4_missing`(D2 修订 spec scenario)
+  - 加 `test_p4_domain_video_returns_failed_when_mp4_missing`(防御路径)
+  - 加 `test_p4_domain_video_rejects_non_d12_source_uri`(round 1 codex F3 D12 layout fence;承 round1-F3 spec MODIFIED 第 4 Scenario)
+  - 加 `test_p4_domain_video_returns_failed_on_source_target_mismatch`(round 1 codex F3 mismatch fence;承 round1-F3 spec MODIFIED 第 5 Scenario)
 - [ ] 3.2 跑 L2 live smoke `examples/comfy_local_smoke_video.json`:用户开 ComfyUI server(终端 1)+ Claude 跑 `python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id cluster2_l2_<HHMMSS>`,实证 framework 端 mp4 落 `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4` + `Content/Generated/<run_id>/MS_<base>.uasset` 同 run 内 + Generated/ 下不再有 raw mp4 垃圾文件
-- [ ] 3.3(选)P4 真机 commandlet evidence(若 user 装了 UE 5.x):走 `exec(open('ue_scripts/run_import.py').read())` 实证 import_video_entry 不 copy + FileMediaSource asset 正确创建
+- [ ] 3.3 P4 真机 commandlet evidence(round 2 codex F1 修订:**finish 前必需**,**不**再标 optional):
+  - 沿 `CLAUDE.md` §手工验收 + L161-167:本 change 实际改 `ue_scripts/domain_video.py` FileMediaSource API / file_path 派生 / no-copy / mismatch fence,这些是 UE 5.x commandlet 路径行为,L2 smoke 不跑 UE API + stub-unreal 不替代真机
+  - **路径 A(用户本机有 UE 5.x)**:用户操作 — 在装 UE 5.x 机器上 UE Python Console 跑 `exec(open('<repo>/ue_scripts/run_import.py').read())`(指 cluster2_l2_<HHMMSS> run folder 通过 `FORGEUE_RUN_FOLDER` env);实证 domain_video 不 copy + FileMediaSource asset 创建 + `.uasset.file_path` 引用 `Movies/<run_id>/MS_<base>.mp4`;落 `verification/p4_real_ue.md`(12-key audit frontmatter + UE 5.x 版本 + run_id + asset_path 截图)
+  - **路径 B(用户本机无 UE 5.x)**:Claude 必须显式标 `autonomy_decision: user_required` blocker;`verification/p4_real_ue.md` 用 placeholder evidence(`status: blocked-user-environment`);本 change 不能进 finish/archive 阶段;active.md 维持 follow-on entry 状态(不 retire)直到 P4 实证完成
+  - finish_gate 守门:`verification/p4_real_ue.md` MUST 存在 + frontmatter 含 `p4_real_ue_status: completed | blocked-user-environment` 字段(若 blocked → finish gate WARN,不阻断 archive **当且仅当** `autonomy_decision: user_required` + user 显式 acknowledge);`completed` 状态 MUST 含 commandlet 输出截图或日志 evidence
 
 ## 4. Phase D — Spec sync + doc-sync gate + active 收敛
 
