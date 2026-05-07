@@ -81,3 +81,43 @@ def test_is_manifest_importable_returns_true_for_video_mp4():
 def test_is_manifest_importable_returns_true_for_image_raster():
     art = _mkart("image", "raster", file_path="/tmp/x.png")
     assert is_manifest_importable(art) is True
+
+
+# ---- A.3:derive_drop_target helper -----------------------------------------
+
+from framework.ue_bridge.manifest_builder import derive_drop_target  # noqa: E402
+
+
+def test_derive_drop_target_video_mp4():
+    """video.mp4 → Content/Movies/<run_id>/MS_<base>.mp4(D12 路径分流 + UE 命名)"""
+    art = _mkart("video", "mp4", file_path="/tmp/run/abc.mp4")
+    art.metadata = {"display_name": "OpeningScene"}
+    target = _mktarget()
+    drop_dir, filename = derive_drop_target(art, target=target, run_id="run_a")
+    assert drop_dir == Path("/tmp/proj/Content/Movies/run_a")
+    assert filename == "MS_OpeningScene.mp4"
+
+
+def test_derive_drop_target_preserves_raw_filename_for_non_video():
+    """round 1 codex F2 fence:image/audio/mesh/material 保 raw artifact basename"""
+    target = _mktarget()
+    cases = [
+        ("image", "raster", "/tmp/run/def456.png"),
+        ("audio", "waveform", "/tmp/run/ghi.flac"),
+        ("mesh", "gltf", "/tmp/run/jkl.glb"),
+    ]
+    for modality, shape, fp in cases:
+        art = _mkart(modality, shape, file_path=fp)
+        art.metadata = {"display_name": "ShouldNotAffectFilename"}
+        drop_dir, filename = derive_drop_target(art, target=target, run_id="run_a")
+        assert drop_dir == Path("/tmp/proj/Content/Generated/run_a")
+        assert filename == Path(fp).name
+
+
+def test_derive_drop_target_falls_through_for_unmapped_shape():
+    """round 1 codex F1 defensive:_KIND_MAP miss 不 raise,fall through 非 video"""
+    art = _mkart("video", "webm", file_path="/tmp/run/x.webm")
+    target = _mktarget()
+    drop_dir, filename = derive_drop_target(art, target=target, run_id="run_a")
+    assert drop_dir == Path("/tmp/proj/Content/Generated/run_a")
+    assert filename == "x.webm"

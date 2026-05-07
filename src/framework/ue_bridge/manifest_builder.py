@@ -27,7 +27,7 @@ Rules (§E.1 — framework only DECLARES; UE-side script EXECUTES):
 from __future__ import annotations
 
 import re
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 from framework.core.artifact import Artifact
@@ -84,6 +84,44 @@ _PREFIX_BY_KIND: dict[str, str] = {
     # Phase 3 D1:MS_ 前缀(沿 SM_ / S_ / T_ / M_ 风格,2 字符前缀)
     "file_media_source": "MS_",
 }
+
+
+def derive_drop_target(
+    art: Artifact, *, target: UEOutputTarget, run_id: str,
+) -> tuple[Path, str]:
+    """返回 (drop_dir, target_filename) — D12 路径分流 + UE naming for video,
+    raw basename for non-video.
+
+    Precondition: caller MUST 用 `is_manifest_importable(art)` filter;
+    若 _KIND_MAP miss(defensive)→ fall through 非 video 分支返 raw basename,
+    不 raise(沿 OpenSpec change fix-export-d12-and-skipped-evidence-filter
+    design D10 + round 1 codex F1 修订).
+
+    - video + `_KIND_MAP[(modality, shape)] == "file_media_source"` →
+        (Movies/<run_id>, MS_<base>.mp4)
+    - 其他 importable modality(image/audio/mesh/material)→
+        (Generated/<run_id>, raw_basename)
+        其中 raw_basename = Path(art.payload_ref.file_path).name(沿 design D1 修订:
+        round 1 codex F2 — 非 video 不改 filename, 避免 NG1 超范围 + 同 display_name
+        collision)
+    """
+    # 中文注释:project_root 由 UEOutputTarget 提供绝对路径
+    project_root = Path(target.project_root)
+    kind = _KIND_MAP.get((art.artifact_type.modality, art.artifact_type.shape))
+    if kind == "file_media_source" and art.artifact_type.modality == "video":
+        # video → Content/Movies/<run_id>/MS_<base>.<ext>(D12 packaging path 分流)
+        ue_name = _derive_ue_name(art, kind=kind, policy=target.asset_naming_policy)
+        ext = Path(art.payload_ref.file_path).suffix or ".mp4"
+        return (
+            project_root / "Content" / "Movies" / run_id,
+            f"{ue_name}{ext}",
+        )
+    # 非 video importable + defensive _KIND_MAP miss fall-through(round 1 codex F1)
+    # 沿 design D1 修订:image/audio/mesh/material 保 raw basename(不走 UE naming)
+    return (
+        project_root / "Content" / "Generated" / run_id,
+        Path(art.payload_ref.file_path).name,
+    )
 
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_]+")
