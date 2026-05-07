@@ -109,7 +109,11 @@ def test_manifest_builder_skips_selected_filter(tmp_path):
     assert {e.artifact_id for e in manifest.assets} == {"keep"}
 
 
-def test_manifest_builder_rejects_inline_importable(tmp_path):
+def test_manifest_builder_silently_skips_inline_importable(tmp_path):
+    """OpenSpec change fix-export-d12-and-skipped-evidence-filter D10 修订:
+    inline payload 在新 is_manifest_importable 单源 filter 下 silent skip(返 False);
+    旧 build_manifest "errors.append + raise ManifestBuildError" 路径折叠到 single-
+    source filter,与 ExportExecutor._is_importable 行为对齐(沿 round 1 codex F1)。"""
     proj = _fake_ue_project(tmp_path)
     repo = _repo(tmp_path / "a")
     t = _target(proj)
@@ -121,8 +125,10 @@ def test_manifest_builder_rejects_inline_importable(tmp_path):
         payload_kind=PayloadKind.inline,
         producer=ProducerRef(run_id="r", step_id="g"),
     )
-    with pytest.raises(ManifestBuildError):
-        build_manifest(run_id="r", target=t, artifacts=list(repo))
+    # D10 修订:不再 raise,silent skip(沿 _KIND_MAP miss / non-file payload 同款)
+    manifest = build_manifest(run_id="r", target=t, artifacts=list(repo))
+    assert len(manifest.assets) == 0, \
+        "inline payload 应被 is_manifest_importable filter silent skip(D10)"
 
 
 def test_manifest_builder_flags_missing_expected_kinds(tmp_path):

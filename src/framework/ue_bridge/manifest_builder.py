@@ -154,20 +154,25 @@ def build_manifest(
     for art in artifacts:
         if selected_artifact_ids is not None and art.artifact_id not in selected_artifact_ids:
             continue
-        kind = _KIND_MAP.get((art.artifact_type.modality, art.artifact_type.shape))
-        if kind is None:
-            # Non-importable artifact (e.g. bundle / report / text) — skip silently.
+        # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase A:
+        # filter 收敛到 is_manifest_importable 单源(沿 design D10 + round 1 codex F1);
+        # 旧"_KIND_MAP miss silent skip + payload.kind != file → errors.append"双 branch
+        # 合并到一处 helper,与 ExportExecutor._is_importable 共用同一 single source
+        if not is_manifest_importable(art):
+            # Non-importable artifact (bundle / report / text / unmapped shape /
+            # non-file payload)— silent skip.
             continue
-        if art.payload_ref.kind != PayloadKind.file:
-            errors.append(
-                f"{art.artifact_id}: {art.artifact_type.internal} must be file-backed "
-                f"(got {art.payload_ref.kind.value})"
-            )
-            continue
+        # is_manifest_importable 已确保 _KIND_MAP 命中 + file payload;此处直接 dict 访问
+        kind = _KIND_MAP[(art.artifact_type.modality, art.artifact_type.shape)]
         ue_name = _derive_ue_name(art, kind=kind, policy=target.asset_naming_policy)
         target_obj_path = f"{run_asset_folder}/{ue_name}"
         target_pkg_path = target_obj_path   # Package + object paths coincide in UE 5.x naming
-        source_uri = str(PurePosixPath(art.payload_ref.file_path))
+        # source_uri 从 derive_drop_target 计算(沿 design D1 修订 — 单源契约)
+        # video → Content/Movies/<run_id>/MS_<base>.mp4
+        # 非 video → Content/Generated/<run_id>/<raw basename>
+        drop_dir, filename = derive_drop_target(art, target=target, run_id=run_id)
+        drop_relative = drop_dir.relative_to(Path(target.project_root)).as_posix()
+        source_uri = f"{drop_relative}/{filename}"
         entries.append(UEAssetEntry(
             asset_entry_id=f"ae_{art.artifact_id}",
             artifact_id=art.artifact_id,

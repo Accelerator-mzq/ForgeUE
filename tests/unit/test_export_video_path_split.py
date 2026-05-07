@@ -121,3 +121,33 @@ def test_derive_drop_target_falls_through_for_unmapped_shape():
     drop_dir, filename = derive_drop_target(art, target=target, run_id="run_a")
     assert drop_dir == Path("/tmp/proj/Content/Generated/run_a")
     assert filename == "x.webm"
+
+
+# ---- A.4:build_manifest source_uri via derive_drop_target -----------------
+
+from framework.ue_bridge.manifest_builder import build_manifest  # noqa: E402
+
+
+def test_manifest_entry_source_uri_matches_framework_drop_path():
+    """单源契约 — manifest source_uri 等于 derive_drop_target 计算路径相对 project_root"""
+    target = _mktarget()
+    art_video = _mkart("video", "mp4", file_path="/tmp/run/abc.mp4")
+    art_video.metadata = {"display_name": "Scene1"}
+    art_image = _mkart("image", "raster", file_path="/tmp/run/def.png")
+    art_image.artifact_id = "a_2"
+    art_image.metadata = {"display_name": "Tavern"}
+    manifest = build_manifest(run_id="run_a", target=target,
+                              artifacts=[art_video, art_image])
+    entries = {e.artifact_id: e for e in manifest.assets}
+    # video → Content/Movies/<run_id>/MS_<base>.mp4
+    assert entries["a_1"].source_uri == "Content/Movies/run_a/MS_Scene1.mp4"
+    # image → Content/Generated/<run_id>/<raw basename>
+    assert entries["a_2"].source_uri == "Content/Generated/run_a/def.png"
+
+
+def test_manifest_silent_skip_unmapped_shape_consistent_with_export():
+    """video.webm 在 build_manifest filter 也走 is_manifest_importable 单源 silent skip"""
+    target = _mktarget()
+    art = _mkart("video", "webm", file_path="/tmp/run/x.webm")
+    manifest = build_manifest(run_id="run_a", target=target, artifacts=[art])
+    assert len(manifest.assets) == 0  # silent skip,无 entry
