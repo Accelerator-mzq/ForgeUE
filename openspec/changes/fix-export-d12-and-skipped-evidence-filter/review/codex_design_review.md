@@ -8,7 +8,7 @@ contract_refs:
   - specs/ue-export-bridge/spec.md
 aligned_with_contract: false
 drift_decision: written-back-to-design
-writeback_commit: pending
+writeback_commit: efd2129de71c9e9f82b738d90de43373aeff4d31
 drift_reason: S2 design stage round 1 codex adversarial review 4 finding(3 high F1+F2+F3 + 1 medium F4)全 accepted-codex inline writeback;F1+F2 揭示 _KIND_MAP miss + 非 video filename ue_name silent change(超 NG1);F3 暴露 latent design smell(domain_video 验证 source_uri / 引用 target_object_path 反推);F4 helper API signature naming_policy oversight。详见 review/design_cross_check.md ## B/C/D 与 notes/codex_adversarial_review_review_round1.md(verbatim)。
 reasoning_notes_anchor: review/design_cross_check.md#round-summary
 detected_env: claude-code
