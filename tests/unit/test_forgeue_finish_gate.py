@@ -3823,3 +3823,148 @@ def test_parse_srs_tbd_table_section_boundary_respects_next_h2(tmp_path):
     result = _parse_srs_tbd_table(srs)
     assert "TBD-010" in result
     assert "TBD-999" not in result
+
+
+# ---------------------------------------------------------------------------
+# P2.g — _check_srs_registry_consistency fence 单元测试(round 1 F3 fix)
+# ---------------------------------------------------------------------------
+
+
+def _make_srs_file(tmp_path: Path, tbds: dict[str, str]) -> Path:
+    """Helper:构造含 §7.3 表格的 SRS.md fixture。tbds = {tbd_id: status_emoji}"""
+    docs_dir = tmp_path / "docs" / "requirements"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    srs = docs_dir / "SRS.md"
+    rows = "\n".join(
+        f"| {tid} | desc {tid} {emoji} | date |"
+        for tid, emoji in tbds.items()
+    )
+    srs.write_text(
+        "# SRS\n\n"
+        "### 7.3 未决事项\n\n"
+        "| 编号 | 事项 | 目标决议日期 |\n"
+        "| --- | --- | --- |\n"
+        f"{rows}\n\n"
+        "## 8 Other\n",
+        encoding="utf-8",
+    )
+    return srs
+
+
+def _make_active_md(tmp_path: Path, entries: list[dict]) -> Path:
+    """Helper:构造 openspec/backlog/active.md。
+
+    每个 entry dict 须含 id / category / status (可选其他字段)。
+    """
+    backlog_dir = tmp_path / "openspec" / "backlog"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    active = backlog_dir / "active.md"
+    lines = ["# Follow-on Backlog\n"]
+    for e in entries:
+        eid = e["id"]
+        lines.append(f"### `{eid}`\n")
+        for k, v in e.items():
+            if k != "id":
+                lines.append(f"- **{k}**: {v}")
+        lines.append("")
+    active.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return active
+
+
+def test_check_srs_registry_consistency_set_match_passes(tmp_path):
+    """SRS active TBDs == registry tbd-pointer ids → 空 list(PASS)。
+
+    registry entry id 使用 TBD-XXX 格式(与实际 active.md 一致)。
+    """
+    from tools.forgeue_finish_gate import _check_srs_registry_consistency
+    # SRS: TBD-001 ⏳(active), TBD-002 ✅(completed → 不计入 active set)
+    _make_srs_file(tmp_path, {"TBD-001": "⏳", "TBD-002": "✅"})
+    # registry: pointer 只有 TBD-001(id 格式匹配 SRS TBD id)
+    _make_active_md(tmp_path, [
+        {"id": "TBD-001", "category": "requirements-tbd-pointer", "status": "active"},
+    ])
+    change_dir = tmp_path / "openspec" / "changes" / "my-change"
+    change_dir.mkdir(parents=True)
+    result = _check_srs_registry_consistency(change_dir, "my-change", repo=tmp_path)
+    assert result == [], f"Expected PASS (sets equal), got: {result}"
+
+
+def test_check_srs_registry_consistency_both_empty_passes(tmp_path):
+    """SRS 无 TBD / registry 无 pointer → 两 set 均为空 → PASS。"""
+    from tools.forgeue_finish_gate import _check_srs_registry_consistency
+    # SRS: 只有已完成的 TBD
+    _make_srs_file(tmp_path, {"TBD-001": "✅"})
+    # registry: 无 requirements-tbd-pointer 类别
+    _make_active_md(tmp_path, [
+        {"id": "some-enhancement", "category": "enhancement", "status": "active"},
+    ])
+    change_dir = tmp_path / "openspec" / "changes" / "my-change"
+    change_dir.mkdir(parents=True)
+    result = _check_srs_registry_consistency(change_dir, "my-change", repo=tmp_path)
+    assert result == [], f"Expected PASS (both sets empty), got: {result}"
+
+
+def test_check_srs_registry_consistency_srs_adds_tbd_without_pointer_blocks(tmp_path):
+    """SRS 加新 TBD(active)但 registry 无对应 pointer → BLOCKER set mismatch。"""
+    from tools.forgeue_finish_gate import _check_srs_registry_consistency
+    # SRS: TBD-009 active,TBD-010 active(两者都缺 registry pointer)
+    _make_srs_file(tmp_path, {"TBD-009": "⏳", "TBD-010": "❌"})
+    # registry: 只有 TBD-009 pointer,缺 TBD-010
+    _make_active_md(tmp_path, [
+        {"id": "TBD-009", "category": "requirements-tbd-pointer", "status": "active"},
+    ])
+    change_dir = tmp_path / "openspec" / "changes" / "my-change"
+    change_dir.mkdir(parents=True)
+    result = _check_srs_registry_consistency(change_dir, "my-change", repo=tmp_path)
+    # 期望 BLOCKER:added 含 TBD-010
+    assert any("srs_registry_set_mismatch" in r for r in result), (
+        f"Expected srs_registry_set_mismatch blocker, got: {result}"
+    )
+    # 具体检查 added 含 TBD-010
+    assert any("TBD-010" in r for r in result), (
+        f"Expected TBD-010 in mismatch detail, got: {result}"
+    )
+
+
+def test_check_srs_registry_consistency_completed_tbd_still_active_in_registry_blocks(tmp_path):
+    """SRS TBD 已完成(✅)但 registry pointer 仍 active → BLOCKER 状态变化违规。"""
+    from tools.forgeue_finish_gate import _check_srs_registry_consistency
+    # SRS: TBD-005 已完成
+    _make_srs_file(tmp_path, {"TBD-005": "✅"})
+    # registry: TBD-005 pointer 仍 active
+    _make_active_md(tmp_path, [
+        {"id": "TBD-005", "category": "requirements-tbd-pointer", "status": "active"},
+    ])
+    change_dir = tmp_path / "openspec" / "changes" / "my-change"
+    change_dir.mkdir(parents=True)
+    result = _check_srs_registry_consistency(change_dir, "my-change", repo=tmp_path)
+    # 期望有 srs_completed_tbd_still_active_in_registry_TBD-005 blocker
+    assert any("srs_completed_tbd_still_active_in_registry" in r for r in result), (
+        f"Expected srs_completed_tbd_still_active_in_registry blocker, got: {result}"
+    )
+
+
+def test_check_srs_registry_consistency_registry_has_pointer_srs_lacks_tbd_blocks(tmp_path):
+    """registry 有 pointer 但 SRS 无对应 TBD(可能已被删除) → BLOCKER set mismatch。"""
+    from tools.forgeue_finish_gate import _check_srs_registry_consistency
+    # SRS: 无任何 TBD
+    _make_srs_file(tmp_path, {})
+    # registry: 有一个 pointer 指向不存在的 TBD-999
+    _make_active_md(tmp_path, [
+        {"id": "TBD-999", "category": "requirements-tbd-pointer", "status": "active"},
+    ])
+    change_dir = tmp_path / "openspec" / "changes" / "my-change"
+    change_dir.mkdir(parents=True)
+    result = _check_srs_registry_consistency(change_dir, "my-change", repo=tmp_path)
+    assert any("srs_registry_set_mismatch" in r for r in result), (
+        f"Expected srs_registry_set_mismatch blocker, got: {result}"
+    )
+
+
+def test_srs_registry_consistency_fence_remains_registered():
+    """Anti-regression:_check_srs_registry_consistency 必须出现在 build_report 函数体中。"""
+    import inspect
+    src = inspect.getsource(fg.build_report)
+    assert "_check_srs_registry_consistency" in src, (
+        "_check_srs_registry_consistency not registered in build_report"
+    )

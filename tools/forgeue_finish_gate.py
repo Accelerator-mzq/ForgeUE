@@ -1893,6 +1893,11 @@ def build_report(
     for reason in _check_followon_continuity(change_dir, change_id, repo):
         blockers.append(Blocker(type="followon_continuity_violation", detail=reason))
 
+    # P2.g — SRS↔registry consistency fence(centralize-followon-backlog-registry round 1 F3 fix)
+    # SRS §7.3 active TBDs 必须与 registry requirements-tbd-pointer 条目集合等价
+    for reason in _check_srs_registry_consistency(change_dir, change_id, repo):
+        blockers.append(Blocker(type="srs_registry_consistency_violation", detail=reason))
+
     if not no_validate:
         # archive/ 路径下 skip openspec validate(沿 design.md D-OpenSpecValidateArchiveSkip):
         # upstream openspec CLI 不识别 `openspec/changes/archive/<dated-id>/` 路径,
@@ -2535,6 +2540,106 @@ def _check_followon_continuity(
         blockers.append(f"archived_md_history_lost_{lost_id}")
     for field_key in append_only.get("immutable_field_modified", []):
         blockers.append(f"archived_md_immutable_field_modified_{field_key}")
+
+    return blockers
+
+
+# ---------------------------------------------------------------------------
+# P2.g — SRS↔registry consistency fence(round 1 F3 fix)
+# centralize-followon-backlog-registry
+# ---------------------------------------------------------------------------
+
+# TBD pointer heading regex:H3 `### \`TBD-XXX\``(支持大写字母 + 数字,SRS 格式)
+# 与 _REGISTRY_ENTRY_HEADING_RE 独立,仅用于 SRS consistency fence 提取 TBD pointer ids
+_TBD_POINTER_HEADING_RE = re.compile(
+    r"^###\s+`(?P<id>TBD-\d+)`\s*$", re.MULTILINE
+)
+
+# registry field regex(复用 _REGISTRY_FIELD_RE 形式)
+_TBD_POINTER_FIELD_RE = re.compile(
+    r"^-\s+\*\*(?P<key>[a-z_][a-z0-9_-]*)\*\*\s*:\s*(?P<val>.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _parse_tbd_pointer_entries(active_md_path: "Path") -> "dict[str, dict]":
+    """解析 active.md 中 category: requirements-tbd-pointer 的 TBD-XXX entries。
+
+    与 _parse_registry_md 功能相似,但使用宽松 heading regex 支持大写 TBD-XXX id。
+    返回 dict[tbd_id, fields_dict](如 {"TBD-001": {"status": "active", ...}})。
+    文件不存在 → {}(tolerant)。
+    """
+    if not active_md_path.is_file():
+        return {}
+    text = active_md_path.read_text(encoding="utf-8")
+    entries: dict[str, dict] = {}
+    headings = list(_TBD_POINTER_HEADING_RE.finditer(text))
+    for i, h in enumerate(headings):
+        tbd_id = h.group("id")
+        body_start = h.end()
+        body_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        body = text[body_start:body_end]
+        entry: dict = {"id": tbd_id}
+        for fm in _TBD_POINTER_FIELD_RE.finditer(body):
+            entry[fm.group("key")] = fm.group("val").strip()
+        # 仅保留 category == requirements-tbd-pointer 的 entry
+        if entry.get("category") == "requirements-tbd-pointer":
+            entries[tbd_id] = entry
+    return entries
+
+
+def _check_srs_registry_consistency(
+    change_dir: "Path",
+    change_id: str,
+    repo: "Path | None" = None,
+) -> "list[str]":
+    """Round 1 F3 fix:SRS §7.3 ↔ active.md requirements-tbd-pointer 集合等价 + 状态变化同步。
+
+    阶段 1 — 集合等价校验:
+        srs_active_tbds(status != ✅) 必须 == active_tbd_pointers(category=requirements-tbd-pointer)
+        不等 → BLOCKER srs_registry_set_mismatch_added_[...] _removed_[...]
+
+    阶段 2 — 状态变化校验:
+        registry 有 pointer entry 且 SRS 状态已 ✅ 但 entry.status == active
+        → BLOCKER srs_completed_tbd_still_active_in_registry_<id>
+
+    返回空 list = PASS;非空 list 含各条 BLOCKER reason string。
+    """
+    repo = repo or Path.cwd()
+    blockers: list[str] = []
+
+    # 解析 SRS §7.3 TBD 状态
+    srs_path = repo / "docs" / "requirements" / "SRS.md"
+    srs_tbds = _parse_srs_tbd_table(srs_path)
+
+    # 解析 active.md TBD pointer entries(使用宽松 regex 支持大写 TBD-XXX)
+    active_path = repo / "openspec" / "backlog" / "active.md"
+    active_tbd_entries = _parse_tbd_pointer_entries(active_path)
+
+    # 集合比较:SRS active TBDs vs registry TBD pointers
+    active_tbd_pointers: set[str] = set(active_tbd_entries.keys())
+    srs_active_tbds: set[str] = {
+        tbd_id for tbd_id, status in srs_tbds.items() if status != "✅"
+    }
+
+    added = srs_active_tbds - active_tbd_pointers    # SRS 有但 registry 无
+    removed = active_tbd_pointers - srs_active_tbds  # registry 有但 SRS 无/已完成
+
+    if added or removed:
+        added_str = ",".join(sorted(added))
+        removed_str = ",".join(sorted(removed))
+        blockers.append(
+            f"srs_registry_set_mismatch_added_[{added_str}]_removed_[{removed_str}]"
+        )
+
+    # 状态变化校验:registry pointer 仍 active 但 SRS 已 ✅
+    for tbd_id in active_tbd_pointers:
+        if srs_tbds.get(tbd_id) == "✅":
+            entry_status = active_tbd_entries.get(tbd_id, {}).get("status", "active")
+            if entry_status == "active":
+                blockers.append(
+                    f"srs_completed_tbd_still_active_in_registry_{tbd_id}"
+                )
 
     return blockers
 
