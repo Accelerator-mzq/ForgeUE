@@ -5,9 +5,9 @@ license: MIT
 compatibility: Claude Code Agent tool + python -m pytest;sister to superpowers:subagent-driven-development(generic 3-stage process)
 metadata:
   author: forgeue (initial seed)
-  version: "2.4"
+  version: "2.5"
   scenario_subtype_count: 28
-  case_study_count: 3
+  case_study_count: 4
   retrospect_protocol: trigger-type-matrix(4 types × per-type intensity)  # Type 2 parallel retired in retire-parallel-and-worktree-fully (2026-05-06)
   worktree_consent_policy: superpowers-upstream-using-git-worktrees  # retire ForgeUE-level worktree consent gate;沿 upstream Step 0 consent gate
 ---
@@ -89,7 +89,7 @@ Universal controller-side discipline for `superpowers:subagent-driven-developmen
 | 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
 |---|---|---|---|---|
 | **§1.7.1 Run tests + report(机械)** | "run pytest, report pass/fail" | direct(controller;no subagent) | 不值得 subagent dispatch | controller 自己 `python -m pytest -q` |
-| **§1.7.2 Cross-check evidence vs spec(reasoning)** | "verify evidence matches spec scenarios" | `sonnet` | 跨 evidence + spec 比对推理 | 列 spec scenarios + evidence file paths + match criteria |
+| **§1.7.2 Cross-check evidence vs spec(reasoning)** | "verify evidence matches spec scenarios" | `sonnet` | 跨 evidence + spec 比对推理 | 列 spec scenarios + evidence file paths + match criteria;**若验证 fail "pre-existing":dispatch prompt MUST 给 plan stage commit SHA + 明示"baseline 必早于 plan stage commit;用 `git diff <plan-stage-commit>~..<plan-stage-commit>` 区分 introduced-by-plan vs pre-existing-before-plan;`git stash` 不可作 baseline 验证(stash 仅暂存 working-tree,不撤销已 commit drift)"**(沿 Case 4 P3 Pattern G) |
 
 ---
 
@@ -439,6 +439,73 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 **Cost vs all-Opus alternative**:实际 $X vs Opus 估 $Y → 节省 ratio
 ```
 
+### Case 4: ForgeUE / fix-finish-gate-archived-replay-compat / P0-P3+S6(Type 1 3-stage retrospect)
+
+**Date**:2026-05-07
+**Project context**:Workflow tooling micro-bugfix change(fix `tools/forgeue_finish_gate.py` regex + per-format threshold + repo-relative archive detection;closes 2 retire-parallel P0 baseline follow-on);4 phase × 3 subagent + S6 final review
+
+**Subagent dispatch**(Type 1 3-stage,P0-P3 共 12 subagent + S6 final reviewer):
+
+| Phase | Subagent | Scenario subtype(§1.X.Y)| Model | $cost | Verdict |
+|---|---|---|---|---|---|
+| P0 | implementer | §1.7.2 cross-check evidence vs spec(baseline measurement)| Haiku | $0.05 | ✅ DONE |
+| P0 | spec_reviewer | §1.2.1 string matching | Haiku | $0.05 | ✅ Spec compliant |
+| P0 | code_quality | §1.3.1 style/lint(no-code task)| Haiku | $0.06 | ✅ Approved |
+| P1 | implementer | §1.4.1 unit test from spec(9 case append)| Sonnet | $0.30 | ✅ DONE(perfect 2 FAIL + 7 PASS prediction) |
+| P1 | spec_reviewer | §1.2.1 string matching(11 scenario mapping)| Haiku | $0.06 | ✅ Spec compliant |
+| P1 | code_quality | §1.3.3 maintainability + §1.3.4 runtime correctness(误用 Haiku)| Haiku | $0.05 | ❌ **4/4 false-positive findings(1 Critical + 3 Important)** |
+| P2 | implementer | §1.1.3 multi-file integration(4 edits to forgeue_finish_gate.py)| Sonnet | $0.30 | ✅ DONE(VERBATIM,9/9 PASS,0 regression) |
+| P2 | spec_reviewer | §1.2.1 string matching | Haiku | $0.05 | ❌ **boundary violation 误判**(P1 vs P2 attribution) |
+| P2 | code_quality | §1.3.3 + §1.3.4 | Haiku | $0.06 | ✅ Approved |
+| P3 | implementer | §1.7.2 cross-check evidence vs spec | Sonnet | $0.12 | ⚠️ DONE_WITH_CONCERNS(误标 self-drift "pre-existing") |
+| P3 | spec/code-quality | (controller-direct,no subagent dispatch)| N/A | $0 | ✅ |
+| S6 | final reviewer | §1.3.3 + cross-phase consistency | Sonnet | included in change-review | ✅ Approve with fixes(2 Important + 2 Minor;Important 全 inline 修复) |
+
+**Real issues caught / failed**(Trigger Type 1 mandatory Q1-Q6 retrospect 实证):
+
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+| **P1 code_quality 4/4 false-positive**(haiku reviewer trace `make_complete_change` fixture + `_common.py` change_path 错;声称 Critical 实际不存在)| **Important** | controller override(沿 ForgeUE memory `feedback_verify_external_reviews`)| **Haiku 在 fixture-cross-module-trace tasks 上 confident-false-positive**;§1.3.3/§1.3.4 表"Sonnet MANDATORY"应明确扩到含 "test fixture 跨文件 trace" 子类 |
+| **P2 spec_reviewer boundary violation 误判**(指控 P2 implementer 改了 test 文件,实是 P1 改动 + controller 没在 phase 之间 commit)| Important | controller override + 补 commit P0+P1+P2 干净 phase | Pattern: **phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**;controller workflow-level 失误,非 reviewer model 问题 |
+| **P3 implementer 误标 self-drift "pre-existing"**(本 change plan stage `design_cross_check.md` frontmatter 缺 `disputed_open: 0` 字段触发的 fail;implementer 用 `git stash` 验证 baseline,但 stash 不能 revert 已 commit plan stage drift)| Important | controller 自检 + 修 frontmatter | Pattern: **`git stash` 不能 revert 已 commit baseline drift**;§1.7.2 verify task 应用 `git diff <plan-stage-commit>~..<plan-stage-commit>` 区分 introduced-by-plan vs pre-existing-before-plan |
+| **S6 final reviewer 真捕获 multi-phase 累积 drift**(design.md 重复 `D-OpenSpecValidateArchiveSkip` section / design_cross_check.md A.2 表头 "3 D-decision" 应为 "4 D-decision" / spec.md Scenario 2 `≥9` 应为 `≥10`)| Important + Minor | Sonnet final reviewer | **Capability validation**(沿 Case 2/3 同款"Sonnet final reviewer 是 multi-evidence consistency 抓手"模式);per-phase reviewer scope 看不到 cross-phase 累积 drift |
+
+**Lesson reinforce / new pattern surfaced**:
+
+- **Pattern A reinforced**(沿 Case 2 + Case 3):**Sonnet code_quality 是 silent failure 抓手** — 本 case 反向 reinforce — P1 用 Haiku code_quality 出现 4/4 false-positive,validating §1.3.3/§1.3.4 mandatory Sonnet。Controller 应严格按 §1.3 model 列 dispatch,不可降级。
+- **Pattern E 新 — Haiku code_quality 在 fixture-cross-module-trace 任务上 confident-false-positive**(P1):reviewer 任务需追踪 fixture(`make_complete_change`)+ helper(`_common.py change_path`)在多文件间的语义,Haiku 给出 confident "Critical" finding 但 trace 错。**Mitigation pattern**:任何 code review 涉及 trace fixture / helper / 跨模块语义 → §1.3.4 Sonnet MANDATORY,不接受 §1.3.1 style nits 误用。Controller 应在 dispatch 前问"reviewer 需 trace 多少文件 / fixture?",超 1 文件即 §1.3.3+。
+- **Pattern F 新 — phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**(P2):controller 没在 P1 phase 完成后 commit,导致 P2 spec_reviewer 看 `git diff` 时误把 P1 改动归给 P2(boundary violation 误判)。**Mitigation pattern**:每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer。Reviewer 看到的 diff 应只含本 phase 改动 + 上 phase commit 之后的 evidence。Sonnet final reviewer 不受影响(全 commit 都在 base),但 per-phase reviewer 受影响。**§7 controller checklist 应加此项**。
+- **Pattern G 新 — `git stash` 不能 revert 已 commit baseline drift**(P3):implementer 用 `git stash && pytest && git stash pop` 验证某 fail "pre-existing",但 stash 仅暂存 working-tree changes,不撤销已 commit 的 plan stage drift(本 case `design_cross_check.md` 缺 frontmatter 字段是 plan stage 引入,early commit `a32b4fb`)。**Mitigation pattern**:§1.7.2 verify task 验证 "pre-existing" claim 应用 `git diff <plan-stage-commit>~..<plan-stage-commit> -- <suspect-file>` 看 plan stage 是否引入,而非 stash。Controller dispatch verify task 时 prompt 应给 plan stage commit SHA + 明示"判定 pre-existing 必须 baseline 早于 plan stage commit"。
+- **Pattern D reinforced**(沿 Case 3):**controller inline fix > round 2 dispatch threshold** — 本 case 共 8 issue 全 controller inline fix(P1 4 false-positive override + P2 boundary override + P3 self-drift fix + S6 2 Important + 1 Minor),无一项 round 2 dispatch。再次实证 inline fix ROI 高于 round 2 dispatch when fix is mechanical(override 决策 + 1-line frontmatter 字段加)。
+
+**Cost vs all-Opus alternative**:P0-P3 实际 ~$1.10 + S6 final reviewer($0 included)+ retrospect Opus(本次 ~$0.50)= ~$1.60 vs 全 Opus 估 $8-12 → 节省 ~$6-10。Pattern E 实证 Haiku in code_quality 误用的 cost-asymmetry — false-positive 看似 $0.05 cheap,但 controller verify + override + retrospect 实际成本远高于初始 dispatch 改 Sonnet($0.20 directly Sonnet vs $0.05 Haiku + $0.50 controller verify time = 总 5x cost)。
+
+**§6 catalog new rows**(Q4 + new pattern surfaced;3 row):
+
+| Subagent failure mode | Pattern that prevents | Case studies reproducing |
+|---|---|---|
+| **Haiku code_quality false-positive on fixture-cross-module-trace tasks**(reviewer 任务需追踪 fixture / helper 跨多文件语义,Haiku confident 但 trace 错;声称 "Critical" 实际不存在)| 任何 review 涉及 trace fixture / helper / 跨模块语义 → §1.3.3/§1.3.4 Sonnet MANDATORY,不可降级 §1.3.1 style nits;controller dispatch 前问"reviewer 需 trace 多少文件 / fixture?"超 1 文件即升 Sonnet | Case 4 P1 |
+| **phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**(controller 没在 phase 完成后 commit,reviewer 看 `git diff` 把上 phase 改动归给本 phase)| 每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer;reviewer prompt 应明示 "diff base = 上 phase commit SHA" | Case 4 P2 |
+| **`git stash` 不能 revert 已 commit baseline drift**(verify task 用 `stash && pytest && stash pop` 验证 "pre-existing",但 stash 仅暂存 working-tree;已 commit 的 plan stage drift 不在 stash scope)| §1.7.2 verify task 验证 "pre-existing" 应用 `git diff <plan-stage-commit>~..<plan-stage-commit> -- <suspect-file>`;controller dispatch verify task prompt 给 plan stage commit SHA + 明示"baseline 必早于 plan stage commit" | Case 4 P3 |
+
+**§3.4 Retrospect verdict per phase**:
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P0 | No | No | No | No | No | No(haiku 在 mechanical baseline 任务合格)| **SKIP** |
+| P1 | **Yes**(haiku code_quality 4/4 confident-false-positive)| **Yes**(reviewer trace `make_complete_change` 错)| **Yes**(controller override 4/4)| **Yes**(Pattern E)| No | **Yes**(haiku 在 fixture-cross-module-trace code review 应升 Sonnet)| **Add Case** — Q1+Q2+Q3+Q4+Q6 |
+| P2 | **Yes**(spec_reviewer boundary attribution 错)| **Yes**(P1 vs P2 attribution confusion)| **Yes**(controller override + 补 commit)| **Yes**(Pattern F)| No | No(controller workflow,非 model)| **Add Case** — Q1+Q2+Q3+Q4 |
+| P3 | **Yes**(implementer 误标 self-drift)| Partial(`git stash` verify logic 错)| **Yes**(controller 自检 + 修 frontmatter)| **Yes**(Pattern G)| No | No(sonnet implementer 实际合格,prompt 缺 baseline SHA)| **Add Case** — Q1+Q3+Q4 |
+| S6 | No | No | No | No(reinforce Pattern A,non-failure)| No | No | **SKIP**(capability validation only) |
+
+**Controller self-reflection**(沿 ForgeUE memory `feedback_verify_external_reviews` reinforce):
+
+- 本 case 关键决定时刻 controller 4 次 override reviewer verdict(P1 code_quality 4 finding reject + P2 spec boundary reject + P3 self-drift catch + S6 final review accept apply)
+- 若机械应用 reviewer verdict 不 override,本次 archive 会带 4 错误 fix(test 反而坏)+ 漏 1 真 self-drift
+- 这正是 §3.2 cross-verify + §3.3 inline fix 决策框架的实战价值
+
+---
+
 ### Case 3: ForgeUE / restore-superpowers-worktree-consent-gate / P0+P1(Type 1 3-stage retrospect)
 
 **Date**:2026-05-06
@@ -599,6 +666,9 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 | 静态 review 漏 runtime correctness | §1.3.4 误用 Haiku 替代 Sonnet | §1.3.4 MANDATORY Sonnet | controller catches downstream / Sonnet code_quality 必跑 |
 | **sister-file fence test sync drift**(多 sister command md 文件 IDENTICAL section body,无 fence 强 equality)| §1.3.3 multi-file maintainability 漏 — 缺 cross-file equality fence | Add fence 函数 extract sister files section + character-level equality assert(15 LOC pattern)| controller inline-fix 加 fence(沿 Case 3 P0 实例) |
 | **fence design intent docstring gap**(asymmetric trigger gating 无 docstring 解释)| §1.3.3 maintainability 漏 — design intent 不显式 | Asymmetric 设计必含 "Asymmetry note" docstring 段 | controller inline-fix 加 docstring(沿 Case 3 P1 实例) |
+| **Haiku code_quality false-positive on fixture-cross-module-trace tasks**(reviewer 任务需追踪 fixture / helper 跨多文件语义,Haiku confident 但 trace 错)| §1.3.X model 误用 — Haiku 替代 Sonnet 在 fixture-trace 类任务 | 任何 review 涉及 trace fixture / helper / 跨模块语义 → §1.3.3/§1.3.4 Sonnet MANDATORY;controller dispatch 前问"reviewer 需 trace 多少文件 / fixture?"超 1 文件即升 Sonnet | controller override reviewer verdict + 沿 §3.2 cross-verify(沿 Case 4 P1 实例) |
+| **phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**(controller 没在 phase 完成后 commit,reviewer 看 `git diff` 把上 phase 改动归给本 phase)| §7 controller workflow 漏 — phase 间未 commit | 每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer;reviewer prompt 明示 "diff base = 上 phase commit SHA" | controller override boundary verdict + 补 commit phase boundary(沿 Case 4 P2 实例) |
+| **`git stash` 不能 revert 已 commit baseline drift**(verify task 用 stash 验证 "pre-existing",但 stash 仅暂存 working-tree;已 commit drift 不在 stash scope)| §1.7.2 verify task 缺 baseline 区分协议 | 用 `git diff <plan-stage-commit>~..<plan-stage-commit> -- <suspect-file>`;dispatch prompt 给 plan stage commit SHA + 明示 "baseline 必早于 plan stage commit" | controller 自检 catch self-drift + 修 frontmatter(沿 Case 4 P3 实例) |
 
 ---
 
@@ -606,9 +676,12 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 
 ### Controller dispatch 前(每次):
 1. **判定 task subtype**:read §1 找 §1.X.Y 行
+   - **重要**:若 code_quality review 涉及 trace fixture / helper / 跨模块语义 → 视为 §1.3.3/§1.3.4(Sonnet MANDATORY),**不可**降级 §1.3.1 style nits(沿 Case 4 P1 Pattern E)
 2. **选 model**:用 §1 表的 model 列(若 cheap-model row,read §2 playbook 验证 pre-condition 满足)
 3. **写 dispatch prompt**:用 §2 X playbook 的 prompt 模板 + §3.1 STRICT cwd
 4. **显式传 `model:` 参数**(否则 inherit 父 session model — Pattern catalog 第 1 行 failure mode)
+5. **Phase-commit hygiene**(Type 1 3-stage workflow):每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer;reviewer prompt 明示 "diff base = 上 phase commit SHA"(沿 Case 4 P2 Pattern F);否则 reviewer 看 working-tree 累积 diff 会误归 attribution
+6. **Verify task baseline SHA**(§1.7.2):若 dispatch verify task 验证某 fail "pre-existing",prompt MUST 给 plan stage commit SHA + 明示用 `git diff <plan-stage-commit>~..<plan-stage-commit>` 区分,**不**接受 implementer 用 `git stash` 验证 baseline(沿 Case 4 P3 Pattern G)
 
 ### Controller 收 return 后:
 1. **跑 §3.2 cross-verify**(测试 count / commit SHA / branch / spec strings)
