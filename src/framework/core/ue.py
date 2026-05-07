@@ -90,6 +90,11 @@ class Evidence(BaseModel):
     op_id: str
     kind: str
     status: Literal["success", "failed", "skipped"]
+    # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase A:
+    # skip_reason 区分 framework PermissionPolicy denied vs UE-side no-handler
+    # skipped(沿 design D3 + spec.md "Evidence schema includes skip_reason
+    # enum field" Requirement);default None 后向兼容旧 evidence
+    skip_reason: Literal["permission_denied", "no_handler"] | None = None
     source_uri: str | None = None
     target_object_path: str | None = None
     log_ref: str | None = None
