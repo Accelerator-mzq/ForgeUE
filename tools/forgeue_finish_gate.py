@@ -1595,6 +1595,19 @@ def _get_change_baseline_commit(repo: "Path | None" = None) -> "str | None":
     return sha if sha else None
 
 
+def _get_active_md_at_commit(repo: "Path", sha: str) -> str:
+    """读取指定 git commit 时的 openspec/backlog/active.md 内容。
+
+    若该 commit 中 active.md 不存在(protocol 首次启用场景)→ 返回空字符串,
+    调用方的 _parse_registry_md 将返回空 dict,允许 baseline 退化。
+    """
+    result = subprocess.run(
+        ["git", "show", f"{sha}:openspec/backlog/active.md"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
 # ---------------------------------------------------------------------------
 # openspec validate --strict
 # ---------------------------------------------------------------------------

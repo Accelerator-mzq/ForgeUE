@@ -2791,3 +2791,44 @@ def test_get_change_baseline_commit_no_archive_returns_none(tmp_path):
     from tools.forgeue_finish_gate import _get_change_baseline_commit
     _git(tmp_path, "init", "-q")
     assert _get_change_baseline_commit(tmp_path) is None
+
+
+# ---------------------------------------------------------------------------
+# P2.b Helper 2: _get_active_md_at_commit
+# ---------------------------------------------------------------------------
+
+
+def test_get_active_md_at_commit_reads_historical_version(tmp_path):
+    from tools.forgeue_finish_gate import _get_active_md_at_commit
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@test")
+    _git(tmp_path, "config", "user.name", "test")
+    backlog_dir = tmp_path / "openspec" / "backlog"
+    backlog_dir.mkdir(parents=True)
+    active_md = backlog_dir / "active.md"
+    # 写 v1 内容并 commit
+    active_md.write_text("# v1 content\n\n### `entry-x`\n\n- **status**: active\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v1")
+    sha_v1 = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    # 修改为 v2 并 commit
+    active_md.write_text("# v2 content (modified)\n", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v2")
+    # 验证可读取历史 v1 版本
+    v1_content = _get_active_md_at_commit(tmp_path, sha_v1)
+    assert "v1 content" in v1_content
+    assert "entry-x" in v1_content
+
+
+def test_get_active_md_at_commit_missing_file_returns_empty(tmp_path):
+    from tools.forgeue_finish_gate import _get_active_md_at_commit
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@test")
+    _git(tmp_path, "config", "user.name", "test")
+    # commit 中没有 active.md
+    (tmp_path / "README.md").write_text("init", encoding="utf-8")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "init no active.md")
+    sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+    assert _get_active_md_at_commit(tmp_path, sha) == ""
