@@ -874,23 +874,28 @@ def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_path: Pa
     )
 
 
-def test_p4_domain_video_copies_mp4_to_content_movies_subdir(tmp_path: Path, monkeypatch):
-    """D12:domain_video.import_video_entry copy mp4 source 到
-    `<project_root>/Content/Movies/<run_id>/<MS_<base>>.mp4`,**NOT**
-    `<project_root>/Content/Generated/<run_id>/`(packaging 路径分流)。
+def test_p4_domain_video_consumes_d12_mp4_in_place_no_copy(tmp_path: Path, monkeypatch):
+    """D12 + OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase B.3:
+    framework `ExportExecutor` drop loop 已经把 mp4 写到 D12 final 位置
+    `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4`(沿 design D6 简化幅度);
+    `domain_video.import_video_entry` 不再 copy / mkdir,直接 in-place 消费,
+    `FileMediaSource.file_path` 从 `entry["source_uri"]` 派生(单源 truth)。
+
+    本 test 重写自 legacy `test_p4_domain_video_copies_mp4_to_content_movies_subdir`
+    (后者断言已被废弃的 `domain_video copies mp4 from _framework_source/` 路径)。
     """
     ue_project = _fake_ue_project(tmp_path)
-    (ue_project / "Content" / "Movies").mkdir(exist_ok=True)
     run_id = "run_p4_video_movies"
 
-    # framework-side mp4 source(模拟已落 artifact tree)
-    artifact_root = tmp_path / "_artifacts"
-    artifact_root.mkdir()
-    source_mp4 = artifact_root / f"{run_id}_video_01.mp4"
+    # ---- 模拟 framework Phase A.5 已 drop:mp4 已在 D12 final 位置 ----
+    movies_dir = ue_project / "Content" / "Movies" / run_id
+    movies_dir.mkdir(parents=True, exist_ok=True)
+    final_mp4 = movies_dir / "MS_OpeningScene.mp4"
     minimal_mp4 = b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00isomiso2mp41mp42"
-    source_mp4.write_bytes(minimal_mp4)
+    final_mp4.write_bytes(minimal_mp4)
+    mp4_mtime_before = final_mp4.stat().st_mtime_ns
 
-    # Stub `unreal`(简化 — 同上)
+    # Stub `unreal`(简化 — 沿既有 fixture pattern)
     unreal_stub = types.ModuleType("unreal")
 
     class _FakeFileMediaSource:
@@ -903,10 +908,14 @@ def test_p4_domain_video_copies_mp4_to_content_movies_subdir(tmp_path: Path, mon
         def get_outer(self):
             return self
 
+    captured_asset_holder: dict = {}
+
     class _FakeAssetTools:
         @classmethod
         def create_asset(cls, asset_name, package_path, asset_class, factory):
-            return _FakeFileMediaSource()
+            asset = _FakeFileMediaSource()
+            captured_asset_holder["asset"] = asset
+            return asset
 
     class _FakeAssetToolsHelpers:
         @staticmethod
@@ -932,24 +941,23 @@ def test_p4_domain_video_copies_mp4_to_content_movies_subdir(tmp_path: Path, mon
     unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
     monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
 
+    # 监听 shutil.copy2 — 必须 NEVER 被调
+    import shutil as _shutil
+    copy2_calls: list = []
+    monkeypatch.setattr(_shutil, "copy2", lambda *a, **kw: copy2_calls.append((a, kw)))
+
     # Import domain_video freshly
     ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
     monkeypatch.syspath_prepend(str(ue_scripts_dir))
     sys.modules.pop("domain_video", None)
     import domain_video  # noqa: E402
 
-    # 构造 entry(模拟 manifest_builder + import_plan_builder 输出)
-    # source_uri 相对 project_root,filesystem path = project_root / source_uri;
-    # framework-side source mp4 必须实际存在 — 在 ue_project 树内 setup
-    # (本 fence 简化:直接 setup framework-side 在 project_root 子目录,verify domain_video copy 行为)
-    framework_source_in_project = ue_project / "_framework_source" / f"{run_id}_video_01.mp4"
-    framework_source_in_project.parent.mkdir(parents=True, exist_ok=True)
-    framework_source_in_project.write_bytes(minimal_mp4)
+    # 构造 entry — source_uri 直接指向 D12 final 路径(沿 Phase A 新协议)
     entry = {
         "asset_entry_id": f"ae_{run_id}_video_01",
         "artifact_id": f"{run_id}_video_01",
         "asset_kind": "file_media_source",
-        "source_uri": f"_framework_source/{run_id}_video_01.mp4",
+        "source_uri": f"Content/Movies/{run_id}/MS_OpeningScene.mp4",
         "target_object_path": f"/Game/Generated/Video/{run_id}/MS_OpeningScene",
         "target_package_path": f"/Game/Generated/Video/{run_id}/MS_OpeningScene",
         "ue_naming": {"prefix": "MS_", "ue_name": "MS_OpeningScene"},
@@ -957,16 +965,20 @@ def test_p4_domain_video_copies_mp4_to_content_movies_subdir(tmp_path: Path, mon
     }
     result = domain_video.import_video_entry(entry, project_root=str(ue_project))
 
-    # D12:mp4 copy 到 Content/Movies/<run_id>/MS_OpeningScene.mp4
-    expected_movies_path = ue_project / "Content" / "Movies" / run_id / "MS_OpeningScene.mp4"
-    assert expected_movies_path.is_file(), \
-        f"D12:mp4 应 copy 到 Content/Movies/{run_id}/,实际找不到 {expected_movies_path}"
-    assert expected_movies_path.read_bytes() == minimal_mp4
-    # NOT in Content/Generated/<run_id>/(D12 路径分流核心)
+    # ---- 断言 D12 in-place 消费协议 ----
+    # 1. mp4 仍在 D12 final 位置(framework 已 drop;UE 端 NOT 改动)
+    assert final_mp4.is_file()
+    assert final_mp4.read_bytes() == minimal_mp4
+    # 2. shutil.copy2 必须 NEVER 被调(防 Windows 自我覆盖 WinError 32)
+    assert copy2_calls == [], f"shutil.copy2 should NOT be invoked, was called {copy2_calls}"
+    # 3. NOT 落 Content/Generated/<run_id>/<file>.mp4(D12 路径分流核心)
     forbidden_generated_path = ue_project / "Content" / "Generated" / run_id / "MS_OpeningScene.mp4"
     assert not forbidden_generated_path.exists(), \
-        f"D12 violation:mp4 不应 copy 到 Content/Generated/<run_id>/,实际存在 {forbidden_generated_path}"
-    # Status success
+        f"D12 violation:mp4 不应在 Content/Generated/<run_id>/,实际存在 {forbidden_generated_path}"
+    # 4. file_path 从 source_uri 派生(去 Content/ 前缀;round 1 codex F3 单源 truth)
+    asset = captured_asset_holder["asset"]
+    assert asset._props["file_path"] == f"Movies/{run_id}/MS_OpeningScene.mp4"
+    # 5. Status success
     assert result["status"] == "success"
 
 
