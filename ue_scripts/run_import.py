@@ -61,12 +61,21 @@ def run(run_folder: str | Path | None = None) -> None:
     # codex round-7 verification review P2 round-1:run_import.py 必须 honor 框架层
     # PermissionPolicy(如 `allow_import_file_media_source=False`),否则被 deny 的 op
     # 仍会被 commandlet 执行并创建 asset(违反 NFR-PERMISSION-001 用户权限边界)。
+    #
+    # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase B.2(round 1
+    # codex F1 + design D5 双侧统一协议):三 AND filter — 仅 PermissionPolicy denied
+    # (framework write 路径,带 `skip_reason="permission_denied"`)skipped 触发 pre-skip;
+    # UE-side append 的 `no_handler` skipped 不被吞,否则会出现"前一次 run 落 no_handler
+    # skipped → 后一次 run 直接 pre-skip 不再 dispatch"的回归(本次 run 不应继承前一次
+    # run 的 no_handler 决策,handler 是否存在每次都重新判定)。
     pre_skipped_op_ids: set[str] = set()
     try:
         import json as _json  # 仅本段用,不污染顶层 import
         with open(bundle.evidence_path, "r", encoding="utf-8") as _f:
             for _ev in _json.load(_f) or []:
-                if _ev.get("status") == "skipped" and _ev.get("op_id"):
+                if (_ev.get("status") == "skipped"
+                        and _ev.get("skip_reason") == "permission_denied"
+                        and _ev.get("op_id")):
                     pre_skipped_op_ids.add(_ev["op_id"])
     except Exception:
         # evidence 不存在 / 损坏 → fall through(framework export 一般保证文件存在)
@@ -86,9 +95,14 @@ def run(run_folder: str | Path | None = None) -> None:
             ))
             continue
         if handler is None:
+            # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase B.2:
+            # UE-side no-handler dispatch path 写 `skip_reason="no_handler"`
+            # (双侧统一协议 — 与 framework `permission_denied` 区分;下游 review /
+            # 报表 / Documentation Sync 可按 skip_reason 分类)。
             evidence_writer.append(bundle.evidence_path, evidence_writer.make_record(
                 op_id=op["op_id"], kind=kind, status="skipped",
                 error=f"no UE-side handler for kind={kind}",
+                skip_reason="no_handler",
             ))
             continue
         entry = entries_by_id.get(op["asset_entry_id"])
