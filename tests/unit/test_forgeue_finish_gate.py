@@ -2595,3 +2595,54 @@ def test_archive_segment_detection_uses_path_parts_not_substring(tmp_path, monke
         f"active change containing 'archive' substring in name (NOT segment under "
         f"archive subtree) should still invoke openspec validate; got {invoked['count']}"
     )
+
+
+# ---------------------------------------------------------------------------
+# P2.a Helper 1: _extract_followon_tracking_section
+# ---------------------------------------------------------------------------
+
+
+def test_extract_followon_tracking_section_finds_unchecked_p12(tmp_path):
+    from tools.forgeue_finish_gate import _extract_followon_tracking_section
+    tasks_md = tmp_path / "tasks.md"
+    tasks_md.write_text("""# Tasks
+
+## P0 (baseline)
+- [x] 1.1 baseline
+
+## P12 (follow-on tracking)
+- [ ] P12.1 (follow-on tracking): **followon-a** — desc
+- [x] P12.2 (follow-on tracking): **followon-b** [cancelled-completed: abc1234] — desc
+- [x] P12.3 (follow-on tracking): **followon-c** [cancelled-superseded by some-other-change] — desc
+- [x] P12.4 (follow-on tracking): **followon-d** [cancelled-not-applicable: out-of-scope (本 change 不 cover)] — desc
+""", encoding="utf-8")
+    result = _extract_followon_tracking_section(tasks_md)
+    assert result["unchecked"] == ["followon-a"]
+    assert len(result["resolved"]) == 3
+    resolved_by_id = {r["id"]: r for r in result["resolved"]}
+    assert resolved_by_id["followon-b"]["tag_type"] == "cancelled-completed"
+    assert resolved_by_id["followon-b"]["tag_value"] == "abc1234"
+    assert resolved_by_id["followon-c"]["tag_type"] == "cancelled-superseded"
+    assert resolved_by_id["followon-c"]["tag_value"] == "some-other-change"
+    assert resolved_by_id["followon-d"]["tag_type"] == "cancelled-not-applicable"
+
+
+def test_extract_followon_tracking_section_no_section_returns_empty(tmp_path):
+    from tools.forgeue_finish_gate import _extract_followon_tracking_section
+    tasks_md = tmp_path / "tasks.md"
+    tasks_md.write_text("# Tasks\n\n## P0 (baseline)\n- [x] 1.1 baseline\n", encoding="utf-8")
+    result = _extract_followon_tracking_section(tasks_md)
+    assert result == {"unchecked": [], "resolved": []}
+
+
+def test_extract_followon_tracking_section_compatible_with_p_prefix_em_dash(tmp_path):
+    """Compat with archived ForgeUE change naming `## P<N> — text`(em-dash U+2014)."""
+    from tools.forgeue_finish_gate import _extract_followon_tracking_section
+    tasks_md = tmp_path / "tasks.md"
+    tasks_md.write_text("""# Tasks
+
+## P12 — follow-on tracking
+- [ ] P12.1 (follow-on tracking): **archived-style-followon** — desc
+""", encoding="utf-8")
+    result = _extract_followon_tracking_section(tasks_md)
+    assert result["unchecked"] == ["archived-style-followon"]

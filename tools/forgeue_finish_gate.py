@@ -1446,6 +1446,127 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
 
 
 # ---------------------------------------------------------------------------
+# P2.a Markdown 解析 helpers — centralize-followon-backlog-registry
+# ---------------------------------------------------------------------------
+
+# Follow-on tracking section 标题 regex — 兼容 4 种命名格式:
+#   ## P<N> (follow-on tracking)
+#   ## P<N> — text (follow-on tracking)  [括号可选,兼容 em-dash 风格]
+#   ## Phase <N> text (follow-on tracking)
+#   ## <int>. P<N> — text (follow-on tracking)
+# 匹配规则:标题含 `follow-on tracking`(括号可选),沿 design.md D-FenceParseStrategy 阶段 2
+_FOLLOWON_SECTION_HEADING_RE = re.compile(
+    r"^##\s+(?:P\d+\s*[—\-]?\s*|Phase\s+\d+\s+|\d+\.\s+P\d+\s+[—\-]\s+).*\(?follow-on\s+tracking\)?",
+    re.MULTILINE,
+)
+
+# Follow-on item regex — 解析 checkbox 状态 + followon-id + 可选 cancel tag
+_FOLLOWON_ITEM_RE = re.compile(
+    r"^-\s+\[(?P<checked>\s|x)\]\s+P\d+(?:\.\d+)?(?:\s+\(follow-on\s+tracking\))?\s*[:：]\s*\*\*(?P<id>[a-z0-9-]+)\*\*"
+    r"(?:\s+\[(?P<tag_type>cancelled-superseded|cancelled-not-applicable|cancelled-completed)(?:\s+by\s+|:\s*)(?P<tag_value>[^\]]+)\])?",
+    re.MULTILINE,
+)
+
+# Registry H3 entry heading regex — 匹配 ### `<followon-id>`
+_REGISTRY_ENTRY_HEADING_RE = re.compile(r"^###\s+`(?P<id>[a-z0-9-]+)`\s*$", re.MULTILINE)
+
+# Registry field line regex — 匹配 - **key**: value
+_REGISTRY_FIELD_RE = re.compile(
+    r"^-\s+\*\*(?P<key>[a-z_][a-z0-9_-]*)\*\*\s*:\s*(?P<val>.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _extract_followon_tracking_section(tasks_md_path: "Path") -> "dict[str, list]":
+    """解析 tasks.md 中的 follow-on tracking section。
+
+    返回 dict 含 2 个 key:
+    - "unchecked": list[str] — 未勾选 checkbox 的 followon-id 列表
+    - "resolved": list[dict] — 已勾选且含 cancel tag 的 entries,
+      每条 dict: {id, tag_type, tag_value}
+
+    文件无 follow-on tracking section → 返回 {"unchecked": [], "resolved": []}
+    不抛 exception(容错)。
+    """
+    text = tasks_md_path.read_text(encoding="utf-8")
+    # 找 follow-on tracking section 标题
+    section_match = _FOLLOWON_SECTION_HEADING_RE.search(text)
+    if not section_match:
+        return {"unchecked": [], "resolved": []}
+    section_start = section_match.start()
+    # 找下一个 H2(section 边界)
+    next_h2 = re.search(r"^##\s+", text[section_match.end():], re.MULTILINE)
+    section_end = section_match.end() + next_h2.start() if next_h2 else len(text)
+    section_text = text[section_start:section_end]
+    unchecked: list[str] = []
+    resolved: list[dict] = []
+    for m in _FOLLOWON_ITEM_RE.finditer(section_text):
+        checked = m.group("checked") == "x"
+        item_id = m.group("id")
+        tag_type = m.group("tag_type")
+        tag_value = (m.group("tag_value") or "").strip()
+        if checked and tag_type:
+            resolved.append({"id": item_id, "tag_type": tag_type, "tag_value": tag_value})
+        elif not checked:
+            unchecked.append(item_id)
+    return {"unchecked": unchecked, "resolved": resolved}
+
+
+def _find_latest_archived_change(repo: "Path | None" = None) -> "Path | None":
+    """扫 <repo>/openspec/changes/archive/ 返回最新归档 change 目录(按名称排序)。
+
+    目录名须匹配 YYYY-MM-DD- 前缀格式。
+    若无 archive 目录或目录为空 → 返回 None(不抛 exception)。
+    """
+    repo = repo or Path.cwd()
+    archive_root = repo / "openspec" / "changes" / "archive"
+    if not archive_root.is_dir():
+        return None
+    candidates = sorted(
+        (p for p in archive_root.iterdir() if p.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}-", p.name)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _parse_registry_md(active_md_path: "Path") -> "dict[str, dict]":
+    """解析 openspec/backlog/active.md H3 entries。
+
+    返回 dict[followon-id, fields_dict]。
+    字段缺失 → 字段值为 None(tolerant parsing)。
+    文件不存在 → 返回 {}(不抛 exception)。
+    """
+    if not active_md_path.is_file():
+        return {}
+    text = active_md_path.read_text(encoding="utf-8")
+    entries: dict[str, dict] = {}
+    headings = list(_REGISTRY_ENTRY_HEADING_RE.finditer(text))
+    for i, h in enumerate(headings):
+        followon_id = h.group("id")
+        body_start = h.end()
+        body_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        body = text[body_start:body_end]
+        entry: dict = {"id": followon_id}
+        for fm in _REGISTRY_FIELD_RE.finditer(body):
+            entry[fm.group("key")] = fm.group("val").strip()
+        entries[followon_id] = entry
+    return entries
+
+
+def _parse_archived_md(archived_md_path: "Path") -> "dict[str, dict]":
+    """解析 openspec/backlog/archived.md tombstone entries。
+
+    Tombstone 字段:archived_at_commit / archived_in_change /
+    cancellation_reason / registry_entry_snapshot。
+    registry_entry_snapshot 是 JSON 字符串,caller 负责 json.loads。
+    文件不存在 → 返回 {}(不抛 exception)。
+    与 _parse_registry_md 使用相同 H3 + field 解析逻辑,字段名由 fence 层校验。
+    """
+    return _parse_registry_md(archived_md_path)
+
+
+# ---------------------------------------------------------------------------
 # openspec validate --strict
 # ---------------------------------------------------------------------------
 
