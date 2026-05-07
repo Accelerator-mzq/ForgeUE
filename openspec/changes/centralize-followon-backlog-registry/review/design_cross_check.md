@@ -13,8 +13,8 @@ codex_plugin_available: true
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_design_review.md
 created_at: 2026-05-06T14:50:00Z
-resolved_at: 2026-05-07T14:10:00Z
-resolution_summary: round 1 4 finding 全 accepted-codex inline writeback (F1+F2 立场翻转 user 拍板 (a) accept;F3+F4 obvious fix);writeback_commit 125eae1 单 batch 同时是 4 finding 的 ref + sync adjustments for fix-finish-gate-archived-replay-compat 88a8aec merge(backfill 24→22 + baseline 1576→1753 + P12 inheritance chain re-anchor)
+resolved_at: 2026-05-07T17:05:00Z
+resolution_summary: round 1 + round 2 close;round 1 4 finding accepted-codex (commit 125eae1 + sync adjustments) + round 2 3 finding accepted-codex (commit 5084166;F1-r2 baseline anchor / F2-r2 tombstone 5-point consistency / F3-r2 commit-touches strict + evidence escape hatch);total 2 rounds, 7 findings all closed inline writeback, no disputed-permanent-drift
 disputed_open: 0
 runtime_enforcement_protocol_version: v1
 skill_cascade_audit:
@@ -234,9 +234,9 @@ Round 2 codex `/codex:adversarial-review` job `b876734jn`(2026-05-07T16:48:00Z)v
 
 | ID | P | Finding | file:line | Independent Verify | Resolution | writeback_commit |
 |---|---|---|---|---|---|---|
-| **F1-r2** | P1 high | active.md self-diff 基线选错(用 `git log -1 -- active.md` 而非上一 archive commit;已提交删除被 baseline 跟着移动而漏检) | `execution/micro_tasks.md:342` (helper `_get_prior_archive_commit_for_active_md`) + `design.md` D-FenceParseStrategy 阶段 1 步骤 1 | ✅ TRUE — micro_tasks 实施 baseline 是 active.md 最新 commit;controller 早期 commit 删 entry 后 baseline 跟随漂移,后续 diff 为空 | **accepted-codex** | (待 fix commit) |
-| **F2-r2** | P1 high | tombstone `registry_entry_snapshot` design 写"留 trace,fence 不解析";controller 删 active.md entry 后 append 任意 placeholder tombstone(`{}` snapshot / 错 archived_in_change / 错 cancellation_reason)即通过 fence | `design.md:189` (`registry_entry_snapshot ... 留 trace 用,fence 不解析`)+ `specs/...` 4 字段 scenario 仅校字段存在 | ✅ TRUE — tombstone fence 退化成"删除必须有一行看似墓碑的文本";完整性 / id 匹配 / 字段一致性 / cancellation_reason ↔ tasks.md tag 一致性均无校验 | **accepted-codex** | (待 fix commit) |
-| **F3-r2** | P2 med | `cancelled-completed` 仅 git rev-parse 存在性,任何 doc-only / unrelated commit 都通过;round 1 F2 留 follow-on 的 commit-touches 校验是 trade-off bypass 而非 ergonomics | `design.md:81 + 93` (`不校验 commit 触达特定文件,留 follow-on tighten-cancel-completed-commit-touches-validation`)+ `specs/...:25-28` | ✅ TRUE — round 1 留 follow-on 的决策让 cancelled-completed 沦为 typo-only check | **disputed-pending(user 拍板;scope expansion)** | (待 user 决议) |
+| **F1-r2** | P1 high | active.md self-diff 基线选错 | `execution/micro_tasks.md:342` (helper `_get_prior_archive_commit_for_active_md`) + `design.md` D-FenceParseStrategy 阶段 1 步骤 1 | ✅ TRUE | **accepted-codex** — design.md D-FenceParseStrategy 阶段 1 改 baseline 锚定上一 archive commit;helper 重命名 `_get_change_baseline_commit`;spec.md 加 scenario "baseline anchors to last archive commit not active.md path commit" | `5084166` |
+| **F2-r2** | P1 high | tombstone snapshot 不解析,controller 任意 placeholder 通过 | `design.md:189` (`留 trace 用,fence 不解析`)+ `specs/...` 4 字段 scenario | ✅ TRUE | **accepted-codex** — design.md D-TombstoneProtocol 新增"5 项一致性校验"(id + snapshot 8 字段 + 字段值匹配 baseline + archived_in_change + cancellation_reason ↔ tasks tag);spec.md 加 4 scenarios(snapshot 字段错 BLOCKER / archived_in_change 不匹配 BLOCKER / snapshot 字段值不一致 BLOCKER / cancellation_reason 不一致 BLOCKER) | `5084166` |
+| **F3-r2** | P2 med | cancelled-completed 仅 git rev-parse,任何 doc-only / unrelated commit 都通过 | `design.md:81 + 93` (`留 follow-on tighten-...`)+ `specs/...:25-28` | ✅ TRUE | **accepted-codex** — user 2026-05-07 拍板 (α);拉回 current scope:tag 格式扩展 `[cancelled-completed: <commit> evidence: <path>]`;fence Step 3.4 commit-touches intersect + Step 3.5 escape hatch;P12.8 follow-on cancelled-completed-by-this-change | `5084166` |
 
 ### F.1 Independent file:line verification
 
@@ -256,8 +256,9 @@ Round 2 codex `/codex:adversarial-review` job `b876734jn`(2026-05-07T16:48:00Z)v
 
 ### F.3 Round 2 disputed_open
 
-- F1-r2 + F2-r2 accept;F3-r2 disputed-pending → **disputed_open: 1**
-- S3 推 apply 阻断条件触发(disputed_open > 0 阻断;沿 design.md §3 Cross-check Protocol)
+- F1-r2 + F2-r2 + F3-r2 全 accept inline writeback(commit `5084166`)→ **disputed_open: 0**
+- Round 2 close 2026-05-07T17:05:00Z;S3 推 apply 阻断条件解除
+- 总 round 数:2(round 1 close + round 2 close;预估 round 3 不需要 — F1-r2/F2-r2 是 implementation correctness fix 无新 design 立场翻转,F3-r2 已实施 strict + escape hatch 沿 round 1 F2 立场延伸完整守门)
 
 ### F.4 升级 user 拍板请求(F3-r2 scope decision)
 
@@ -313,6 +314,10 @@ Round 1 决议留 follow-on `tighten-cancel-completed-commit-touches-validation`
 | 与 round 1 F2 立场协调 | 强化(strict 完整) | 削弱(strict 退一步) | 保留(strict 留 follow-on 实施) |
 
 ### G.4 Claude 推荐:**(α)**
+
+**User 决议(2026-05-07T17:05:00Z)**:**(α) strict commit-touches + evidence escape hatch**(commit `5084166`;同 batch 含 F1-r2 + F2-r2 inline writeback)。
+
+
 
 理由:
 - round 1 F2 立场已是"strict validation 防 hand-edit drift",(β) advisory 退一步会让 round 1 F2 决议自相矛盾
