@@ -21,7 +21,7 @@ skill_cascade_audit:
   cascade_check_pass_at: 2026-05-07T07:53:46Z
 task_granularity: phase
 autonomy_decision: claude_codex_concurred
-codex_review_ref: review/codex_design_review.md + review/codex_verification_review.md
+codex_review_ref: review/codex_verification_review.md
 verdict: approve
 disputed_open: 0
 review_round: 1
