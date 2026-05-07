@@ -931,3 +931,59 @@ def test_list_followon_cancelled_no_tasks_md_returns_empty_structure(tmp_path):
     result = list_followon_cancelled(change_dir)
     assert set(result.keys()) == {"cancelled_superseded", "cancelled_not_applicable", "cancelled_completed"}
     assert all(v == [] for v in result.values())
+
+
+# ---------------------------------------------------------------------------
+# P3 Sub-task 3+4: argparse flags + CLI integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_change_state_cli_list_followon_inherited_json(tmp_path):
+    """CLI --list-followon-inherited --json 输出含预期 inherited id。"""
+    # 构建 mock change 目录结构(tasks.md 含 inherited 条目)
+    openspec = tmp_path / "openspec" / "changes"
+    openspec.mkdir(parents=True)
+    change_dir = openspec / "test-followon-cli"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **inherit-a** (沿前一 change 继承) — some desc
+- [x] P12.2 (follow-on tracking): **cancelled-x** [cancelled-completed: abc] — desc
+""",
+        encoding="utf-8",
+    )
+    result = _run_cli(
+        tmp_path,
+        ["--change", "test-followon-cli", "--list-followon-inherited", "--json"],
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    data = json.loads(result.stdout)
+    assert "inherited" in data
+    assert "inherit-a" in data["inherited"]
+    assert "cancelled-x" not in data["inherited"]
+
+
+def test_change_state_cli_list_followon_cancelled_json(tmp_path):
+    """CLI --list-followon-cancelled --json 输出含 cancelled-* 分组结构。"""
+    openspec = tmp_path / "openspec" / "changes"
+    openspec.mkdir(parents=True)
+    change_dir = openspec / "test-cancelled-cli"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **sup-a** [cancelled-superseded by other-change] — desc
+- [x] P12.2 (follow-on tracking): **comp-b** [cancelled-completed: deadbeef] — desc
+""",
+        encoding="utf-8",
+    )
+    result = _run_cli(
+        tmp_path,
+        ["--change", "test-cancelled-cli", "--list-followon-cancelled", "--json"],
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    data = json.loads(result.stdout)
+    assert set(data.keys()) == {"cancelled_superseded", "cancelled_not_applicable", "cancelled_completed"}
+    sup_ids = [e["id"] for e in data["cancelled_superseded"]]
+    assert "sup-a" in sup_ids
+    comp_ids = [e["id"] for e in data["cancelled_completed"]]
+    assert "comp-b" in comp_ids

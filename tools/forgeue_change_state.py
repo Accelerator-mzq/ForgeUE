@@ -576,7 +576,9 @@ def list_followon_cancelled(change_dir: Path) -> dict[str, list[dict]]:
     tasks.md 不存在 / 无 follow-on tracking section → 返回 3 个空列表 dict(容错)。
     """
     # 延迟导入:避免模块顶层循环依赖(finish_gate 不 import change_state)
-    from tools.forgeue_finish_gate import _extract_followon_tracking_section  # noqa: PLC0415
+    # 注意:tools/ 目录已被 sys.path.insert(0, ...) 插入,直接用模块名导入
+    import forgeue_finish_gate as _fgate  # noqa: PLC0415
+    _extract_followon_tracking_section = _fgate._extract_followon_tracking_section
 
     # 空结构(三类 key 均存在,调用方可安全 .values())
     empty: dict[str, list[dict]] = {
@@ -701,6 +703,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Read-only by default; this flag is accepted for uniformity.",
     )
+    # P3: follow-on backlog query flags (for /forgeue:change-status ### Followon Backlog section)
+    p.add_argument(
+        "--list-followon-inherited",
+        action="store_true",
+        help="List follow-on ids inherited from prior change (from tasks.md follow-on tracking section).",
+    )
+    p.add_argument(
+        "--list-followon-cancelled",
+        action="store_true",
+        help="List cancelled-* follow-ons by type: cancelled_superseded / not_applicable / completed.",
+    )
     return p
 
 
@@ -742,6 +755,45 @@ def main(argv: list[str] | None = None) -> int:
                     for ch in active:
                         print(f"[OK] {ch}")
             return 0
+
+        # P3: --list-followon-* 分支(需要 --change 指定 change dir)
+        if args.list_followon_inherited or args.list_followon_cancelled:
+            if not args.change:
+                print(
+                    "[FAIL] --change <id> required with --list-followon-* flags",
+                    file=sys.stderr,
+                )
+                return 1
+            change_dir = _common.change_path(repo, args.change)
+            if change_dir is None:
+                print(
+                    f"[FAIL] change {args.change!r} not found under "
+                    "openspec/changes/ or openspec/changes/archive/",
+                    file=sys.stderr,
+                )
+                return 1
+            if args.list_followon_inherited:
+                # 提取 inherited follow-on id 列表
+                inherited = list_followon_inherited(change_dir)
+                if args.json:
+                    print(json.dumps({"inherited": inherited}, ensure_ascii=False, indent=2))
+                else:
+                    print("Inherited follow-ons:")
+                    for fid in inherited:
+                        print(f"  - {fid}")
+                return 0
+            if args.list_followon_cancelled:
+                # 提取 cancelled-* 分组结构
+                cancelled = list_followon_cancelled(change_dir)
+                if args.json:
+                    print(json.dumps(cancelled, ensure_ascii=False, indent=2))
+                else:
+                    print("Cancelled follow-ons:")
+                    for type_, items in cancelled.items():
+                        print(f"  {type_}:")
+                        for it in items:
+                            print(f"    - {it['id']} -> {it['ref']}")
+                return 0
 
         if not args.change:
             print(
