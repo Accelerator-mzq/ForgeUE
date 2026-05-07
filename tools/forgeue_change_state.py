@@ -562,6 +562,47 @@ def list_followon_inherited(change_dir: Path) -> list[str]:
     return [m.group("id") for m in _FOLLOWON_INHERITED_RE.finditer(section_text)]
 
 
+def list_followon_cancelled(change_dir: Path) -> dict[str, list[dict]]:
+    """提取 <change_dir>/tasks.md follow-on tracking section 中 cancelled-* 条目,按 tag 类型分组。
+
+    返回:
+      {
+        "cancelled_superseded": [{id, ref}, ...],
+        "cancelled_not_applicable": [{id, ref}, ...],
+        "cancelled_completed": [{id, ref}, ...],
+      }
+
+    复用 forgeue_finish_gate._extract_followon_tracking_section 解析逻辑。
+    tasks.md 不存在 / 无 follow-on tracking section → 返回 3 个空列表 dict(容错)。
+    """
+    # 延迟导入:避免模块顶层循环依赖(finish_gate 不 import change_state)
+    from tools.forgeue_finish_gate import _extract_followon_tracking_section  # noqa: PLC0415
+
+    # 空结构(三类 key 均存在,调用方可安全 .values())
+    empty: dict[str, list[dict]] = {
+        "cancelled_superseded": [],
+        "cancelled_not_applicable": [],
+        "cancelled_completed": [],
+    }
+    tasks_md = change_dir / "tasks.md"
+    if not tasks_md.is_file():
+        return empty
+    extracted = _extract_followon_tracking_section(tasks_md)
+    result: dict[str, list[dict]] = {
+        "cancelled_superseded": [],
+        "cancelled_not_applicable": [],
+        "cancelled_completed": [],
+    }
+    for item in extracted.get("resolved", []):
+        tag_type: str = item.get("tag_type", "")
+        # tag_type 值已是 cancelled-superseded / cancelled-not-applicable / cancelled-completed
+        # 转换为下划线格式作为 dict key
+        key = tag_type.replace("-", "_")
+        if key in result:
+            result[key].append({"id": item.get("id", ""), "ref": item.get("tag_value", "")})
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Top-level orchestration
 # ---------------------------------------------------------------------------

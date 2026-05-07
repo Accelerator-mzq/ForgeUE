@@ -872,3 +872,62 @@ def test_list_followon_inherited_no_tasks_md_returns_empty(tmp_path):
     change_dir = tmp_path / "change"
     change_dir.mkdir()
     assert list_followon_inherited(change_dir) == []
+
+
+# ---------------------------------------------------------------------------
+# P3 Sub-task 2: list_followon_cancelled
+# ---------------------------------------------------------------------------
+
+
+def test_list_followon_cancelled_categorizes_by_type(tmp_path):
+    """3 类 cancelled tag 被正确分组,每条含 id + ref 字段。"""
+    from tools.forgeue_change_state import list_followon_cancelled
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **followon-a** [cancelled-superseded by new-change] — desc
+- [x] P12.2 (follow-on tracking): **followon-b** [cancelled-not-applicable: out-of-scope] — desc
+- [x] P12.3 (follow-on tracking): **followon-c** [cancelled-completed: abc1234] — desc
+- [x] P12.4 (follow-on tracking): **followon-d** [cancelled-completed: def5678 evidence: notes/foo.md] — desc
+""",
+        encoding="utf-8",
+    )
+    result = list_followon_cancelled(change_dir)
+    # cancelled-superseded
+    assert len(result["cancelled_superseded"]) == 1
+    assert result["cancelled_superseded"][0]["id"] == "followon-a"
+    # cancelled-not-applicable
+    assert len(result["cancelled_not_applicable"]) == 1
+    assert "out-of-scope" in result["cancelled_not_applicable"][0]["ref"]
+    # cancelled-completed(含 2 条)
+    assert len(result["cancelled_completed"]) == 2
+    completed_ids = [e["id"] for e in result["cancelled_completed"]]
+    assert "followon-c" in completed_ids
+    assert "followon-d" in completed_ids
+
+
+def test_list_followon_cancelled_empty_when_no_cancelled(tmp_path):
+    """无 cancelled 条目时,3 个 key 均返回空列表。"""
+    from tools.forgeue_change_state import list_followon_cancelled
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        "## P0 baseline\n- [x] 1.1 baseline\n",
+        encoding="utf-8",
+    )
+    result = list_followon_cancelled(change_dir)
+    assert all(v == [] for v in result.values())
+
+
+def test_list_followon_cancelled_no_tasks_md_returns_empty_structure(tmp_path):
+    """tasks.md 不存在时返回含 3 个空列表的 dict。"""
+    from tools.forgeue_change_state import list_followon_cancelled
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    result = list_followon_cancelled(change_dir)
+    assert set(result.keys()) == {"cancelled_superseded", "cancelled_not_applicable", "cancelled_completed"}
+    assert all(v == [] for v in result.values())
