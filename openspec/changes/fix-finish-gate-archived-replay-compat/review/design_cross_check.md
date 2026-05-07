@@ -22,6 +22,7 @@ task_granularity: phase
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_design_review.md
 created_at: 2026-05-06T00:00:00Z
+disputed_open: 0
 ---
 
 # Design Cross-check — fix-finish-gate-archived-replay-compat (S2 plan stage)
