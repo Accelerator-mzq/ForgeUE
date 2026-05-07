@@ -1381,8 +1381,19 @@ def _check_verdict_normalization(
 # indicate real incomplete work and MUST still block. See design.md §5
 # Tool Design table (forgeue_finish_gate row) for the rationale.
 _SELF_STAGE_SECTION_THRESHOLD = 9
+# Per-format threshold(round 1 codex F2 inline writeback 新增 D-PerFormatThreshold):
+# active 格式 `## <int>. <text>` 用 ≥9(P8 finish gate = section 9,backward-compat 守门)
+# archived 格式 `## P<int> — <text>` 用 ≥10(实测 archived P9 ambiguous,
+# 既有 `## P9 — Documentation Sync Gate` workflow prerequisite 应 block,
+# 也有 `## P9 — MEMORY.md update(后置可选)` self-stage 应 skip;
+# conservative 取 ≥10 让 P0-P9 全 block(prereq 漏报 fail-loud),P10+ skip 才 self-stage)
+_SELF_STAGE_SECTION_THRESHOLD_ARCHIVED = 10
 
-_SECTION_HEADING_RE = re.compile(r"^##\s+(\d+)\.\s+", re.MULTILINE)
+# 双格式 + 双 capture group 暴露 P-prefix 标识
+# group(1) = "P" or None(P-prefix 标识,选 per-format threshold);group(2) = section integer
+# (?:\.|\s+—) non-capturing alternation 匹配 `.`(active)或 `\s+—`(archived em-dash U+2014)
+# 沿 design.md D-RegexExtension(round 1 codex F2 inline writeback 修订)。
+_SECTION_HEADING_RE = re.compile(r"^##\s+(P)?(\d+)(?:\.|\s+—)\s+", re.MULTILINE)
 
 
 def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
@@ -1395,13 +1406,21 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
         return []
     blockers: list[Blocker] = []
     current_section: int | None = None
+    current_threshold: int = _SELF_STAGE_SECTION_THRESHOLD  # default active 阈值
     for ln_no, line in enumerate(text.splitlines(), 1):
         section_match = _SECTION_HEADING_RE.match(line)
         if section_match:
             try:
-                current_section = int(section_match.group(1))
+                current_section = int(section_match.group(2))  # group(2) = integer
             except ValueError:
                 current_section = None
+            # Per-format threshold(沿 D-PerFormatThreshold round 1 codex F2 inline writeback):
+            # group(1) == "P" → archived 格式 → threshold ≥10(P0-P9 全 prerequisite 应 block)
+            # group(1) is None → active 格式 → threshold ≥9(原 baseline,P8 finish gate = section 9)
+            if section_match.group(1) == "P":
+                current_threshold = _SELF_STAGE_SECTION_THRESHOLD_ARCHIVED
+            else:
+                current_threshold = _SELF_STAGE_SECTION_THRESHOLD
             continue
         m = re.match(r"^- \[ \]\s+(.+)", line)
         if not m:
@@ -1411,7 +1430,7 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
             continue
         if (
             current_section is not None
-            and current_section >= _SELF_STAGE_SECTION_THRESHOLD
+            and current_section >= current_threshold
         ):
             # P8 self-stage / P9 archive / footer — finish_gate is the gate
             # for these, so they cannot be a blocker AT finish_gate time.
@@ -1565,9 +1584,24 @@ def build_report(
     blockers.extend(check_tasks_unchecked(change_dir))
 
     if not no_validate:
-        validate_blocker = run_openspec_validate(repo, change_id)
-        if validate_blocker:
-            blockers.append(validate_blocker)
+        # archive/ 路径下 skip openspec validate(沿 design.md D-OpenSpecValidateArchiveSkip):
+        # upstream openspec CLI 不识别 `openspec/changes/archive/<dated-id>/` 路径,
+        # 强制 invoke 必 fail 报噪声 BLOCKER。short-term mitigation 路径 skip + warning。
+        # 长期方案给上游 openspec CLI 提 PR 留 follow-on `enhance-openspec-cli-archived-change-support`。
+        # repo-relative + segment-precise 检测(沿 D-DispatchPathDetection round 1 codex F1
+        # inline writeback 修订:旧 `"archive" in change_dir.parts` 在 repo 父目录名含
+        # `archive` 时 false-positive 让 active change 静默漏报真 BLOCKER)。
+        if change_dir.is_relative_to(_common.archive_dir(repo)):
+            warnings.append(
+                "openspec_validate_skipped: archive_path_unsupported_by_upstream_cli "
+                "(change_dir is in archive/ subtree; openspec CLI doesn't recognize archived "
+                "change ids; long-term fix tracked as follow-on enhance-openspec-cli-"
+                "archived-change-support)"
+            )
+        else:
+            validate_blocker = run_openspec_validate(repo, change_id)
+            if validate_blocker:
+                blockers.append(validate_blocker)
 
     warnings.extend(detect_review_gate_hook())
 

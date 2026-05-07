@@ -2342,3 +2342,256 @@ def test_runtime_fences_wired_into_check_frontmatter_protocol(tmp_path):
     assert "skill_cascade_violation" in blocker_types, blocker_types
     assert "round_fix_continuity_violation" in blocker_types, blocker_types
     assert "task_granularity_violation" in blocker_types, blocker_types
+
+
+# ---------------------------------------------------------------------------
+# fix-finish-gate-archived-replay-compat: 双格式 section heading 识别
+# ---------------------------------------------------------------------------
+
+
+def test_check_tasks_unchecked_recognizes_p_prefixed_em_dash(tmp_path):
+    """archived 历史 change tasks.md 的 ``## P<N> — <text>`` 格式 section heading
+    必须命中 ``_SECTION_HEADING_RE`` 并触发 self-stage filter(archived format
+    threshold ≥10 → P10/P11 skip)。沿 specs.md Scenario 2 + 10 + design.md
+    D-RegexExtension(round 1 修订)+ D-PerFormatThreshold(round 1 新增)。
+    """
+    b = make_complete_change(tmp_path, "fc-tu-p-prefix")
+    custom_tasks = (
+        "# Tasks: fc-tu-p-prefix\n\n"
+        "## P0 — 命令模板更新\n\n"
+        "- [x] P0.1 done\n\n"
+        "## P10 — Archive\n\n"
+        "- [ ] P10.1 /opsx:archive\n"
+        "- [ ] P10.2 evidence preserved\n\n"
+        "## P11 — Documentation Sync footer\n\n"
+        "- [ ] P11.1 sync gate items closed\n"
+    )
+    b.write_tasks(content=custom_tasks)
+    blockers = fg.check_tasks_unchecked(b.change_dir)
+    assert blockers == [], (
+        f"§P10 / §P11 unchecked lines must be skipped (P-prefixed em-dash + archived "
+        f"threshold ≥10); got: {[(blk.type, blk.detail) for blk in blockers]}"
+    )
+
+
+def test_check_tasks_unchecked_p_prefix_optional_active_format_unchanged(tmp_path):
+    """active 现行 ``## <N>. <text>`` 格式必须仍命中(backward-compat 守门)。
+    沿 specs.md Scenario 1(active `## <int>. <text>` 仍命中)+ 守门 commit a4334db
+    起 baseline 行为不破。
+    """
+    b = make_complete_change(tmp_path, "fc-tu-active-fmt")
+    custom_tasks = (
+        "# Tasks: fc-tu-active-fmt\n\n"
+        "## 1. P0 Setup\n\n"
+        "- [x] 1.1 done\n\n"
+        "## 9. P8 Finish Gate\n\n"
+        "- [ ] 9.1 finish_gate exit 0\n"
+        "- [ ] 9.2 finish_gate_report landed\n"
+    )
+    b.write_tasks(content=custom_tasks)
+    blockers = fg.check_tasks_unchecked(b.change_dir)
+    assert blockers == [], (
+        f"§9 (active `## N.` 格式) unchecked lines must be skipped (active format "
+        f"threshold ≥9 self-stage); backward-compat 守门; got: "
+        f"{[(blk.type, blk.detail) for blk in blockers]}"
+    )
+
+
+def test_check_tasks_unchecked_yagni_decimal_subsection_not_matched(tmp_path):
+    """假阴性边界:``## 1.5 sub-section``(小数点 sub-section)不应命中
+    ``_SECTION_HEADING_RE`` regex。沿 specs.md Scenario 3(假阴性边界)+
+    design.md D-RegexExtension YAGNI 边界。
+    """
+    b = make_complete_change(tmp_path, "fc-tu-yagni-dec")
+    custom_tasks = (
+        "# Tasks: fc-tu-yagni-dec\n\n"
+        "## 1. P0 Setup\n\n"
+        "- [x] 1.1 done\n\n"
+        "## 1.5 sub-section假想格式\n\n"
+        "- [ ] 1.5.1 should still block (no section number captured;current_section=1)\n"
+    )
+    b.write_tasks(content=custom_tasks)
+    blockers = fg.check_tasks_unchecked(b.change_dir)
+    types = [blk.type for blk in blockers]
+    assert "tasks_unchecked" in types, (
+        f"§1.5 sub-section header should NOT match new regex (YAGNI 边界);§1.5.1 unchecked "
+        f"应仍 block(current_section 滞留 1 < 9); got: {types}"
+    )
+
+
+def test_check_tasks_unchecked_p_non_digit_not_matched(tmp_path):
+    """假阴性边界:``## PX — title``(P 后非数字)不应命中 regex。沿 specs.md
+    Scenario 4 — `(P)?(\\d+)` 要求 \\d+ 至少 1 位。
+    """
+    b = make_complete_change(tmp_path, "fc-tu-p-non-digit")
+    custom_tasks = (
+        "# Tasks: fc-tu-p-non-digit\n\n"
+        "## 1. P0 Setup\n\n"
+        "- [x] 1.1 done\n\n"
+        "## PX — invalid heading\n\n"
+        "- [ ] PX.1 should still block (no section number captured)\n"
+    )
+    b.write_tasks(content=custom_tasks)
+    blockers = fg.check_tasks_unchecked(b.change_dir)
+    types = [blk.type for blk in blockers]
+    assert "tasks_unchecked" in types, (
+        f"§PX header (P 后非数字) should NOT match regex; PX.1 应仍 block; got: {types}"
+    )
+
+
+def test_check_tasks_unchecked_archived_p9_doc_sync_gate_blocks(tmp_path):
+    """archived ``## P9 — Documentation Sync Gate`` workflow prerequisite +
+    unchecked 项 MUST 报 blocker — archived format threshold ≥10 → P9 < 10
+    not self-stage skip。沿 specs.md Scenario 8 + design.md D-PerFormatThreshold
+    (round 1 codex F2 inline writeback)。
+    """
+    b = make_complete_change(tmp_path, "fc-tu-archived-p9-prereq")
+    custom_tasks = (
+        "# Tasks: fc-tu-archived-p9-prereq\n\n"
+        "## P0 — 命令模板更新\n\n"
+        "- [x] P0.1 done\n\n"
+        "## P9 — Documentation Sync Gate\n\n"
+        "- [ ] P9.1 sync gate items closed\n"
+        "- [ ] P9.2 doc drift 标记\n"
+    )
+    b.write_tasks(content=custom_tasks)
+    blockers = fg.check_tasks_unchecked(b.change_dir)
+    types = [blk.type for blk in blockers]
+    assert "tasks_unchecked" in types, (
+        f"archived `## P9 — Documentation Sync Gate` (workflow prerequisite) unchecked "
+        f"items MUST block; archived format threshold ≥10 → P9=9 < 10 not self-stage; "
+        f"got types: {types}"
+    )
+    p9_blockers = [
+        blk for blk in blockers
+        if "P9.1 sync gate items closed" in blk.detail or "P9.2 doc drift" in blk.detail
+    ]
+    assert len(p9_blockers) == 2, (
+        f"both P9.1 + P9.2 unchecked items must block; got: "
+        f"{[(blk.type, blk.detail) for blk in p9_blockers]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# fix-finish-gate-archived-replay-compat: archive 路径 openspec validate skip
+# ---------------------------------------------------------------------------
+
+
+def test_finish_gate_skips_openspec_validate_for_archive_path(tmp_path, monkeypatch):
+    """archived change(``change_dir.is_relative_to(_common.archive_dir(repo))`` True)→
+    ``run_openspec_validate`` 不被 invoke(monkeypatch + count == 0)+ blocker 不含任何
+    validate-related type + warning 含 rationale prefix。沿 specs.md Scenario 6 + 11 +
+    design.md D-OpenSpecValidateArchiveSkip + D-DispatchPathDetection round 1 修订
+    (round 1 codex F3 inline writeback 改造)。
+    """
+    archive_id = "2026-05-06-fc-archive"
+    archived_change_dir = tmp_path / "openspec" / "changes" / "archive" / archive_id
+    archived_change_dir.mkdir(parents=True)
+    b = make_complete_change(archived_change_dir.parent, archive_id)
+    invoked = {"count": 0}
+    def _spy(repo, change_id):
+        invoked["count"] += 1
+        return fg.Blocker(
+            type="openspec_validate_failed",
+            detail="sentinel - this should NOT be reachable in archive path",
+        )
+    monkeypatch.setattr(fg, "run_openspec_validate", _spy)
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id=archive_id,
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=False,
+    )
+    assert invoked["count"] == 0, (
+        f"archive path MUST skip run_openspec_validate (count == 0); "
+        f"got count={invoked['count']}; round 1 F3 守门"
+    )
+    types = [blk.type for blk in report.blockers]
+    for forbidden in ("openspec_validate_failed", "openspec_cli_missing", "openspec_validate_error"):
+        assert forbidden not in types, (
+            f"archive path skip MUST not produce {forbidden!r} blocker; got types: {types}"
+        )
+    assert any("openspec_validate_skipped" in w for w in report.warnings), (
+        f"archive path skip should emit rationale warning; got warnings: {report.warnings}"
+    )
+
+
+def test_finish_gate_invokes_openspec_validate_when_repo_path_contains_archive_segment(
+    tmp_path, monkeypatch,
+):
+    """repo 整体路径含 ``archive`` segment(``tmp_path / "archive" / "repo"`` —
+    repo 父目录名是 ``archive``)+ active change → ``run_openspec_validate`` 仍被
+    invoke(count == 1)。守门 round 1 codex F1 高危 finding。沿 specs.md Scenario 9 +
+    design.md D-DispatchPathDetection round 1 修订。
+    """
+    repo = tmp_path / "archive" / "repo"
+    repo.mkdir(parents=True)
+    active_id = "fc-active-under-archive-parent"
+    b = make_complete_change(repo, active_id)
+    invoked = {"count": 0}
+    def _spy(repo_arg, change_id):
+        invoked["count"] += 1
+        return None
+    monkeypatch.setattr(fg, "run_openspec_validate", _spy)
+    fg.build_report(
+        repo=repo,
+        change_id=active_id,
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=False,
+    )
+    assert invoked["count"] == 1, (
+        f"active change MUST invoke run_openspec_validate (count == 1) even when "
+        f"repo path contains 'archive' segment; got count={invoked['count']}; round 1 F1 守门"
+    )
+
+
+def test_finish_gate_invokes_openspec_validate_for_active_path(tmp_path, monkeypatch):
+    """active change 不在 archive subtree → run_openspec_validate 仍 invoke
+    (backward-compat 守门)。沿 specs.md Scenario 5。
+    """
+    b = make_complete_change(tmp_path, "fc-active-path")
+    invoked = {"count": 0}
+    real_validate = fg.run_openspec_validate
+    def _spy(repo, change_id):
+        invoked["count"] += 1
+        return real_validate(repo, change_id)
+    monkeypatch.setattr(fg, "run_openspec_validate", _spy)
+    fg.build_report(
+        repo=tmp_path,
+        change_id="fc-active-path",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=False,
+    )
+    assert invoked["count"] == 1, (
+        f"active path should invoke run_openspec_validate exactly 1 time (backward-compat); "
+        f"got {invoked['count']}"
+    )
+
+
+def test_archive_segment_detection_uses_path_parts_not_substring(tmp_path, monkeypatch):
+    """active change 名含 ``archive`` 子串(``add-archive-feature``)但路径不在 archive
+    subtree → 不应被检测为 archive 路径(active 行为不变,继续 invoke openspec
+    validate)。沿 specs.md Scenario 7 + design.md D-DispatchPathDetection
+    round 1 修订(改用 ``change_dir.is_relative_to(_common.archive_dir(repo))``)。
+    """
+    b = make_complete_change(tmp_path, "add-archive-feature")
+    invoked = {"count": 0}
+    real_validate = fg.run_openspec_validate
+    def _spy(repo, change_id):
+        invoked["count"] += 1
+        return real_validate(repo, change_id)
+    monkeypatch.setattr(fg, "run_openspec_validate", _spy)
+    fg.build_report(
+        repo=tmp_path,
+        change_id="add-archive-feature",
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=False,
+    )
+    assert invoked["count"] == 1, (
+        f"active change containing 'archive' substring in name (NOT segment under "
+        f"archive subtree) should still invoke openspec validate; got {invoked['count']}"
+    )
