@@ -210,14 +210,12 @@ class ExportExecutor(StepExecutor):
 
     @staticmethod
     def _is_importable(art: Artifact) -> bool:
-        # OpenSpec change comfy-agent-cli-video-adoption Phase 3 round-2 F1 修订:
-        # whitelist 加 "video" — D-Runner-Extension + D1 决策驱动;否则 video Artifact
-        # 在此被静默过滤,不进 manifest_builder → P4 真机看不到 .uasset(沿 round-2
-        # F1 codex finding 揭示的盲点)。
-        return (
-            art.payload_ref.kind == PayloadKind.file
-            and art.artifact_type.modality in {"image", "mesh", "audio", "video", "material"}
-        )
+        # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase A:
+        # 收敛到 _KIND_MAP 单一真源(沿 design D10 + round 1 codex F1 修订);
+        # 旧 modality-only whitelist 与 manifest_builder shape-aware filter 不一致,
+        # 导致 unsupported shape(如 video.webm)在新 derive_drop_target 路径下 crash export
+        from framework.ue_bridge.manifest_builder import is_manifest_importable
+        return is_manifest_importable(art)
 
     @staticmethod
     def _collect_upstream(ctx: StepContext) -> list[Artifact]:

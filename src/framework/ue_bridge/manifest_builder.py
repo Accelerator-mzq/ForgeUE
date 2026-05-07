@@ -58,6 +58,24 @@ _KIND_MAP: dict[tuple[str, str], str] = {
 }
 
 
+def is_manifest_importable(art: Artifact) -> bool:
+    """art 是否在 _KIND_MAP 命中 — manifest 能力的单一真源.
+
+    Used by `ExportExecutor._is_importable` AND `manifest_builder.build_manifest`
+    to keep import filtering consistent across modules(沿 OpenSpec change
+    fix-export-d12-and-skipped-evidence-filter design D10 — round 1 codex F1
+    修订:消除 modality whitelist 与 _KIND_MAP shape map 双源).
+
+    返回 True 必须同时满足:
+    1. payload_ref.kind == PayloadKind.file(只能导入 file-backed Artifact)
+    2. (modality, shape) 在 _KIND_MAP 命中(unsupported shape 如 video.webm 返 False)
+    """
+    # 中文注释:single source check — 把 ExportExecutor 与 build_manifest filter 收敛到一处
+    if art.payload_ref.kind != PayloadKind.file:
+        return False
+    return _KIND_MAP.get((art.artifact_type.modality, art.artifact_type.shape)) is not None
+
+
 _PREFIX_BY_KIND: dict[str, str] = {
     "texture": "T_",
     "sound_wave": "S_",
