@@ -1638,6 +1638,72 @@ def _diff_registry_entries(prior: "dict", current: "dict") -> "dict[str, list[st
     }
 
 
+def _validate_tombstone_consistency(
+    tombstone: "dict",
+    baseline_entry: "dict",
+    current_change_id: str,
+    tasks_cancel_tag: "dict",
+) -> "str | None":
+    """Round 2 F2-r2 fix:5-point tombstone consistency check。
+
+    关闭 {} placeholder bypass 漏洞:fence 解析 registry_entry_snapshot 为 JSON,
+    校验 id 匹配 + 8 schema 字段 + critical 字段值与 baseline 一致 +
+    archived_in_change == current change + cancellation_reason 匹配 tasks.md cancel tag type。
+
+    返回 None 表示全部通过;返回 BLOCKER reason str(短描述)表示失败。
+    """
+    # Check 1: id 匹配
+    if tombstone.get("id") != baseline_entry.get("id"):
+        return (
+            f"tombstone_id_mismatch_got_{tombstone.get('id')}_expected_{baseline_entry.get('id')}"
+        )
+
+    # Check 2: snapshot 是合法 JSON object + 含 8 个 schema 字段
+    snapshot_raw = tombstone.get("registry_entry_snapshot", "")
+    try:
+        snapshot = json.loads(snapshot_raw) if isinstance(snapshot_raw, str) else snapshot_raw
+    except json.JSONDecodeError:
+        return f"tombstone_snapshot_invalid_{tombstone.get('id')}_malformed_json"
+    if not isinstance(snapshot, dict):
+        return f"tombstone_snapshot_invalid_{tombstone.get('id')}_not_object"
+    required_fields = {
+        "id", "source", "description", "trigger",
+        "category", "retire-impact-status", "priority", "status",
+    }
+    missing = required_fields - set(snapshot.keys())
+    if missing:
+        return (
+            f"tombstone_snapshot_invalid_{tombstone.get('id')}_missing_fields_"
+            f"{','.join(sorted(missing))}"
+        )
+
+    # Check 3: snapshot critical 字段值与 baseline 一致(category + source)
+    for field in ("category", "source"):
+        if snapshot.get(field) != baseline_entry.get(field):
+            return (
+                f"tombstone_snapshot_mismatch_{tombstone.get('id')}_"
+                f"{field}_got_{snapshot.get(field)}_baseline_{baseline_entry.get(field)}"
+            )
+
+    # Check 4: archived_in_change == current change id
+    if tombstone.get("archived_in_change") != current_change_id:
+        return (
+            f"tombstone_archived_in_change_mismatch_{tombstone.get('id')}_"
+            f"got_{tombstone.get('archived_in_change')}_expected_{current_change_id}"
+        )
+
+    # Check 5: cancellation_reason 前缀 == tasks cancel tag type
+    expected_reason_prefix = tasks_cancel_tag.get("type", "")
+    cancellation_reason = tombstone.get("cancellation_reason", "")
+    if not cancellation_reason.startswith(expected_reason_prefix):
+        return (
+            f"tombstone_cancellation_reason_mismatch_{tombstone.get('id')}_"
+            f"tombstone_{cancellation_reason}_tasks_{expected_reason_prefix}"
+        )
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # openspec validate --strict
 # ---------------------------------------------------------------------------

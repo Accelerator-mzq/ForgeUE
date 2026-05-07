@@ -2874,3 +2874,113 @@ def test_diff_registry_entries_status_changed_only_to_cancelled_prefix():
     current = {"entry-a": {"id": "entry-a", "status": "inherited"}}
     diff = _diff_registry_entries(prior, current)
     assert diff["status_changed_to_cancelled"] == []
+
+
+# ---------------------------------------------------------------------------
+# P2.b Helper 4: _validate_tombstone_consistency
+# ---------------------------------------------------------------------------
+
+
+def test_validate_tombstone_consistency_all_checks_pass():
+    from tools.forgeue_finish_gate import _validate_tombstone_consistency
+    baseline = {
+        "id": "entry-x", "source": "archived/foo/tasks.md", "category": "workflow-protocol",
+        "description": "foo", "trigger": "bar", "retire-impact-status": "unaffected",
+        "priority": "low", "status": "active",
+    }
+    snapshot_json = (
+        '{"id":"entry-x","source":"archived/foo/tasks.md","description":"foo",'
+        '"trigger":"bar","category":"workflow-protocol","retire-impact-status":"unaffected",'
+        '"priority":"low","status":"cancelled-completed"}'
+    )
+    tombstone = {
+        "id": "entry-x",
+        "archived_at_commit": "abc1234567" * 4,
+        "archived_in_change": "current-change",
+        "cancellation_reason": "cancelled-completed: abc1234",
+        "registry_entry_snapshot": snapshot_json,
+    }
+    cancel_tag = {"type": "cancelled-completed", "value": "abc1234"}
+    assert _validate_tombstone_consistency(tombstone, baseline, "current-change", cancel_tag) is None
+
+
+def test_validate_tombstone_consistency_id_mismatch_blocks():
+    from tools.forgeue_finish_gate import _validate_tombstone_consistency
+    baseline = {"id": "entry-x"}
+    tombstone = {"id": "entry-y", "registry_entry_snapshot": "{}"}
+    cancel_tag = {"type": "cancelled-completed"}
+    err = _validate_tombstone_consistency(tombstone, baseline, "c", cancel_tag)
+    assert err is not None and "tombstone_id_mismatch" in err
+
+
+def test_validate_tombstone_consistency_snapshot_malformed_json_blocks():
+    from tools.forgeue_finish_gate import _validate_tombstone_consistency
+    tombstone = {"id": "entry-x", "registry_entry_snapshot": "{not valid json"}
+    err = _validate_tombstone_consistency(tombstone, {"id": "entry-x"}, "c", {"type": "cancelled-completed"})
+    assert err is not None and "malformed_json" in err
+
+
+def test_validate_tombstone_consistency_snapshot_missing_fields_blocks():
+    from tools.forgeue_finish_gate import _validate_tombstone_consistency
+    tombstone = {"id": "entry-x", "registry_entry_snapshot": '{"id":"entry-x","status":"active"}'}
+    err = _validate_tombstone_consistency(tombstone, {"id": "entry-x"}, "c", {"type": "cancelled-completed"})
+    assert err is not None and "missing_fields" in err
+
+
+def test_validate_tombstone_consistency_archived_in_change_mismatch_blocks():
+    from tools.forgeue_finish_gate import _validate_tombstone_consistency
+    baseline = {"id": "entry-x", "category": "workflow-protocol", "source": "archived/foo"}
+    snapshot_json = (
+        '{"id":"entry-x","source":"archived/foo","description":"d","trigger":"t",'
+        '"category":"workflow-protocol","retire-impact-status":"unaffected",'
+        '"priority":"low","status":"cancelled-completed"}'
+    )
+    tombstone = {
+        "id": "entry-x",
+        "archived_in_change": "wrong-change",
+        "cancellation_reason": "cancelled-completed: abc",
+        "registry_entry_snapshot": snapshot_json,
+    }
+    cancel_tag = {"type": "cancelled-completed"}
+    err = _validate_tombstone_consistency(tombstone, baseline, "current-change", cancel_tag)
+    assert err is not None and "archived_in_change_mismatch" in err
+
+
+def test_validate_tombstone_consistency_cancellation_reason_mismatch_blocks():
+    from tools.forgeue_finish_gate import _validate_tombstone_consistency
+    baseline = {"id": "entry-x", "category": "workflow-protocol", "source": "archived/foo"}
+    snapshot_json = (
+        '{"id":"entry-x","source":"archived/foo","description":"d","trigger":"t",'
+        '"category":"workflow-protocol","retire-impact-status":"unaffected",'
+        '"priority":"low","status":"cancelled-superseded"}'
+    )
+    tombstone = {
+        "id": "entry-x",
+        "archived_in_change": "current-change",
+        "cancellation_reason": "cancelled-not-applicable: out-of-scope (text)",
+        "registry_entry_snapshot": snapshot_json,
+    }
+    cancel_tag = {"type": "cancelled-superseded"}
+    err = _validate_tombstone_consistency(tombstone, baseline, "current-change", cancel_tag)
+    assert err is not None and "cancellation_reason_mismatch" in err
+
+
+def test_validate_tombstone_consistency_critical_field_mismatch_blocks():
+    """snapshot category 与 baseline 不一致时应 BLOCK。"""
+    from tools.forgeue_finish_gate import _validate_tombstone_consistency
+    baseline = {"id": "entry-x", "category": "workflow-protocol", "source": "archived/foo"}
+    # snapshot 中 category 故意改成不同值
+    snapshot_json = (
+        '{"id":"entry-x","source":"archived/foo","description":"d","trigger":"t",'
+        '"category":"WRONG-CATEGORY","retire-impact-status":"unaffected",'
+        '"priority":"low","status":"cancelled-completed"}'
+    )
+    tombstone = {
+        "id": "entry-x",
+        "archived_in_change": "current-change",
+        "cancellation_reason": "cancelled-completed: abc",
+        "registry_entry_snapshot": snapshot_json,
+    }
+    cancel_tag = {"type": "cancelled-completed"}
+    err = _validate_tombstone_consistency(tombstone, baseline, "current-change", cancel_tag)
+    assert err is not None and "snapshot_mismatch" in err and "category" in err
