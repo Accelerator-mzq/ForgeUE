@@ -200,6 +200,15 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 - 不修改 OpenSpec 默认产物全集:`.claude/commands/opsx/*` / `.claude/skills/openspec-*` / `.codex/commands/opsx/*` / `.codex/skills/openspec-*`。
 - 贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);失败时 surface job_id 给用户,先 `probe_hunyuan_3d_query` 再决定 `--resume`。
 
+### Follow-on Backlog Registry(自 `centralize-followon-backlog-registry` 启用,2026-05-07)
+
+集中 follow-on 记录位置:[`openspec/backlog/active.md`](openspec/backlog/active.md)+ [`openspec/backlog/archived.md`](openspec/backlog/archived.md)+ [`openspec/backlog/README.md`](openspec/backlog/README.md)(协议)。
+
+- 双源:registry(archive-tracking + capability-boundary + SRS pointer)+ SRS §7.3 TBD(需求层);`_check_srs_registry_consistency` fence 守门 set 等价。
+- Cancel 4 类:`inherited` / `cancelled-superseded by <id>` / `cancelled-not-applicable: <enum>`(5 类 enum)/ `cancelled-completed: <commit>`(strict commit-touches + evidence escape hatch)。
+- Fence:archive 阶段 `_check_followon_continuity` + `_check_srs_registry_consistency` 守门;漏继承 / 失效 ref → BLOCKER。
+- 查询:`/forgeue:change-status <id>` `### Followon Backlog` section。
+
 ### Documentation Sync Gate(摘要)
 
 每个非平凡 change 在 archive 或 merge 前必须执行 Documentation Sync Gate(完整规则见 `docs/ai_workflow/README.md` §4)。

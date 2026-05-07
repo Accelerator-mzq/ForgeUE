@@ -222,6 +222,15 @@ Claude 默认拍板 + 自动 invoke `/codex:review` 二次验证。**以下 6 �
 
 每条 implementation evidence frontmatter 必填 `autonomy_decision` 字段(`claude_autonomous` / `claude_codex_concurred` / `user_required` / `user_overrode`);`concurred` 必配 `codex_review_ref`。`/codex:review` 默认 background 分发(大 scope);adversarial 永远 background。完整协议见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C。
 
+### Follow-on Backlog Registry(自 `centralize-followon-backlog-registry` 启用,2026-05-07)
+
+集中 follow-on 记录位置:[`openspec/backlog/active.md`](openspec/backlog/active.md)(active entries)+ [`openspec/backlog/archived.md`](openspec/backlog/archived.md)(append-only tombstones)+ [`openspec/backlog/README.md`](openspec/backlog/README.md)(协议 / schema / cancel 协议)。
+
+- **双源**:registry 收 archive-tracking(workflow-protocol + capability-boundary)+ pointer at SRS §7.3 active TBD;`docs/requirements/SRS.md` §7.3 仍是需求层 backlog。两边 cross-link 不重复。
+- **Cancel 协议 4 类**(沿 `tools/forgeue_finish_gate.py::_check_followon_continuity` strict validation):`inherited`(沿前一 change 继承)/ `cancelled-superseded by <change-id>` / `cancelled-not-applicable: <enum-prefix>`(`retire-superseded`/`out-of-scope`/`scope-changed`/`obsolete`/`infeasible` 5 类 enum)/ `cancelled-completed: <commit-ref>`(commit 必须触达 follow-on source/contract_refs OR 配 `evidence: <path>` escape hatch)
+- **Fence enforcement**:archive 阶段 `_check_followon_continuity` 守门 active.md self-diff + archived tasks.md 兜底 + cancel ref strict + tombstone 5-point consistency + archived.md append-only;`_check_srs_registry_consistency` 守门 SRS↔registry set 等价 + 状态变化同步;漏继承 / cancel ref 失效 / tombstone 不一致 / SRS-registry 漂移 → BLOCKER。
+- **查询**:`/forgeue:change-status <id>` 输出 `### Followon Backlog` section(inherited 计数 + 3-class cancelled 分类)。
+
 ### Documentation Sync Gate(摘要)
 
 每个非平凡 change 在 archive 或 merge 前必须执行 Documentation Sync Gate(完整规则见 `docs/ai_workflow/README.md` §4)。
