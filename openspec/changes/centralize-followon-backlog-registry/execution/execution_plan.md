@@ -24,7 +24,7 @@ skill_cascade_audit:
 
 # centralize-followon-backlog-registry Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans (本 change 走 `/forgeue:change-apply-direct` 轻量路径,沿 design.md Migration Plan;subagent dispatch 不需要 — scope 可控 + change 自身是 workflow 协议改造重场景轻业务边界附近)。Steps 用 checkbox(`- [ ]`)语法跟踪。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use **`superpowers:subagent-driven-development`**(沿 ForgeUE memory `feedback_self_reference_overcaution.md` — 修改 workflow 协议(命令模板 / fence / skill)的 change 默认走 subagent dispatch;不用"self-reference 风险"推 direct 路径)。Steps 用 checkbox(`- [ ]`)语法跟踪。详 `## Execution Mode` 段。
 
 **Goal**: 建立集中 follow-on backlog registry(`openspec/backlog/active.md` + `archived.md`)+ 2 个 archive-stage blocker fence(`_check_followon_continuity` + `_check_srs_registry_consistency`)+ 13th evidence frontmatter conditional 字段 `followon_continuity` + 一次性 backfill 22 active follow-on + 3 archived.md 首批 tombstone,补 ForgeUE 当前没有集中 follow-on 记录位置的 systemic gap。
 
@@ -157,8 +157,26 @@ P0 (baseline) ─→ P1 (registry files) ─→ P2.a (helpers) ─→ P2.b ... P
 
 ## Execution Mode
 
-**Recommended**: `/forgeue:change-apply-direct`(沿 design.md Migration Plan;轻量 change scope < 3 deliverable + 1 主源文件 → fence 扩展集中;subagent dispatch 收益不显著 + 本 change 自身是 workflow 协议改造,内部 self-reference low — controller 主体 dispatch flow 不动)。
+**Recommended**: **`/forgeue:change-apply-subagent`**(沿 ForgeUE memory `feedback_self_reference_overcaution.md` user 拍板默认 — 修改 workflow 协议(命令模板 / fence / skill)的 change 走 subagent dispatch,不用"self-reference 风险"推 direct):
 
-**Inline execution + checkpoint per phase**:每 phase 完成跑 `pytest -q tests/unit/test_forgeue_finish_gate.py -k "test_check_followon"` + 手工 review 后续推 P+1。
+- 本 change 实际 4 deliverable(registry + 2 fence + 13th frontmatter + 命令模板更新)+ ~74 micro-tasks 跨 7 文件,超 light-weight 阈值;
+- dispatch flow 主体被动 — 本 change 实施期 controller 仍用旧版命令模板执行,新命令模板/fence 仅在本 change archive 后下次 change 才生效,commit-by-commit forward progress 成立 → subagent dispatch 安全;
+- subagent 模式带来的 4 类 per-task evidence(implementer / spec_review / code_quality_review / final_review)对 fence implementation correctness(round 2 实证 F1-r2 baseline anchor / F2-r2 snapshot consistency 都是 implementation gap)有显著价值。
 
-详细 step-by-step micro-tasks 见 [`execution/micro_tasks.md`](micro_tasks.md)。
+**Phase 决策表**(per `superpowers:subagent-driven-development` skill):
+
+| Phase | 拆 sub-task 派 subagent | 走 direct(controller 主流程) |
+|---|---|---|
+| P0 baseline | direct(只是数据汇总,无设计 / 实装) | ✓ |
+| P1 registry 文件创建 | subagent dispatch — 22 entries 写入颗粒度 | ✓ |
+| P2.a-P2.h fence 实装 + tests | **subagent dispatch**(每 helper / fence stage / test batch 派 implementer + spec_review + code_quality_review;final_review 在 phase 末) | |
+| P3 change_state 子命令 | subagent dispatch | |
+| P4 命令模板更新 | direct(纯 .md 编辑,无 implementation 决策) | ✓ |
+| P5 verify | direct(L0/L1/L2 + codex review hook 是 controller 主流程) | ✓ |
+| P6 doc sync gate | direct(沿 forgeue:change-doc-sync 编排;single-doc 决策不需 dispatch) | ✓ |
+| P7 retrospective + cross-check + finish_gate | direct | ✓ |
+| P8 archive | direct(USER 范围) | ✓ |
+
+详细 step-by-step micro-tasks 见 [`execution/micro_tasks.md`](micro_tasks.md)。subagent dispatch 协议见 `superpowers:subagent-driven-development` skill。
+
+**Token budget tracking**(沿 ADR-009 informational):`tools/forgeue_subagent_budget.py` 每 task 输出 budget log;exit 0 始终(soft WARNING 不 hard gate)。

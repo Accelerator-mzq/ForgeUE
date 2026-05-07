@@ -23,7 +23,7 @@ skill_cascade_audit:
 
 # centralize-followon-backlog-registry Micro-tasks
 
-> Per-task TDD 步骤 + actual code + commit 指引。沿 ForgeUE protocol(`/forgeue:change-apply-direct`):每 sub-task 走 red → green → commit;commit message 含 `tasks.md#PX.Y` anchor。
+> Per-task TDD 步骤 + actual code + commit 指引。沿 ForgeUE protocol(`/forgeue:change-apply-subagent`,memory `feedback_self_reference_overcaution.md` 强制):P2.a-h fence + P3 change_state 子命令 + tests 派 subagent(implementer + spec_review + code_quality_review + final_review);P0 / P1 / P4-P8 走 controller 主流程 direct。每 sub-task 走 red → green → commit;commit message 含 `tasks.md#PX.Y` anchor + subagent evidence ref。
 
 ## P0. Baseline + 22 项 backfill 数据源准备
 

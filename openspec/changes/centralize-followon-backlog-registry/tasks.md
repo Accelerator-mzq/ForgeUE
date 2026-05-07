@@ -1,6 +1,6 @@
 # Tasks — centralize-followon-backlog-registry
 
-沿 ForgeUE Integrated AI Change Workflow S0-S9 状态机 + ADR-010 baseline。本 change 走 `/forgeue:change-apply-direct`(轻量;3 deliverable scope;不需要 subagent dispatch)。
+沿 ForgeUE Integrated AI Change Workflow S0-S9 状态机 + ADR-010 baseline。本 change 走 **`/forgeue:change-apply-subagent`**(沿 memory `feedback_self_reference_overcaution.md` — 修改 workflow 协议(命令模板 / fence / skill)的 change 默认 subagent dispatch;P2.a-h fence 实装 + P3 change_state 子命令 + tests 派 subagent;P0 / P1 / P4-P8 走 controller 主流程 direct)。
 
 ## P0. Baseline + 24 项 backfill 准备
 
