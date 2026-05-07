@@ -223,7 +223,7 @@ Claude controller 默认走自主路径 + 同步 invoke `/codex:review` 二次�
 4. **Claude verdict ≈ Codex verdict** → 直接执行,evidence frontmatter `autonomy_decision: claude_codex_concurred` + `codex_review_ref: <evidence 路径>`
 5. **Claude verdict ≠ Codex verdict** → 升级到用户决策,evidence frontmatter `autonomy_decision: user_required`
 
-**`autonomy_decision` 字段枚举**(每条 implementation evidence 必填):
+**`autonomy_decision` ∈ {`claude_autonomous`, `claude_codex_concurred`, `user_required`, `user_overrode`}**(每条 implementation evidence 必填;canonical = `tools/forgeue_finish_gate.py::_AUTONOMY_DECISION_VALUES`,由 `forgeue_enum_cross_ref_check.py` set-equality 守门):
 
 | 枚举值 | 含义 |
 |---|---|
@@ -305,73 +305,42 @@ Codex round N 输出顶层 `verdict ∈ {approve, needs-attention}`,Claude cross
 - **Self-host bootstrap 豁免** — 本 change 实施期间 fence 命令模板还没落地时,controller 临时在 planning layer 自检 6 类 trigger(沿 D-SelfHost 模式);archive 后走命令模板
 - **`claude_codex_concurred` 必须先拿 codex result** — controller MUST 先 `/codex:status --wait <job>` 确认 done + `/codex:result <job>` 拿完整 output,否则改 `user_required`
 
-### C.7 Runtime Enforcement Protocol(自 `enhance-workflow-automation-runtime-enforcement` change 起,2026-05-05)
+### C.7 v1 Advisory Runtime Fence(沿 ADR-011 baseline,retire-parallel-and-worktree-fully P2 后简化)
 
-本 change 引入 4 个 runtime fence + 1 个新命令 + 8 个 Preflight section,把原本 declared-only 的 Layer 6 cascade dependency / worktree isolation / round 2 continuity / task granularity 转为 advisory enforcement(命令模板显式步骤 + LLM 自报 frontmatter declaration + finish_gate audit;详见 design.md R6 advisory not deterministic limitation,真 deterministic enforcement 留 follow-on `enhance-workflow-automation-executable-enforcement`)。
+> **Retire 历史**(2026-05-06,archived `retire-parallel-and-worktree-fully`):ADR-011 + ADR-012 + ADR-013 + ledger-binding 4 archived change 引入的 ForgeUE-level worktree / parallel dispatch / dispatch ledger / sister skill 强制层整 retire(沿 D-HardRetireScope wide retire;user 拍板 B option:"不再支持 subagent 并行处理任务,在这个阶段也不要支持 worktree,将 worktree 的功能和 superpowers 保持一致")。Active 工作流退回 ADR-010 baseline + v1 advisory fence。原 §C.7 ADR-011 / §C.8 ADR-012 / §C.9 ADR-013 / §C.10 ledger-binding 4 节合并为本节简述 + retire 历史指针。
 
-**4 fence**(`tools/forgeue_finish_gate.py`):
+`tools/forgeue_finish_gate.py` 内 3 个 v1 advisory fence(沿 ADR-011 baseline 沉淀):
 
-| Fence | D-decision | 检查 evidence frontmatter |
+| Fence | D-decision | evidence frontmatter 检查 |
 |---|---|---|
-| `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp) |
-| `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict(round_1/2 implementer_id + reviewer_id 一致) |
+| `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp)|
+| `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict(round_1/2 implementer_id + reviewer_id 一致;v1 advisory string-equality only)|
 | `_check_task_granularity` | D-TaskGranularityDeclaration | `task_granularity` ∈ {phase, per-file, sub-task} |
-| `_check_worktree_path` | D-WorktreeEnforce | `worktree_path` non-null(仅当 `triggered_by_command` ∈ {change-apply-subagent, change-apply-parallel}) |
 
-**Protocol gating**(D-ProtocolVersionMigration):4 fence 仅对含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效;legacy archived evidence 全 pass-through,确保 archived `enhance-workflow-automation` 等历史 change replay 不被 false-block。
+**Protocol gating**(D-ProtocolVersionMigration + D-ActiveVsArchivedReplayBoundary,沿 retire-parallel-and-worktree-fully P2):
+- `runtime_enforcement_protocol_version: v1` evidence → 走 v1 advisory fence
+- 缺 `runtime_enforcement_protocol_version` 字段(legacy ADR-010 时期 evidence)→ 全 fence pass-through
+- **Active 路径 evidence + present-but-invalid value**(`v2` / `v3` / typo / null / empty / `v4`)→ BLOCKER `unknown_protocol_version`(防 controller typo silent bypass)
+- **Archived 路径 evidence + 任何 unknown value** → legacy pass-through(归档不动;沿 D-ArchivedReplayCompat)
 
-**新命令 `/forgeue:change-apply-parallel`**(D-ParallelDispatch):invoke `superpowers:dispatching-parallel-agents` SKILL,暴露**并行 dispatch 路径**;controller 显式判定 task 独立(`task_independence_assertion: true` + `task_files_disjoint: [<file-set>...]`,命令前自动 verify file overlap → 任一交集 abort)后路由。借用模式 disclaimer:SKILL 描述 debugging-focused,implementation 借用同款"独立 domain → parallel"模式。
+**Retire 范围**:
+- 删除工具:`forgeue_preflight_wrapper.py`(W1 wrapper)+ `forgeue_dispatch_ledger.py`(W3 ledger CLI)+ `_forgeue_ledger_crypto.py`(crypto helper)整删 ~1475 LOC
+- 删除命令:`/forgeue:change-apply-parallel.md` 整删 433 LOC;命令矩阵 10 → 9
+- 删除 fence:`_check_worktree_path` / `_check_worktree_consent_outcome` / `_check_worktree_mode_consistency` / `_check_parallel_decline_fallback` / `_check_dispatch_ledger` / `_check_runtime_enforcement_protocol_version_validity` / `_check_archived_replay_path_boundary` / `_check_ledger_terminal_proof` / `_check_ledger_forgery_resistance_consistency` 等 7 fence + 2 helper + 5+ 常量
+- Sister skill `subagent-driven-discipline` partial retire(D-SisterSkillRewrite 沿 user push back 修正前判断):保留主体(§1 scenario taxonomy / §2 cheap-model reliability / §3-main / §4 / §5 historical case / §6-§9 meta);删 §3.4.2 Type 2 Parallel + §3.5 Worktree Consent Policy + trigger matrix Type 2 row(748 → 682 LOC,v2.3 → v2.4)
+- 命令模板编辑:`change-apply-subagent.md` 删 Preflight Worktree + Preflight Subagent Discipline;`change-apply-direct.md` 删 Preflight Worktree mention;`change-apply.md` 加 parallel retire 通告
+- 测试更新:删 70+ retire fence tests + 17 retire-related cmd markdown tests + 修正 fixture 命令矩阵 10 → 9
 
-**8 个 Preflight section**(D-PreflightProtocol):
+**Worktree consent**:沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke + 自家 Step 0 consent gate(无 ForgeUE-level mandatory invoke / 无 receipt JSON / 无 outcome × mode 状态机 / 无 dispatch ledger);default decline → main repo cwd。
 
-| 命令 | Preflight Worktree | Preflight Skill Cascade | Preflight Task Granularity |
-|---|---|---|---|
-| `change-apply-subagent` | ✓ | ✓ | ✓ |
-| `change-apply-parallel` | ✓ | ✓ | ✓ |
-| `change-apply-direct` | **N/A**(D-DirectWorktreeRefinement)| ✓ | ✓ |
-| `change-plan` / `change-debug` / `change-verify` / `change-review` / `change-doc-sync` | — | ✓ | — |
-| `change-finish` / `change-status` | — | **N/A**(纯工具 / 只读)| — |
-| codex `/review` / `/adversarial-review` | — | **N/A**(纯 codex CLI dispatch,disclaimer)| — |
+**Archived 4 change replay 兼容**(沿 D-ArchivedReplayCompat):archived `runtime-enforcement` / `executable-enforcement` / `restore-consent-gate` / `ledger-binding` evidence 不动(沿"归档即冻结"原则);archived 路径 + v2/v3/unknown protocol value → finish_gate legacy pass-through 兼容。P5 实测 31 → 29 blocker(2 v2 fence blocker `round_fix_continuity_v2_violation` + `dispatch_ledger_violation` 在 retire 后消失,匹配 design.md 期望)。
 
-**D-DirectWorktreeRefinement**(2026-05-05 user 拍板):`change-apply-direct` 沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项**仍跑在主 worktree**(direct 是 < 3 micro-task 轻量 fallback,worktree 创建 + commit-before-worktree + squash merge 收尾的 ~10-20s 开销不划算)。`forgeue_finish_gate.py::_check_worktree_path` fence 在 direct evidence 上 pass-through。
-
-**状态机**(B.1):S2→S3 / S3→S4-S5 / S4 stage 进入命令时多了 **Preflight phase**,任一 preflight fail → 命令 abort + 详细错误,不进入 Steps 主流程。Preflight 失败不算 stage 推进;controller 修 SKILL invoke / worktree / task granularity declaration 后 retry。
-
-**新 evidence frontmatter 字段**(本 change 引入):
-- `runtime_enforcement_protocol_version: v1`(协议版本标记;触发 4 fence 生效)
-- `worktree_path`(D-WorktreeEnforce)
-- `skill_cascade_audit`(D-SkillCascadeCheck;dict)
-- `subagent_continuity`(D-RoundFixContinuity;dict)
-- `task_granularity`(D-TaskGranularityDeclaration)
-- `task_independence_assertion` + `task_files_disjoint`(仅 `change-apply-parallel`)
-
-完整规则见 OpenSpec change `enhance-workflow-automation-runtime-enforcement/design.md` D-WorktreeEnforce / D-DirectWorktreeRefinement / D-SkillCascadeCheck / D-RoundFixContinuity / D-TaskGranularityDeclaration / D-ParallelDispatch / D-PreflightProtocol / D-ProtocolVersionMigration 决策。
-
-### C.8 Executable Enforcement Layer v2(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05)
-
-ADR-011 v1 Runtime Enforcement Protocol 是 **advisory not deterministic**(R6 限制):controller 跳过 markdown step 时 subagent 已修改 / finish_gate 是 archive 时才扫,无法 abort dispatch。本 change 升级 v2 为 **executable enforcement layer**(W1 wrapper + W2 actual diff + W3 ledger),关闭 v1 F1/F2/F3 deferred gap。
-
-**W1 — `tools/forgeue_preflight_wrapper.py`**(F1 round 1 + F2 round 2 inline writeback):wrapper 自管 isolated worktree(`git worktree add/list --porcelain` subprocess + cwd realpath 校验,不依赖 SKILL invoke);写 13-field receipt JSON(含 `is_isolated_worktree: true` + `worktree_action ∈ {created, reused}`)到 `<change>/preflight_receipts/<receipt_id>.json`;exit codes 0/5/6/7。命令模板**只能消费 receipt path**(LLM 复制 worktree_path + receipt path 到 evidence frontmatter,不直接写)。
-
-**W2 — Parallel actual diff overlap detection**(F4 round 1 + F3 round 2 inline writeback):`/forgeue:change-apply-parallel` 在 implementer commit 完成后主 session 跑:Step 0 dirty precondition `git status --porcelain=v1` 非空 → 自动降级 sequential;Step 1 actual changed-files 收集(`git diff --name-only -z` + `git ls-files --others --exclude-standard -z` 合集,含 untracked + Bash dict→JSON `IMPL_FILES_JSON` env var 序列化);Step 2 cross-implementer set intersection inline python3 → 非空 → abort + 自动降级。abort log 沿 ForgeUE 产物路径 `<change>/parallel_abort_*`(**不**用 `/tmp/`)。
-
-**W3 — `tools/forgeue_dispatch_ledger.py`**(F2 round 1 + F1 round 2 inline writeback):append-only JSONL ledger(`<change>/dispatch_ledger.jsonl`)+ `append`/`verify` 子命令;7 字段(agent_id / round / role / task_subject_hash / dispatched_at ISO8601 / parent_session_id / wrapper_version);6 VALID_ROLES enum。**post-dispatch capture 真实 agent_id**:Skill(Task) 之后从 return parse → Bash wrapper append ledger(关闭 round 1 synthetic UUID 漏洞)。
-
-**protocol_version dispatch matrix**(`forgeue_finish_gate.py` v2 升级):缺字段 → legacy pass-through;`v1` → v1 fence;`v2` → v1 + v2 fence(v2 = v1 + additional checks,严格于 v1)。
-
-**v2 新 / 升级 4 fence**:`_check_worktree_path_v2`(receipt cross-check + `is_isolated_worktree: true`)/ `_check_round_fix_continuity_v2`(ledger agent_id 集合 cross-check)/ `_check_file_overlap_actual`(parallel only;actual ⊆ declared + disjoint unless degraded)/ `_check_dispatch_ledger`(inline ledger verify:JSON well-formed + wrapper_version + timestamp 单调)。
-
-**v2 evidence frontmatter 7 v2 字段**:`runtime_enforcement_protocol_version: v2` + `worktree_receipt_path` + `worktree_path` + `dispatch_ledger_path: dispatch_ledger.jsonl`(固定值)+ `task_files_actual`(parallel only)+ `degraded_to` / `degradation_reason` + `pre_dispatch_metadata: advisory` + `ledger_forgery_resistance: advisory`(F2/F3 round 1 inline writeback advisory 标注 — 诚实暴露当前 limitation)。
-
-**DogfoodGap**:本 change 实施时 W1 wrapper 还没 ship,本 change evidence 全部 v1 advisory。**第一个真 v2 dogfood 是下一 follow-on change**;P5.5 v2 e2e fixture(`tests/integration/test_v2_e2e_synthetic_change.py`)= archive 必过 gate(P10.0 二次确认),mock 完成 v2 协议端到端实跑。
-
-**F2/F3 deferred 到 follow-on `enhance-workflow-automation-ledger-binding`**:wrapper-bound dispatch(F2;Hook system 或 Skill 协议扩展)+ cryptographic ledger signing(F3;HMAC + LLM 不可见 key)— 触发条件:本 change ship 后实测 advisory 不足以挡 controller drift。
-
-**Subagent Discipline Layer 2 wiring**:`/forgeue:change-apply-{subagent,parallel}` Preflight 段 MANDATORY invoke `Skill(subagent-driven-discipline)`(sister skill 沉淀 controller-side 40% scenario judgment;§3.4 Trigger Type Matrix:Type 1 = 3-stage / Type 2 = parallel / Type 3 = standalone Task / Type 4 = ad-hoc / Type 5 = codex CLI 各自 retrospect intensity)。
-
-完整规则见 OpenSpec change `enhance-workflow-automation-executable-enforcement/design.md` D-W1-ReceiptSchema / D-W2-OverlapDetection / D-W3-LedgerFormat / D-W3-WrapperImpl / D-DispatchWrapperBoundary / D-DegradationPath / D-FrontmatterSchemaExtension / D-W4-IntegrationGate / D-DogfoodGap 决策。
-
----
+**完整规则见 archived**:
+- `openspec/changes/archive/2026-05-XX-retire-parallel-and-worktree-fully/`(15 D-decision + codex round 1 4 finding accepted-codex)
+- `openspec/changes/archive/2026-05-05-enhance-workflow-automation-runtime-enforcement/design.md`(ADR-011 历史)
+- `openspec/changes/archive/2026-05-05-enhance-workflow-automation-executable-enforcement/design.md`(ADR-012 历史)
+- `openspec/changes/archive/2026-05-06-restore-superpowers-worktree-consent-gate/design.md`(ADR-013 历史)
+- `openspec/changes/archive/2026-05-06-enhance-workflow-automation-ledger-binding/design.md`(ledger-binding 历史)
 
 ## D. Documentation Sync Gate
 

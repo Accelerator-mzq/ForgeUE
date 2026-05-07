@@ -24,6 +24,8 @@ S7→S8 transition:Finish Gate(中心化最后防线)。`forgeue_finish_gate.py`
      - **tasks unchecked**:`tasks.md` 无 `[ ]` 残留(或带 SKIP reason)
      - **`openspec validate <id> --strict`** PASS
      - **`~/.claude/settings.json` review-gate hook**:若含 `--enable-review-gate` → WARN 提示用户 disable
+     - **`_check_followon_continuity`**(自 `centralize-followon-backlog-registry` 起):active.md self-diff + archived tasks.md 兜底 + cancel ref strict validation + tombstone 5-point consistency + archived.md append-only;漏继承 / cancel ref 失效 / tombstone 不一致 → BLOCKER `followon_continuity_violation`
+     - **`_check_srs_registry_consistency`**(自 `centralize-followon-backlog-registry` 起):SRS §7.3 active TBD ↔ active.md `requirements-tbd-pointer` 集合等价 + 状态变化同步;mismatch / 漂移 → BLOCKER `srs_registry_consistency_violation`
    - exit 0(PASS)/ 2(任一 blocker)/ 3(目录不存)/ 1(IO 异常)
 5. **写 finish_gate_report** — `verification/finish_gate_report.md`(`evidence_type: finish_gate_report` / 12-key frontmatter):列每项检查的 [OK]/[FAIL]/[WARN] + blocker reason。
 6. **状态推进** — finish_gate exit 0 → 进 S8(可走 `/opsx:archive`);exit 2 → 报告 blocker,**不**推进,用户修后重跑。

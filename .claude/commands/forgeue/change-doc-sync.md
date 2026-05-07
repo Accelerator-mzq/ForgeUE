@@ -38,6 +38,13 @@ evidence frontmatter(`doc_sync_report.md`)MUST 加 `skill_cascade_audit` 字段 
    - 扫 10 份长期文档(`openspec/specs/*` / `docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md` / `README.md` / `CHANGELOG.md` / `CLAUDE.md` / `AGENTS.md`)
    - 每份打 `[REQUIRED]` / `[OPTIONAL]` / `[SKIP]` / `[DRIFT]` 标签
    - exit 0(无 DRIFT)/ 2(任一 DRIFT)/ 1(IO 异常)
+4b. **forgeue_enum_cross_ref_check 静态扫描**(canonical frozenset ↔ doc 枚举一致性):
+   - `python -m tools.forgeue_enum_cross_ref_check`
+   - 扫 `tools/*.py` 下所有 `_VALID_*` / `*_VALUES` / `*_TYPES` / `*_COMMANDS` frozenset 字面声明,与 `CLAUDE.md` + `docs/ai_workflow/forgeue_integrated_ai_workflow.md` 中以 `<name> ∈ {…}` 形式描述的枚举字面值做 set-equality diff
+   - mapped canonical 集合不等 doc 集合 → `[DRIFT]` blocker
+   - actionable advisory `[WARN]`(exit 0 OK):mapped canonical 缺 doc 表述 / docs-only enum 无 canonical
+   - exit 0(无 drift)/ 2(任一 drift)/ 1(IO 或解析异常)
+   - drift 出现时:由用户拍板修 docs 让其与 canonical 同步,或修 canonical 让其与 docs 同步(工具不自动选择 source-of-truth)
 5. **跑 README §4.3 提示词**(以 tool 输出作 context):
    - agent 输出 4 类:`A. 必须更新` / `B. 不需要更新` / `C. 存在 doc drift` / `D. 建议 patch`
    - 启发式规则(沿 design.md §7):commit-touching → CHANGELOG REQUIRED;`src/framework/core/` 改动 → LLD REQUIRED;`docs/ai_workflow/` 改动 → CLAUDE+AGENTS REQUIRED;无 spec delta → `openspec/specs/*` SKIP
@@ -58,6 +65,8 @@ evidence frontmatter(`doc_sync_report.md`)MUST 加 `skill_cascade_audit` 字段 
 ### Static scan
 - forgeue_doc_sync_check exit code: <0|2|1>
 - 10 docs: REQUIRED=<N> / OPTIONAL=<N> / SKIP=<N> / DRIFT=<N>
+- forgeue_enum_cross_ref_check exit code: <0|2|1>
+- enum cross-ref: canonical=<N> mapped=<M> doc-occurrences=<O> drifts=<K> actionable-warnings=<W>
 
 ### Agent classification (README §4.3)
 - A. 必须更新: <list of files + reason>
@@ -82,6 +91,7 @@ next: <S8 ready | blocked + reason>
 - **数字以实测为准**(README §4.2):涉及测试总数等以 `python -m pytest -q` 实际输出为准;**不硬编码**。
 - **DRIFT 显式化**:docs / tests / code / CHANGELOG 冲突 → 标 [DRIFT] 让用户裁决,**不自行猜测**哪个对(README §4.2)。
 - **必跑 doc_sync_check**;DRIFT 阻断 S8。
+- **必跑 enum_cross_ref_check**;canonical frozenset 与 docs `<name> ∈ {…}` 不一致 → [DRIFT] 阻断 S8(由用户拍板 source-of-truth 修哪一边)。
 - **本命令不直接触发 `/codex:adversarial-review` / `/codex:review`**(本命令是 docs 同步 gate,不属 stage review;若需 review 走 `/forgeue:change-{plan,apply,verify,review}` 对应 stage hook)。
 
 ## Decision Delegation

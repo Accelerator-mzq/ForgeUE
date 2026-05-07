@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -145,28 +146,37 @@ _DISPATCH_MODE_FIELD = "triggered_by_command"
 # Backward-compat alias(legacy 引用;archived enhance-workflow-automation 等
 # evidence frontmatter 使用 change-apply-subagent 单值)
 _DISPATCH_MODE_SUBAGENT_VALUE = "change-apply-subagent"
-# P6 codex round 1 F1 fix:dispatch detector 必须识别 subagent + parallel 双值
-# (parallel 命令模板声明同款 4 类 subagent_* evidence 协议)
+# retire-parallel-and-worktree-fully P5 alignment fix(2026-05-06):移除
+# `change-apply-parallel` 从 dispatch detector 集合(parallel command 已 P3 整删,
+# 不再有 evidence 含 `triggered_by_command: change-apply-parallel`;留 stale value
+# 会让恶意 / typo evidence bypass REQUIRED check)。
 _SUBAGENT_STYLE_DISPATCH_VALUES: frozenset[str] = frozenset({
     "change-apply-subagent",
-    "change-apply-parallel",
 })
 
 # enhance-workflow-automation-runtime-enforcement(D-ProtocolVersionMigration):
-# 4 fence(skill_cascade / round_fix_continuity / task_granularity /
-# worktree_path)仅对 frontmatter 含 `runtime_enforcement_protocol_version: v1`
-# 的 evidence 生效。legacy archived evidence(无此字段)→ fence pass-through,
-# 确保历史 change(enhance-workflow-automation 等)evidence audit replay 兼容。
+# 3 v1 advisory fence(skill_cascade / round_fix_continuity / task_granularity)仅对
+# frontmatter 含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效。
+# legacy archived evidence(无此字段)→ fence pass-through,确保历史 change replay 兼容。
 #
-# enhance-workflow-automation-executable-enforcement(D-FrontmatterSchemaExtension):
-# v2 协议在 v1 基础上严格增强:
-# - v2 fence(_check_worktree_path v2 / _check_round_fix_continuity v2 /
-#   _check_file_overlap_actual / _check_dispatch_ledger)仅对 v2 evidence 生效
-# - v1 fence 对 v1 + v2 evidence 都生效(v2 ⊇ v1,不是替换)
-# - legacy evidence(无字段)全 fence pass-through
+# retire-parallel-and-worktree-fully P2(2026-05-06):v2/v3 protocol versions retired
+# (along with worktree_path / dispatch_ledger / ledger_terminal_proof / ledger_forgery_resistance /
+# archived_replay_path / runtime_enforcement_protocol_version_validity 等 12 fence 函数全删除);
+# active 路径 evidence 含 present-but-invalid value(v2/v3/typo/null/empty/v4)
+# → BLOCKER `unknown_protocol_version`(D-ActiveVsArchivedReplayBoundary;inline check
+# in check_frontmatter_protocol main loop);archived 路径 + 任何 unknown value →
+# legacy pass-through(D-ArchivedReplayCompat;归档不动)。
 _RUNTIME_ENFORCEMENT_VERSION_FIELD = "runtime_enforcement_protocol_version"
 _RUNTIME_ENFORCEMENT_VERSION_VALUE = "v1"
-_RUNTIME_ENFORCEMENT_VERSION_VALUE_V2 = "v2"
+
+# retire-parallel-and-worktree-fully P2(2026-05-06):v2/v3 protocol versions retired;
+# only v1 remains as advisory baseline. Active evidence with present-but-invalid value
+# (v2/v3/typo/null/empty) → BLOCKER `unknown_protocol_version`(D-ActiveVsArchivedReplayBoundary
+# inline check in check_frontmatter_protocol);archived path evidence with v2/v3/unknown
+# → legacy pass-through(D-ArchivedReplayCompat).
+_VALID_PROTOCOL_VERSIONS: frozenset[str] = frozenset({
+    _RUNTIME_ENFORCEMENT_VERSION_VALUE,  # "v1"
+})
 
 # task_granularity 字段合法枚举值(design.md D-TaskGranularityDeclaration)
 _TASK_GRANULARITY_VALUES: frozenset[str] = frozenset({"phase", "per-file", "sub-task"})
@@ -176,17 +186,11 @@ _ISO_TIMESTAMP_RE = re.compile(
     r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+\-]\d{2}:?\d{2})?$"
 )
 
-# D-WorktreeEnforce + D-DirectWorktreeRefinement(2026-05-05 user 拍板):
-# implementation evidence 来自 change-apply-subagent / change-apply-parallel
-# 时触发 worktree_path 强校验。change-apply-direct 沿 archived
-# 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail 第 5 项
-# **不强制** worktree(direct 是 < 3 micro-task 轻量 fallback,worktree 创建
-# + squash merge 收尾 ~10-20s 开销不划算);_check_worktree_path fence 在
-# direct evidence 上 pass-through。
-_WORKTREE_REQUIRED_COMMANDS: frozenset[str] = frozenset({
-    "change-apply-subagent",
-    "change-apply-parallel",
-})
+# retire-parallel-and-worktree-fully P2(2026-05-06):全部 worktree-related 常量整删。
+# `_WORKTREE_REQUIRED_COMMANDS` / `_WORKTREE_CONSENT_OUTCOME_FIELD` / `_WORKTREE_MODE_FIELD` /
+# `_VALID_WORKTREE_CONSENT_OUTCOMES` / `_VALID_WORKTREE_MODES` / `_OUTCOME_MODE_INVARIANTS` /
+# `_WORKTREE_FENCE_TRIGGER_COMMANDS` 全删除(对应 fence 函数同步删除);worktree 沿
+# Superpowers upstream `using-git-worktrees` SKILL 自家 consent gate,无 ForgeUE-level 强制层。
 
 # Subdirectories that require strict 12-key evidence (helpers in notes/ are
 # allowed to omit frontmatter; per F3-adv ``notes/`` is the helper bucket
@@ -357,15 +361,13 @@ def _detect_subagent_dispatch_mode(change_dir: Path) -> bool:
     file (``notes/pre_p0/dispatch_mode.txt``) — that file is helper-tier and
     silently absent on legitimate subagent runs would have bypassed the
     gate. Instead the per-task evidence files emitted by
-    ``change-apply-subagent`` / ``change-apply-parallel`` MUST carry the
-    ``triggered_by_command`` frontmatter field, and finish_gate scans for
-    that signal directly.
+    ``change-apply-subagent`` MUST carry the ``triggered_by_command``
+    frontmatter field, and finish_gate scans for that signal directly.
 
-    P6 codex round 1 F1 fix(enhance-workflow-automation-runtime-enforcement):
-    detector 扩到 ``change-apply-parallel``(parallel 命令模板声明同款 4 类
-    subagent_* evidence 协议;原 detector 仅识别单字符串 ``change-apply-subagent``,
-    parallel run 即使缺 spec_review / code_quality_review / final_review 也
-    bypass REQUIRED check,与 parallel 命令 Guardrail 不一致)。
+    retire-parallel-and-worktree-fully P5 alignment fix(2026-05-06):
+    detector 收回到仅 ``change-apply-subagent``(parallel command 已 P3
+    整删,不再有 evidence 含 `triggered_by_command: change-apply-parallel`;
+    沿 D-PostRetireParallelStrategy)。
 
     Scope: only formal evidence subdirs (notes/ helpers excluded — they may
     quote the field in body prose as documentation example without
@@ -831,31 +833,25 @@ def check_frontmatter_protocol(
             blockers.append(
                 Blocker(type="task_granularity_violation", detail=err, file=rel)
             )
-        for err in _check_worktree_path(ev, fm, change_dir):
-            blockers.append(
-                Blocker(type="worktree_path_violation", detail=err, file=rel)
-            )
 
-        # enhance-workflow-automation-executable-enforcement:v2 runtime fence
-        # (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
-        # v2 fence 仅对 `runtime_enforcement_protocol_version: v2` evidence 生效;
-        # v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
-        if _runtime_enforcement_v2_active(fm):
-            for err in _check_worktree_path_v2(ev, fm, change_dir):
+        # retire-parallel-and-worktree-fully P2(2026-05-06):D-ActiveVsArchivedReplayBoundary
+        # inline check — active 路径 evidence 含 present-but-invalid `runtime_enforcement_protocol_version`
+        # → BLOCKER `unknown_protocol_version`;archived 路径 + 任何 unknown value → legacy
+        # pass-through(沿 D-ArchivedReplayCompat,归档不动);active + absent → legacy
+        # pass-through(ADR-010 时期 evidence 兼容)。
+        pv_value = fm.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD)
+        if pv_value is not None and pv_value not in _VALID_PROTOCOL_VERSIONS:
+            if not _is_archived_replay_path(ev, repo):
                 blockers.append(
-                    Blocker(type="worktree_path_v2_violation", detail=err, file=rel)
-                )
-            for err in _check_round_fix_continuity_v2(ev, fm, change_dir):
-                blockers.append(
-                    Blocker(type="round_fix_continuity_v2_violation", detail=err, file=rel)
-                )
-            for err in _check_file_overlap_actual(ev, fm, change_dir):
-                blockers.append(
-                    Blocker(type="file_overlap_actual_violation", detail=err, file=rel)
-                )
-            for err in _check_dispatch_ledger(ev, fm, change_dir):
-                blockers.append(
-                    Blocker(type="dispatch_ledger_violation", detail=err, file=rel)
+                    Blocker(
+                        type="unknown_protocol_version",
+                        detail=(
+                            f"active evidence {rel!r} has runtime_enforcement_protocol_version: "
+                            f"{pv_value!r} (must be absent or 'v1';v2/v3 retired in "
+                            "retire-parallel-and-worktree-fully P2)"
+                        ),
+                        file=rel,
+                    )
                 )
 
     return blockers, len(formal)
@@ -1112,25 +1108,35 @@ def _check_autonomy_boundary(
 
 
 def _runtime_enforcement_active(frontmatter: dict) -> bool:
-    """检查 evidence 是否声明加载 runtime enforcement protocol v1 或 v2。
+    """检查 evidence 是否声明加载 runtime enforcement protocol v1。
 
-    D-ProtocolVersionMigration:v1 fence(skill_cascade / round_fix_continuity /
-    task_granularity / worktree_path)对 v1 + v2 evidence 都生效(v2 ⊇ v1);
-    legacy evidence(无此字段)→ 全 fence pass-through。
+    retire-parallel-and-worktree-fully P2(2026-05-06):v2/v3 retired;只 accept v1。
+    legacy evidence(无此字段)→ 全 fence pass-through;active 路径 + 非 v1 的 present
+    value(typo / null / empty / v2 / v3) → BLOCKER `unknown_protocol_version`(沿
+    D-ActiveVsArchivedReplayBoundary,inline check 在 check_frontmatter_protocol);
+    archived 路径 + 任何 value → legacy pass-through(沿 D-ArchivedReplayCompat)。
     """
     version = frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD)
-    return version in (_RUNTIME_ENFORCEMENT_VERSION_VALUE, _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2)
+    return version in _VALID_PROTOCOL_VERSIONS
 
 
-def _runtime_enforcement_v2_active(frontmatter: dict) -> bool:
-    """检查 evidence 是否声明加载 runtime enforcement protocol v2。
+def _is_archived_replay_path(evidence_path: "Path", repo_root: "Path") -> bool:
+    """判断 evidence 物理路径是否在 ``openspec/changes/archive/`` 子树。
 
-    D-FrontmatterSchemaExtension(enhance-workflow-automation-executable-enforcement):
-    v2 fence(worktree_path v2 / round_fix_continuity v2 / file_overlap_actual /
-    dispatch_ledger)仅对 frontmatter 含 ``runtime_enforcement_protocol_version: v2``
-    的 evidence 生效;v1 evidence pass-through v2 fence;legacy evidence 全 pass-through。
+    沿 D-ActiveVsArchivedReplayBoundary(retire-parallel-and-worktree-fully P2,
+    2026-05-06):active 路径 evidence 与 archived 路径 evidence 的 `runtime_enforcement_protocol_version`
+    字段处理不同 — active path + present-but-invalid value → BLOCKER;archived path +
+    任何 unknown value → legacy pass-through(归档不动)。
+
+    实测策略:`evidence_path.resolve()` 与 `repo_root.resolve()` 计算 relative;
+    若 relative path 前 3 segments 为 `openspec/changes/archive` → archived。
+    任何 ValueError(evidence path 不在 repo 子树)/ OSError(symlink 异常)→ False(默认 active)。
     """
-    return frontmatter.get(_RUNTIME_ENFORCEMENT_VERSION_FIELD) == _RUNTIME_ENFORCEMENT_VERSION_VALUE_V2
+    try:
+        rel = evidence_path.resolve().relative_to(repo_root.resolve())
+        return rel.parts[:3] == ("openspec", "changes", "archive")
+    except (ValueError, OSError):
+        return False
 
 
 def _check_skill_cascade(
@@ -1306,483 +1312,6 @@ def _check_task_granularity(
         )
 
     return errors
-
-
-def _check_worktree_path(
-    evidence_path: "Path",
-    frontmatter: dict,
-    change_root: "Path",
-) -> list[str]:
-    """检查 implementation evidence 来自 change-apply-* 命令时含 ``worktree_path`` 字段。
-
-    D-WorktreeEnforce(spec.md L40)+ D-DirectWorktreeRefinement(2026-05-05
-    user 拍板):implementation evidence 由 ``change-apply-subagent`` /
-    ``change-apply-parallel`` 命令 dispatch 时,evidence frontmatter MUST 含
-    ``worktree_path`` 字段(non-null)— 双层守门:命令模板 preflight(early
-    abort)+ finish_gate audit(late catch)。
-
-    ``change-apply-direct`` 沿 archived 2026-05-04-adopt-subagent-driven-development
-    D-Worktree-Detail 第 5 项不强制 worktree(direct 是 < 3 micro-task 轻量
-    fallback);direct evidence 在此 fence pass-through。
-
-    Protocol gating:仅对 ``runtime_enforcement_protocol_version: v1`` evidence
-    生效。仅对 implementation evidence + 来源命令在
-    ``_WORKTREE_REQUIRED_COMMANDS`` frozenset 内的强制(其他 stage evidence
-    如 verify_report 或 direct 命令的 tdd_log 不强制)。
-    """
-    errors: list[str] = []
-    if not _runtime_enforcement_active(frontmatter):
-        return errors
-    ev_type = frontmatter.get("evidence_type") or ""
-    if ev_type not in _IMPLEMENTATION_EV_TYPES:
-        return errors
-
-    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
-    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
-        return errors  # change-apply-direct / 非 change-apply-* / 手工 evidence 不强制
-
-    ev_name = evidence_path.name
-    worktree = frontmatter.get("worktree_path")
-    if worktree is None:
-        errors.append(
-            f"worktree_path field missing from {ev_name} "
-            f"(D-WorktreeEnforce: implementation evidence triggered by {triggered!r} "
-            "MUST carry worktree_path field non-null)"
-        )
-        return errors
-    if not isinstance(worktree, str) or not worktree.strip():
-        errors.append(
-            f"worktree_path in {ev_name} is empty or non-string "
-            f"(got {worktree!r})"
-        )
-
-    return errors
-
-
-# ---------------------------------------------------------------------------
-# enhance-workflow-automation-executable-enforcement:v2 runtime fence
-# (D-FrontmatterSchemaExtension + D-W1-ReceiptSchema + D-W3-LedgerFormat)
-#
-# 4 v2 fence,仅对 `runtime_enforcement_protocol_version: v2` evidence 生效:
-#  1. _check_worktree_path_v2  → Blocker.type: worktree_path_v2_violation
-#  2. _check_round_fix_continuity_v2 → Blocker.type: round_fix_continuity_v2_violation
-#  3. _check_file_overlap_actual → Blocker.type: file_overlap_actual_violation
-#  4. _check_dispatch_ledger   → Blocker.type: dispatch_ledger_violation
-#
-# Protocol gating(_runtime_enforcement_v2_active):仅 v2 evidence 触发;
-# v1 evidence pass-through;legacy(无字段)pass-through。
-# ---------------------------------------------------------------------------
-
-
-def _normalize_path_str(p: str) -> str:
-    """路径字符串标准化:替换反斜杠为正斜杠,去掉尾部分隔符,casefold(Windows 兼容)。
-
-    用于 receipt.worktree_path vs evidence frontmatter worktree_path 比较时
-    消除 Windows / POSIX 路径格式差异。
-    """
-    return p.replace("\\", "/").rstrip("/")
-
-
-def _check_worktree_path_v2(
-    evidence_path: "Path",
-    frontmatter: dict,
-    change_root: "Path",
-) -> list[str]:
-    """v2 worktree_path 升级校验:跨检 receipt JSON。
-
-    D-W1-ReceiptSchema(enhance-workflow-automation-executable-enforcement):
-    v2 evidence MUST 含 `worktree_receipt_path` 字段(non-null),finish_gate 读
-    receipt JSON 校验:
-    - receipt 文件存在(missing → error)
-    - receipt JSON well-formed(JSONDecodeError → error)
-    - receipt `worktree_path` == evidence frontmatter `worktree_path`(路径标准化后)
-    - receipt `is_isolated_worktree: true`(false 或缺失 → error)
-
-    本 fence 在 v1 fence(_check_worktree_path)通过之后执行额外 v2 校验。
-    仅对 implementation evidence + triggered 在 _WORKTREE_REQUIRED_COMMANDS 内有效。
-    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
-    """
-    errors: list[str] = []
-    if not _runtime_enforcement_v2_active(frontmatter):
-        return errors  # v1 / legacy evidence pass-through
-
-    ev_type = frontmatter.get("evidence_type") or ""
-    if ev_type not in _IMPLEMENTATION_EV_TYPES:
-        return errors
-
-    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
-    if triggered not in _WORKTREE_REQUIRED_COMMANDS:
-        return errors  # direct / 非 change-apply-* 不强制
-
-    ev_name = evidence_path.name
-
-    # v2 evidence MUST 含 worktree_receipt_path 字段
-    receipt_rel = frontmatter.get("worktree_receipt_path")
-    if receipt_rel is None or (isinstance(receipt_rel, str) and not receipt_rel.strip()):
-        errors.append(
-            f"worktree_receipt_path field missing from {ev_name} "
-            "(D-W1-ReceiptSchema v2: implementation evidence triggered by "
-            f"{triggered!r} MUST carry worktree_receipt_path field non-null)"
-        )
-        return errors
-
-    # 读 receipt 文件(<change>/<receipt_rel>)
-    receipt_path = change_root / str(receipt_rel).strip()
-    if not receipt_path.is_file():
-        errors.append(
-            f"worktree_receipt_path={receipt_rel!r} in {ev_name} does not exist "
-            f"(expected at {receipt_path})"
-        )
-        return errors
-
-    try:
-        receipt_text = receipt_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        errors.append(
-            f"worktree_receipt_path={receipt_rel!r} in {ev_name} cannot be read: "
-            f"{_common.console_safe(exc)}"
-        )
-        return errors
-
-    try:
-        receipt = json.loads(receipt_text)
-    except json.JSONDecodeError as exc:
-        errors.append(
-            f"worktree_receipt_path={receipt_rel!r} in {ev_name} is not valid JSON: "
-            f"{_common.console_safe(exc)}"
-        )
-        return errors
-
-    # 校验 receipt.worktree_path == evidence frontmatter.worktree_path
-    receipt_wt = receipt.get("worktree_path") or ""
-    fm_wt = frontmatter.get("worktree_path") or ""
-    if _normalize_path_str(str(receipt_wt)) != _normalize_path_str(str(fm_wt)):
-        errors.append(
-            f"worktree_path mismatch for {ev_name}: receipt.worktree_path="
-            f"{receipt_wt!r} != evidence frontmatter worktree_path={fm_wt!r} "
-            "(D-W1-ReceiptSchema: receipt and evidence MUST agree on worktree path)"
-        )
-
-    # 校验 receipt.is_isolated_worktree == true
-    is_isolated = receipt.get("is_isolated_worktree")
-    if is_isolated is not True:
-        errors.append(
-            f"receipt is_isolated_worktree={is_isolated!r} for {ev_name} "
-            "(D-W1-ReceiptSchema: is_isolated_worktree MUST be true in receipt)"
-        )
-
-    return errors
-
-
-def _check_round_fix_continuity_v2(
-    evidence_path: "Path",
-    frontmatter: dict,
-    change_root: "Path",
-) -> list[str]:
-    """v2 round_fix_continuity 升级校验:cross-check 对 dispatch ledger。
-
-    D-W3-LedgerFormat + D-RoundFixContinuity(v2 升级):
-    v2 evidence MUST 含 `dispatch_ledger_path` 字段(non-null);
-    finish_gate 读 ledger JSONL 校验 evidence frontmatter `subagent_continuity`
-    中引用的所有 agent_id 都在 ledger 中有真实记录(agent_id 集合 ⊆ ledger agent_id 集合)。
-
-    缺失 `subagent_continuity` 字段时不报错(round 1 only evidence;沿 v1 语义)。
-    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
-    """
-    errors: list[str] = []
-    if not _runtime_enforcement_v2_active(frontmatter):
-        return errors  # v1 / legacy evidence pass-through
-
-    ev_name = evidence_path.name
-
-    # v2 evidence MUST 含 dispatch_ledger_path 字段
-    ledger_rel = frontmatter.get("dispatch_ledger_path")
-    if ledger_rel is None or (isinstance(ledger_rel, str) and not ledger_rel.strip()):
-        errors.append(
-            f"dispatch_ledger_path field missing from {ev_name} "
-            "(D-W3-LedgerFormat v2: v2 evidence MUST carry dispatch_ledger_path field)"
-        )
-        return errors
-
-    # subagent_continuity 缺失时不做后续校验(round 1 only evidence pass-through)
-    cont = frontmatter.get("subagent_continuity")
-    if cont is None:
-        return errors
-    if not isinstance(cont, dict):
-        return errors  # v1 fence 已报错,v2 不重复
-
-    # 收集 subagent_continuity 中所有 agent_id(非 None / 非空)
-    continuity_agent_ids: set[str] = set()
-    for key in (
-        "round_1_implementer_id",
-        "round_2_fix_implementer_id",
-        "round_1_reviewer_id",
-        "round_2_review_reviewer_id",
-    ):
-        val = cont.get(key)
-        if val and isinstance(val, str) and val.strip():
-            continuity_agent_ids.add(val.strip())
-
-    if not continuity_agent_ids:
-        return errors  # 没有 agent_id 引用,不做 ledger 校验
-
-    # 读 ledger 文件
-    ledger_path = change_root / str(ledger_rel).strip()
-    if not ledger_path.is_file():
-        errors.append(
-            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} does not exist "
-            f"(expected at {ledger_path}; "
-            "D-W3-LedgerFormat: ledger MUST exist to cross-check agent_id)"
-        )
-        return errors
-
-    try:
-        ledger_text = ledger_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        errors.append(
-            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} cannot be read: "
-            f"{_common.console_safe(exc)}"
-        )
-        return errors
-
-    # 收集 ledger 中所有 agent_id
-    ledger_agent_ids: set[str] = set()
-    for line_no, raw in enumerate(ledger_text.splitlines(), 1):
-        raw = raw.strip()
-        if not raw:
-            continue
-        try:
-            row = json.loads(raw)
-        except json.JSONDecodeError:
-            continue  # dispatch_ledger fence 会独立报 JSON 错误
-        aid = row.get("agent_id")
-        if aid and isinstance(aid, str) and aid.strip():
-            ledger_agent_ids.add(aid.strip())
-
-    # 校验引用的 agent_id 集合 ⊆ ledger agent_id 集合
-    missing_ids = continuity_agent_ids - ledger_agent_ids
-    if missing_ids:
-        sorted_missing = sorted(missing_ids)
-        errors.append(
-            f"subagent_continuity in {ev_name} references agent_id(s) "
-            f"{sorted_missing} that are NOT in dispatch ledger "
-            f"{ledger_rel!r} (D-RoundFixContinuity v2: all referenced agent_ids "
-            "MUST have real ledger records)"
-        )
-
-    return errors
-
-
-def _check_file_overlap_actual(
-    evidence_path: "Path",
-    frontmatter: dict,
-    change_root: "Path",
-) -> list[str]:
-    """W2 file overlap actual 校验:parallel 路径 actual diff ⊆ declared 且 disjoint。
-
-    D-W2-OverlapDetection(enhance-workflow-automation-executable-enforcement):
-    parallel evidence(triggered_by_command: change-apply-parallel)MUST 含
-    `task_files_actual` 字段(list of {implementer_agent_id, files: [...]})。
-
-    校验:
-    1. actual ⊆ declared(`task_files_actual` 中每个 implementer 的 files 集合
-       ⊆ `task_files_disjoint` 中对应 implementer 的 files 集合)
-    2. actual changed-files set 之间 disjoint(若 `degraded_to: null` — 未降级)
-       `degraded_to: change-apply-subagent` 时跳过 disjoint 校验(已降级 sequential 路径)
-
-    仅对 triggered_by_command: change-apply-parallel evidence 生效;sequential pass-through。
-    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
-    """
-    errors: list[str] = []
-    if not _runtime_enforcement_v2_active(frontmatter):
-        return errors  # v1 / legacy evidence pass-through
-
-    ev_name = evidence_path.name
-
-    # 仅 parallel evidence 强制
-    triggered = frontmatter.get(_DISPATCH_MODE_FIELD)
-    if triggered != "change-apply-parallel":
-        return errors
-
-    # task_files_actual 字段必须存在(list)
-    actual_raw = frontmatter.get("task_files_actual")
-    if actual_raw is None:
-        errors.append(
-            f"task_files_actual field missing from {ev_name} "
-            "(D-W2-OverlapDetection: change-apply-parallel v2 evidence MUST carry "
-            "task_files_actual field)"
-        )
-        return errors
-
-    if not isinstance(actual_raw, list):
-        errors.append(
-            f"task_files_actual in {ev_name} is not a list "
-            f"(got {type(actual_raw).__name__})"
-        )
-        return errors
-
-    # 构建 actual: {agent_id -> set[file]}
-    actual_by_agent: dict[str, set[str]] = {}
-    for entry in actual_raw:
-        if not isinstance(entry, dict):
-            continue
-        agent_id = entry.get("implementer_agent_id") or ""
-        files = entry.get("files") or []
-        if not isinstance(files, list):
-            files = []
-        actual_by_agent[str(agent_id)] = set(str(f) for f in files)
-
-    # 构建 declared: {agent_id -> set[file]} from task_files_disjoint
-    declared_raw = frontmatter.get("task_files_disjoint") or []
-    declared_by_agent: dict[str, set[str]] = {}
-    if isinstance(declared_raw, list):
-        for entry in declared_raw:
-            if not isinstance(entry, dict):
-                continue
-            agent_id = entry.get("implementer_agent_id") or ""
-            files = entry.get("files") or []
-            if not isinstance(files, list):
-                files = []
-            declared_by_agent[str(agent_id)] = set(str(f) for f in files)
-
-    # 校验 actual ⊆ declared
-    for agent_id, actual_files in actual_by_agent.items():
-        declared_files = declared_by_agent.get(agent_id, set())
-        extra = actual_files - declared_files
-        if extra:
-            errors.append(
-                f"task_files_actual for agent {agent_id!r} in {ev_name} contains "
-                f"files not in task_files_disjoint declaration: {sorted(extra)} "
-                "(D-W2-OverlapDetection: actual changed files MUST be subset of "
-                "declared disjoint files)"
-            )
-
-    # 降级路径跳过 disjoint 校验
-    degraded_to = frontmatter.get("degraded_to")
-    if degraded_to == "change-apply-subagent":
-        return errors  # 已降级 sequential,不再校验 disjoint
-
-    # 校验 actual changed-files set 之间 disjoint
-    agents = sorted(actual_by_agent.keys())
-    for i, agent_a in enumerate(agents):
-        for agent_b in agents[i + 1:]:
-            overlap = actual_by_agent[agent_a] & actual_by_agent[agent_b]
-            if overlap:
-                errors.append(
-                    f"actual file overlap between agent {agent_a!r} and {agent_b!r} "
-                    f"in {ev_name}: overlapping files {sorted(overlap)} "
-                    "(D-W2-OverlapDetection: actual changed-files sets MUST be "
-                    "disjoint when degraded_to is null)"
-                )
-
-    return errors
-
-
-def _check_dispatch_ledger(
-    evidence_path: "Path",
-    frontmatter: dict,
-    change_root: "Path",
-) -> list[str]:
-    """W3 dispatch ledger 完整性校验。
-
-    D-W3-LedgerFormat(enhance-workflow-automation-executable-enforcement):
-    v2 evidence MUST 含 `dispatch_ledger_path` 字段;finish_gate inline 实施
-    ledger 校验(等价于 forgeue_dispatch_ledger.py verify 逻辑):
-    - ledger 文件存在
-    - 每行是合法 JSON
-    - 每行含 wrapper_version 字段(非空)
-    - dispatched_at 时间戳单调递增
-
-    新 Blocker.type: `dispatch_ledger_violation`
-    Protocol gating:仅对 v2 evidence 生效(内部 guard + check_frontmatter_protocol 外层 dispatch)。
-
-    Inline 实施原因:import forgeue_dispatch_ledger 作为 module 易于测试,
-    无 subprocess 开销;forgeue_dispatch_ledger.py 无模块级副作用(只有
-    `if __name__ == "__main__": raise SystemExit(main())`)。
-
-    **Sync drift 警告**(P2 round 1 codex code_quality_review 提出):本 inline 实施
-    与 `forgeue_dispatch_ledger.cmd_verify` 有 2 处**有意差异**:
-    1. **空行处理**:本 inline 跳过空行(`raw_stripped` 后 `continue`);
-       `cmd_verify` 对空行调 `json.loads("")` 抛 `JSONDecodeError` 返回 EXIT_VERIFY_FAIL。
-       本 inline 更宽松 — 接受 ledger 文件尾部多余空行(append 工具写入后常见)。
-    2. **prev_ts 更新条件**:本 inline 仅当 `ts` non-empty 时更新 `prev_ts = ts`;
-       `cmd_verify` 无条件 `prev_ts = ts`(哪怕 `ts == ""`)。
-       本 inline 更严格 — `dispatched_at` 缺失行不会重置 prev_ts,后续单调性检查仍生效。
-
-    **若 forgeue_dispatch_ledger.cmd_verify 校验规则未来变更**(如加 `schema_version`
-    字段、改 timestamp 格式)→ 本 inline 实施**不会自动同步**,需手工 update。
-    Maintenance contract:每次改 `cmd_verify` MUST 同步 review 本函数。
-    """
-    errors: list[str] = []
-    if not _runtime_enforcement_v2_active(frontmatter):
-        return errors  # v1 / legacy evidence pass-through
-
-    ev_name = evidence_path.name
-
-    # dispatch_ledger_path 字段必须存在
-    ledger_rel = frontmatter.get("dispatch_ledger_path")
-    if ledger_rel is None or (isinstance(ledger_rel, str) and not ledger_rel.strip()):
-        errors.append(
-            f"dispatch_ledger_path field missing from {ev_name} "
-            "(D-W3-LedgerFormat: v2 evidence MUST carry dispatch_ledger_path field)"
-        )
-        return errors
-
-    ledger_path = change_root / str(ledger_rel).strip()
-    if not ledger_path.is_file():
-        errors.append(
-            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} does not exist "
-            f"(expected at {ledger_path})"
-        )
-        return errors
-
-    try:
-        ledger_text = ledger_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        errors.append(
-            f"dispatch_ledger_path={ledger_rel!r} in {ev_name} cannot be read: "
-            f"{_common.console_safe(exc)}"
-        )
-        return errors
-
-    # inline verify(等价于 forgeue_dispatch_ledger.cmd_verify 逻辑)
-    prev_ts = ""
-    for line_no, raw in enumerate(ledger_text.splitlines(), 1):
-        raw_stripped = raw.strip()
-        if not raw_stripped:
-            continue  # 空行跳过
-        try:
-            payload = json.loads(raw_stripped)
-        except json.JSONDecodeError as exc:
-            errors.append(
-                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name} "
-                f"is not valid JSON: {_common.console_safe(exc)}"
-            )
-            return errors  # 无法继续解析后续行
-
-        # wrapper_version 字段必须存在且非空
-        wv = payload.get("wrapper_version")
-        if not wv:
-            errors.append(
-                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name} "
-                "is missing wrapper_version field "
-                "(D-W3-LedgerFormat: every ledger line MUST carry wrapper_version)"
-            )
-
-        # dispatched_at 时间戳必须单调递增
-        ts = payload.get("dispatched_at", "")
-        if prev_ts and ts < prev_ts:
-            errors.append(
-                f"dispatch_ledger {ledger_rel!r} line {line_no} in {ev_name}: "
-                f"timestamp {ts!r} is earlier than previous {prev_ts!r} "
-                "(D-W3-LedgerFormat: timestamps MUST be monotonically increasing)"
-            )
-        if ts:
-            prev_ts = ts
-
-    return errors
-
-
 def _check_verdict_normalization(
     claude_resolution_list: list[str],
     codex_top_verdict: str,
@@ -1852,8 +1381,19 @@ def _check_verdict_normalization(
 # indicate real incomplete work and MUST still block. See design.md §5
 # Tool Design table (forgeue_finish_gate row) for the rationale.
 _SELF_STAGE_SECTION_THRESHOLD = 9
+# Per-format threshold(round 1 codex F2 inline writeback 新增 D-PerFormatThreshold):
+# active 格式 `## <int>. <text>` 用 ≥9(P8 finish gate = section 9,backward-compat 守门)
+# archived 格式 `## P<int> — <text>` 用 ≥10(实测 archived P9 ambiguous,
+# 既有 `## P9 — Documentation Sync Gate` workflow prerequisite 应 block,
+# 也有 `## P9 — MEMORY.md update(后置可选)` self-stage 应 skip;
+# conservative 取 ≥10 让 P0-P9 全 block(prereq 漏报 fail-loud),P10+ skip 才 self-stage)
+_SELF_STAGE_SECTION_THRESHOLD_ARCHIVED = 10
 
-_SECTION_HEADING_RE = re.compile(r"^##\s+(\d+)\.\s+", re.MULTILINE)
+# 双格式 + 双 capture group 暴露 P-prefix 标识
+# group(1) = "P" or None(P-prefix 标识,选 per-format threshold);group(2) = section integer
+# (?:\.|\s+—) non-capturing alternation 匹配 `.`(active)或 `\s+—`(archived em-dash U+2014)
+# 沿 design.md D-RegexExtension(round 1 codex F2 inline writeback 修订)。
+_SECTION_HEADING_RE = re.compile(r"^##\s+(P)?(\d+)(?:\.|\s+—)\s+", re.MULTILINE)
 
 
 def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
@@ -1866,13 +1406,21 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
         return []
     blockers: list[Blocker] = []
     current_section: int | None = None
+    current_threshold: int = _SELF_STAGE_SECTION_THRESHOLD  # default active 阈值
     for ln_no, line in enumerate(text.splitlines(), 1):
         section_match = _SECTION_HEADING_RE.match(line)
         if section_match:
             try:
-                current_section = int(section_match.group(1))
+                current_section = int(section_match.group(2))  # group(2) = integer
             except ValueError:
                 current_section = None
+            # Per-format threshold(沿 D-PerFormatThreshold round 1 codex F2 inline writeback):
+            # group(1) == "P" → archived 格式 → threshold ≥10(P0-P9 全 prerequisite 应 block)
+            # group(1) is None → active 格式 → threshold ≥9(原 baseline,P8 finish gate = section 9)
+            if section_match.group(1) == "P":
+                current_threshold = _SELF_STAGE_SECTION_THRESHOLD_ARCHIVED
+            else:
+                current_threshold = _SELF_STAGE_SECTION_THRESHOLD
             continue
         m = re.match(r"^- \[ \]\s+(.+)", line)
         if not m:
@@ -1882,7 +1430,7 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
             continue
         if (
             current_section is not None
-            and current_section >= _SELF_STAGE_SECTION_THRESHOLD
+            and current_section >= current_threshold
         ):
             # P8 self-stage / P9 archive / footer — finish_gate is the gate
             # for these, so they cannot be a blocker AT finish_gate time.
@@ -1895,6 +1443,310 @@ def check_tasks_unchecked(change_dir: Path) -> list[Blocker]:
             )
         )
     return blockers
+
+
+# ---------------------------------------------------------------------------
+# P2.a Markdown 解析 helpers — centralize-followon-backlog-registry
+# ---------------------------------------------------------------------------
+
+# Follow-on tracking section 标题 regex — 兼容 4 种命名格式:
+#   ## P<N> (follow-on tracking)
+#   ## P<N> — text (follow-on tracking)  [括号可选,兼容 em-dash 风格]
+#   ## Phase <N> text (follow-on tracking)
+#   ## <int>. P<N> — text (follow-on tracking)
+# 匹配规则:标题含 `follow-on tracking`(括号可选),沿 design.md D-FenceParseStrategy 阶段 2
+_FOLLOWON_SECTION_HEADING_RE = re.compile(
+    r"^##\s+(?:P\d+\s*[—\-]?\s*|Phase\s+\d+\s+|\d+\.\s+P\d+\s+[—\-]\s+).*\(?follow-on\s+tracking\)?",
+    re.MULTILINE,
+)
+
+# Follow-on item regex — 解析 checkbox 状态 + followon-id + 可选 cancel tag
+_FOLLOWON_ITEM_RE = re.compile(
+    r"^-\s+\[(?P<checked>\s|x)\]\s+P\d+(?:\.\d+)?(?:\s+\(follow-on\s+tracking\))?\s*[:：]\s*\*\*(?P<id>[a-z0-9-]+)\*\*"
+    r"(?:\s+\[(?P<tag_type>cancelled-superseded|cancelled-not-applicable|cancelled-completed)(?:\s+by\s+|:\s*)(?P<tag_value>[^\]]+)\])?",
+    re.MULTILINE,
+)
+
+# Registry H3 entry heading regex — 匹配 ### `<followon-id>`
+_REGISTRY_ENTRY_HEADING_RE = re.compile(r"^###\s+`(?P<id>[a-z0-9-]+)`\s*$", re.MULTILINE)
+
+# Registry field line regex — 匹配 - **key**: value
+_REGISTRY_FIELD_RE = re.compile(
+    r"^-\s+\*\*(?P<key>[a-z_][a-z0-9_-]*)\*\*\s*:\s*(?P<val>.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _extract_followon_tracking_section(tasks_md_path: "Path") -> "dict[str, list]":
+    """解析 tasks.md 中的 follow-on tracking section。
+
+    返回 dict 含 2 个 key:
+    - "unchecked": list[str] — 未勾选 checkbox 的 followon-id 列表
+    - "resolved": list[dict] — 已勾选且含 cancel tag 的 entries,
+      每条 dict: {id, tag_type, tag_value}
+
+    文件无 follow-on tracking section → 返回 {"unchecked": [], "resolved": []}
+    不抛 exception(容错)。
+    """
+    text = tasks_md_path.read_text(encoding="utf-8")
+    # 找 follow-on tracking section 标题
+    section_match = _FOLLOWON_SECTION_HEADING_RE.search(text)
+    if not section_match:
+        return {"unchecked": [], "resolved": []}
+    section_start = section_match.start()
+    # 找下一个 H2(section 边界)
+    next_h2 = re.search(r"^##\s+", text[section_match.end():], re.MULTILINE)
+    section_end = section_match.end() + next_h2.start() if next_h2 else len(text)
+    section_text = text[section_start:section_end]
+    unchecked: list[str] = []
+    resolved: list[dict] = []
+    for m in _FOLLOWON_ITEM_RE.finditer(section_text):
+        checked = m.group("checked") == "x"
+        item_id = m.group("id")
+        tag_type = m.group("tag_type")
+        tag_value = (m.group("tag_value") or "").strip()
+        if checked and tag_type:
+            resolved.append({"id": item_id, "tag_type": tag_type, "tag_value": tag_value})
+        elif not checked:
+            unchecked.append(item_id)
+    return {"unchecked": unchecked, "resolved": resolved}
+
+
+def _find_latest_archived_change(repo: "Path | None" = None) -> "Path | None":
+    """扫 <repo>/openspec/changes/archive/ 返回最新归档 change 目录(按名称排序)。
+
+    目录名须匹配 YYYY-MM-DD- 前缀格式。
+    若无 archive 目录或目录为空 → 返回 None(不抛 exception)。
+    """
+    repo = repo or Path.cwd()
+    archive_root = repo / "openspec" / "changes" / "archive"
+    if not archive_root.is_dir():
+        return None
+    candidates = sorted(
+        (p for p in archive_root.iterdir() if p.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}-", p.name)),
+        key=lambda p: p.name,
+        reverse=True,
+    )
+    return candidates[0] if candidates else None
+
+
+def _parse_srs_tbd_table(srs_md_path: "Path") -> "dict[str, str]":
+    """解析 SRS.md §7.3 未决事项 table,返回 {TBD-XXX: status} dict。
+
+    Status 检测:扫描行内容中是否含 ✅ / ⚠️ baseline / ❌ / ⏳ emoji 标记。
+    均不含 → 默认 ⏳。
+
+    Tolerant:文件不存在 / 无 §7.3 / 表为空 → 返回 {}。
+    """
+    if not srs_md_path.is_file():
+        return {}
+    text = srs_md_path.read_text(encoding="utf-8")
+    # 找 §7.3 section(支持 ## 7.3 / ### 7.3)
+    section_match = re.search(r"^###?\s+7\.3\s+", text, re.MULTILINE)
+    if not section_match:
+        return {}
+    section_start = section_match.end()
+    # 找下一个 H2 边界
+    next_section = re.search(r"^##\s+", text[section_start:], re.MULTILINE)
+    section_text = (
+        text[section_start: section_start + next_section.start()]
+        if next_section
+        else text[section_start:]
+    )
+    result: dict[str, str] = {}
+    for line in section_text.splitlines():
+        # 匹配 `| TBD-XXX | ...`
+        m = re.match(r"^\|\s*(TBD-\d+)\s*\|", line)
+        if not m:
+            continue
+        tbd_id = m.group(1)
+        # 状态检测:顺序优先 ✅ > ⚠️ baseline > ❌ > ⏳ > default
+        if "✅" in line:
+            status = "✅"
+        elif "⚠️ baseline" in line or "⚠️" in line:
+            status = "⚠️ baseline"
+        elif "❌" in line:
+            status = "❌"
+        elif "⏳" in line:
+            status = "⏳"
+        else:
+            status = "⏳"  # 默认:无明确标记视为 pending
+        result[tbd_id] = status
+    return result
+
+
+def _parse_registry_md(active_md_path: "Path") -> "dict[str, dict]":
+    """解析 openspec/backlog/active.md H3 entries。
+
+    返回 dict[followon-id, fields_dict]。
+    字段缺失 → 字段值为 None(tolerant parsing)。
+    文件不存在 → 返回 {}(不抛 exception)。
+    """
+    if not active_md_path.is_file():
+        return {}
+    text = active_md_path.read_text(encoding="utf-8")
+    entries: dict[str, dict] = {}
+    headings = list(_REGISTRY_ENTRY_HEADING_RE.finditer(text))
+    for i, h in enumerate(headings):
+        followon_id = h.group("id")
+        body_start = h.end()
+        body_end = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        body = text[body_start:body_end]
+        entry: dict = {"id": followon_id}
+        for fm in _REGISTRY_FIELD_RE.finditer(body):
+            entry[fm.group("key")] = fm.group("val").strip()
+        entries[followon_id] = entry
+    return entries
+
+
+def _parse_archived_md(archived_md_path: "Path") -> "dict[str, dict]":
+    """解析 openspec/backlog/archived.md tombstone entries。
+
+    Tombstone 字段:archived_at_commit / archived_in_change /
+    cancellation_reason / registry_entry_snapshot。
+    registry_entry_snapshot 是 JSON 字符串,caller 负责 json.loads。
+    文件不存在 → 返回 {}(不抛 exception)。
+    与 _parse_registry_md 使用相同 H3 + field 解析逻辑,字段名由 fence 层校验。
+    """
+    return _parse_registry_md(archived_md_path)
+
+
+# ---------------------------------------------------------------------------
+# P2.b Self-diff helpers — centralize-followon-backlog-registry
+# ---------------------------------------------------------------------------
+
+
+def _get_change_baseline_commit(repo: "Path | None" = None) -> "str | None":
+    """解析 self-diff baseline commit(= 最新 archived change 目录最近被 touch 的 commit)。
+
+    Round 2 F1-r2 fix:不使用 git log -1 -- active.md,
+    因为该命令会随当前 change 的 commits 漂移,导致漏检已提交的删除。
+    取 latest archived change 目录的最近 commit 作为稳定 baseline。
+
+    返回 sha string;无 archive / git 调用失败 → 返回 None。
+    """
+    repo = repo or Path.cwd()
+    # 找最新 archived change 目录(P2.a 已实施)
+    latest_archived = _find_latest_archived_change(repo)
+    if latest_archived is None:
+        return None
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%H", "--", str(latest_archived)],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    sha = result.stdout.strip()
+    return sha if sha else None
+
+
+def _get_active_md_at_commit(repo: "Path", sha: str) -> str:
+    """读取指定 git commit 时的 openspec/backlog/active.md 内容。
+
+    若该 commit 中 active.md 不存在(protocol 首次启用场景)→ 返回空字符串,
+    调用方的 _parse_registry_md 将返回空 dict,允许 baseline 退化。
+    """
+    result = subprocess.run(
+        ["git", "show", f"{sha}:openspec/backlog/active.md"],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _diff_registry_entries(prior: "dict", current: "dict") -> "dict[str, list[str]]":
+    """计算两个 parsed registry dict 之间的 add/remove/status-changed diff。
+
+    用于 _check_followon_continuity 阶段 1(active.md self-diff),
+    检测应在 archived.md 中有对应 tombstone 的 entries
+    (removed + status_changed_to_cancelled-* 路径)。
+
+    返回:
+    - "added": list[str] — 在 current 中新增的 id
+    - "removed": list[str] — 在 prior 中存在但 current 中缺失的 id
+    - "status_changed_to_cancelled": list[str] — 同时存在于 prior/current,
+      prior status==active 且 current status 以 "cancelled-" 开头的 id
+    """
+    prior_ids = set(prior.keys())
+    current_ids = set(current.keys())
+    added = sorted(current_ids - prior_ids)
+    removed = sorted(prior_ids - current_ids)
+    # 只检测 active → cancelled-* 的转变(protocol 相关转变)
+    status_changed_to_cancelled = sorted(
+        id_ for id_ in (prior_ids & current_ids)
+        if prior[id_].get("status") == "active"
+        and current[id_].get("status", "").startswith("cancelled-")
+    )
+    return {
+        "added": added,
+        "removed": removed,
+        "status_changed_to_cancelled": status_changed_to_cancelled,
+    }
+
+
+def _validate_tombstone_consistency(
+    tombstone: "dict",
+    baseline_entry: "dict",
+    current_change_id: str,
+    tasks_cancel_tag: "dict",
+) -> "str | None":
+    """Round 2 F2-r2 fix:5-point tombstone consistency check。
+
+    关闭 {} placeholder bypass 漏洞:fence 解析 registry_entry_snapshot 为 JSON,
+    校验 id 匹配 + 8 schema 字段 + critical 字段值与 baseline 一致 +
+    archived_in_change == current change + cancellation_reason 匹配 tasks.md cancel tag type。
+
+    返回 None 表示全部通过;返回 BLOCKER reason str(短描述)表示失败。
+    """
+    # Check 1: id 匹配
+    if tombstone.get("id") != baseline_entry.get("id"):
+        return (
+            f"tombstone_id_mismatch_got_{tombstone.get('id')}_expected_{baseline_entry.get('id')}"
+        )
+
+    # Check 2: snapshot 是合法 JSON object + 含 8 个 schema 字段
+    snapshot_raw = tombstone.get("registry_entry_snapshot", "")
+    try:
+        snapshot = json.loads(snapshot_raw) if isinstance(snapshot_raw, str) else snapshot_raw
+    except json.JSONDecodeError:
+        return f"tombstone_snapshot_invalid_{tombstone.get('id')}_malformed_json"
+    if not isinstance(snapshot, dict):
+        return f"tombstone_snapshot_invalid_{tombstone.get('id')}_not_object"
+    required_fields = {
+        "id", "source", "description", "trigger",
+        "category", "retire-impact-status", "priority", "status",
+    }
+    missing = required_fields - set(snapshot.keys())
+    if missing:
+        return (
+            f"tombstone_snapshot_invalid_{tombstone.get('id')}_missing_fields_"
+            f"{','.join(sorted(missing))}"
+        )
+
+    # Check 3: snapshot critical 字段值与 baseline 一致(category + source)
+    for field in ("category", "source"):
+        if snapshot.get(field) != baseline_entry.get(field):
+            return (
+                f"tombstone_snapshot_mismatch_{tombstone.get('id')}_"
+                f"{field}_got_{snapshot.get(field)}_baseline_{baseline_entry.get(field)}"
+            )
+
+    # Check 4: archived_in_change == current change id
+    if tombstone.get("archived_in_change") != current_change_id:
+        return (
+            f"tombstone_archived_in_change_mismatch_{tombstone.get('id')}_"
+            f"got_{tombstone.get('archived_in_change')}_expected_{current_change_id}"
+        )
+
+    # Check 5: cancellation_reason 前缀 == tasks cancel tag type
+    expected_reason_prefix = tasks_cancel_tag.get("type", "")
+    cancellation_reason = tombstone.get("cancellation_reason", "")
+    if not cancellation_reason.startswith(expected_reason_prefix):
+        return (
+            f"tombstone_cancellation_reason_mismatch_{tombstone.get('id')}_"
+            f"tombstone_{cancellation_reason}_tasks_{expected_reason_prefix}"
+        )
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -2035,10 +1887,36 @@ def build_report(
     blockers.extend(fm_blockers)
     blockers.extend(check_tasks_unchecked(change_dir))
 
+    # P2.f — follow-on backlog continuity fence(centralize-followon-backlog-registry)
+    # 4 阶段检查:active.md self-diff + archived tasks.md 兜底 +
+    # cancel ref strict validation + archived.md append-only
+    for reason in _check_followon_continuity(change_dir, change_id, repo):
+        blockers.append(Blocker(type="followon_continuity_violation", detail=reason))
+
+    # P2.g — SRS↔registry consistency fence(centralize-followon-backlog-registry round 1 F3 fix)
+    # SRS §7.3 active TBDs 必须与 registry requirements-tbd-pointer 条目集合等价
+    for reason in _check_srs_registry_consistency(change_dir, change_id, repo):
+        blockers.append(Blocker(type="srs_registry_consistency_violation", detail=reason))
+
     if not no_validate:
-        validate_blocker = run_openspec_validate(repo, change_id)
-        if validate_blocker:
-            blockers.append(validate_blocker)
+        # archive/ 路径下 skip openspec validate(沿 design.md D-OpenSpecValidateArchiveSkip):
+        # upstream openspec CLI 不识别 `openspec/changes/archive/<dated-id>/` 路径,
+        # 强制 invoke 必 fail 报噪声 BLOCKER。short-term mitigation 路径 skip + warning。
+        # 长期方案给上游 openspec CLI 提 PR 留 follow-on `enhance-openspec-cli-archived-change-support`。
+        # repo-relative + segment-precise 检测(沿 D-DispatchPathDetection round 1 codex F1
+        # inline writeback 修订:旧 `"archive" in change_dir.parts` 在 repo 父目录名含
+        # `archive` 时 false-positive 让 active change 静默漏报真 BLOCKER)。
+        if change_dir.is_relative_to(_common.archive_dir(repo)):
+            warnings.append(
+                "openspec_validate_skipped: archive_path_unsupported_by_upstream_cli "
+                "(change_dir is in archive/ subtree; openspec CLI doesn't recognize archived "
+                "change ids; long-term fix tracked as follow-on enhance-openspec-cli-"
+                "archived-change-support)"
+            )
+        else:
+            validate_blocker = run_openspec_validate(repo, change_id)
+            if validate_blocker:
+                blockers.append(validate_blocker)
 
     warnings.extend(detect_review_gate_hook())
 
@@ -2118,6 +1996,660 @@ def render_report_md(report: FinishGateReport) -> str:
         ]
     )
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# P2.d — cancel tag strict validation (round 1 F2 + round 2 F3-r2)
+# ---------------------------------------------------------------------------
+
+# cancelled-not-applicable reason 允许的枚举值(5 类)
+_VALID_CANCEL_REASON_PREFIXES: frozenset[str] = frozenset({
+    "retire-superseded",
+    "out-of-scope",
+    "scope-changed",
+    "obsolete",
+    "infeasible",
+})
+
+
+def _validate_cancel_tag_not_applicable(reason: str) -> "str | None":
+    """Round 1 F2 fix: validate cancelled-not-applicable reason against 5-class enum.
+
+    允许 enum 前缀后跟任意自由文本补充说明(e.g. 'out-of-scope (本 change 不修无关 bug)' OK)。
+    '我懒' / 空字符串 / 未知前缀 → BLOCKER。
+
+    Allowed enum values:
+      retire-superseded / out-of-scope / scope-changed / obsolete / infeasible
+
+    Returns:
+        None — PASS(reason 以有效枚举值开头)
+        str  — BLOCKER reason string
+    """
+    reason = (reason or "").strip()
+    # 提取第一个 token(以空白 / 括号为分隔符)
+    first_token = reason.split(maxsplit=1)[0] if reason else ""
+    # 去除 token 末尾的标点符号(:,))
+    first_token = first_token.rstrip(":,)")
+    if first_token in _VALID_CANCEL_REASON_PREFIXES:
+        return None
+    return f"cancel_reason_not_in_enum_got_{first_token or '<empty>'}"
+
+
+def _validate_cancel_tag_completed(
+    tag_value: str,
+    followon_entry: dict,
+    repo: "Path | None" = None,
+) -> "str | None":
+    """Round 1 F2 + Round 2 F3-r2: strict commit existence + commit-touches +
+    evidence escape hatch.
+
+    tag_value format:
+      '<commit-ref>'  OR  '<commit-ref> evidence: <path>'
+
+    Steps:
+      1. 解析 tag_value,分离 commit_ref 和可选 evidence_path
+      2. git rev-parse --verify <commit_ref> → 存在性校验
+      3. git diff-tree --name-only -r <commit_ref> → touched_files 集合
+      4. 构建 relevant_paths(entry.source + entry.contract_refs)
+      5. touched ∩ relevant != ∅ → PASS
+      6. evidence_path 存在 → escape hatch PASS
+      7. 否则 → BLOCKER
+
+    Returns:
+        None — PASS
+        str  — BLOCKER reason string
+    """
+    repo = repo or Path.cwd()
+    # Step 1: 解析 commit_ref 和 evidence_path
+    parts = tag_value.split(" evidence: ", maxsplit=1)
+    commit_ref = parts[0].strip()
+    evidence_path = parts[1].strip() if len(parts) == 2 else None
+
+    # 空 commit_ref → 特殊 BLOCKER
+    if not commit_ref:
+        return "cancel_commit_empty"
+
+    # Step 2: git rev-parse --verify <commit_ref>
+    rev_parse = subprocess.run(
+        ["git", "rev-parse", "--verify", commit_ref],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rev_parse.returncode != 0:
+        return f"cancel_commit_not_found_got_{commit_ref}"
+
+    # Step 3: git diff-tree --name-only -r <commit_ref>
+    diff_tree = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_ref],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    touched_files: set[str] = set()
+    if diff_tree.returncode == 0:
+        for line in diff_tree.stdout.splitlines():
+            line_stripped = line.strip()
+            if line_stripped:
+                touched_files.add(line_stripped)
+
+    # Step 4: 构建 relevant_paths(entry.source + entry.contract_refs)
+    relevant_paths: set[str] = set()
+    source = followon_entry.get("source", "")
+    if isinstance(source, str) and source:
+        relevant_paths.add(source.strip())
+    contract_refs = followon_entry.get("contract_refs", [])
+    if isinstance(contract_refs, list):
+        for ref in contract_refs:
+            if isinstance(ref, str) and ref:
+                relevant_paths.add(ref.strip())
+
+    # Step 5: commit-touches intersection
+    if touched_files & relevant_paths:
+        return None
+
+    # Step 6: evidence escape hatch
+    if evidence_path:
+        candidate = Path(evidence_path)
+        if not candidate.is_absolute():
+            candidate = repo / evidence_path
+        if candidate.exists():
+            return None
+        # evidence path 指定但不存在 → 特定 BLOCKER(帮助诊断)
+        return f"cancel_evidence_path_not_found_{commit_ref}_evidence_{evidence_path}"
+
+    # Step 7: 全不通过 → BLOCKER
+    return f"cancel_commit_does_not_touch_followon_or_provide_evidence_got_{commit_ref}"
+
+
+def _validate_cancel_tag_superseded(change_id: str, repo: "Path | None" = None) -> "str | None":
+    """Round 1 F2 fix: validate cancelled-superseded ref by change-id existence.
+
+    Active 路径:`openspec/changes/<change_id>/` 目录存在 → PASS。
+    Archive 路径:`openspec/changes/archive/*-<change_id>/` glob 任一匹配 → PASS。
+    两条路径均不存在 → return BLOCKER reason str。
+
+    Returns:
+        None — PASS(change_id 解析到 active 或 archived 路径)
+        str  — BLOCKER reason string
+    """
+    repo = repo or Path.cwd()
+    change_id = (change_id or "").strip()
+    # 空 change_id → 特殊 BLOCKER
+    if not change_id:
+        return "cancel_ref_empty_superseded_by"
+    # 检查 active 路径
+    active_path = repo / "openspec" / "changes" / change_id
+    if active_path.is_dir():
+        return None
+    # 检查 archive glob 路径(*-<change_id> 前缀形式)
+    archive_root = repo / "openspec" / "changes" / "archive"
+    if archive_root.is_dir():
+        archive_pattern = archive_root.glob(f"*-{change_id}")
+        if any(p.is_dir() for p in archive_pattern):
+            return None
+    return f"cancel_ref_not_found_superseded_by_{change_id}"
+
+
+def _validate_cancel_refs(
+    resolved: "list[dict]",
+    registry_entries: "dict[str, dict]",
+    repo: "Path | None" = None,
+) -> "list[str]":
+    """Aggregation: dispatch each resolved cancel tag to corresponding validator.
+
+    沿 design.md D-FenceParseStrategy 阶段 3 第 4 步。
+
+    resolved item format (from _extract_followon_tracking_section):
+      {"id": <followon-id>, "tag_type": "cancelled-<X>", "tag_value": <value>}
+
+    Returns:
+        []         — all PASS(无 BLOCKER)
+        [str, ...] — BLOCKER reason strings,格式 "<followon-id>: <reason>"
+    """
+    blockers: list[str] = []
+    for item in resolved:
+        item_id = item.get("id", "")
+        tag_type = item.get("tag_type", "")
+        tag_value = item.get("tag_value", "")
+
+        if tag_type == "cancelled-superseded":
+            err = _validate_cancel_tag_superseded(tag_value, repo)
+        elif tag_type == "cancelled-not-applicable":
+            err = _validate_cancel_tag_not_applicable(tag_value)
+        elif tag_type == "cancelled-completed":
+            # tolerant get: 若 registry 中无该 id → 使用空 dict
+            entry = registry_entries.get(item_id, {})
+            err = _validate_cancel_tag_completed(tag_value, entry, repo)
+        else:
+            # 未知 tag_type → BLOCKER
+            err = f"cancel_unknown_tag_type_{item_id}_got_{tag_type}"
+
+        if err is not None:
+            blockers.append(f"{item_id}: {err}")
+
+    return blockers
+
+
+# ---------------------------------------------------------------------------
+# P2.c — fence 阶段 2 archived tasks.md 兜底源
+# ---------------------------------------------------------------------------
+
+
+def _check_archived_tasks_fallback(
+    current_change_id: str, repo: "Path | None" = None
+) -> "dict[str, list[str]]":
+    """Fence stage 2 fallback source (round 1 F1):
+    扫描最新 archived change tasks.md follow-on tracking section 的 unchecked 项,
+    要求 current change tasks.md 中每项都已声明(继承或 cancelled-*)。
+
+    若无 archive 基线 / 无 follow-on tracking section / 文件缺失 → 返回 {}(tolerant)。
+    archive-stage finish_gate 决定 {} 是否视为 pass。
+
+    Returns:
+        {} — 无漏继承项(通过)或无法获取基线(no-op)
+        {"missing_inherited": [<followon-id>, ...]} — 漏继承的 prior unchecked 项列表
+    """
+    repo = repo or Path.cwd()
+    # 阶段 1:找最新 archived change 目录(复用 P2.a helper)
+    latest_archived = _find_latest_archived_change(repo)
+    if latest_archived is None:
+        return {}
+    # 阶段 2:读 prior tasks.md,提取 follow-on tracking section
+    prior_tasks_md = latest_archived / "tasks.md"
+    if not prior_tasks_md.is_file():
+        return {}
+    prior = _extract_followon_tracking_section(prior_tasks_md)
+    prior_unchecked: "set[str]" = set(prior.get("unchecked", []))
+    if not prior_unchecked:
+        return {}
+    # 阶段 3:读 current tasks.md,收集所有已声明项(unchecked + resolved ids)
+    current_tasks_md = repo / "openspec" / "changes" / current_change_id / "tasks.md"
+    if not current_tasks_md.is_file():
+        # current tasks.md 不存在 → 全部 prior unchecked 都漏继承
+        return {"missing_inherited": sorted(prior_unchecked)}
+    current = _extract_followon_tracking_section(current_tasks_md)
+    current_declared: "set[str]" = set(current.get("unchecked", []))
+    # resolved 列表项是 dict,从中提取 id 字段
+    for item in current.get("resolved", []):
+        current_declared.add(item.get("id", ""))
+    # 阶段 4:计算漏继承(prior unchecked 中未在 current 声明的)
+    missing = prior_unchecked - current_declared
+    return {"missing_inherited": sorted(missing)} if missing else {}
+
+
+# ---------------------------------------------------------------------------
+# P2.e — archived.md append-only 校验(centralize-followon-backlog-registry)
+# D-TombstoneProtocol:"tombstone 一旦写入 archived.md 不得修改或删除"
+# ---------------------------------------------------------------------------
+
+
+def _check_archived_md_append_only(
+    prior_sha: "str | None",
+    repo: "Path | None" = None,
+) -> "dict[str, list[str]]":
+    """Round 1 F1 (D-TombstoneProtocol append-only): archived.md 不得删除或修改
+    既有 tombstone entry 的 4 个 protected fields。
+
+    通过 git diff prior_sha..HEAD 对 openspec/backlog/archived.md 做逐行分析:
+    - history_lost: 纯删除行触及既有 entry block 的 H3 标题行
+    - immutable_field_modified: '- **field**: ...' 紧跟 '+ **field**: ...' 触及
+      4 个 protected fields(archived_at_commit / archived_in_change /
+      cancellation_reason / registry_entry_snapshot)
+
+    Returns:
+        dict with keys "history_lost" (list[str]) and "immutable_field_modified"
+        (list[str], format "<entry-id>:<field>").
+        Empty lists indicate no violation.
+        prior_sha=None / archived.md 不存在于 baseline → tolerant return empty.
+    """
+    repo = repo or Path.cwd()
+    result: dict[str, list[str]] = {"history_lost": [], "immutable_field_modified": []}
+
+    # prior_sha 为 None 时 no-op(兼容 change 第一次 finish gate 无 baseline)
+    if not prior_sha:
+        return result
+
+    diff_proc = subprocess.run(
+        ["git", "diff", prior_sha, "HEAD", "--", "openspec/backlog/archived.md"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    # 非零 returncode 或无 diff 输出 → no-op tolerant(P5 dogfood fix:GBK decode 错误时 stdout 可能为 None)
+    if diff_proc.returncode != 0 or not diff_proc.stdout or not diff_proc.stdout.strip():
+        return result
+
+    diff_lines = diff_proc.stdout.splitlines()
+
+    # 4 个 protected field 名(D-TombstoneProtocol)
+    _PROTECTED_FIELDS = frozenset(
+        ("archived_at_commit", "archived_in_change", "cancellation_reason", "registry_entry_snapshot")
+    )
+
+    # H3 entry 标题行模式:### `<id>`
+    _H3_RE = re.compile(r"^###\s+`([a-z0-9][a-z0-9-]*)`\s*$")
+    # protected field 行模式:- **<field>**: <value>
+    _FIELD_RE = re.compile(r"^-\s+\*\*([a-z_]+)\*\*\s*:")
+
+    current_entry_id = ""
+    history_lost_set: set[str] = set()
+    field_modified_set: set[str] = set()
+
+    i = 0
+    while i < len(diff_lines):
+        line = diff_lines[i]
+
+        # 跳过 diff 元数据行(--- +++ @@ diff index)
+        if (
+            line.startswith("---")
+            or line.startswith("+++")
+            or line.startswith("@@")
+            or line.startswith("diff --git")
+            or line.startswith("index ")
+        ):
+            i += 1
+            continue
+
+        # 提取 diff 前缀(+/-/空格)和内容
+        if line.startswith("+") and not line.startswith("+++"):
+            prefix = "+"
+            content = line[1:]
+        elif line.startswith("-") and not line.startswith("---"):
+            prefix = "-"
+            content = line[1:]
+        elif line.startswith(" "):
+            prefix = " "
+            content = line[1:]
+        else:
+            # 其他行(如空行等)
+            i += 1
+            continue
+
+        stripped = content.strip()
+
+        # 上下文行和新增行都可以更新 current_entry_id(追踪当前所在 entry)
+        h3_match = _H3_RE.match(stripped)
+        if h3_match:
+            # 对于删除行(- ### `id`):这是 entry H3 被删除本身
+            if prefix == "-":
+                entry_id = h3_match.group(1)
+                # 检查下一非元数据行是否为对应 + 行(判断是否为 rename 而非纯删除)
+                next_idx = i + 1
+                while next_idx < len(diff_lines):
+                    nl = diff_lines[next_idx]
+                    if nl.startswith("@@") or nl.startswith("diff ") or nl.startswith("index "):
+                        break
+                    if nl.startswith("+") and not nl.startswith("+++"):
+                        # 有对应 + 行 → rename/modify,不算纯删除
+                        break
+                    if nl.startswith("-") or nl.startswith(" "):
+                        # 继续扫描
+                        next_idx += 1
+                        continue
+                    next_idx += 1
+
+                # 判断是否有紧随的 + H3 行(同 id rename 不计为 history_lost)
+                # 简化判断:扫描前向 3 行内找 + H3
+                paired_add_found = False
+                for j in range(i + 1, min(i + 4, len(diff_lines))):
+                    jl = diff_lines[j]
+                    if jl.startswith("+") and not jl.startswith("+++"):
+                        jstripped = jl[1:].strip()
+                        jh3 = _H3_RE.match(jstripped)
+                        if jh3 and jh3.group(1) == entry_id:
+                            paired_add_found = True
+                            break
+                    elif jl.startswith("-"):
+                        # 继续找
+                        continue
+                    else:
+                        break
+
+                if not paired_add_found:
+                    history_lost_set.add(entry_id)
+                # H3 删除行不更新 current_entry_id(保持上一 entry 的 id 追踪)
+            else:
+                # 上下文行或新增行 → 更新 current entry 追踪
+                current_entry_id = h3_match.group(1)
+            i += 1
+            continue
+
+        # 检测 protected field 的 modify pair(- 行紧跟 + 行)
+        if prefix == "-" and current_entry_id:
+            field_match = _FIELD_RE.match(stripped)
+            if field_match and field_match.group(1) in _PROTECTED_FIELDS:
+                field_name = field_match.group(1)
+                # 扫描后续行,找是否紧跟对应 + field 行(modify pair)
+                for j in range(i + 1, min(i + 4, len(diff_lines))):
+                    jl = diff_lines[j]
+                    if jl.startswith("+") and not jl.startswith("+++"):
+                        jstripped = jl[1:].strip()
+                        jfm = _FIELD_RE.match(jstripped)
+                        if jfm and jfm.group(1) == field_name:
+                            # 确认是 modify pair
+                            field_modified_set.add(f"{current_entry_id}:{field_name}")
+                            break
+                        elif jfm:
+                            # 不同 field 的 + 行,停止
+                            break
+                    elif jl.startswith(" ") or jl.startswith("-"):
+                        continue
+                    else:
+                        break
+
+        i += 1
+
+    result["history_lost"] = sorted(history_lost_set)
+    result["immutable_field_modified"] = sorted(field_modified_set)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# P2.f — _check_followon_continuity orchestrator(centralize-followon-backlog-registry)
+# 把 P2.a-P2.e 的 8 个 helper 串联成主 fence。
+# 对应 design.md D-FenceParseStrategy 4 阶段:
+#   阶段 1 active.md self-diff + 阶段 2 archived tasks.md 兜底 +
+#   阶段 3 cancel ref strict validation + 阶段 4 archived.md append-only
+# ---------------------------------------------------------------------------
+
+
+def _check_followon_continuity(
+    change_dir: "Path",
+    change_id: str,
+    repo: "Path | None" = None,
+) -> "list[str]":
+    """Follow-on backlog continuity fence — 4 阶段聚合检查。
+
+    返回空 list 表示全部通过;非空 list 包含各条 BLOCKER reason string。
+
+    调用方(build_report)将每条 reason 转为 Blocker(type=..., detail=reason)。
+
+    阶段 1 active.md self-diff:
+        - 获取 baseline sha(最新 archived change 的 commit)
+        - 对比 prior/current active.md entries
+        - removed 或 status_changed_to_cancelled 的 entry 须在 archived.md 有 tombstone
+        - 找到 tombstone → 调 _validate_tombstone_consistency 5-point 校验
+
+    阶段 2 archived tasks.md 兜底:
+        - 检测 prior archived tasks.md follow-on tracking section 中 unchecked 项
+        - 当前 change tasks.md 必须全部继承声明
+
+    阶段 3 cancel ref strict validation:
+        - 从当前 tasks.md 提取 resolved cancel tag list
+        - 调 _validate_cancel_refs 逐条严格校验
+
+    阶段 4 archived.md append-only:
+        - 校验 archived.md 历史条目不被删除或修改 protected fields
+    """
+    repo = repo or Path.cwd()
+    blockers: list[str] = []
+
+    # === 阶段 1: active.md self-diff ===
+    baseline_sha = _get_change_baseline_commit(repo)
+    if baseline_sha is not None:
+        # 读取 baseline 时的 active.md 内容
+        prior_text = _get_active_md_at_commit(repo, baseline_sha)
+
+        # 用 tmp 文件解析 prior active.md(复用 _parse_registry_md 需要 Path)
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", encoding="utf-8", delete=False
+        ) as tmp_f:
+            tmp_f.write(prior_text)
+            tmp_path_str = tmp_f.name
+        try:
+            prior_entries = _parse_registry_md(Path(tmp_path_str))
+        finally:
+            try:
+                Path(tmp_path_str).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        # 读取当前 active.md
+        current_active_md = repo / "openspec" / "backlog" / "active.md"
+        current_entries = _parse_registry_md(current_active_md)
+
+        # 计算 diff
+        diff = _diff_registry_entries(prior_entries, current_entries)
+
+        # 读 archived.md tombstone dict
+        archived_md_path = repo / "openspec" / "backlog" / "archived.md"
+        archived_entries = _parse_archived_md(archived_md_path)
+
+        # 读 current change tasks.md follow-on tracking section(用于 tombstone 5-point 校验)
+        current_tasks_md = change_dir / "tasks.md"
+        tasks_section: dict = {"unchecked": [], "resolved": []}
+        if current_tasks_md.is_file():
+            tasks_section = _extract_followon_tracking_section(current_tasks_md)
+
+        # 对每个 removed / status_changed_to_cancelled entry 检查 tombstone
+        need_tombstone_ids: list[str] = (
+            diff.get("removed", []) + diff.get("status_changed_to_cancelled", [])
+        )
+        for entry_id in need_tombstone_ids:
+            if entry_id not in archived_entries:
+                # 找不到 tombstone → BLOCKER
+                blockers.append(f"tombstone_missing_for_{entry_id}")
+            else:
+                # 找到 tombstone → 5-point 校验
+                tombstone = archived_entries[entry_id]
+                baseline_entry = prior_entries.get(entry_id, {})
+                # 从 tasks_section.resolved 找到对应 cancel tag
+                tasks_cancel_tag: dict = {}
+                for item in tasks_section.get("resolved", []):
+                    if item.get("id") == entry_id:
+                        tasks_cancel_tag = {
+                            "type": item.get("tag_type", ""),
+                            "value": item.get("tag_value", ""),
+                        }
+                        break
+                consistency_err = _validate_tombstone_consistency(
+                    tombstone, baseline_entry, change_id, tasks_cancel_tag
+                )
+                if consistency_err is not None:
+                    blockers.append(consistency_err)
+
+    # === 阶段 2: archived tasks.md 兜底 ===
+    fallback = _check_archived_tasks_fallback(change_id, repo)
+    for missing_id in fallback.get("missing_inherited", []):
+        blockers.append(f"archived_followon_not_declared_{missing_id}")
+
+    # === 阶段 3: cancel ref strict validation ===
+    current_tasks_md = change_dir / "tasks.md"
+    if current_tasks_md.is_file():
+        tasks_info = _extract_followon_tracking_section(current_tasks_md)
+        resolved = tasks_info.get("resolved", [])
+        # 读当前 active.md entries(用于 cancelled-completed entry 查字段)
+        current_active_md = repo / "openspec" / "backlog" / "active.md"
+        current_entries_for_cancel = _parse_registry_md(current_active_md)
+        # _validate_cancel_refs 仅对 resolved 列表做严格校验
+        cancel_ref_errors = _validate_cancel_refs(resolved, current_entries_for_cancel, repo)
+        for err in cancel_ref_errors:
+            blockers.append(err)
+
+    # === 阶段 4: archived.md append-only ===
+    # baseline_sha 可能在阶段 1 已计算(或 None);re-use
+    if "baseline_sha" not in dir():
+        baseline_sha = _get_change_baseline_commit(repo)
+    append_only = _check_archived_md_append_only(baseline_sha, repo)
+    for lost_id in append_only.get("history_lost", []):
+        blockers.append(f"archived_md_history_lost_{lost_id}")
+    for field_key in append_only.get("immutable_field_modified", []):
+        blockers.append(f"archived_md_immutable_field_modified_{field_key}")
+
+    return blockers
+
+
+# ---------------------------------------------------------------------------
+# P2.g — SRS↔registry consistency fence(round 1 F3 fix)
+# centralize-followon-backlog-registry
+# ---------------------------------------------------------------------------
+
+# TBD pointer heading regex:H3 `### \`TBD-XXX\``(支持大写字母 + 数字,SRS 格式)
+# 与 _REGISTRY_ENTRY_HEADING_RE 独立,仅用于 SRS consistency fence 提取 TBD pointer ids
+_TBD_POINTER_HEADING_RE = re.compile(
+    r"^###\s+`(?P<id>TBD-\d+)`\s*$", re.MULTILINE
+)
+
+# registry field regex(复用 _REGISTRY_FIELD_RE 形式)
+_TBD_POINTER_FIELD_RE = re.compile(
+    r"^-\s+\*\*(?P<key>[a-z_][a-z0-9_-]*)\*\*\s*:\s*(?P<val>.+?)\s*$",
+    re.MULTILINE,
+)
+
+
+def _parse_tbd_pointer_entries(active_md_path: "Path") -> "dict[str, dict]":
+    """解析 active.md 中 category: requirements-tbd-pointer 的 TBD-XXX entries。
+
+    与 _parse_registry_md 功能相似,但使用宽松 heading regex 支持大写 TBD-XXX id。
+    返回 dict[tbd_id, fields_dict](如 {"TBD-001": {"status": "active", ...}})。
+    文件不存在 → {}(tolerant)。
+    """
+    if not active_md_path.is_file():
+        return {}
+    text = active_md_path.read_text(encoding="utf-8")
+    entries: dict[str, dict] = {}
+    headings = list(_TBD_POINTER_HEADING_RE.finditer(text))
+    # P2.h dogfood 暴露 fix:body 必须在下一 H2/H3 (任意 case) 处截止,
+    # 否则最后一个 TBD entry body 会 bleed 到后续 lowercase section 致 category 字段被覆盖
+    next_section_re = re.compile(r"^#{2,3}\s+", re.MULTILINE)
+    for i, h in enumerate(headings):
+        tbd_id = h.group("id")
+        body_start = h.end()
+        next_tbd = headings[i + 1].start() if i + 1 < len(headings) else len(text)
+        # 同时受 next H2/H3 boundary 约束
+        next_section_match = next_section_re.search(text, body_start, next_tbd)
+        body_end = next_section_match.start() if next_section_match else next_tbd
+        body = text[body_start:body_end]
+        entry: dict = {"id": tbd_id}
+        for fm in _TBD_POINTER_FIELD_RE.finditer(body):
+            entry[fm.group("key")] = fm.group("val").strip()
+        # 仅保留 category == requirements-tbd-pointer 的 entry
+        if entry.get("category") == "requirements-tbd-pointer":
+            entries[tbd_id] = entry
+    return entries
+
+
+def _check_srs_registry_consistency(
+    change_dir: "Path",
+    change_id: str,
+    repo: "Path | None" = None,
+) -> "list[str]":
+    """Round 1 F3 fix:SRS §7.3 ↔ active.md requirements-tbd-pointer 集合等价 + 状态变化同步。
+
+    阶段 1 — 集合等价校验:
+        srs_active_tbds(status != ✅) 必须 == active_tbd_pointers(category=requirements-tbd-pointer)
+        不等 → BLOCKER srs_registry_set_mismatch_added_[...] _removed_[...]
+
+    阶段 2 — 状态变化校验:
+        registry 有 pointer entry 且 SRS 状态已 ✅ 但 entry.status == active
+        → BLOCKER srs_completed_tbd_still_active_in_registry_<id>
+
+    返回空 list = PASS;非空 list 含各条 BLOCKER reason string。
+    """
+    repo = repo or Path.cwd()
+    blockers: list[str] = []
+
+    # 解析 SRS §7.3 TBD 状态
+    srs_path = repo / "docs" / "requirements" / "SRS.md"
+    srs_tbds = _parse_srs_tbd_table(srs_path)
+
+    # 解析 active.md TBD pointer entries(使用宽松 regex 支持大写 TBD-XXX)
+    active_path = repo / "openspec" / "backlog" / "active.md"
+    active_tbd_entries = _parse_tbd_pointer_entries(active_path)
+
+    # 集合比较:SRS active TBDs vs registry TBD pointers
+    active_tbd_pointers: set[str] = set(active_tbd_entries.keys())
+    srs_active_tbds: set[str] = {
+        tbd_id for tbd_id, status in srs_tbds.items() if status != "✅"
+    }
+
+    added = srs_active_tbds - active_tbd_pointers    # SRS 有但 registry 无
+    removed = active_tbd_pointers - srs_active_tbds  # registry 有但 SRS 无/已完成
+
+    if added or removed:
+        added_str = ",".join(sorted(added))
+        removed_str = ",".join(sorted(removed))
+        blockers.append(
+            f"srs_registry_set_mismatch_added_[{added_str}]_removed_[{removed_str}]"
+        )
+
+    # 状态变化校验:registry pointer 仍 active 但 SRS 已 ✅
+    for tbd_id in active_tbd_pointers:
+        if srs_tbds.get(tbd_id) == "✅":
+            entry_status = active_tbd_entries.get(tbd_id, {}).get("status", "active")
+            if entry_status == "active":
+                blockers.append(
+                    f"srs_completed_tbd_still_active_in_registry_{tbd_id}"
+                )
+
+    return blockers
 
 
 # ---------------------------------------------------------------------------

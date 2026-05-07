@@ -523,6 +523,89 @@ def collect_frontmatter_issues(
 
 
 # ---------------------------------------------------------------------------
+# Follow-on backlog helpers (P3: list_followon_inherited / list_followon_cancelled)
+# ---------------------------------------------------------------------------
+
+# inherited 条目匹配:checkbox(checked or unchecked)+ followon-id + "(沿前一 change 继承)" 文字
+_FOLLOWON_INHERITED_RE = re.compile(
+    r"^-\s+\[[\sx]\]\s+P\d+(?:\.\d+)?(?:\s+\(follow-on\s+tracking\))?\s*[:：]\s*\*\*(?P<id>[a-z0-9-]+)\*\*"
+    r"[^\n]*?(?:沿前一\s*change\s*继承|inherited\s+from\s+prior)",
+    re.MULTILINE,
+)
+
+# follow-on tracking section heading(与 forgeue_finish_gate._FOLLOWON_SECTION_HEADING_RE 同款)
+_FOLLOWON_SECTION_HEADING_RE_CS = re.compile(
+    r"^##\s+(?:P\d+\s*[—\-]?\s*|Phase\s+\d+\s+|\d+\.\s+P\d+\s+[—\-]\s+).*\(?follow-on\s+tracking\)?",
+    re.MULTILINE,
+)
+
+
+def list_followon_inherited(change_dir: Path) -> list[str]:
+    """提取 <change_dir>/tasks.md follow-on tracking section 中含 "(沿前一 change 继承)" 的条目 id 列表。
+
+    供 /forgeue:change-status 命令渲染 '### Followon Backlog' section 调用。
+    无 follow-on tracking section / tasks.md 不存在 → 返回 [](容错)。
+    """
+    tasks_md = change_dir / "tasks.md"
+    if not tasks_md.is_file():
+        return []
+    text = tasks_md.read_text(encoding="utf-8")
+    # 定位 follow-on tracking section
+    section_match = _FOLLOWON_SECTION_HEADING_RE_CS.search(text)
+    if not section_match:
+        return []
+    section_start = section_match.start()
+    next_h2 = re.search(r"^##\s+", text[section_match.end():], re.MULTILINE)
+    section_end = section_match.end() + next_h2.start() if next_h2 else len(text)
+    section_text = text[section_start:section_end]
+    # 提取含 inherited 声明的条目 id
+    return [m.group("id") for m in _FOLLOWON_INHERITED_RE.finditer(section_text)]
+
+
+def list_followon_cancelled(change_dir: Path) -> dict[str, list[dict]]:
+    """提取 <change_dir>/tasks.md follow-on tracking section 中 cancelled-* 条目,按 tag 类型分组。
+
+    返回:
+      {
+        "cancelled_superseded": [{id, ref}, ...],
+        "cancelled_not_applicable": [{id, ref}, ...],
+        "cancelled_completed": [{id, ref}, ...],
+      }
+
+    复用 forgeue_finish_gate._extract_followon_tracking_section 解析逻辑。
+    tasks.md 不存在 / 无 follow-on tracking section → 返回 3 个空列表 dict(容错)。
+    """
+    # 延迟导入:避免模块顶层循环依赖(finish_gate 不 import change_state)
+    # 注意:tools/ 目录已被 sys.path.insert(0, ...) 插入,直接用模块名导入
+    import forgeue_finish_gate as _fgate  # noqa: PLC0415
+    _extract_followon_tracking_section = _fgate._extract_followon_tracking_section
+
+    # 空结构(三类 key 均存在,调用方可安全 .values())
+    empty: dict[str, list[dict]] = {
+        "cancelled_superseded": [],
+        "cancelled_not_applicable": [],
+        "cancelled_completed": [],
+    }
+    tasks_md = change_dir / "tasks.md"
+    if not tasks_md.is_file():
+        return empty
+    extracted = _extract_followon_tracking_section(tasks_md)
+    result: dict[str, list[dict]] = {
+        "cancelled_superseded": [],
+        "cancelled_not_applicable": [],
+        "cancelled_completed": [],
+    }
+    for item in extracted.get("resolved", []):
+        tag_type: str = item.get("tag_type", "")
+        # tag_type 值已是 cancelled-superseded / cancelled-not-applicable / cancelled-completed
+        # 转换为下划线格式作为 dict key
+        key = tag_type.replace("-", "_")
+        if key in result:
+            result[key].append({"id": item.get("id", ""), "ref": item.get("tag_value", "")})
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Top-level orchestration
 # ---------------------------------------------------------------------------
 
@@ -620,6 +703,17 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Read-only by default; this flag is accepted for uniformity.",
     )
+    # P3: follow-on backlog query flags (for /forgeue:change-status ### Followon Backlog section)
+    p.add_argument(
+        "--list-followon-inherited",
+        action="store_true",
+        help="List follow-on ids inherited from prior change (from tasks.md follow-on tracking section).",
+    )
+    p.add_argument(
+        "--list-followon-cancelled",
+        action="store_true",
+        help="List cancelled-* follow-ons by type: cancelled_superseded / not_applicable / completed.",
+    )
     return p
 
 
@@ -661,6 +755,45 @@ def main(argv: list[str] | None = None) -> int:
                     for ch in active:
                         print(f"[OK] {ch}")
             return 0
+
+        # P3: --list-followon-* 分支(需要 --change 指定 change dir)
+        if args.list_followon_inherited or args.list_followon_cancelled:
+            if not args.change:
+                print(
+                    "[FAIL] --change <id> required with --list-followon-* flags",
+                    file=sys.stderr,
+                )
+                return 1
+            change_dir = _common.change_path(repo, args.change)
+            if change_dir is None:
+                print(
+                    f"[FAIL] change {args.change!r} not found under "
+                    "openspec/changes/ or openspec/changes/archive/",
+                    file=sys.stderr,
+                )
+                return 1
+            if args.list_followon_inherited:
+                # 提取 inherited follow-on id 列表
+                inherited = list_followon_inherited(change_dir)
+                if args.json:
+                    print(json.dumps({"inherited": inherited}, ensure_ascii=False, indent=2))
+                else:
+                    print("Inherited follow-ons:")
+                    for fid in inherited:
+                        print(f"  - {fid}")
+                return 0
+            if args.list_followon_cancelled:
+                # 提取 cancelled-* 分组结构
+                cancelled = list_followon_cancelled(change_dir)
+                if args.json:
+                    print(json.dumps(cancelled, ensure_ascii=False, indent=2))
+                else:
+                    print("Cancelled follow-ons:")
+                    for type_, items in cancelled.items():
+                        print(f"  {type_}:")
+                        for it in items:
+                            print(f"    - {it['id']} -> {it['ref']}")
+                return 0
 
         if not args.change:
             print(

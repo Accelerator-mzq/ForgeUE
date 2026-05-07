@@ -680,15 +680,155 @@ ForgeUE Integrated AI Change Workflow controller(Claude main session) SHALL 默�
 - **AND** 不冲突路径(`approve` × `accepted-codex` / `approve` × `accepted-claude` / `approve` × `rejected` / `needs-attention` × `accepted-codex`)→ 自主路径,写 `claude_codex_concurred`
 - **AND** 冲突路径(`approve` × `disputed-open` / `needs-attention` × `accepted-claude` / `needs-attention` × `rejected` / `needs-attention` × `disputed-open` / 任何 finding `severity ∈ {critical, high}` × Claude `rejected` / writeback diff 与 codex 推荐方向相反)→ 升级 fence #3 用户,写 `user_required`
 
+### Requirement: Preflight Worktree runtime enforcement
+
+`/forgeue:change-apply-{subagent,parallel}` 两个命令模板 SHALL 在 step 1 含 `## Preflight Worktree` section,且 SHALL **MUST invoke** `Skill(superpowers:using-git-worktrees)`(沿 Superpowers upstream `subagent-driven-development/SKILL.md` `## Integration` 段声明的 Required cascade — 不允许只放字符串占位)。Step 0 consent gate outcome 必须显式记录到 evidence frontmatter。
+
+**Default 行为(D-RestoreConsentGate;ADR-013)**:user 在 Step 0 consent gate decline → work in main repo cwd(`worktree_consent_outcome: declined` + `worktree_mode: in_place`);bug-fix iteration / explicit isolation 需要时 user 在 Step 0 同意 → worktree 创建(`worktree_consent_outcome: accepted` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}`)。
+
+**Opt-in tool**:`tools/forgeue_preflight_wrapper.py`(W1 wrapper)留 deprecated 但 functional;user 显式 invoke 时 wrapper 自管 worktree + 13-field receipt JSON(`worktree_mode: wrapper_worktree`);命令模板**不再 mandatory invoke**(改 OPT-IN 引用)。
+
+`/forgeue:change-apply-direct` **沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项不强制** Preflight Worktree(direct 路径定位 < 3 micro-task / budget 紧张的轻量 fallback;archived 决策保留)。
+
+**Outcome / Mode 显式状态机**(D-ConsentOutcomeStateMachine;codex round 1 F2+F3 writeback):
+
+| `worktree_consent_outcome` | 必配 `worktree_mode` | `worktree_path` | `worktree_receipt_path` | parallel-route allowed? |
+|---|---|---|---|---|
+| `declined` | `in_place`(强制) | **禁写** | absent | NO(自动降级 sequential)|
+| `accepted` | `skill_worktree` | required + path exists | absent | YES |
+| `accepted` | `wrapper_worktree` | required + path exists | required + JSON valid + receipt path matches | YES |
+| `already_isolated` | `skill_worktree` 或 `wrapper_worktree`(**必须** isolated workspace mode;codex round 2 plan review F2 writeback) | required + path exists + path != main repo root | mode-conditional | YES |
+| `sandbox_fallback` | `in_place` | **禁写** | absent | NO(自动降级 sequential)|
+
+**`already_isolated` 强 invariant**(W6 / codex round 2 plan review F2 writeback;关闭 already_isolated → in_place 绕过 parallel decline auto-fallback 漏洞):
+
+- `worktree_consent_outcome: already_isolated` MUST 配 `worktree_mode ∈ {skill_worktree, wrapper_worktree}`(**禁** `in_place`)
+- `worktree_path` MUST 写 + path exists + `os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`(防 controller 写 `worktree_path: <main_repo>` 假声 isolated)
+- 任一违反 → `_check_worktree_consent_outcome` Blocker
+- `parallel` Step 0 决策表对 `already_isolated` 仅在以上 invariant 全满足时允许 parallel 路径;违反 → 自动降级 sequential(同 declined 处理)
+
+实装路径:
+
+- 命令模板首段 MUST 显式声明 "MUST invoke `Skill(superpowers:using-git-worktrees)`;Step 0 consent outcome capture to evidence frontmatter;default outcome = declined → work in place;opt-in outcome = accepted → worktree creation"
+- evidence frontmatter 必填字段(`triggered_by_command ∈ {change-apply-subagent, change-apply-parallel}`):
+  - `worktree_consent_outcome: <enum>`
+  - `worktree_mode: <enum>`
+- evidence frontmatter conditional 字段:`worktree_path` / `worktree_receipt_path` 按 outcome × mode 表填
+- `forgeue_finish_gate.py` 加 2 新 fence:
+  - `_check_worktree_consent_outcome`:enum value validate + outcome ↔ mode invariant
+  - `_check_worktree_mode_consistency`:mode 决定 worktree_path / worktree_receipt_path 是否必填 / 禁写
+- 既有 fence 升级:
+  - `_check_worktree_path` v1 / `_check_worktree_path_v2` 入口加 `worktree_consent_outcome` field present check;legacy archived evidence(不含本字段)→ pass-through(沿 D-AdvisoryFenceMode 兼容意图);本 change 自身及后续 evidence 必填字段 → mode-conditional validate
+
+**Supersedes**:archived `enhance-workflow-automation-runtime-enforcement` D-WorktreeEnforce(L2 mandatory)+ archived `enhance-workflow-automation-executable-enforcement` D-W1-ReceiptSchema mandatory invocation 部分。Cross-archive ADR table:SRS ADR-011 + ADR-012 加 `Superseded by ADR-013 (worktree mandatory parts)`。
+
+#### Scenario: change-apply-subagent 命令模板 MUST invoke Skill + outcome capture
+
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-subagent.md`
+- **THEN** 文件内含 `## Preflight Worktree` section(精确匹配)
+- **AND** section 内含 `MUST invoke Skill(superpowers:using-git-worktrees)` 字符串(沿 Required cascade,且写明 MUST 而非 MAY)
+- **AND** section 内含 `worktree_consent_outcome` 字段提示(显式 outcome capture)
+- **AND** section 内含 "default decline" 或 "opt-in" 字符串(显式声明 default 行为)
+
+#### Scenario: change-apply-parallel 命令模板 MUST invoke Skill + outcome capture + decline auto-fallback
+
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-parallel.md`
+- **THEN** 文件内含 `## Preflight Worktree` section
+- **AND** section 内含 `MUST invoke Skill(superpowers:using-git-worktrees)` 字符串
+- **AND** section 内含 `worktree_consent_outcome` 字段提示
+- **AND** section 内含 "decline" → "auto-fallback" / "降级 sequential" 字符串(沿 D-ParallelDeclineFallback)
+
+#### Scenario: change-apply-direct 沿 archived 第 5 项不强制 Preflight Worktree
+
+- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-direct.md`
+- **THEN** 文件不需要含 `## Preflight Worktree` section(沿 archived 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail 第 5 项)
+
+#### Scenario: implementation evidence outcome=declined + mode=in_place
+
+- **WHEN** evidence frontmatter `worktree_consent_outcome: declined` + `worktree_mode: in_place`
+- **THEN** `_check_worktree_consent_outcome` fence 通过(invariant:declined ↔ in_place)
+- **AND** evidence 不含 `worktree_path` 字段(in_place 禁写)
+- **AND** `_check_worktree_path` v1 / v2 fence pass-through
+
+#### Scenario: implementation evidence outcome=accepted + mode=skill_worktree
+
+- **WHEN** evidence frontmatter `worktree_consent_outcome: accepted` + `worktree_mode: skill_worktree` + `worktree_path: <abs_path>`
+- **THEN** `_check_worktree_consent_outcome` 通过(accepted → skill_worktree 或 wrapper_worktree)
+- **AND** `_check_worktree_path` v1 fence validate path 存在
+- **AND** evidence 不含 `worktree_receipt_path`(skill_worktree mode 不要求 receipt)
+
+#### Scenario: implementation evidence outcome=accepted + mode=wrapper_worktree
+
+- **WHEN** evidence frontmatter `worktree_consent_outcome: accepted` + `worktree_mode: wrapper_worktree` + `worktree_path: <abs_path>` + `worktree_receipt_path: <relative_path>`
+- **THEN** `_check_worktree_path` v1 + `_check_worktree_path_v2` 全 validate(path 存在 + receipt JSON 解析 + receipt `worktree_path` == evidence `worktree_path` + receipt `is_isolated_worktree: true`)
+- **AND** 任一不一致 → Blocker(写了就要真)
+
+#### Scenario: implementation evidence outcome=accepted + mode=in_place 阻断(不一致)
+
+- **WHEN** evidence frontmatter `worktree_consent_outcome: accepted` + `worktree_mode: in_place`
+- **THEN** `_check_worktree_consent_outcome` exit 非 0(违 invariant:accepted → mode ∈ {skill_worktree, wrapper_worktree})
+- **AND** 错误指明 outcome / mode 矛盾
+
+#### Scenario: implementation evidence mode=in_place 写 worktree_path 阻断
+
+- **WHEN** evidence frontmatter `worktree_mode: in_place` + `worktree_path: <any>`
+- **THEN** `_check_worktree_mode_consistency` exit 非 0(in_place mode 禁写 worktree_path,关闭 F2 双歧义漏洞)
+
+#### Scenario: implementation evidence mode=wrapper_worktree 缺 receipt 阻断
+
+- **WHEN** evidence frontmatter `worktree_mode: wrapper_worktree` + `worktree_path: <abs>` + 缺 `worktree_receipt_path`
+- **THEN** `_check_worktree_mode_consistency` exit 非 0(wrapper_worktree 必配 receipt;关闭 F2 receipt provenance 漏洞)
+
+#### Scenario: legacy archived evidence 不含 worktree_consent_outcome → pass-through
+
+- **WHEN** archived `enhance-workflow-automation-runtime-enforcement` 或 `enhance-workflow-automation-executable-enforcement` evidence 替换 / replay 时(不含 `worktree_consent_outcome` 字段)
+- **THEN** `_check_worktree_consent_outcome` + `_check_worktree_mode_consistency` 入口 field-present check → pass-through(legacy 兼容)
+- **AND** `_check_worktree_path` v1 / v2 沿 archived 行为(写了字段就 validate)
+
+#### Scenario: implementation evidence already_isolated + in_place 阻断(W6 codex round 2 F2)
+
+- **WHEN** evidence frontmatter `worktree_consent_outcome: already_isolated` + `worktree_mode: in_place`
+- **THEN** `_check_worktree_consent_outcome` exit 非 0(违 invariant:already_isolated 必须 mode ∈ {skill_worktree, wrapper_worktree})
+- **AND** 错误指明 already_isolated 不允许 in_place(消除"已隔离 + main repo cwd 重新打开 F1 attribution"漏洞)
+
+#### Scenario: implementation evidence already_isolated + worktree_path == main repo 阻断(W6 codex round 2 F2)
+
+- **WHEN** evidence frontmatter `worktree_consent_outcome: already_isolated` + `worktree_mode: skill_worktree` + `worktree_path: <main_repo_root>`(controller 写假声 isolated)
+- **THEN** `_check_worktree_consent_outcome` exit 非 0(违 invariant:`os.path.realpath(worktree_path) != os.path.realpath(main_repo_root)`)
+- **AND** 错误指明 worktree_path 不能等于 main repo root
+
+#### Scenario: parallel + already_isolated valid 路径走 parallel(W6)
+
+- **WHEN** controller invoke `/forgeue:change-apply-parallel` + `worktree_consent_outcome: already_isolated` + `worktree_mode: skill_worktree` + `worktree_path` 写且 != main repo
+- **THEN** parallel 路径正常跑(W6 invariant 守门通过)
+- **AND** W2 actual diff 收集 in 各自 implementer workspace
+
+#### Scenario: opt-in W1 wrapper 仍 functional(含 worktree-internal call 路径;W7-a)
+
+- **WHEN** user 显式 `python tools/forgeue_preflight_wrapper.py --change <id>` 调用(无论 cwd 在 main repo 还是已存在 wrapper-managed worktree 内)
+- **THEN** wrapper 行为(沿 archived `enhance-workflow-automation-executable-enforcement` D-W1-ReceiptSchema + 本 change W7-a bug fix):
+  - 用 `git rev-parse --git-common-dir` 推断 main repo root(**不**用 `--show-toplevel`,避免 worktree 内调用返 worktree 自身造成 nested target);main / worktree 两种调用上下文返同一 main repo
+  - 自管 worktree(`git worktree add` from main repo;already exists → reuse)+ 13-field receipt JSON + cwd realpath 校验
+- **AND** wrapper `--help` 含 `[DEPRECATED in default flow]` deprecation notice
+- **AND** regression test:`tests/unit/test_preflight_wrapper.py::test_git_repo_root_from_inside_worktree_returns_main_repo` + `test_wrapper_reuse_path_works_when_invoked_from_existing_worktree`(W7-a fence)
+
 ### Requirement: Implementation parallel dispatch via `/forgeue:change-apply-parallel`
 
 ForgeUE Integrated AI Change Workflow SHALL 提供独立命令 `/forgeue:change-apply-parallel`,invoke `superpowers:dispatching-parallel-agents` SKILL,作为 multi-task implementation 的并行 dispatch 路径。Controller 显式判定 task 独立性(无 shared state / 无 sequential dependency / 无 file scope 交叉)后 route 到此命令。
 
-`/forgeue:change-apply-subagent` 命令 **保留默认 sequential**(`subagent-driven-development` SKILL),不内嵌自动 task independence routing(避免 LLM 误判 race condition)。
+`/forgeue:change-apply-subagent` 命令保留默认 sequential(`subagent-driven-development` SKILL),不内嵌自动 task independence routing(避免 LLM 误判 race condition)。
 
-evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `false`),表示 controller 是否声明 task 独立。`true` 时配套 `task_files_disjoint: <list of file path sets>` 字段(controller declaration),parallel dispatch 前 wrapper 自动 verify 文件 set 不交。
+evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `false`),表示 controller 是否声明 task 独立。`true` 时配套 `task_files_disjoint: <list of file path sets>` 字段(controller declaration),parallel dispatch 前自动 verify 文件 set 不交。
 
-**v2 升级(本 change,F4 round 1 codex inline writeback 后)**:dispatch 后**主 session 自动**在每个 implementer worktree 跑 actual changed-files 收集(`git diff --name-only -z <base_sha>..HEAD` + `git ls-files --others --exclude-standard -z` 合集,含 untracked file;原 `git diff --name-only` 漏 untracked)+ precondition `git status --porcelain=v1 -z` 校验 implementer worktree clean(否则降级)。任意两 implementer actual set 交集非空 → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: actual_file_overlap_detected` 或 `dirty_implementer_worktree`。详见新增 Requirement "Parallel dispatch actual file overlap detection"。
+**v2 升级(archived `enhance-workflow-automation-executable-enforcement`,F4 round 1 + F3 round 2 codex inline writeback)**:dispatch 后主 session 自动在每个 implementer 跑 `git diff --name-only -z <base_sha>..HEAD` + `git ls-files --others --exclude-standard -z` 合集收集 actual changed-files set;先 `git status --porcelain=v1` precondition fail-closed 校验 implementer worktree clean(若 dirty → 自动降级 sequential)。任意两 implementer actual set 交集非空 → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: actual_file_overlap_detected` 或 `dirty_implementer_worktree`。
+
+**ADR-013 update**(D-ParallelDeclineFallback;codex round 1 F1 writeback + codex round 2 F2 writeback):`/forgeue:change-apply-parallel` Step 0 outcome 决策表:
+
+- `worktree_consent_outcome: declined` → 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt;沿 R-no-continue-prompts);evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: parallel_requires_isolated_workspace` + `worktree_consent_outcome: declined` + `worktree_mode: in_place`。**main repo + multi-implementer + W2 路径 SHALL NOT 走**(F1 attribution 漏洞:多 implementer 同 working tree git state 全局污染)。
+- `worktree_consent_outcome: accepted` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}` → parallel 路径正常跑 + W2 actual diff 收集 in 各自 worktree(沿 archived ADR-012 `task_files_actual` 含 `implementer_agent_id` + `files`)
+- `worktree_consent_outcome: already_isolated` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}` + `worktree_path` 写且 != main repo → parallel 路径正常跑(W6 codex round 2 F2 writeback:已 enforce isolated workspace invariant;不再绕过 F1 attribution 守门)
+- `worktree_consent_outcome: already_isolated` + `worktree_mode: in_place` → **invalid**;`_check_worktree_consent_outcome` Blocker(消除 W6 codex round 2 F2 揭示的"已隔离 + main repo cwd 重新打开 F1"漏洞);**自动降级 sequential**(同 declined 处理)
+- `worktree_consent_outcome: sandbox_fallback` → 警告 + 降级 sequential(sandbox 与 parallel 不兼容)
 
 #### Scenario: controller 显式声明 task 独立 + parallel dispatch
 
@@ -703,7 +843,7 @@ evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `fal
 - **THEN** 命令在 dispatch 前自动 abort + 错误提示 "task A and task B have overlapping files: <files>"
 - **AND** controller MUST 改 task 划分 OR 切换到 `/forgeue:change-apply-subagent` sequential
 
-#### Scenario: actual file overlap detected dispatch 后自动降级 sequential(v2 新增)
+#### Scenario: actual file overlap detected dispatch 后自动降级 sequential(v2)
 
 - **WHEN** declared file sets disjoint 通过初检 + dispatch 后实际 git diff 发现 implementer 间 file overlap
 - **THEN** 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt)
@@ -715,102 +855,27 @@ evidence frontmatter MUST 含 `task_independence_assertion` 字段(`true` / `fal
 - **THEN** 命令路由 `subagent-driven-development` SKILL,sequential dispatch per-task
 - **AND** evidence frontmatter `task_independence_assertion: false`(默认值)
 
-### Requirement: Preflight Worktree runtime enforcement
+#### Scenario: ADR-013 parallel decline 自动降级 sequential(D-ParallelDeclineFallback)
 
-`/forgeue:change-apply-{subagent,parallel}` **两个**命令模板 SHALL 在 step 1 含 `## Preflight Worktree` section,要求 controller MUST 先 invoke `tools/forgeue_preflight_wrapper.py`(wrapper 自己用 `git worktree` subprocess 自管 worktree;F1 round 1 inline writeback,**不**依赖 SKILL invoke)才能进入 subagent dispatch 阶段。
+- **WHEN** controller invoke `/forgeue:change-apply-parallel` 且 user 在 Step 0 consent gate decline(`worktree_consent_outcome: declined`)
+- **THEN** 命令 abort + 自动降级 `/forgeue:change-apply-subagent` sequential(无 user prompt)
+- **AND** evidence frontmatter `degraded_to: change-apply-subagent` + `degradation_reason: parallel_requires_isolated_workspace`
+- **AND** evidence frontmatter `worktree_consent_outcome: declined` + `worktree_mode: in_place`
+- **AND** main repo + multi-implementer + W2 路径 NOT 走(F1 attribution 漏洞 — 沿 codex round 1 F1 writeback)
 
-`/forgeue:change-apply-direct` **沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项不强制** Preflight Worktree(direct 路径定位 < 3 micro-task / budget 紧张的轻量 fallback,worktree 创建 + commit-before-worktree + squash merge 收尾的 ~10-20s 开销对轻量 task 不划算;archived 决策保留,本 change 不覆盖)。详见 archived `2026-05-05-enhance-workflow-automation-runtime-enforcement` design.md D-WorktreeEnforce / D-DirectWorktreeRefinement + 本 change design.md D-W1-ReceiptSchema / D-DispatchWrapperBoundary。
+#### Scenario: ADR-013 parallel accepted worktree(skill 或 wrapper mode)
 
-实装路径(subagent / parallel only):
-- 命令模板首段显式声明 "MUST 调用 `python tools/forgeue_preflight_wrapper.py` 生成 receipt 才能进入 dispatch step"
-- wrapper 自己用 `git worktree` subprocess 自管 worktree(F1 round 1 inline writeback;**不**依赖 SKILL invoke)+ 强制 cwd 校验在 wrapper-managed worktree 内 + cascade check + 写 receipt JSON 到 `<change>/preflight_receipts/<receipt_id>.json`
-- 命令模板从 wrapper stdout capture receipt 相对路径,后续 LLM 把 receipt 内 `worktree_path` 复制到 evidence frontmatter `worktree_path`,把 receipt 相对路径写到 evidence frontmatter `worktree_receipt_path`
-- Preflight 失败(wrapper exit 非 0 / wrong-cwd / dirty worktree / cascade check 异常)→ 命令 abort + 详细错误信息
-- evidence frontmatter MUST 含 `worktree_path` 字段(non-null when `triggered_by_command` ∈ `{change-apply-subagent, change-apply-parallel}`)+ v2 时额外含 `worktree_receipt_path` 字段(`change-apply-direct` evidence 不强制)
-
-**v2 升级(本 change,F1 round 1 codex inline writeback 后)**:`forgeue_finish_gate.py::_check_worktree_path` fence 升级为 receipt cross-check — 校验 receipt 文件存在 + receipt JSON well-formed + receipt `is_isolated_worktree: true` + receipt 内 `worktree_path` == evidence frontmatter `worktree_path`(沿 D-DispatchWrapperBoundary)。v1 evidence(无 `worktree_receipt_path` 字段)沿 v1 fence 行为(仅校验 evidence frontmatter `worktree_path` non-null)。
-
-#### Scenario: change-apply-subagent 命令模板含 Preflight Worktree section + wrapper invocation
-
-- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-subagent.md`
-- **THEN** 文件内含 `## Preflight Worktree` section(精确匹配)
-- **AND** section 内含 `python tools/forgeue_preflight_wrapper.py` 字符串(wrapper invocation)
-- **AND** wrapper invocation 在任何 Skill(Task) dispatch step 之前
-- **AND** section 内**不含** `Skill(superpowers:using-git-worktrees)` 字符串(F1 round 1 inline writeback;wrapper 自管 worktree,SKILL 不再 invoke)
-
-#### Scenario: change-apply-parallel 命令模板含 Preflight Worktree section + wrapper invocation
-
-- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-parallel.md`
-- **THEN** 文件内含 `## Preflight Worktree` section(精确匹配)
-- **AND** section 内含 `python tools/forgeue_preflight_wrapper.py` 字符串(wrapper invocation)
-- **AND** section 内**不含** `Skill(superpowers:using-git-worktrees)` 字符串(F1 round 1 inline writeback)
-
-#### Scenario: change-apply-direct 沿 archived 第 5 项不强制 Preflight Worktree
-
-- **WHEN** 静态扫 `.claude/commands/forgeue/change-apply-direct.md`
-- **THEN** 文件**不需要**含 `## Preflight Worktree` section(沿 archived 2026-05-04-adopt-subagent-driven-development D-Worktree-Detail 第 5 项)
-- **AND** direct 命令产生的 implementation evidence(`tdd_log` / `debug_log`)不强制 `worktree_path` / `worktree_receipt_path` frontmatter 字段
-
-#### Scenario: subagent / parallel implementation evidence 缺 worktree_path 字段 finish_gate 阻断
-
-- **WHEN** `forgeue_finish_gate.py` 扫描 implementation evidence(`subagent_implementer_report` 等)且 `triggered_by_command` 是 `change-apply-subagent` 或 `change-apply-parallel`
-- **THEN** 缺 `worktree_path` 字段 → exit 非 0 + 错误指明缺字段的 evidence 文件
-
-#### Scenario: v2 evidence receipt cross-check 通过
-
-- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2` + `worktree_receipt_path: preflight_receipts/<id>.json` + `worktree_path: <abs path>`
-- **THEN** finish_gate 读取 receipt JSON + 比较 receipt 内 `worktree_path` == evidence `worktree_path` + receipt `is_isolated_worktree: true`
-- **AND** 一致 → fence pass
-
-#### Scenario: v2 evidence receipt is_isolated_worktree false 阻断(F1 round 1 inline)
-
-- **WHEN** v2 evidence 的 receipt `is_isolated_worktree: false` 或缺失字段
-- **THEN** `_check_worktree_path` v2 fence exit 非 0
-- **AND** 错误信息指明 receipt 未声明 isolated worktree
-
-#### Scenario: v2 evidence receipt 不一致 finish_gate 阻断
-
-- **WHEN** v2 evidence 的 receipt 内 `worktree_path` ≠ evidence frontmatter `worktree_path`
-- **THEN** `_check_worktree_path` v2 fence exit 非 0
-- **AND** 错误信息指明 receipt 与 evidence 两侧 path 字符串
-
-#### Scenario: direct implementation evidence 缺 worktree_path 字段 finish_gate pass-through
-
-- **WHEN** `forgeue_finish_gate.py` 扫描 direct 命令产生的 implementation evidence(`tdd_log` / `debug_log`,`triggered_by_command: change-apply-direct`)
-- **THEN** 缺 `worktree_path` / `worktree_receipt_path` 字段不报错(沿 archived D-Worktree-Detail 第 5 项 fence pass-through)
-
-### Requirement: SKILL cascade enforcement via `forgeue_skill_cascade_check.py`
-
-ForgeUE SHALL 提供 stdlib-only 工具 `tools/forgeue_skill_cascade_check.py`,静态扫描 SKILL.md `## Integration` 段 / `Required workflow skills:` 列表 / `**Required:**` 标记,输出 controller 未 invoke 的 dependency SKILL 列表。
-
-`/forgeue:change-apply-*` 命令模板 SHALL 在每个 invoke SKILL 的 step **后**加 `## Preflight Skill Cascade` section,跑 `forgeue_skill_cascade_check.py` 验证 dependency 全 invoke。
-
-evidence frontmatter MUST 含 `skill_cascade_audit` 字段(对象,含已 invoke SKILL 列表 + cascade check pass timestamp)。
-
-`forgeue_finish_gate.py` SHALL 含 `_check_skill_cascade` fence 守门 implementation evidence frontmatter `skill_cascade_audit` 字段必填且 dependency 全 invoke。
-
-#### Scenario: forgeue_skill_cascade_check 静态扫 + 输出 missing dependency
-
-- **WHEN** 跑 `python tools/forgeue_skill_cascade_check.py --skill superpowers:subagent-driven-development --invoked superpowers:using-git-worktrees,test-driven-development,requesting-code-review,finishing-a-development-branch`
-- **THEN** 工具静态读 `subagent-driven-development` SKILL.md `## Integration` 段
-- **AND** 输出 missing dependency 列表(若有)+ exit 0(全 OK)/ exit 5(missing dependency)
-
-#### Scenario: 命令模板缺 Preflight Skill Cascade section finish_gate 间接阻断
-
-- **WHEN** 命令模板 invoke SKILL 但缺后续 cascade check call
-- **THEN** evidence `skill_cascade_audit` 字段会缺(因为没跑 check),finish_gate `_check_skill_cascade` exit 非 0
-
-#### Scenario: dependency 未 invoke 时命令 abort
-
-- **WHEN** controller invoke 主 SKILL 但跳过 dependency SKILL,然后命令 step 跑 cascade check
-- **THEN** cascade check exit 5 + 错误提示 missing dependency 列表
-- **AND** 命令 abort,提示 controller 主动 invoke missing dependency 后 retry
+- **WHEN** controller invoke `/forgeue:change-apply-parallel` 且 user 在 Step 0 consent gate accept(`worktree_consent_outcome: accepted` + `worktree_mode ∈ {skill_worktree, wrapper_worktree}`)
+- **THEN** parallel implementer 各自在 isolated worktree cwd(沿 D-ConsentOutcomeStateMachine)
+- **AND** W2 actual diff 收集 in 各自 worktree(implementer 间 boundary 由 worktree 隔离)
+- **AND** evidence frontmatter `worktree_path` 必填 + path exists;`worktree_mode: wrapper_worktree` 时 `worktree_receipt_path` 必填 + receipt JSON valid
 
 ### Requirement: Round 2+ fix subagent continuity
 
 `subagent-driven-development` 协议中,round 1 reviewer 找问题后 round 2 fix MUST 通过 `SendMessage` 给 same implementer subagent;round 2 reviewer re-review MUST 给 same reviewer subagent。
 
 evidence frontmatter MUST 含 `subagent_continuity` 字段(对象):
+
 ```yaml
 subagent_continuity:
   round_1_implementer_id: <agent-id>
@@ -821,14 +886,18 @@ subagent_continuity:
 
 `forgeue_finish_gate.py` SHALL 含 `_check_round_fix_continuity` fence 守门 round 1 / round 2 agent ID 一致性。
 
-**v2 升级(本 change)**:`_check_round_fix_continuity` fence 升级为 ledger cross-check — 校验 evidence frontmatter `subagent_continuity` 中所有 agent_id 都在 `<change>/dispatch_ledger.jsonl` 中**有真实记录**(沿 D-DispatchWrapperBoundary 防 LLM 伪造 agent_id);ledger 缺失 → fail-closed。v1 evidence(无 `dispatch_ledger_path` 字段)沿 v1 fence 行为(仅校验 frontmatter 字段 round_1 == round_2 字符串相等)。
+**v2 升级**(archived `enhance-workflow-automation-executable-enforcement`):`_check_round_fix_continuity` v2 fence 升级为 ledger cross-check — 校验 evidence frontmatter `subagent_continuity` 中所有 agent_id 都在 `<change>/dispatch_ledger.jsonl` 中**有真实记录**(沿 D-DispatchWrapperBoundary 防 LLM 伪造 agent_id);ledger 缺失 → fail-closed。v1 evidence(无 `dispatch_ledger_path` 字段)沿 v1 fence 行为(仅校验 frontmatter 字段 round_1 == round_2 字符串相等)。
 
-#### Scenario: round 2 fix 用 same implementer agent ID(v1 + v2)
+**v3 升级**(本 change `enhance-workflow-automation-ledger-binding`):`_check_round_fix_continuity` v3 fence 在 v2 cross-check 基础上加 HMAC chain 整链 verify — 校验 ledger 全行 `_forgeue_ledger_crypto.verify_chain_v3(key_bytes, lines)` 整链通过(任何 hand-edit / 删除 / reorder → break chain → fence exit 非 0);v2 evidence(`runtime_enforcement_protocol_version: v2`)仍走 v2 schema-only 路径,不触 v3 chain verify。
+
+**ADR-013 update**:本 change 调整 default cwd 为 main repo(沿 D-AllChangeApplyMainRepoDefault),W3 dispatch ledger 仍 active(与 worktree 解耦)— ledger 路径 `<change>/dispatch_ledger.jsonl` 在 main repo cwd(`worktree_mode: in_place`)或 worktree(`worktree_mode ∈ {skill_worktree, wrapper_worktree}`)内创建;v2/v3 fence cross-check 行为不变(沿 archived `enhance-workflow-automation-executable-enforcement` 同款)。**注**:parallel + decline 路径下 W3 仍跑但 sequential dispatch(沿 D-ParallelDeclineFallback 自动降级)。
+
+#### Scenario: round 2 fix 用 same implementer agent ID(v1 + v2 + v3)
 
 - **WHEN** evidence frontmatter 含 `subagent_continuity` + `round_2_fix_implementer_id`
 - **THEN** `round_2_fix_implementer_id` MUST 等于 `round_1_implementer_id`,否则 `_check_round_fix_continuity` exit 非 0
 
-#### Scenario: round 2 reviewer 用 same reviewer agent ID(v1 + v2)
+#### Scenario: round 2 reviewer 用 same reviewer agent ID(v1 + v2 + v3)
 
 - **WHEN** evidence frontmatter 含 `round_2_review_reviewer_id`
 - **THEN** `round_2_review_reviewer_id` MUST 等于 `round_1_reviewer_id`,否则 fence exit 非 0
@@ -840,7 +909,7 @@ subagent_continuity:
 
 #### Scenario: v2 evidence ledger 缺失 agent_id 阻断
 
-- **WHEN** v2 evidence `subagent_continuity.round_1_implementer_id` 在 ledger 中**无对应行**(可能 LLM 手写 evidence frontmatter 但跳过 wrapper)
+- **WHEN** v2 evidence `subagent_continuity.round_1_implementer_id` 在 ledger 中**无对应行**
 - **THEN** `_check_round_fix_continuity` v2 fence exit 非 0
 - **AND** 错误信息指明 evidence agent_id 不在 ledger 中
 
@@ -848,6 +917,30 @@ subagent_continuity:
 
 - **WHEN** v2 evidence `dispatch_ledger_path: dispatch_ledger.jsonl` 但 `<change>/dispatch_ledger.jsonl` 文件不存在
 - **THEN** `_check_round_fix_continuity` v2 fence + `_check_dispatch_ledger` v2 fence 都 exit 非 0(双重守门)
+
+#### Scenario: ADR-013 main repo cwd ledger 路径不变
+
+- **WHEN** controller default 在 main repo cwd 跑 `/forgeue:change-apply-subagent` + W3 ledger append
+- **THEN** ledger 路径 `<repo>/openspec/changes/<id>/dispatch_ledger.jsonl`(沿 archived ADR-012 同款 main repo path)
+- **AND** v2/v3 fence cross-check 行为不变
+
+#### Scenario: v3 evidence ledger HMAC chain 整链 verify 通过
+
+- **WHEN** v3 evidence `runtime_enforcement_protocol_version: v3` + ledger 含 N 行 v3 schema 合法行(整链 HMAC + key_id 一致)
+- **THEN** `_check_round_fix_continuity` v3 fence + `_check_dispatch_ledger` v3 fence pass
+- **AND** evidence frontmatter `ledger_forgery_resistance: cryptographic`
+
+#### Scenario: v3 evidence ledger 行被 hand-edit 触发 BLOCKER(double fence)
+
+- **WHEN** v3 evidence + ledger 任意一行 `agent_id` 被 hand-edit
+- **THEN** `_check_dispatch_ledger` v3 fence exit 非 0(hmac_mismatch)
+- **AND** `_check_round_fix_continuity` v3 fence 也 exit 非 0(双重守门)
+
+#### Scenario: v2 evidence 不触 v3 chain verify(self-dogfood gap)
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2`(本 change 自身 evidence 沿 self-dogfood gap)
+- **THEN** v3 fence 分支 pass-through(不 inspect ledger 的 hmac 字段)
+- **AND** v2 advisory schema-only 校验仍生效
 
 ### Requirement: Task granularity declaration
 
@@ -933,30 +1026,56 @@ Receipt JSON SHALL 含字段(13 个,F1 round 1 inline writeback 加 2 新字段 
 
 ForgeUE SHALL 提供 stdlib-only 工具 `tools/forgeue_dispatch_ledger.py`,提供子命令:
 - `append --change <id> --agent-id <id> --round <N> --role <role> [--task-subject-hash <sha256>]`:向 `<change>/dispatch_ledger.jsonl` append 一行 JSON
-- `verify --change <id>`:校验 ledger JSONL 每行 well-formed + timestamp 单调递增 + wrapper_version 字段非空
+- `verify --change <id>`:校验 ledger JSONL 每行 well-formed + timestamp 单调递增 + wrapper_version 字段非空 + (v3 协议)HMAC chain 整链 verify
 
-`<change>/dispatch_ledger.jsonl` SHALL 是 append-only 文件,每行一个 JSON 记录,字段:`agent_id` / `round`(int)/ `role` / `task_subject_hash`(可空)/ `dispatched_at`(ISO8601)/ `parent_session_id`(可空)/ `wrapper_version`。
+`<change>/dispatch_ledger.jsonl` SHALL 是 append-only 文件,每行一个 JSON 记录。schema 沿 `runtime_enforcement_protocol_version` 字段分两档:
 
-命令模板 `/forgeue:change-apply-{subagent,parallel}` SHALL 在每次 Skill(Task) / Skill(SendMessage) 调用前先 wrapper append。命令模板**不暴露** ledger 文件路径给 LLM Read / Write / Edit tool(沿 D-DispatchWrapperBoundary 防 LLM 篡改)。
+**v2 schema(7 字段;archived `executable-enforcement` ship)**:`agent_id` / `round`(int)/ `role` / `task_subject_hash`(可空)/ `dispatched_at`(ISO8601)/ `parent_session_id`(可空)/ `wrapper_version`。
+
+**v3 schema(11 字段;本 change ship)**:v2 7 字段 + `protocol_version: "v3"` / `key_id`(SHA256(key)[:16] fingerprint)/ `prev_hmac`(64 hex chars,首行全 0)/ `hmac`(HMAC-SHA256 over canonical JSON)。
+
+`tools/forgeue_dispatch_ledger.py` SHALL 在 `cmd_append` 中按当前 wrapper 版本(`WRAPPER_VERSION`)决定写哪档 schema:
+- v2 wrapper(`WRAPPER_VERSION = "1.0"`):写 7 字段
+- v3 wrapper(`WRAPPER_VERSION = "2.0"`,本 change ship):写 11 字段(含 HMAC chain)
+
+`cmd_verify` SHALL 沿 ledger 行的 `protocol_version` 字段 dispatch:
+- 行内无 `protocol_version` 字段(v2 ledger):走 schema-only 校验(timestamp 单调 + wrapper_version 非空 + JSON well-formed)
+- 行内 `protocol_version: "v3"`:走 schema-only + HMAC chain 整链 verify
+
+`cmd_verify` exit code(round 1 codex F2 inline writeback 后):
+- 0:校验通过
+- 5:`verify_fail`(任何 schema / HMAC / chain / terminal proof / frontmatter audit 错误,BLOCKER)— 含 `hmac_mismatch` / `chain_break` / `key_id_inconsistent` / `key_id_mismatch`(active v3,默认 fail-closed)/ `tail_truncation_detected` / `final_hmac_mismatch` / `schema_violation` / `frontmatter_audit_inconsistency`
+- 6:`key_rotation_user_override_required`(仅在 evidence frontmatter `ledger_archived_replay: true` opt-in 时触发;user 显式承担"无法重算 HMAC"风险;archived ledger replay 兼容路径)
+- 7:`key_file_corrupted`
+
+命令模板 `/forgeue:change-apply-{subagent,parallel}` SHALL 在每次 Skill(Task) / Skill(SendMessage) 调用**之后**(post-dispatch capture 真实 agent_id)wrapper append(沿 archived `enhance-workflow-automation-executable-enforcement` F2 round 1 inline writeback 协议 — pre-dispatch 写入 synthetic agent_id 与真实 agent_id 无关,本 change F3-only scope 不 reopen F2)。命令模板**不暴露** ledger 文件路径给 LLM Read / Write / Edit tool(沿 D-DispatchWrapperBoundary 防 LLM 篡改);**不暴露** key 文件路径给 LLM(沿 D-KeyLocation,key 文件在 LLM 不主动 read 的 `~/.claude/` 用户目录)。
+
+evidence frontmatter `pre_dispatch_metadata: advisory` 标注沿 archived 同款保留(post-dispatch capture 模型的 advisory 限制说明:agent_id 在 dispatch 后 capture,F3 cryptographic enforcement 不解决"LLM 在 post-dispatch 后伪造 agent_id"威胁,本边界留 follow-on `enhance-workflow-automation-skill-tool-binding`)。
 
 evidence frontmatter SHALL 含 `dispatch_ledger_path` 字段,值固定为 `dispatch_ledger.jsonl`(相对 `<change>/`)。
 
-#### Scenario: wrapper append 写一行 JSONL
+#### Scenario: wrapper append 写一行 JSONL(v2 路径,archived 兼容)
 
-- **WHEN** 跑 `python tools/forgeue_dispatch_ledger.py append --change <id> --agent-id ad79e93a40414763e --round 1 --role implementer --task-subject-hash sha256:abc...`
+- **WHEN** wrapper version `1.0` + 跑 `python tools/forgeue_dispatch_ledger.py append --change <id> --agent-id ad79e93a40414763e --round 1 --role implementer --task-subject-hash sha256:abc...`
 - **THEN** 文件 `<change>/dispatch_ledger.jsonl` 末尾 append 一行 JSON
-- **AND** JSON 含字段 `agent_id` / `round: 1` / `role: "implementer"` / `task_subject_hash: "sha256:abc..."` / `dispatched_at`(当前 ISO8601)/ `wrapper_version`
+- **AND** JSON 含 7 字段 v2 schema(无 `protocol_version` / `key_id` / `prev_hmac` / `hmac`)
+
+#### Scenario: wrapper append 写一行 JSONL(v3 路径,本 change ship)
+
+- **WHEN** wrapper version `2.0`(本 change ship 后)+ 跑 append
+- **THEN** 文件末尾 append 一行 11 字段 v3 schema JSON
+- **AND** JSON 含 `protocol_version: "v3"` / `key_id` / `prev_hmac`(首行全 0,后续行链接前一行 hmac)/ `hmac`(HMAC-SHA256 over canonical)
 
 #### Scenario: ledger timestamp 单调性 verify
 
 - **WHEN** 跑 `python tools/forgeue_dispatch_ledger.py verify --change <id>`
 - **THEN** 工具校验所有行 `dispatched_at` 字段单调递增
-- **AND** 任意行 timestamp 倒流 → exit 非 0 + 错误指明行号
+- **AND** 任意行 timestamp 倒流 → exit 5 + 错误指明行号
 
 #### Scenario: ledger 缺失 finish_gate 阻断
 
-- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2` + `dispatch_ledger_path: dispatch_ledger.jsonl` + `subagent_continuity` 字段 declared dispatch 但实际 `<change>/dispatch_ledger.jsonl` 文件不存在
-- **THEN** `forgeue_finish_gate.py::_check_dispatch_ledger` v2 fence exit 非 0
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2` 或 `v3` + `dispatch_ledger_path: dispatch_ledger.jsonl` + `subagent_continuity` 字段 declared dispatch 但实际 `<change>/dispatch_ledger.jsonl` 文件不存在
+- **THEN** `forgeue_finish_gate.py::_check_dispatch_ledger` v2/v3 fence exit 非 0
 - **AND** 错误信息指明缺失的 ledger 文件
 
 #### Scenario: ledger agent_id 集合 与 evidence subagent_continuity 不一致 finish_gate 阻断
@@ -969,6 +1088,77 @@ evidence frontmatter SHALL 含 `dispatch_ledger_path` 字段,值固定为 `dispa
 
 - **WHEN** ledger JSONL 任意行缺 `wrapper_version` 字段(可能 LLM 手工伪造行)
 - **THEN** `_check_dispatch_ledger` fence exit 非 0
+
+#### Scenario: v3 ledger 行 hmac 字段缺失 finish_gate 阻断(v3 路径)
+
+- **WHEN** evidence v3 + ledger 行 `protocol_version: "v3"` 但缺 `hmac` 字段
+- **THEN** `_check_dispatch_ledger` v3 fence exit 非 0,error message prefix `[hmac_mismatch] line <N>: hmac field missing`
+
+#### Scenario: cmd_verify active v3 默认 key_id mismatch BLOCKER(round 1 codex F2 inline writeback)
+
+- **WHEN** 跑 `python tools/forgeue_dispatch_ledger.py verify --change <id>` + ledger 是 v3 + ledger 内 key_id 与当前 file key_id 不一致 + 命令未指定 `--allow-archived-replay` flag
+- **THEN** verify exit 5(`key_id_mismatch`,BLOCKER)
+- **AND** stderr 打印 `[ERROR] ledger key_id <X> ≠ current key_id <Y>; HMAC verify cannot proceed; if this is archived replay, set evidence_frontmatter ledger_archived_replay: true OR pass --allow-archived-replay flag`
+
+#### Scenario: cmd_verify archived replay user override 路径 exit 6(round 1 codex F2 inline writeback)
+
+- **WHEN** 跑 `python tools/forgeue_dispatch_ledger.py verify --change <id> --allow-archived-replay` + ledger 是 v3 + ledger 内 key_id 与当前 file key_id 不一致
+- **THEN** verify exit 6(`key_rotation_user_override_required`,user opt-in WARN)
+- **AND** stderr 打印 `[WARN] ledger key_id <X> ≠ current key_id <Y>; HMAC verify skipped per --allow-archived-replay flag; archived ledger replay accepted`
+- **AND** finish_gate 接受 user override 路径(evidence frontmatter `ledger_archived_replay: true` 配套必须;否则 finish_gate 自身不接受 cmd_verify exit 6)
+
+#### Scenario: cmd_verify exit code 7 区分 key_file_corrupted
+
+- **WHEN** 跑 `python tools/forgeue_dispatch_ledger.py verify --change <id>` + key 文件存在但 JSON parse 失败 / key_hex 长度错
+- **THEN** verify exit 7(`key_file_corrupted`)
+- **AND** stderr 打印 `[ERROR] key file corrupted at <path>: <reason>; backup + remove file to re-init`
+
+#### Scenario: cmd_verify v3 dispatch by ANY v3 fingerprint signal(round 3 codex F1 inline writeback)
+
+- **WHEN** ledger 任意行含 v3 信号字段任一(`hmac` / `prev_hmac` / `key_id`)OR `wrapper_version: "2.0"` OR `protocol_version: "v3"`
+- **THEN** cmd_verify SHALL 走 v3 strict validation 路径(strict 11-field schema + chain HMAC + key rotation),**不**降级到 v2 schema-only;此规则防 LLM hand-edit 全部行 protocol_version 字段企图绕 v3 fence
+- **AND** strict schema validation 校 `protocol_version` 字段必须精确 `"v3"`(若被改为 `"v2"` / `"v4"` / 缺失 → BLOCKER `[schema_violation]`)
+
+#### Scenario: cmd_verify v3 strict trigger via hmac field only(LLM 改 protocol_version 但漏改 hmac)
+
+- **WHEN** ledger 行含 `hmac` / `prev_hmac` / `key_id` 字段任一,但所有行 `protocol_version` 被改为 `"v2"` / 缺失
+- **THEN** cmd_verify trigger v3 strict validation(沿 ANY v3 信号 dispatch);strict schema 校 `protocol_version` 必须 `"v3"` → BLOCKER `[schema_violation]`
+- **AND** verify exit 5,error message prefix `[schema_violation] line <N>: field 'protocol_version' MUST be exactly 'v3', got <X>`
+
+#### Scenario: cmd_verify v3 strict trigger via wrapper_version 2.0(LLM 漏改 wrapper_version)
+
+- **WHEN** ledger 行 `wrapper_version: "2.0"` + 所有行 `protocol_version` 改 / 缺失 + 所有 v3 字段(hmac / prev_hmac / key_id)被删
+- **THEN** cmd_verify trigger v3 strict validation(`wrapper_version=2.0` 是 v3 信号之一);strict schema 校 v3 字段缺失 → BLOCKER `[schema_violation]`
+
+#### Scenario: cmd_verify pure v2 ledger(无 v3 信号)走 v2 schema-only
+
+- **WHEN** ledger 全行 7-字段 v2 schema(无 hmac / prev_hmac / key_id;`wrapper_version: "1.0"`;无 `protocol_version`)
+- **THEN** cmd_verify 走 v2 schema-only 路径(JSON well-formed + wrapper_version 非空 + timestamp 单调);不触发 v3 strict
+- **AND** verify exit 0(archived v2 ledger 完全 backward compatible)
+
+**cmd_verify scope boundary(round 3 codex F2 inline writeback;terminal proof 由 finish_gate 而非 cmd_verify 实施)**:
+
+`cmd_verify` SHALL 实施:strict 11-field schema validation(沿 D-Scope-F3-MergeWithP12.8)+ chain HMAC verify(沿 D-HashChain)+ key rotation 双路径(沿 D-KeyRotationHandling)+ ANY v3 信号 dispatch(round 3 codex F1)。
+
+`cmd_verify` SHALL **不**实施 terminal proof(`ledger_line_count` + `ledger_final_hmac` 与 evidence frontmatter cross-check)— 此责任由 `forgeue_finish_gate.py::_check_ledger_terminal_proof` fence 实施(沿 D-LedgerTerminalProof);finish_gate 是 evidence-aware fence locus,有 evidence frontmatter context;cmd_verify 是 standalone CLI verify 工具,无 evidence context,加 `--evidence-line-count` / `--evidence-final-hmac` flag 是工具职责过度扩展。
+
+**Append serial invariant**(round 3 codex F4 inline writeback):
+
+命令模板 `/forgeue:change-apply-{subagent,parallel}` SHALL **主 session 串行 append wrapper**(implementer subagent dispatch 之间 parallel,但 append 是主 session 跑 — Skill(Task) 返回后由 controller 主 session 调 wrapper,自然 serialize)。本 invariant 防并发 append race(同时读 prev_hmac → 写两行同 prev_hmac → chain 断)。
+
+`tools/forgeue_dispatch_ledger.py::cmd_append` 自身**不**强制 cross-platform file lock(`fcntl` / `msvcrt`);并发安全由命令模板 main session serial 提供。若 ship 后实证 race 实际发生(如非 ForgeUE 工作流外部并发跑 wrapper)→ 触发 follow-on `enhance-workflow-automation-ledger-append-lock`。
+
+#### Scenario: 命令模板 main session 串行 append invariant(round 3 codex F4 inline writeback)
+
+- **WHEN** `/forgeue:change-apply-parallel` dispatch N 个 implementer subagent(parallel)+ 每个 implementer 完成后回到主 session
+- **THEN** 主 session **顺序**调 cmd_append wrapper(每次 Skill(Task) 返回后串行调一次),**不**并发调 wrapper
+- **AND** ledger 行依次 append,prev_hmac 链接前一行 hmac;chain 完整无断
+
+#### Scenario: 外部并发 append(本 change scope 外)race 不被 fence 防御
+
+- **WHEN** 用户外部 script 在命令模板之外并发跑 `python tools/forgeue_dispatch_ledger.py append ...` 多次
+- **THEN** 可能产生并发 append race(沿 R3 deferred follow-on);本 change 不防御此场景
+- **AND** finish_gate verify chain 时若发现 chain 断 → BLOCKER(沿 chain_break);但 BLOCKER 后 user 需自己 debug 是不是外部 race
 
 ### Requirement: Parallel dispatch actual file overlap detection
 
@@ -1090,6 +1280,826 @@ v1 evidence(含 `runtime_enforcement_protocol_version: v1`)沿用 v1 fence 行�
 - **THEN** v1 evidence 全部按 v1 fence 校验
 - **AND** v2 fence 不被触发(无 v2 字段 → pass-through)
 - **AND** 整个 archive 通过 finish_gate(不 false-block)
+
+### Requirement: HMAC key lifecycle for v3 cryptographic ledger binding
+
+ForgeUE SHALL 提供 stdlib-only helper module `tools/_forgeue_ledger_crypto.py`,负责 HMAC key 文件 lifecycle 管理。
+
+**Key 文件路径**:`Path.home() / ".claude" / "forgeue_ledger_key"`(跨 change 共享;Windows / Linux / Mac 都解析到当前用户 home)。
+
+**Key 文件 schema**(JSON 单文件):
+```json
+{
+  "version": 1,
+  "created_at": "<ISO8601 timestamp>",
+  "key_hex": "<64 hex chars = 32 bytes random>"
+}
+```
+
+**`load_or_init_key()` 函数 SHALL 返回 `(key_bytes: bytes, key_id: str)` tuple**:
+- `key_bytes`:32 字节 raw key(`bytes.fromhex(key_hex)`)
+- `key_id`:`hashlib.sha256(key_bytes).hexdigest()[:16]`(16 hex chars = 64-bit fingerprint;不暴露 raw key)
+
+**Lifecycle 4 状态**:
+
+| 状态 | 触发条件 | wrapper 行为 | 退出/返回 |
+|---|---|---|---|
+| 首次 init | key 文件不存在 + `append` 调用 | `secrets.token_bytes(32)` 生成 + 用 `os.O_EXCL` flag 创建文件 + Linux/Mac `os.chmod(0o600)` + 打印 `[INFO] HMAC key initialized at <path> (key_id=<fingerprint>)` | 0 (继续 append) |
+| 正常 load | 文件存在 + JSON 合法 + key_hex 长度恰好 64 chars | 读 key + 计算 key_id | 0 |
+| 文件损坏 | 文件存在但 JSON 解析失败 / key_hex 长度错误 / version 不识别 | abort,**不**静默重建;打印 ERROR 提示 user backup + 删除 + 重新 init | 7 (`key_file_corrupted`) |
+| key rotation 检测 | (verify 时)ledger 行 key_id ≠ 当前 file key_id,但 ledger 自身 key_id 一致 | WARN,不阻断 | 6 (`key_rotation_detected`) |
+
+**关键约束**:
+- Key 文件**不**进 git 追踪(由用户目录自然隔离;`.gitignore` 不需加入,因为不在 repo 内)
+- 命令模板**不暴露** key 文件路径给 LLM Read / Write / Edit tool(LLM 不直接接触 key)
+- 实施 stdlib-only:`secrets` / `hashlib` / `hmac` / `json` / `pathlib` / `os.chmod`,无第三方依赖
+
+#### Scenario: 首次 init 自动生成 key 文件
+
+- **WHEN** `~/.claude/forgeue_ledger_key` 不存在 + 跑 `forgeue_dispatch_ledger.py append`
+- **THEN** wrapper 自动 `secrets.token_bytes(32)` 生成 32 字节 random + 用 `os.O_EXCL` flag 创建 JSON 文件
+- **AND** 文件含 `version: 1` + `created_at` ISO8601 + `key_hex`(64 hex chars)
+- **AND** Linux/Mac 文件权限 `0600`(stat 校 `S_IRUSR | S_IWUSR`,无 group/other 位)
+- **AND** stdout 打印 `[INFO] HMAC key initialized at <path> (key_id=<16 hex>)` 一行
+
+#### Scenario: 正常 load 已存在 key 文件
+
+- **WHEN** key 文件已存在 + JSON 合法 + key_hex 长度 64 chars + 跑 append/verify
+- **THEN** wrapper 读文件 + 解析 JSON + 用 key_hex 派生 key_bytes 与 key_id
+- **AND** key_id == sha256(key_bytes).hexdigest()[:16]
+
+#### Scenario: 文件损坏 fail-closed
+
+- **WHEN** key 文件存在但 JSON 解析失败(如末尾被 truncate) OR key_hex 长度 ≠ 64 OR version 字段不是 1
+- **THEN** wrapper exit 7
+- **AND** stderr 打印 `[ERROR] key file corrupted at <path>: <reason>; backup + remove file to re-init`
+- **AND** **不**自动重建 key(避免静默丢失 verify 旧 ledger 能力)
+
+#### Scenario: 文件锁防 race(并发 init)
+
+- **WHEN** 两个 wrapper 进程同时检测 key 文件不存在并尝试 init
+- **THEN** 用 `os.open(path, O_CREAT | O_EXCL | O_WRONLY)` 创建文件
+- **AND** 第二个进程触发 EEXIST,捕获后 retry-load,读到第一个进程刚写入的 key
+- **AND** 两个 wrapper 最终用同一 key + 同一 key_id
+
+### Requirement: v3 ledger schema with HMAC chain
+
+ForgeUE SHALL 升级 ledger 行 schema 到 v3 — v2 的 7 字段基础上加 4 字段:`protocol_version` / `key_id` / `prev_hmac` / `hmac`。
+
+**v3 ledger 行 schema**(11 字段):
+```json
+{
+  "agent_id": "<hex>",
+  "round": <int>,
+  "role": "<implementer|spec_reviewer|code_quality_reviewer|final_reviewer|implementer_round_2_fix|spec_reviewer_round_2_review>",
+  "task_subject_hash": "<sha256:...|null>",
+  "dispatched_at": "<ISO8601>",
+  "parent_session_id": "<uuid|null>",
+  "wrapper_version": "2.0",
+  "protocol_version": "v3",
+  "key_id": "<16 hex chars>",
+  "prev_hmac": "<64 hex chars; first line: '0' * 64>",
+  "hmac": "<64 hex chars = HMAC-SHA256(key, canonical_payload)>"
+}
+```
+
+**Wrapper 版本**:`tools/forgeue_dispatch_ledger.py::WRAPPER_VERSION` SHALL 升到 `"2.0"`(标记 v3 schema break)。
+
+**HMAC 计算规则**:
+- `canonical_payload(record)` 函数:`json.dumps(record_without_hmac_field, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")`
+- `hmac` 字段从 canonical 中**排除**(避免循环依赖)
+- `prev_hmac` 字段**包含**(它是 chain 输入)
+- `compute_hmac(key, record)` 调 `hmac.new(key, canonical_payload(record), hashlib.sha256).hexdigest()`
+
+**Hash chain 协议**:
+- 首行 `prev_hmac` 固定 `"0" * 64`(64 个 0)
+- 第 N 行(N >= 2)`prev_hmac` 等于第 N-1 行的 `hmac` 字段值
+- 任何修改 / 删除 / reorder 必然 break chain(后续行 prev_hmac 不匹配新"上一行" hmac)
+
+**Append 流程**(`cmd_append` 升级):
+1. 加载或初始化 key (`load_or_init_key()`)
+2. 读 ledger 末尾行的 hmac(若 ledger 不存在或为空 → 用 `"0" * 64`)
+3. 构建 record(11 字段全填,`hmac` 字段先留空)
+4. 算 `hmac = compute_hmac(key, record)`,填入 record
+5. 写一行(json.dumps 同 canonical 规则,逐行 append)
+
+#### Scenario: 首行 prev_hmac 全 0
+
+- **WHEN** ledger 文件不存在 + wrapper append 第一行
+- **THEN** record 含 `prev_hmac: "0000000000000000000000000000000000000000000000000000000000000000"`(64 chars)
+- **AND** record 的 hmac 字段 = `compute_hmac(key, record_with_prev_hmac_zeros)`
+
+#### Scenario: 后续行 prev_hmac 链接上一行 hmac
+
+- **WHEN** ledger 已有 N 行 + wrapper append 第 (N+1) 行
+- **THEN** 新行 `prev_hmac` 等于第 N 行的 `hmac` 值(64 hex chars)
+- **AND** 新行 `hmac = compute_hmac(key, new_record_with_prev_hmac_chained)`
+
+#### Scenario: hmac 字段从 canonical 排除
+
+- **WHEN** wrapper 计算 `canonical_payload(record)` 用于 HMAC 输入
+- **THEN** canonical bytes 不含 `hmac` 字段(避免循环依赖)
+- **AND** canonical bytes 含 `prev_hmac` 字段(它是 chain 输入)
+
+#### Scenario: canonical JSON 字段顺序无关
+
+- **WHEN** 同一 record 字段以不同写入顺序构造(insertion order 1 vs insertion order 2)
+- **THEN** `canonical_payload(record)` 返回完全相同的 bytes(`sort_keys=True` 保证)
+- **AND** `compute_hmac` 输出 hex 也相同
+
+#### Scenario: wrapper_version 升到 "2.0"
+
+- **WHEN** v3 wrapper append 一行
+- **THEN** record 含 `wrapper_version: "2.0"`(常量,不可配置)
+- **AND** archived v2 ledger 行(`wrapper_version: "1.0"`)在 v2 fence 路径下仍合法(fence 不强制具体值,仅校非空)
+
+### Requirement: v3 fence dispatch matrix and HMAC chain verification
+
+`forgeue_finish_gate.py::_check_dispatch_ledger` SHALL 加入 v3 dispatch 分支,fence dispatch matrix 扩到 4 档:
+
+| evidence frontmatter `runtime_enforcement_protocol_version` | fence 行为 |
+|---|---|
+| 无字段(legacy) | 全 v1/v2/v3 fence pass-through |
+| `v1` | 走 v1 fence(沿 ADR-011) |
+| `v2` | 走 v1 + v2 fence(advisory schema-only,沿 ADR-012) |
+| `v3` | 走 v1 + v2 + v3 fence(v3 = v2 schema check + HMAC chain verify + terminal proof + audit consistency + strict 11-field schema) |
+| 其他 present value(`v4` / typo / empty / null)| **BLOCKER `unknown_protocol_version`**(沿 D-RuntimeEnforcementProtocolVersionValidity 沿 round 2 codex F2 inline writeback;**fence skip 必须由 absence 决定,不能由 invalid value 决定**) |
+
+**新 helper**:`_runtime_enforcement_v3_active(frontmatter) -> bool`,检测 `frontmatter.get("runtime_enforcement_protocol_version") == "v3"`。
+
+**新 helper**(round 2 codex F2 inline writeback):`_VALID_PROTOCOL_VERSIONS = frozenset({"v1", "v2", "v3"})` 模块常量;新 fence `_check_runtime_enforcement_protocol_version_validity` 在所有 protocol-version-dependent fence 之前跑(防 unknown value 走 skip 路径)。
+
+**v3 verify 流程**(`_forgeue_ledger_crypto.verify_chain_v3(key_bytes, lines, evidence_frontmatter)`):
+1. 解析 ledger 全行为 list of dict
+2. 检查 ledger 内所有行 `key_id` 一致(沿"同 ledger 同 key" invariant)
+3. 检查 ledger 内 key_id vs 当前文件 key_id(**round 1 codex F2 inline writeback,key_rotation 默认 fail-closed**):
+   - **active v3 evidence**(`evidence_frontmatter.get("ledger_archived_replay") != True`):key_id 不一致 → `key_id_mismatch` BLOCKER(攻击场景:LLM 替换 key 文件即可降级 HMAC 校 — 必须 fail-closed)
+   - **archived replay 模式**(`evidence_frontmatter.ledger_archived_replay: true` opt-in):key_id 不一致 → `key_rotation_user_override_required` 走 user explicit override 路径(audit 友好,user 显式承担"无法重算 HMAC"风险)
+4. 从首行起整链 verify(仅在 key_id 与当前 file 一致时跑;archived replay 模式 skip 此步)`:
+   - 首行 `prev_hmac` 必须 `"0" * 64`
+   - 每行 `hmac == compute_hmac(key, record)`(canonical 重算)
+   - 每行 `prev_hmac == 上一行 hmac`(chain 连续)
+5. 检查 ledger terminal proof(沿 round 1 codex F3 inline writeback,新加;`evidence_frontmatter.ledger_line_count` + `ledger_final_hmac` 字段必填 v3 evidence;cross-check 与实际 ledger 一致)— 见独立 Requirement "v3 ledger terminal proof"
+
+**verify 状态枚举 + 处理**(round 1 codex F2 inline writeback 后):
+
+| 状态 | 触发 | 等级 | exit code |
+|---|---|---|---|
+| `ok` | 全链 HMAC 正确 + key_id 一致 + terminal proof 一致 | pass | 0 |
+| `hmac_mismatch` | 某行 HMAC 重算 ≠ 写入值 | BLOCKER | 5 |
+| `chain_break` | 某行 prev_hmac ≠ 上一行 hmac OR 首行 prev_hmac ≠ all-zeros | BLOCKER | 5 |
+| `key_id_inconsistent` | 同一 ledger 内不同行 key_id 不一致 | BLOCKER | 5 |
+| `key_id_mismatch` | active v3 evidence + ledger key_id ≠ 当前 file key_id | BLOCKER | 5 |
+| `tail_truncation_detected` | evidence `ledger_line_count` ≠ 实际 ledger 行数 | BLOCKER | 5 |
+| `final_hmac_mismatch` | evidence `ledger_final_hmac` ≠ 实际 ledger 最后一行 hmac | BLOCKER | 5 |
+| `schema_violation` | ledger 行 strict schema 违反(沿 F5 scope expansion;字段集 / 字段类型 / 字段 format) | BLOCKER | 5 |
+| `frontmatter_audit_inconsistency` | evidence frontmatter `ledger_forgery_resistance` 与 `runtime_enforcement_protocol_version` 不一致 | BLOCKER | 5 |
+| `key_rotation_user_override_required` | archived replay 模式 + ledger key_id ≠ 当前 file key_id | user override(WARN 输出,exit 6) | 6 |
+| `key_file_corrupted` | key 文件 JSON 损坏 / key_hex 长度错 / version 不识别 | wrapper abort | 7 |
+
+**关键 invariants**(round 1 codex inline writeback 后):
+- v3 fence 仅 inspect ledger + evidence frontmatter,**不**修改 ledger 内容
+- v3 fence 走 fail-closed — verify 失败时 finish_gate exit 非 0(BLOCKER 级别)
+- **key_id mismatch 默认 BLOCKER**(round 1 codex F2 inline writeback;不再 WARN 自动 pass);archived replay 兼容走 evidence frontmatter `ledger_archived_replay: true` explicit user opt-in 路径(exit 6 仅在此路径触发,user 显式承担风险)
+- evidence frontmatter `ledger_line_count` + `ledger_final_hmac` 是 v3 必填(F3 inline writeback);缺失或与实际不一致 → BLOCKER
+- ledger 行 strict 11-field schema(F5 scope expansion):字段集精确 + 字段类型 strict + 字段 format 正则校
+
+#### Scenario: v3 evidence + 合法 v3 ledger 整链 verify 通过
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v3` + ledger 含 N 行 v3 schema 合法行(chain 连续 + key_id 一致 + HMAC 正确)
+- **THEN** `_check_dispatch_ledger` v3 fence pass + 无 Blocker
+
+#### Scenario: hand-edit 某行字段触发 hmac_mismatch BLOCKER
+
+- **WHEN** v3 ledger 任意一行的 `agent_id` / `dispatched_at` / 其他原 7 字段 / `protocol_version` / `key_id` / `prev_hmac` 被 hand-edit 修改
+- **THEN** `verify_chain_v3` 重算 HMAC ≠ 行内 hmac 字段
+- **AND** fence exit 非 0,Blocker.type `dispatch_ledger_violation`,error message prefix `[hmac_mismatch] line <N>`
+
+#### Scenario: 删除中间一行触发 chain_break BLOCKER
+
+- **WHEN** v3 ledger 第 K 行(2 ≤ K ≤ N-1)被删除
+- **THEN** 第 K+1 行的 `prev_hmac` ≠ 第 K-1 行的 `hmac`(chain 断裂)
+- **AND** fence exit 非 0,error message prefix `[chain_break] line <K+1>`
+
+#### Scenario: reorder 两行触发 chain_break BLOCKER
+
+- **WHEN** v3 ledger 第 K 行与第 K+1 行交换顺序
+- **THEN** 第 K+1 行(原第 K 行)的 `prev_hmac` ≠ 上一行(原第 K+1 行)的 `hmac`
+- **AND** fence exit 非 0,error message prefix `[chain_break] line <K+1>`
+
+#### Scenario: 首行 prev_hmac 非全 0 触发 chain_break BLOCKER
+
+- **WHEN** v3 ledger 首行 `prev_hmac` ≠ `"0" * 64`(LLM 伪造首行 hmac)
+- **THEN** fence exit 非 0,error message prefix `[chain_break] line 1: first-line prev_hmac MUST be all zeros`
+
+#### Scenario: 同 ledger 内不同 key_id 触发 key_id_inconsistent BLOCKER
+
+- **WHEN** v3 ledger 内不同行 `key_id` 不一致(如 LLM 中途切换 key)
+- **THEN** fence exit 非 0,error message prefix `[key_id_inconsistent] line <N>: expected <key_id>, got <key_id>`
+
+#### Scenario: ledger key_id ≠ 文件 key_id active v3 evidence 默认 fail-closed BLOCKER(round 1 codex F2 inline writeback)
+
+- **WHEN** active v3 evidence(`evidence_frontmatter.ledger_archived_replay` 字段缺失或 `false` / `null`)+ ledger key_id 与当前 `~/.claude/forgeue_ledger_key` 派生的 key_id 不一致
+- **THEN** fence BLOCKER(`key_id_mismatch`),error message prefix `[key_id_mismatch] ledger key_id <X> ≠ current file key_id <Y>; HMAC verify cannot proceed without rotated-from key — finish_gate fail-closed`
+- **AND** **不**走 WARN 路径(攻击场景:LLM 替换 key 文件即可降级 HMAC 校 — 必须 fail-closed)
+- **AND** Blocker.type `dispatch_ledger_violation`
+
+#### Scenario: ledger key_id ≠ 文件 key_id archived replay 模式 user override(round 1 codex F2 inline writeback)
+
+- **WHEN** evidence frontmatter `ledger_archived_replay: true`(opt-in user override;archived `enhance-workflow-automation-ledger-binding` 之前的归档 v3 evidence replay 时 user 显式标注)+ ledger key_id ≠ 当前 file key_id + ledger 自身 key_id 一致
+- **THEN** fence WARN(`key_rotation_user_override_required`,exit 6 from cmd_verify;非 BLOCKER 但 audit 友好);error message prefix `[key_rotation_user_override] ledger key_id <X> ≠ current key_id <Y>; HMAC verify skipped per user opt-in — risk acknowledged`
+- **AND** finish_gate 接受 archived replay,**但** evidence frontmatter `ledger_archived_replay: true` 字段 audit trail(任何回写 / archive 都保留此字段)
+- **AND** `ledger_archived_replay: true` 字段需 user 显式手工添加(命令模板 default 不写入此字段;LLM 可在 controller drift 检测时 alert user 是否需要 opt-in)
+
+#### Scenario: legacy / v1 / v2 evidence 不触 v3 fence
+
+- **WHEN** evidence frontmatter 无 `runtime_enforcement_protocol_version` 字段 OR 值是 `v1` / `v2`
+- **THEN** v3 fence 分支 pass-through(不 inspect ledger 的 v3 字段)
+- **AND** archived v2 ledger 行(无 hmac 字段)在 v2 路径走 schema-only 校验,不强制 hmac 字段存在
+
+### Requirement: ledger_forgery_resistance frontmatter field upgrade to cryptographic with strict gate
+
+evidence frontmatter SHALL 含 `ledger_forgery_resistance` 字段(字符串字面值;沿 archived `enhance-workflow-automation-executable-enforcement` 同款字段);本字段 SHALL 与 `runtime_enforcement_protocol_version` 字段强 enum 绑定(沿 round 1 codex F4 inline writeback,审计字段必须与协议版本一致才能 audit 有意义)。
+
+`forgeue_finish_gate.py` SHALL 含新 fence `_check_ledger_forgery_resistance_consistency`(本 change ship 加,沿 D-FrontmatterAuditConsistency)守门字段一致性:
+
+| `runtime_enforcement_protocol_version` | `ledger_forgery_resistance` 强制值 | 不匹配处理 |
+|---|---|---|
+| 无字段(legacy) | 无字段约束(legacy pass-through) | — |
+| `v1` | 无字段约束(v1 advisory pass-through) | — |
+| `v2` | 必须 `advisory` | BLOCKER `frontmatter_audit_inconsistency` |
+| `v3` | 必须 `cryptographic` | BLOCKER `frontmatter_audit_inconsistency` |
+
+未来若加 multi-level enforcement(如 `cryptographic_strict` / `cryptographic_advisory`),扩 enum 时**同步扩 fence dispatch matrix**;不允许字段单独扩值不扩 fence(避免 audit 信号脱钩重现)。
+
+命令模板 `change-apply-{subagent,parallel}.md` 的 evidence frontmatter 模板 SHALL 在 v3 协议路径下写 `ledger_forgery_resistance: cryptographic`;v2 路径写 `advisory`(self-dogfood gap 路径,沿 D-SelfDogfoodGap)。
+
+#### Scenario: v3 evidence frontmatter 含 cryptographic 标注 fence pass
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v3` + `ledger_forgery_resistance: cryptographic`
+- **THEN** `_check_ledger_forgery_resistance_consistency` fence pass
+
+#### Scenario: v2 evidence frontmatter 含 advisory 标注 fence pass
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2` + `ledger_forgery_resistance: advisory`(self-dogfood gap 路径)
+- **THEN** `_check_ledger_forgery_resistance_consistency` fence pass
+
+#### Scenario: v3 evidence 标 advisory(LLM 自降级伪造)BLOCKER
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v3` + `ledger_forgery_resistance: advisory`
+- **THEN** `_check_ledger_forgery_resistance_consistency` fence exit 非 0
+- **AND** Blocker.type `frontmatter_audit_inconsistency`,error message prefix `[audit_mismatch] v3 protocol requires ledger_forgery_resistance: cryptographic, got: advisory`
+
+#### Scenario: v2 evidence 自称 cryptographic(LLM 虚报)BLOCKER
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v2` + `ledger_forgery_resistance: cryptographic`
+- **THEN** `_check_ledger_forgery_resistance_consistency` fence exit 非 0
+- **AND** Blocker.type `frontmatter_audit_inconsistency`,error message prefix `[audit_mismatch] v2 protocol requires ledger_forgery_resistance: advisory, got: cryptographic`
+
+#### Scenario: legacy / v1 evidence 不强制字段(pass-through)
+
+- **WHEN** evidence frontmatter 无 `runtime_enforcement_protocol_version` 字段 OR 值为 `v1`
+- **THEN** `_check_ledger_forgery_resistance_consistency` fence pass-through(advisory pass)
+
+### Requirement: v3 ledger terminal proof (line_count + final_hmac frontmatter audit)
+
+evidence frontmatter SHALL 含 v3 必填字段(沿 round 1 codex F3 inline writeback;hash chain 抓不住 tail truncation 的 mitigation):
+
+- `ledger_line_count: <int>`(声明 ledger 行数;**LLM 复制 wrapper `cmd_append` stdout 提示的行数**;wrapper-side 不自动写入 evidence;fence 校验与实际 ledger 行数一致)
+- `ledger_final_hmac: <64 hex chars>`(声明 ledger 最后一行 hmac 值;**LLM 复制 wrapper `cmd_append` stdout 提示的 hmac**;fence 校验与实际 ledger 最后一行 hmac 一致)
+
+`tools/forgeue_dispatch_ledger.py::cmd_append` SHALL 在每次成功 append 后 stdout 打印 `[LEDGER] line_count=<N> final_hmac=<hex>`(LLM 可读取此输出复制到 evidence frontmatter)。
+
+`forgeue_finish_gate.py` SHALL 含新 fence `_check_ledger_terminal_proof`(本 change ship 加;沿 D-LedgerTerminalProof D-decision):
+
+- v3 evidence(`runtime_enforcement_protocol_version: v3`)缺 `ledger_line_count` 字段 → BLOCKER `tail_truncation_undeclared`
+- v3 evidence 缺 `ledger_final_hmac` 字段 → BLOCKER `final_hmac_undeclared`
+- evidence `ledger_line_count` 不是正整数 → BLOCKER `tail_truncation_undeclared`(format check)
+- evidence `ledger_final_hmac` 不是 `^[a-f0-9]{64}$` → BLOCKER `final_hmac_undeclared`(format check)
+- evidence `ledger_line_count` ≠ 实际 ledger 非空行数 → BLOCKER `tail_truncation_detected`
+- evidence `ledger_final_hmac` ≠ 实际 ledger 最后一行 hmac → BLOCKER `final_hmac_mismatch`
+- v2 evidence 不强制本字段(pass-through)
+- legacy / v1 evidence 不强制本字段(pass-through)
+
+**Threat model 边界**(沿 design.md threat model 段):本 fence 抓 **常见 sloppy bypass**(LLM 删除尾部不更新 evidence frontmatter)+ **wrapper 跑过的 happy path**(LLM 不能伪造 wrapper stdout)。但 **不**承担 willful forge — LLM 可同时 forge ledger + 重写 evidence frontmatter line_count + final_hmac;那是 `enhance-workflow-automation-os-keystore` follow-on 的 threat model。
+
+#### Scenario: v3 evidence 缺 ledger_line_count 字段 BLOCKER
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v3` + 缺 `ledger_line_count` 字段
+- **THEN** `_check_ledger_terminal_proof` fence exit 非 0
+- **AND** Blocker.type `dispatch_ledger_violation`,error message prefix `[tail_truncation_undeclared] v3 evidence MUST carry ledger_line_count field`
+
+#### Scenario: v3 evidence 缺 ledger_final_hmac 字段 BLOCKER
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v3` + 缺 `ledger_final_hmac` 字段
+- **THEN** `_check_ledger_terminal_proof` fence exit 非 0,error message prefix `[final_hmac_undeclared]`
+
+#### Scenario: v3 evidence ledger_line_count 不匹配实际行数 BLOCKER(tail truncation 抓)
+
+- **WHEN** v3 evidence `ledger_line_count: 5` 但实际 ledger 4 行(LLM 删了最后 1 行未更新 evidence)
+- **THEN** `_check_ledger_terminal_proof` fence exit 非 0,error message prefix `[tail_truncation_detected] declared 5 lines, actual 4 lines`
+
+#### Scenario: v3 evidence ledger_final_hmac 不匹配实际末行 BLOCKER
+
+- **WHEN** v3 evidence `ledger_final_hmac: <X>` 但实际 ledger 最后一行 hmac = `<Y>`(LLM 删行后 evidence 字段未跟改 OR forge 攻击)
+- **THEN** `_check_ledger_terminal_proof` fence exit 非 0,error message prefix `[final_hmac_mismatch] declared <X>, actual <Y>`
+
+#### Scenario: v3 evidence terminal proof 全对 + chain verify 全对 fence pass
+
+- **WHEN** v3 evidence + ledger N 行 chain 合法 + evidence `ledger_line_count: N` + `ledger_final_hmac` 等于实际末行 hmac
+- **THEN** `_check_ledger_terminal_proof` fence pass + `_check_dispatch_ledger` v3 fence pass
+
+#### Scenario: 单行 ledger v3 evidence 必含 line_count: 1
+
+- **WHEN** v3 evidence + ledger 仅 1 行(prev_hmac 全 0)
+- **THEN** evidence frontmatter MUST 含 `ledger_line_count: 1`(否则 BLOCKER tail_truncation_undeclared)
+- **AND** evidence frontmatter MUST 含 `ledger_final_hmac` 等于该唯一行的 hmac(否则 BLOCKER final_hmac_mismatch)
+
+### Requirement: v3 ledger strict 11-field schema validation
+
+`tools/forgeue_dispatch_ledger.py::cmd_verify` v3 路径 + `forgeue_finish_gate.py::_check_dispatch_ledger` v3 分支 SHALL 在 HMAC chain verify 之外加 strict schema validation(沿 round 1 codex F5 scope expansion;HMAC 仅保护字节完整性,schema 校验是 orthogonal 必需层;本 change 合并 archived `executable-enforcement` P12.8 follow-on `enhance-workflow-automation-v2-fence-hardening` 的 schema 部分,P12.8 follow-on superseded)。
+
+**v3 ledger 行 strict schema(11 字段精确)**:
+
+| 字段 | 类型 | format / 约束 | 缺失行为 |
+|---|---|---|---|
+| `agent_id` | str | `^[a-f0-9]{17,}$`(沿 archived 同款 hex format,长度 ≥ 17) | BLOCKER `schema_violation` |
+| `round` | int | 正整数(`isinstance(round, int) and round > 0 and not isinstance(round, bool)`,显式拒 bool;Python `bool` 是 `int` 子类) | BLOCKER |
+| `role` | str | `VALID_ROLES` enum(沿 forgeue_dispatch_ledger 现有 frozenset:`implementer` / `spec_reviewer` / `code_quality_reviewer` / `final_reviewer` / `implementer_round_2_fix` / `spec_reviewer_round_2_review`) | BLOCKER |
+| `task_subject_hash` | str / null | `null` 或 `^sha256:[a-f0-9]{64}$` | BLOCKER 若类型不对 |
+| `dispatched_at` | str | ISO8601 tz-aware(`datetime.fromisoformat(...)` parse-able + `tzinfo is not None`) | BLOCKER |
+| `parent_session_id` | str / null | `null` 或 UUID v4 format(`^[a-f0-9-]{36}$`) | BLOCKER 若类型不对 |
+| `wrapper_version` | str | `^\d+\.\d+$`(major.minor) | BLOCKER |
+| `protocol_version` | str | 精确 `"v3"` | BLOCKER |
+| `key_id` | str | `^[a-f0-9]{16}$`(64-bit fingerprint) | BLOCKER |
+| `prev_hmac` | str | `^[a-f0-9]{64}$` | BLOCKER |
+| `hmac` | str | `^[a-f0-9]{64}$` | BLOCKER |
+
+**严格性约束**:
+- ledger 行字段集 **精确 11 字段**(任何 unknown 字段 → BLOCKER `schema_violation`,error prefix `[schema_violation] unknown field <field_name>`)
+- 任何字段缺失 → BLOCKER `schema_violation`,error prefix `[schema_violation] missing field <field_name>`
+- 字段类型 strict(`type(value) is <expected>`;不接受隐式转换 / 子类如 bool→int)
+- 字段 format 正则严格匹配(全字符串)
+
+**v2 ledger 行 schema validation**(沿现有 v2 fence advisory,本 change **不**加 v2 schema strict — 留给 cancelled P12.8 之外的独立 follow-on 若需要;沿 D-Scope-F3-MergeWithP12.8 边界本 change 仅做 v3 schema strict)。
+
+#### Scenario: v3 ledger 行字段集精确 11 字段
+
+- **WHEN** v3 ledger 行字段集恰好 11 字段(无多无少)+ 每字段类型 + format 正确
+- **THEN** `_check_dispatch_ledger` v3 schema check pass
+
+#### Scenario: v3 ledger 行未知字段 BLOCKER
+
+- **WHEN** v3 ledger 行含 12 字段(11 标准 + `extra_field_xyz`)
+- **THEN** fence exit 非 0,error prefix `[schema_violation] unknown field 'extra_field_xyz' at line <N>`
+
+#### Scenario: v3 ledger 行字段缺失 BLOCKER
+
+- **WHEN** v3 ledger 行缺 `key_id` 字段(其他 10 字段都在)
+- **THEN** fence exit 非 0,error prefix `[schema_violation] missing field 'key_id' at line <N>`
+
+#### Scenario: v3 ledger 行 round 为负数 BLOCKER
+
+- **WHEN** v3 ledger 行 `round: -1`
+- **THEN** fence exit 非 0,error prefix `[schema_violation] field 'round' MUST be positive integer, got: -1`
+
+#### Scenario: v3 ledger 行 round 为 bool BLOCKER
+
+- **WHEN** v3 ledger 行 `round: true`(JSON true 序列化为 Python bool;Python bool 是 int 子类但 schema 应显式拒)
+- **THEN** fence exit 非 0,error prefix `[schema_violation] field 'round' MUST be positive integer (not bool), got: True`
+
+#### Scenario: v3 ledger 行 round 为 float BLOCKER
+
+- **WHEN** v3 ledger 行 `round: 1.0`
+- **THEN** fence exit 非 0,error prefix `[schema_violation] field 'round' MUST be int, got: float`
+
+#### Scenario: v3 ledger 行 agent_id 格式不对 BLOCKER
+
+- **WHEN** v3 ledger 行 `agent_id: "not-a-hex"` OR `agent_id: ""`
+- **THEN** fence exit 非 0,error prefix `[schema_violation] field 'agent_id' MUST match ^[a-f0-9]{17,}$`
+
+#### Scenario: v3 ledger 行 role 不在 enum BLOCKER
+
+- **WHEN** v3 ledger 行 `role: "unknown_role"`
+- **THEN** fence exit 非 0,error prefix `[schema_violation] field 'role' MUST be in VALID_ROLES`
+
+#### Scenario: v3 ledger 行 dispatched_at 无 tzinfo BLOCKER
+
+- **WHEN** v3 ledger 行 `dispatched_at: "2026-05-06T14:00:00"`(无 timezone offset)
+- **THEN** fence exit 非 0,error prefix `[schema_violation] field 'dispatched_at' MUST be ISO8601 tz-aware`
+
+#### Scenario: v3 ledger 行 protocol_version 不是 "v3" BLOCKER
+
+- **WHEN** v3 ledger 行 `protocol_version: "v2"` OR 任何其他值
+- **THEN** fence exit 非 0,error prefix `[schema_violation] field 'protocol_version' MUST be exactly "v3"`
+
+### Requirement: Runtime enforcement protocol_version validity gate
+
+`forgeue_finish_gate.py` SHALL 含新 fence `_check_runtime_enforcement_protocol_version_validity`(本 change ship 加;沿 round 2 codex F2 inline writeback + D-RuntimeEnforcementProtocolVersionValidity)守门 evidence frontmatter `runtime_enforcement_protocol_version` 字段值合法性;此 fence SHALL 在所有 protocol-version-dependent fence 之前跑(`_check_dispatch_ledger` / `_check_round_fix_continuity` / `_check_skill_cascade` / `_check_ledger_terminal_proof` / `_check_ledger_forgery_resistance_consistency` / `_check_archived_replay_path_boundary`)以防 unknown value 走 skip 路径。
+
+**核心 invariant**:fence skip 必须由 absence 决定(legacy pass-through),**不能**由 invalid value 决定(LLM 写错值不应该意外 unlock fence skip)。
+
+**字段值合法性 dispatch**:
+
+| evidence frontmatter `runtime_enforcement_protocol_version` | fence 行为 |
+|---|---|
+| 字段缺失(legacy) | pass-through(全 v1/v2/v3 fence skip) |
+| 字段值 `v1` / `v2` / `v3`(in `_VALID_PROTOCOL_VERSIONS = frozenset({"v1", "v2", "v3"})`) | 走对应 fence dispatch matrix |
+| 字段值 present 但不在 frozenset 内(`v4` / typo / empty / null) | **BLOCKER `unknown_protocol_version`** |
+
+`_VALID_PROTOCOL_VERSIONS` SHALL 在 `tools/forgeue_finish_gate.py` / `tools/forgeue_change_state.py` / docs(`CLAUDE.md` + `forgeue_integrated_ai_workflow.md`)中保持一致;扩 frozenset 时同步扩 docs(沿 `forgeue_enum_cross_ref_check.py` 协议)。
+
+#### Scenario: legacy evidence 无字段 pass-through
+
+- **WHEN** evidence frontmatter 无 `runtime_enforcement_protocol_version` 字段
+- **THEN** `_check_runtime_enforcement_protocol_version_validity` fence pass(legacy pass-through)
+- **AND** 后续 protocol-version-dependent fence 全 skip(legacy 兼容)
+
+#### Scenario: v1 / v2 / v3 evidence 走对应 fence dispatch
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v1` OR `v2` OR `v3`
+- **THEN** `_check_runtime_enforcement_protocol_version_validity` fence pass
+- **AND** 后续 fence 走对应 dispatch 路径
+
+#### Scenario: unknown protocol_version v4 BLOCKER(round 2 codex F2 inline writeback)
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: v4`
+- **THEN** `_check_runtime_enforcement_protocol_version_validity` fence exit 非 0
+- **AND** Blocker.type `dispatch_ledger_violation`,error message prefix `[unknown_protocol_version] runtime_enforcement_protocol_version='v4' not in valid set {v1, v2, v3}; fence skip MUST come from absence not invalid value`
+
+#### Scenario: typo protocol_version `v 3` BLOCKER
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: 'v 3'`(空格 typo)OR `'v3 '`(尾空格)OR `'V3'`(大小写不一致)
+- **THEN** fence exit 非 0,error prefix `[unknown_protocol_version]`(LLM typo 不能 silent skip fence)
+
+#### Scenario: empty / null protocol_version BLOCKER
+
+- **WHEN** evidence frontmatter `runtime_enforcement_protocol_version: ''` OR `runtime_enforcement_protocol_version: null`
+- **THEN** fence exit 非 0,error prefix `[unknown_protocol_version]`(present 但空值不等于 absent;absent 是字段完全不在 frontmatter 中)
+- **NOTE**:absent(字段完全不在 frontmatter)走 legacy pass-through;present-but-empty 走 BLOCKER
+
+### Requirement: Archived replay path boundary
+
+`forgeue_finish_gate.py` SHALL 含新 fence `_check_archived_replay_path_boundary`(本 change ship 加;沿 round 2 codex F1 inline writeback + D-ArchivedReplayPathBoundary)守门 `ledger_archived_replay` evidence frontmatter 字段使用边界。
+
+**字段使用规则**:
+
+| evidence 文件路径 | `ledger_archived_replay` 字段值 | fence 行为 |
+|---|---|---|
+| 任何路径 | 缺失 / `false` / `null` | pass-through(default 路径) |
+| 含 `openspec/changes/archive/` segment(`Path.resolve()` 后) | `true` | 接受 archived replay opt-in;走 D-KeyRotationHandling user override 路径(WARN exit 6) |
+| 不含 `archive/` segment(active change `openspec/changes/<id>/`) | `true` | **BLOCKER `archived_replay_path_violation`**(LLM 在 active change forge 此字段企图绕 fail-closed) |
+
+`tools/forgeue_dispatch_ledger.py::cmd_verify` `--allow-archived-replay` flag 同款边界 — 仅在 ledger 路径在 `openspec/changes/archive/` 内才 honor flag;active change ledger 路径 + flag → BLOCKER + 提示 ledger 不在 archive 路径。
+
+`tools/forgeue_change_state.py --writeback-check` SHALL 同步加此 invariant 检测(active change evidence 出现 `ledger_archived_replay: true` = drift signal,作为 4 类 named DRIFT 之一)。
+
+**核心 invariant**:archived replay 路径不仅要 user explicit opt-in(双 flag),还要 evidence 物理位置在 archive/ 目录(物证驱动);LLM 即使 forge frontmatter + 替换 key 文件,只要 evidence 不在 archive/ 段,fence BLOCKER。
+
+#### Scenario: active change evidence + ledger_archived_replay: true BLOCKER(round 2 codex F1 inline writeback)
+
+- **WHEN** evidence 文件路径 `openspec/changes/<id>/review/foo.md`(active change,不在 archive/)+ frontmatter `ledger_archived_replay: true`
+- **THEN** `_check_archived_replay_path_boundary` fence exit 非 0
+- **AND** Blocker.type `dispatch_ledger_violation`,error message prefix `[archived_replay_path_violation] evidence path '<path>' does not contain 'archive/' segment but ledger_archived_replay=true; archived replay opt-in only allowed for archived evidence`
+
+#### Scenario: archive evidence + ledger_archived_replay: true 走 user override(allowed)
+
+- **WHEN** evidence 文件路径 `openspec/changes/archive/2026-MM-DD-<id>/review/foo.md`(archived)+ frontmatter `ledger_archived_replay: true` + cmd_verify 配套 `--allow-archived-replay` flag + ledger key_id ≠ 当前 file key_id
+- **THEN** `_check_archived_replay_path_boundary` fence pass(在 archive/ 路径,字段允许)
+- **AND** 后续 v3 verify 走 D-KeyRotationHandling user override 路径(WARN exit 6)
+
+#### Scenario: archive evidence + ledger_archived_replay: true 但缺 cmd_verify flag
+
+- **WHEN** evidence 在 archive/ 路径 + frontmatter `ledger_archived_replay: true` + cmd_verify 缺 `--allow-archived-replay` flag
+- **THEN** `_check_archived_replay_path_boundary` fence pass(字段允许),但 cmd_verify v3 verify 走 default 路径
+- **AND** key_id mismatch → BLOCKER(default fail-closed,沿 D-KeyRotationHandling default 路径)
+- **AND** 仅在 user 显式加 flag + frontmatter 字段 + archive/ 路径**三重 explicit opt-in** 时才走 user override
+
+#### Scenario: cmd_verify --allow-archived-replay flag + ledger 不在 archive/ 路径 BLOCKER
+
+- **WHEN** ledger 路径 `openspec/changes/<active-id>/dispatch_ledger.jsonl`(active)+ cmd_verify `--allow-archived-replay` flag
+- **THEN** cmd_verify exit 5(`archived_replay_path_violation`),stderr 提示 ledger 不在 archive/ 路径,`--allow-archived-replay` flag rejected
+
+#### Scenario: forgeue_change_state.py --writeback-check 检测 active change evidence 误用
+
+- **WHEN** 跑 `python tools/forgeue_change_state.py --change <active-id> --writeback-check --json` + active change evidence 含 `ledger_archived_replay: true`
+- **THEN** writeback-check exit 5 + 4 类 named DRIFT 之一标记
+- **AND** alert user 字段使用错误,提示移除字段或 archive change 后再标
+
+### Requirement: `_check_tasks_unchecked` 双格式 section heading 识别 + per-format threshold
+
+`tools/forgeue_finish_gate.py::_check_tasks_unchecked` SHALL 用 regex `_SECTION_HEADING_RE = re.compile(r"^##\s+(P)?(\d+)(?:\.|\s+—)\s+", re.MULTILINE)`(双 capture group)同时识别两种 tasks.md section heading 格式:
+
+- **active changes 现行格式**:`## <int>. <text>`(例:`## 9. P8 Finish Gate`);group(1) = `None`,group(2) = section integer
+- **archived 历史格式**:`## P<int> — <text>`(P-prefix + em-dash U+2014;例:`## P10 — Archive` / `## P11 — Documentation Sync footer`);group(1) = `"P"`,group(2) = section integer
+
+`_check_tasks_unchecked` SHALL 按 group(1) 选 per-format self-stage threshold:
+
+- **Active 格式**(`group(1) is None`):threshold ≥9(`_SELF_STAGE_SECTION_THRESHOLD = 9`,沿原 baseline,P8 finish gate = section 9)
+- **Archived 格式**(`group(1) == "P"`):threshold ≥10(`_SELF_STAGE_SECTION_THRESHOLD_ARCHIVED = 10`;archived P0-P9 全 workflow prerequisite 应 block;P10+ self-stage 应 skip;沿 codex round 1 F2 实证 archived P9 ambiguous 不安全用 ≥9)
+
+section number ≥ threshold 的 `[ ]` 行视为 self-stage,不阻断 finish_gate 自身(避免 chicken-and-egg)。Active workflow 路径(active `openspec/changes/<id>/`)行为 unchanged — `## <int>. <text>` 仍命中 + 阈值 ≥9 不变,backward-compat 守门。
+
+#### Scenario: active change `## <int>. <text>` 格式仍命中(backward-compat)
+
+- **GIVEN** active change tasks.md 含 `## 9. P8 Finish Gate` 后跟 `- [ ] 9.1 finish_gate exit 0`
+- **WHEN** `forgeue_finish_gate.py::_check_tasks_unchecked` 跑
+- **THEN** regex 命中 section 9
+- **AND** §9.1 unchecked 行被识别为 self-stage(9 ≥ 9)→ 不报 blocker
+- **AND** 行为与 commit `a4334db` baseline 一致(backward-compat 守门)
+
+#### Scenario: archived change `## P<N> — <text>` 格式命中
+
+- **GIVEN** archived change tasks.md 含 `## P10 — Archive` 后跟 `- [ ] 10.1 /opsx:archive`,以及 `## P11 — Documentation Sync footer` 后跟 `- [ ] 11.1 sync gate items closed`
+- **WHEN** `forgeue_finish_gate.py::_check_tasks_unchecked` 跑(`change_dir = openspec/changes/archive/2026-MM-DD-<id>/`)
+- **THEN** regex 命中 section 10 + 11
+- **AND** §10.1 + §11.1 unchecked 行均识别为 self-stage(10/11 ≥ 10,archived format threshold)→ 不报 blocker
+- **AND** archived 4 change finish_gate replay `tasks_unchecked` blocker 总数从 25 → 0
+
+#### Scenario: 假阴性边界守门 — `## 1.5 sub-section` 不命中
+
+- **GIVEN** tasks.md 含假想小数点格式 `## 1.5 sub-section`(实测 active / archived 均无此模式)
+- **WHEN** regex 跑
+- **THEN** 不命中(`(\d+)` 后必须是 `.` 或 `\s+—`,`1.5` 后是 `5` 不命中,`1.` 后必须紧跟空格)
+- **AND** YAGNI 边界守住,不 over-permissive
+
+#### Scenario: P-prefix 必须紧跟整数 — `## PX — title` 不命中
+
+- **GIVEN** tasks.md 含 `## PX — title`(P 后非数字)
+- **WHEN** regex 跑
+- **THEN** 不命中(`(P)?(\d+)` 要求 `\d+` 至少 1 位)
+- **AND** parse 安全 — `current_section` 不受污染
+
+#### Scenario: archived `## P9 — Documentation Sync Gate` workflow prerequisite 应 block
+
+- **GIVEN** archived change tasks.md 含 `## P9 — Documentation Sync Gate` 后跟 `- [ ] P9.1 sync gate items closed`(workflow prerequisite stage,doc sync gate 在 finish gate **之前**)
+- **WHEN** `forgeue_finish_gate.py::_check_tasks_unchecked` 跑(`change_dir` 在 archive 路径下)
+- **THEN** regex 命中 group(1)="P" + group(2)=9
+- **AND** archived format threshold ≥10 → 9 < 10 → **NOT** self-stage skip
+- **AND** §P9.1 unchecked 行报 `tasks_unchecked` blocker(workflow prereq 漏报 fail-loud,不静默 skip)
+
+#### Scenario: archived `## P10 — Finish Gate` self-stage 应 skip
+
+- **GIVEN** archived change tasks.md 含 `## P10 — Finish Gate` 后跟 `- [ ] P10.1 finish_gate exit 0`,以及 `## P11 — Archive` 后跟 `- [ ] P11.1 /opsx:archive`,以及 `## P12 — 后置(可选)` 后跟 `- [ ] P12.1 follow-on tracking`
+- **WHEN** `forgeue_finish_gate.py::_check_tasks_unchecked` 跑(archive 路径下)
+- **THEN** regex 命中 group(1)="P" + group(2)=10/11/12
+- **AND** archived format threshold ≥10 → 10/11/12 ≥ 10 → self-stage skip
+- **AND** §P10.1 / §P11.1 / §P12.1 unchecked 行均**不**报 blocker
+
+### Requirement: `forgeue_finish_gate.py` openspec validate archive 路径分流 skip
+
+`tools/forgeue_finish_gate.py` 在 invoke `openspec validate <id> --strict` subprocess 前 SHALL 用 **repo-relative + segment-precise** 方式检测 `change_dir` 是否在 archived 物理布局下(`change_dir.is_relative_to(_common.archive_dir(repo))`);若是则 skip subprocess invocation 并写 rationale 字段到 finish_gate report 标 `openspec_validate_skipped: archive_path_unsupported_by_upstream_cli`,**不**生成 `openspec_validate_failed` blocker。Active change 路径(不在 `_common.archive_dir(repo)` 下)行为 unchanged — 继续 invoke,失败时 BLOCKER。短期 mitigation;长期方案给上游 openspec CLI 提 PR 留 follow-on `enhance-openspec-cli-archived-change-support`。
+
+#### Scenario: active change openspec validate 仍 invoke(backward-compat)
+
+- **GIVEN** active change `openspec/changes/<id>/`(不在 `_common.archive_dir(repo)` subtree)
+- **WHEN** `forgeue_finish_gate.py` 跑
+- **THEN** invoke `openspec validate <id> --strict` subprocess
+- **AND** failure 时仍报 `openspec_validate_failed` BLOCKER(active 路径行为 unchanged)
+
+#### Scenario: archived change openspec validate skip
+
+- **GIVEN** archived change `openspec/changes/archive/2026-MM-DD-<id>/`(在 `_common.archive_dir(repo)` subtree)
+- **WHEN** `forgeue_finish_gate.py` 跑
+- **THEN** **不** invoke `openspec validate` subprocess
+- **AND** finish_gate report 含 rationale `openspec_validate_skipped: archive_path_unsupported_by_upstream_cli`
+- **AND** archived 4 change replay `openspec_validate_failed` blocker 总数从 4 → 0
+
+#### Scenario: archive 路径检测稳定性 — repo-relative `is_relative_to` 而非 substring-of-parts
+
+- **GIVEN** 假想 active change 命名 `add-archive-feature`(`change_dir = <repo>/openspec/changes/add-archive-feature/`,change-id 含 `archive` 子串但路径不在 `_common.archive_dir(repo)` 下)
+- **WHEN** `forgeue_finish_gate.py` 跑
+- **THEN** `change_dir.is_relative_to(_common.archive_dir(repo))` 返回 False(active path 不在 archived 布局下)
+- **AND** 检测 negative,继续 invoke `openspec validate`(active 路径行为 unchanged)
+- **AND** 边界守住 — 不 false-positive 命中
+
+#### Scenario: repo 父目录路径含 `archive` segment 不应 false-positive
+
+- **GIVEN** repo 整体路径含 `archive` segment(如 `tmp_path / "archive" / "repo"` — repo 父目录名是 `archive`),内有 active change `<repo>/openspec/changes/<active-id>/`
+- **WHEN** `forgeue_finish_gate.py` 跑(`change_dir = <repo>/openspec/changes/<active-id>/`)
+- **THEN** `change_dir.is_relative_to(_common.archive_dir(repo))` 返回 False(`_common.archive_dir(repo) = <repo>/openspec/changes/archive/`,active change_dir **不**在此 subtree 下)
+- **AND** **NOT** 走 archive skip 分支
+- **AND** 继续 invoke `openspec validate <id> --strict` subprocess(monkeypatch 守门 count == 1)
+- **AND** 守门高危 finding 修复:`"archive" in Path(change_dir).parts` 旧检测会 false-positive(repo 路径含 `archive` segment 但 active change_dir 不在 archive subtree 下),让 active change 的 openspec validate BLOCKER 静默漏报
+
+#### Scenario: archive-skip test 必须用 monkeypatch 验证 invocation 实际 skipped
+
+- **GIVEN** archived change `change_dir.is_relative_to(_common.archive_dir(repo))` True + env 无 openspec CLI(`shutil.which("openspec")` 返回 None)
+- **WHEN** test 用 `monkeypatch.setattr(fg, "run_openspec_validate", _spy)` + 跑 `fg.build_report(...)`,_spy 计数 invocation
+- **THEN** `_spy invocation count == 0`(archive 路径分流 skip 在 `run_openspec_validate` 之前)
+- **AND** report blockers 不含任何 validate-related blocker type:`openspec_validate_failed` ✗ + `openspec_cli_missing` ✗ + `openspec_validate_error` ✗
+- **AND** report warnings 含 `openspec_validate_skipped: archive_path_unsupported_by_upstream_cli` rationale(audit trail)
+- **AND** 守门 medium finding 修复:仅 assert `openspec_validate_failed` 不在不足以证明 skip — env 无 CLI 时 blocker type 是 `openspec_cli_missing` escapes assertion → false-pass
+
+### Requirement: Centralized follow-on backlog registry under `openspec/backlog/`
+
+The system SHALL maintain a centralized follow-on backlog registry at `openspec/backlog/active.md` (active items) and `openspec/backlog/archived.md` (cancelled / completed items). The active registry SHALL collect archive-tracking class follow-ons (workflow-protocol class + capability-boundary class) and pointer entries to `docs/requirements/SRS.md` §7.3 TBD entries (requirements-tbd-pointer class). The active registry SHALL NOT duplicate full TBD content from SRS §7.3 (dual-source cross-link, not single-source). Each registry entry SHALL carry the following fields: `id` (kebab-case), `source` (archived change tasks.md anchor or SRS §7.3 TBD-XXX pointer), `description`, `trigger` (trigger condition for promotion to a real change), `category` (one of `workflow-protocol` / `capability-boundary` / `requirements-tbd-pointer`), `retire-impact-status` (one of `unaffected` / `scope-narrowed` / `partial-superseded`), `priority` (one of `high` / `medium` / `low` / empty), `status` (active registry entries SHALL always carry `status: active`).
+
+#### Scenario: registry file exists with schema header and 22 backfilled active entries
+
+- **GIVEN** the change `centralize-followon-backlog-registry` has shipped
+- **WHEN** a reader opens `openspec/backlog/active.md`
+- **THEN** the file SHALL contain a schema header block describing the 8 fields, followed by exactly 23 H3 entries: 8 workflow-protocol class + 9 requirements-tbd-pointer class + 6 capability-boundary class
+- **AND** each entry SHALL carry all 8 schema fields (priority MAY be empty); `status` SHALL be exactly `active` for every entry in the active registry
+- **AND** SRS §7.3 TBD table SHALL carry a cross-link header note pointing to `openspec/backlog/active.md` for workflow-protocol + capability-boundary class follow-ons
+
+#### Scenario: archived registry file is initialized with 3 first-batch tombstone entries (append-only protocol)
+
+- **GIVEN** the change `centralize-followon-backlog-registry` has shipped
+- **WHEN** a reader opens `openspec/backlog/archived.md`
+- **THEN** the file SHALL exist with a schema header documenting that archived entries are append-only and SHALL NOT be removed
+- **AND** the first three archived entries SHALL be:
+  - `enhance-workflow-automation-v2-fence-hardening` with `cancellation_reason: cancelled-superseded by enhance-workflow-automation-ledger-binding`, `archived_at_commit: 8a42c71...`, `archived_in_change: enhance-workflow-automation-ledger-binding`
+  - `fix-finish-gate-section-regex-for-p-prefixed` with `cancellation_reason: cancelled-completed: 88a8aec`, `archived_at_commit: 88a8aec...`, `archived_in_change: fix-finish-gate-archived-replay-compat`
+  - `fix-openspec-validate-archived-change-support` with `cancellation_reason: cancelled-completed: 88a8aec`, `archived_at_commit: 88a8aec...`, `archived_in_change: fix-finish-gate-archived-replay-compat`
+
+### Requirement: `_check_followon_continuity` blocker fence enforces inheritance or cancel declaration with active.md self-truth diff and cancel ref strict validation
+
+The system SHALL provide a finish-gate fence `_check_followon_continuity` in `tools/forgeue_finish_gate.py` that runs during the `/forgeue:change-finish` Preflight stage. The fence SHALL combine two complementary scans (round 1 codex F1 inline writeback): (1) **active.md self-diff (primary source)** — `git diff <last_archive_commit> HEAD -- openspec/backlog/active.md` to detect added / removed / status_changed entries, requiring every removed or status-changed-to-cancelled entry to have a matching `openspec/backlog/archived.md` tombstone row; (2) **archived tasks.md (fallback source)** — scan the latest archived change's `tasks.md` for unchecked items in any section matching `## P<N>` or `## P<N> — ` or `## Phase <N>` heading patterns containing the substring `(follow-on tracking)`. The fence SHALL require the current change's `tasks.md` to declare each scanned follow-on id under the same naming pattern with one of four resolutions: (a) `inherited` (checkbox checked plus literal text "(沿前一 change 继承)" or English equivalent), (b) `cancelled-superseded` with literal `[cancelled-superseded by <new-change-id>]` tag, (c) `cancelled-not-applicable` with literal `[cancelled-not-applicable: <reason>]` tag, or (d) `cancelled-completed` with literal `[cancelled-completed: <commit-ref>]` tag. Each cancel tag SHALL pass strict ref validation (round 1 codex F2 inline writeback): `<new-change-id>` MUST resolve to an existing path under `openspec/changes/<id>` or `openspec/changes/archive/*-<id>`; `<reason>` MUST start with one of five enum values `retire-superseded` / `out-of-scope` / `scope-changed` / `obsolete` / `infeasible` (free-form supplementary text after the enum prefix is allowed); `<commit-ref>` MUST satisfy `git rev-parse --verify` (existence only; commit-touches-related-files validation is intentionally out of scope, deferred to follow-on `tighten-cancel-completed-commit-touches-validation`). Missing declarations or failed strict validation SHALL cause fence BLOCKER (exit code 2) listing each unresolved follow-on id and validation failure reason; the implementing agent MUST add explicit inheritance or cancel declarations before retrying archive. The fence SHALL also enforce same-archive-cycle atomic migration: any `cancelled-*` declaration in the current change's tasks.md MUST be reflected by an active.md entry removal AND a corresponding archived.md tombstone in the same archive commit (no deferred-to-next-change migration).
+
+#### Scenario: archive is blocked when prior change unchecked follow-ons are not declared
+
+- **GIVEN** the latest archived change at `openspec/changes/archive/<date>-<prior-id>/` carries `tasks.md` with `## P12 (follow-on tracking)` containing 3 unchecked items `- [ ] <followon-a>` / `- [ ] <followon-b>` / `- [ ] <followon-c>`
+- **AND** the current active change at `openspec/changes/<current-id>/` carries `tasks.md` declaring only `- [x] P12.1: <followon-a>` (no mention of `<followon-b>` or `<followon-c>`)
+- **WHEN** the implementing agent runs `python tools/forgeue_finish_gate.py --change <current-id> --json` before invoking `/opsx:archive`
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: missing declarations for <followon-b>, <followon-c>` and exits with code 2, preventing archive
+- **AND** the implementing agent MUST add explicit `inherited` or `cancelled-*` declarations for both missing ids before retrying
+
+#### Scenario: cancelled-superseded declaration with valid supersedes ref passes fence
+
+- **GIVEN** the prior archived change carries `- [ ] P12.X: <followon-X>` in its `## P12 (follow-on tracking)` section
+- **AND** the current change `tasks.md` carries `- [x] P12.X (follow-on tracking): <followon-X> [cancelled-superseded by <new-change-id>] — <reason>`
+- **AND** `openspec/changes/<new-change-id>/` exists OR `openspec/changes/archive/*-<new-change-id>/` matches at least one path
+- **WHEN** `_check_followon_continuity` parses the current change's tasks.md and validates the supersedes ref
+- **THEN** the fence accepts the entry as resolved and proceeds to the next gate
+- **AND** the registry status of `<followon-X>` SHALL be updated to `cancelled-superseded` and the entry MOVED from `active.md` to `archived.md` (with tombstone fields `archived_at_commit`, `archived_in_change`, `cancellation_reason`) within the same archive commit
+
+#### Scenario: cancelled-superseded with non-existent change-id fails fence (strict ref validation)
+
+- **GIVEN** the current change `tasks.md` carries `- [x] P12.X (follow-on tracking): <followon-X> [cancelled-superseded by fictional-change-id-xyz] — explanation text`
+- **AND** neither `openspec/changes/fictional-change-id-xyz/` nor `openspec/changes/archive/*-fictional-change-id-xyz/` exist
+- **WHEN** `_check_followon_continuity` validates the supersedes ref via stdlib `Path.exists()` and `glob`
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: cancel_ref_not_found_<followon-X>_superseded_by_fictional-change-id-xyz` and exits with code 2
+
+#### Scenario: cancelled-not-applicable declaration without reason text fails fence
+
+- **GIVEN** the current change `tasks.md` carries `- [x] P12.X (follow-on tracking): <followon-X> [cancelled-not-applicable]` (literal tag without `: <reason>` suffix)
+- **WHEN** `_check_followon_continuity` parses the entry
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: cancelled-not-applicable for <followon-X> missing reason text after colon` and exits with code 2
+
+#### Scenario: cancelled-not-applicable with reason not starting with enum value fails fence (round 1 codex F2 strict reason enum)
+
+- **GIVEN** the current change `tasks.md` carries `- [x] P12.X (follow-on tracking): <followon-X> [cancelled-not-applicable: 我懒]` (free-form reason, no enum prefix)
+- **WHEN** `_check_followon_continuity` validates the reason against the 5-value enum (`retire-superseded` / `out-of-scope` / `scope-changed` / `obsolete` / `infeasible`)
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: cancel_reason_not_in_enum_<followon-X>_got_我懒` and exits with code 2
+- **AND** the implementing agent MUST replace the reason with a valid enum prefix, e.g. `[cancelled-not-applicable: out-of-scope (本 change 不修无关 bug)]`
+
+#### Scenario: cancelled-completed with invalid commit ref fails fence
+
+- **GIVEN** the current change `tasks.md` carries `- [x] P12.X (follow-on tracking): <followon-X> [cancelled-completed: 0000000000000000000000000000000000000000]` (commit ref does not exist in git history)
+- **WHEN** `_check_followon_continuity` runs `subprocess.run(["git", "rev-parse", "--verify", "0000000000000000000000000000000000000000"])`
+- **THEN** the subprocess exits non-zero, the fence emits `[FAIL] _check_followon_continuity: cancel_commit_not_found_<followon-X>_got_0000000000000000000000000000000000000000` and exits with code 2
+
+#### Scenario: active.md entry deletion without archived.md tombstone fails fence (round 1 codex F1 self-truth)
+
+- **GIVEN** the prior archive commit `<prior_sha>` had `openspec/backlog/active.md` containing entry `### \`<followon-Y>\``
+- **AND** the current change has hand-edited `active.md` to remove that entry without appending a corresponding row to `archived.md`
+- **WHEN** `_check_followon_continuity` runs `git diff <prior_sha> HEAD -- openspec/backlog/active.md` and detects the removal, then searches `archived.md` for `<followon-Y>` entry
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_missing_for_<followon-Y> (active.md entry removed but archived.md has no tombstone row)` and exits with code 2
+
+#### Scenario: active.md self-diff baseline anchors to last archive commit not active.md path commit (round 2 codex F1-r2 fix)
+
+- **GIVEN** the latest archived change is at `openspec/changes/archive/<YYYY-MM-DD>-<prior-id>/` with archive commit `<prior_archive_sha>`
+- **AND** during the current change, an early commit `<early_change_commit>` has REMOVED entry `### \`<followon-Z>\`` from `active.md` AND failed to write a tombstone to `archived.md`
+- **AND** no later commits in the current change have modified `active.md`
+- **WHEN** `_check_followon_continuity` resolves the baseline by `_find_latest_archived_change()` + `git log -1 --format=%H -- openspec/changes/archive/<YYYY-MM-DD>-<prior-id>/` (returning `<prior_archive_sha>`), NOT by `git log -1 -- openspec/backlog/active.md` (which would incorrectly return `<early_change_commit>` and miss the removal)
+- **THEN** the fence detects that `<followon-Z>` was present in `git show <prior_archive_sha>:openspec/backlog/active.md` but absent in `HEAD:openspec/backlog/active.md`, finds no tombstone for `<followon-Z>` in `archived.md`, and emits `[FAIL] _check_followon_continuity: tombstone_missing_for_<followon-Z>` exiting with code 2
+
+#### Scenario: tombstone with mismatched archived_in_change fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** the current active change is `<current-id>`
+- **AND** `active.md` self-diff detected that entry `<followon-W>` was removed
+- **AND** `archived.md` has a corresponding tombstone block but `archived_in_change: some-other-change-id` (not `<current-id>`)
+- **WHEN** `_check_followon_continuity` parses the tombstone fields and validates `archived_in_change` against the current change context
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_archived_in_change_mismatch_<followon-W> (got: some-other-change-id, expected: <current-id>)` and exits with code 2
+
+#### Scenario: tombstone with empty or invalid registry_entry_snapshot fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** the current change has removed `### \`<followon-V>\`` from `active.md` and appended a tombstone to `archived.md` with `registry_entry_snapshot: {}` (empty object) OR malformed JSON OR missing one of the 8 schema fields
+- **WHEN** `_check_followon_continuity` parses the tombstone's `registry_entry_snapshot` field as JSON
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_snapshot_invalid_<followon-V> (reason: empty object | malformed JSON | missing field <name>)` and exits with code 2
+
+#### Scenario: tombstone snapshot field values disagree with baseline active.md entry fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** baseline `active.md` (at last archive commit) had entry `<followon-U>` with `category: workflow-protocol` and `priority: high`
+- **AND** current change removed the entry and appended tombstone with `registry_entry_snapshot: {"id":"<followon-U>","category":"capability-boundary","priority":null,...}` (snapshot disagrees with baseline)
+- **WHEN** `_check_followon_continuity` cross-references snapshot fields against baseline active.md entry
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_snapshot_mismatch_<followon-U> (snapshot.category=capability-boundary but baseline.category=workflow-protocol)` and exits with code 2
+
+#### Scenario: tombstone cancellation_reason disagrees with tasks.md cancel tag fails fence (round 2 codex F2-r2 fix)
+
+- **GIVEN** the current change `tasks.md` declares `- [x] P12.X (follow-on tracking): <followon-T> [cancelled-superseded by some-new-change]`
+- **AND** the corresponding `archived.md` tombstone has `cancellation_reason: cancelled-not-applicable: out-of-scope (...)`
+- **WHEN** `_check_followon_continuity` cross-references tombstone `cancellation_reason` against tasks.md cancel tag
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: tombstone_cancellation_reason_mismatch_<followon-T> (tombstone says cancelled-not-applicable but tasks.md says cancelled-superseded)` and exits with code 2
+
+#### Scenario: cancelled-completed with commit not touching follow-on source fails fence (round 2 codex F3-r2 fix)
+
+- **GIVEN** the current change `tasks.md` declares `- [x] P12.X (follow-on tracking): <followon-S> [cancelled-completed: deadbee1234567890]`
+- **AND** the follow-on entry in active.md has `source: archived/2026-04-22-foo/tasks.md` and no `contract_refs`
+- **AND** `git diff-tree --no-commit-id --name-only -r deadbee1234567890` returns `["docs/unrelated/foo.md"]` (does NOT touch `archived/2026-04-22-foo/tasks.md`)
+- **WHEN** `_check_followon_continuity` validates the cancelled-completed tag (Step 3.4 commit-touches check)
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: cancel_commit_does_not_touch_followon_or_provide_evidence_<followon-S>` and exits with code 2
+
+#### Scenario: cancelled-completed with evidence escape hatch passes fence (round 2 codex F3-r2 fix)
+
+- **GIVEN** the current change `tasks.md` declares `- [x] P12.X (follow-on tracking): <followon-R> [cancelled-completed: deadbee1234567890 evidence: notes/cross-cutting-rationale.md]`
+- **AND** `git diff-tree` shows commit does NOT touch the follow-on source / contract_refs (e.g. cross-cutting refactor)
+- **AND** `Path("openspec/changes/<current-id>/notes/cross-cutting-rationale.md").exists()` returns True
+- **WHEN** `_check_followon_continuity` falls through to Step 3.5 (evidence escape hatch)
+- **THEN** the fence accepts the entry as resolved and proceeds to the next gate
+
+### Requirement: `_check_srs_registry_consistency` blocker fence enforces SRS §7.3 ↔ active.md set equivalence
+
+The system SHALL provide a finish-gate fence `_check_srs_registry_consistency` in `tools/forgeue_finish_gate.py` that runs during the `/forgeue:change-finish` Preflight stage alongside `_check_followon_continuity` (round 1 codex F3 inline writeback). The fence SHALL parse `docs/requirements/SRS.md` §7.3 TBD table, extract every TBD-XXX row whose status field is one of `❌` / `⚠️ baseline` / `⏳` (i.e. active TBD), and compare the set against `openspec/backlog/active.md` entries with `category: requirements-tbd-pointer`. The two sets MUST be equal (set equality, not subset). On mismatch, the fence SHALL emit `[FAIL] _check_srs_registry_consistency: srs_registry_set_mismatch (added: ..., removed: ...)` and exit with code 2. Additionally, when SRS §7.3 status changes from active to ✅ (complete), the corresponding `requirements-tbd-pointer` entry in active.md MUST be migrated to archived.md as `cancelled-completed` within the same archive commit; otherwise the fence SHALL emit `[FAIL] _check_srs_registry_consistency: srs_completed_tbd_still_active_in_registry (TBD-XXX)` and exit with code 2.
+
+#### Scenario: SRS adds new TBD without registry pointer fails fence
+
+- **GIVEN** `docs/requirements/SRS.md` §7.3 has just added a new row `TBD-014 | <new-tbd-description> | <trigger>` with status `⏳` (active)
+- **AND** `openspec/backlog/active.md` has no `requirements-tbd-pointer` entry for `TBD-014`
+- **WHEN** `_check_srs_registry_consistency` extracts the active TBD set from SRS §7.3 and compares against active.md `requirements-tbd-pointer` entries
+- **THEN** the fence emits `[FAIL] _check_srs_registry_consistency: srs_registry_set_mismatch (added: TBD-014, removed: [])` and exits with code 2
+
+#### Scenario: SRS TBD completes (status → ✅) but registry pointer remains active fails fence
+
+- **GIVEN** `docs/requirements/SRS.md` §7.3 has just changed `TBD-001` status from `❌` to `✅`
+- **AND** `openspec/backlog/active.md` still carries `requirements-tbd-pointer` entry for `TBD-001` with `status: active`
+- **WHEN** `_check_srs_registry_consistency` cross-references SRS status fields against active.md entry status
+- **THEN** the fence emits `[FAIL] _check_srs_registry_consistency: srs_completed_tbd_still_active_in_registry (TBD-001)` and exits with code 2
+
+### Requirement: `archived.md` tombstone follows append-only schema with 4 fields per entry
+
+The `openspec/backlog/archived.md` file SHALL use an append-only schema where each entry consists of an H3 heading `### \`<followon-id>\`` followed by 4 mandatory fields: `archived_at_commit` (40-character lower-case hex git sha), `archived_in_change` (the change-id whose archive commit caused this migration), `cancellation_reason` (one of: `cancelled-superseded by <ref>` / `cancelled-not-applicable: <enum>+free-form` / `cancelled-completed: <commit-ref>` / `inherited-then-completed`), and `registry_entry_snapshot` (the original 8-field active.md entry copied as a single JSON line for trace reconstruction). The file SHALL be append-only — no entry SHALL be removed, and no field of an existing entry SHALL be modified. The system SHALL detect violations via `git diff <commit> -- openspec/backlog/archived.md` per-line analysis: any deletion line touching an existing entry block SHALL cause fence BLOCKER `archived_md_history_lost`; any modification line within an existing entry's 4 fields SHALL cause fence BLOCKER `archived_md_immutable_field_modified`. Only new entry blocks appended after the last existing entry SHALL be accepted.
+
+#### Scenario: tombstone schema with all 4 fields passes parse
+
+- **GIVEN** `openspec/backlog/archived.md` contains an entry block:
+  ```markdown
+  ### `<followon-Z>`
+
+  - **archived_at_commit**: 8237369e3f4a2b6c1d5e8f0a7b9c2d4e6f8a0b2c
+  - **archived_in_change**: centralize-followon-backlog-registry
+  - **cancellation_reason**: cancelled-superseded by retire-parallel-and-worktree-fully
+  - **registry_entry_snapshot**: {"id":"<followon-Z>","source":"...","description":"...","trigger":"...","category":"workflow-protocol","retire-impact-status":"unaffected","priority":null,"status":"cancelled-superseded"}
+  ```
+- **WHEN** `_check_followon_continuity` parses the tombstone block looking up `<followon-Z>`
+- **THEN** all 4 fields are recognized and the tombstone is accepted as valid
+
+#### Scenario: deletion of an existing tombstone entry fails fence (append-only enforcement)
+
+- **GIVEN** `openspec/backlog/archived.md` previously contained an entry for `<followon-W>`
+- **AND** the current change's working-tree version has removed that entry block
+- **WHEN** `_check_followon_continuity` runs `git diff <prior_sha> HEAD -- openspec/backlog/archived.md` and detects deletion lines spanning the `<followon-W>` block
+- **THEN** the fence emits `[FAIL] _check_followon_continuity: archived_md_history_lost (entry: <followon-W>)` and exits with code 2
+
+### Requirement: Evidence frontmatter conditional field `followon_continuity` summarizes archive-stage backlog inheritance
+
+The system SHALL extend the 12-key audit frontmatter for archive-stage evidence files (`verification/finish_gate_report.md` / `review/superpowers_review.md` final / `notes/retrospective.md`) with a conditional 13th key `followon_continuity` (a YAML mapping). The mapping SHALL contain four optional sub-fields: `inherited` (list of follow-on ids inherited unchanged), `cancelled_superseded` (list of `{id, supersedes}` pairs), `cancelled_not_applicable` (list of `{id, reason}` pairs), `cancelled_completed` (list of `{id, commit}` pairs). The field SHALL be REQUIRED in archive-stage evidence (with at least one of the four sub-lists populated, even if all empty for a no-prior-follow-on scenario, in which case the field is rendered as `followon_continuity: {inherited: [], cancelled_superseded: [], cancelled_not_applicable: [], cancelled_completed: []}`). The field MAY be empty / omitted in non-archive-stage evidence.
+
+#### Scenario: archive-stage finish_gate_report includes followon_continuity field
+
+- **GIVEN** the change `<current-id>` is archive-ready and the implementing agent generates `verification/finish_gate_report.md`
+- **WHEN** the agent writes the evidence file
+- **THEN** the frontmatter SHALL include a `followon_continuity` mapping with four sub-fields covering all follow-ons inherited or cancelled in this change
+- **AND** the count of ids across `inherited` + `cancelled_*` sub-lists SHALL match the count of `## P<N> (follow-on tracking)` entries in `tasks.md`
+
+#### Scenario: non-archive-stage evidence omits followon_continuity without penalty
+
+- **GIVEN** the change is at S5 verify stage and the implementing agent generates `verification/verify_report.md`
+- **WHEN** `forgeue_finish_gate.py` parses the evidence frontmatter
+- **THEN** the absence of `followon_continuity` SHALL NOT trigger a fence violation (the field is conditional on archive-stage only)
+
+### Requirement: `/forgeue:change-status` command Output Format includes Followon Backlog section
+
+The `/forgeue:change-status` command Output Format SHALL include a `### Followon Backlog` section that lists, for the active change: (a) inherited count and ids; (b) cancelled count broken down by `cancelled-superseded` / `cancelled-not-applicable` / `cancelled-completed`; (c) the diff between the change's declared follow-ons and the entries in `openspec/backlog/active.md` (newly added entries to registry, entries pending registry sync). The section SHALL be sourced from `python tools/forgeue_change_state.py --change <id> --list-followon-inherited --list-followon-cancelled --json`.
+
+#### Scenario: change-status command output shows Followon Backlog section after change implementation
+
+- **GIVEN** the active change has declared 3 inherited follow-ons and 1 cancelled-superseded follow-on in `tasks.md`
+- **WHEN** the user runs `/forgeue:change-status <id>`
+- **THEN** the output SHALL include a `### Followon Backlog` section with bullets `inherited: 3` (listing 3 ids) and `cancelled-superseded: 1` (listing 1 id with supersedes ref)
+- **AND** the section SHALL note any new follow-on entries pending sync to `openspec/backlog/active.md`
+
+### Requirement: Capability boundary follow-on entries cover the 6 multimodal LLD-inline annotations
+
+The active registry SHALL contain capability-boundary class entries for each LLD-inline `留 follow-on <name>` annotation that has not been promoted to a real change. The 6 entries SHALL be: `audio-metadata-parser` (audio `duration_seconds` / `sample_rate` parser), `video-metadata-parser` (video 5-tuple `duration_seconds` / `frame_count` / `width` / `height` / `fps` parser), `comfy-video-webm-adoption` (webm format support post mp4-only sweep), `comfy-video-v2v-adoption` (video-to-video path beyond text-to-video), `comfy-video-image-sequence-adoption` (image_sequence cinematic high-quality path), `video-bmff-largesize-support` (BMFF `box_size == 1` largesize box). Each entry SHALL reference the LLD section or CLAUDE.md ComfyUI-section line containing the inline annotation as `source`.
+
+#### Scenario: each LLD inline annotation has a corresponding registry entry
+
+- **GIVEN** `docs/design/LLD.md` contains 6 inline annotations of the form `留 follow-on '<name>'` for multimodal capability boundaries
+- **WHEN** a reader greps `openspec/backlog/active.md` for category `capability-boundary`
+- **THEN** the reader finds 6 entries matching the 6 annotation ids
+- **AND** each entry's `source` field references the LLD section or CLAUDE.md line where the annotation appears
 
 ## Invariants
 

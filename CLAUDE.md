@@ -222,6 +222,15 @@ Claude 默认拍板 + 自动 invoke `/codex:review` 二次验证。**以下 6 �
 
 每条 implementation evidence frontmatter 必填 `autonomy_decision` 字段(`claude_autonomous` / `claude_codex_concurred` / `user_required` / `user_overrode`);`concurred` 必配 `codex_review_ref`。`/codex:review` 默认 background 分发(大 scope);adversarial 永远 background。完整协议见 `docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C。
 
+### Follow-on Backlog Registry(自 `centralize-followon-backlog-registry` 启用,2026-05-07)
+
+集中 follow-on 记录位置:[`openspec/backlog/active.md`](openspec/backlog/active.md)(active entries)+ [`openspec/backlog/archived.md`](openspec/backlog/archived.md)(append-only tombstones)+ [`openspec/backlog/README.md`](openspec/backlog/README.md)(协议 / schema / cancel 协议)。
+
+- **双源**:registry 收 archive-tracking(workflow-protocol + capability-boundary)+ pointer at SRS §7.3 active TBD;`docs/requirements/SRS.md` §7.3 仍是需求层 backlog。两边 cross-link 不重复。
+- **Cancel 协议 4 类**(沿 `tools/forgeue_finish_gate.py::_check_followon_continuity` strict validation):`inherited`(沿前一 change 继承)/ `cancelled-superseded by <change-id>` / `cancelled-not-applicable: <enum-prefix>`(`retire-superseded`/`out-of-scope`/`scope-changed`/`obsolete`/`infeasible` 5 类 enum)/ `cancelled-completed: <commit-ref>`(commit 必须触达 follow-on source/contract_refs OR 配 `evidence: <path>` escape hatch)
+- **Fence enforcement**:archive 阶段 `_check_followon_continuity` 守门 active.md self-diff + archived tasks.md 兜底 + cancel ref strict + tombstone 5-point consistency + archived.md append-only;`_check_srs_registry_consistency` 守门 SRS↔registry set 等价 + 状态变化同步;漏继承 / cancel ref 失效 / tombstone 不一致 / SRS-registry 漂移 → BLOCKER。
+- **查询**:`/forgeue:change-status <id>` 输出 `### Followon Backlog` section(inherited 计数 + 3-class cancelled 分类)。
+
 ### Documentation Sync Gate(摘要)
 
 每个非平凡 change 在 archive 或 merge 前必须执行 Documentation Sync Gate(完整规则见 `docs/ai_workflow/README.md` §4)。
@@ -236,42 +245,41 @@ Claude 默认拍板 + 自动 invoke `/codex:review` 二次验证。**以下 6 �
 
 中心化融合 OpenSpec(契约锚点)× Superpowers(evidence 生成器)× codex-plugin-cc(stage cross-review hook)。OpenSpec change artifact 是唯一规范源,evidence 服务于契约,实施暴露的契约漏洞必须回写到 design / proposal / tasks。
 
-**10 个 Claude slash 命令**(对应 S0-S9 状态机各 stage,通过 `/forgeue:change-*` 触发;自 `adopt-subagent-driven-development` change 起,`change-apply` 拆为 `change-apply-subagent` + `change-apply-direct`;自 `enhance-workflow-automation-runtime-enforcement` change 起加 `change-apply-parallel`,共 10):
+**9 个 Claude slash 命令**(对应 S0-S9 状态机各 stage,通过 `/forgeue:change-*` 触发;自 `adopt-subagent-driven-development` change 起,`change-apply` 拆为 `change-apply-subagent` + `change-apply-direct`;**自 `retire-parallel-and-worktree-fully` change 起,2026-05-06,`change-apply-parallel` 整 retire**,命令矩阵 10 → 9):
 
 - `/forgeue:change-status` — 列 active changes / state / evidence(只读)
 - `/forgeue:change-plan` — S2→S3:codex `/codex:adversarial-review` design hook + Superpowers `writing-plans` + 锚点检测
-- `/forgeue:change-apply-subagent` — **default sequential for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill;每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`)+ `subagent_budget.log`;REQUIRED `superpowers:using-git-worktrees`(isolated worktree)
-- `/forgeue:change-apply-parallel` — **并行 dispatch for S3→S4-S5**(自 `enhance-workflow-automation-runtime-enforcement` change 起);invoke Superpowers `dispatching-parallel-agents` SKILL(借用 pattern,debugging-focused → implementation 借用);controller 显式判定 task 独立后路由(`task_independence_assertion: true` + `task_files_disjoint` 字段;命令前自动 verify file overlap);REQUIRED `superpowers:using-git-worktrees`(isolated worktree)
-- `/forgeue:change-apply-direct` — **fallback for S3→S4-S5**;沿原 `executing-plans` / `test-driven-development`;落 `tdd_log` / `debug_log`;不派 subagent;**沿 D-DirectWorktreeRefinement(2026-05-05 user 拍板)不强制 isolated worktree**(direct 是 < 3 micro-task 轻量 fallback,worktree 创建 ~10-20s 开销不划算);轻量 change(< 3 micro-task)/ budget 紧张时使用
+- `/forgeue:change-apply-subagent` — **default sequential for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill;每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`)+ `subagent_budget.log`;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke
+- `/forgeue:change-apply-direct` — **fallback for S3→S4-S5**;沿原 `executing-plans` / `test-driven-development`;落 `tdd_log` / `debug_log`;不派 subagent;主 worktree 实施(沿 D-DirectWorktreeRefinement);轻量 change(< 3 micro-task)/ budget 紧张时使用
 - `/forgeue:change-debug` — 显式调 Superpowers `systematic-debugging`;debug_log 增量,暴露异常缺口必回写
 - `/forgeue:change-verify` — Level 0 / 1 / 2 + codex `/codex:review --base main` 验证 hook
 - `/forgeue:change-review` — Superpowers `requesting-code-review` finalize + codex `/codex:adversarial-review` mixed scope + blocker 回写
 - `/forgeue:change-doc-sync` — Documentation Sync Gate(10 文档静态扫 + §4.3 提示词 + 应用 [REQUIRED])
 - `/forgeue:change-finish` — Finish Gate(中心化最后防线;12-key frontmatter + writeback 真实性 + cross-check `disputed_open == 0`)
 
-**9 个 stdlib-only 工具**(沿 design.md §5 Tool Design;自 `adopt-subagent-driven-development` change 起新增 `forgeue_subagent_budget.py`;自 `enhance-workflow-automation-runtime-enforcement` change 起新增 `forgeue_skill_cascade_check.py`;自 `enhance-workflow-automation-executable-enforcement` change 起新增 `forgeue_preflight_wrapper.py`(W1)+ `forgeue_dispatch_ledger.py`(W3)):
+**8 个 stdlib-only 工具**(沿 design.md §5 Tool Design;自 `adopt-subagent-driven-development` change 起新增 `forgeue_subagent_budget.py`;自 `enhance-workflow-automation-runtime-enforcement` change 起新增 `forgeue_skill_cascade_check.py`;2026-05-06 micro-bugfix 新增 `forgeue_enum_cross_ref_check.py`;**2026-05-06 `retire-parallel-and-worktree-fully` retire `forgeue_preflight_wrapper.py` + `forgeue_dispatch_ledger.py` + `_forgeue_ledger_crypto.py` 3 工具,11+1 → 8**):
 
 - `tools/forgeue_env_detect.py` — 5 层 env 检测 + plugin 可用性启发式
 - `tools/forgeue_change_state.py` — state 推断 + `--writeback-check` 4 类 named DRIFT 检测(回写检测主力;DRIFT detector 扩 4 类 subagent evidence_type)
 - `tools/forgeue_verify.py` — Level 0/1/2 编排,产 `verification/verify_report.md`(12-key audit frontmatter)
 - `tools/forgeue_doc_sync_check.py` — 10 文档静态扫,标 [REQUIRED]/[OPTIONAL]/[SKIP]/[DRIFT]
-- `tools/forgeue_finish_gate.py` — 中心化最后防线(evidence 完整性 + frontmatter 全检 + cross-check + writeback 真实性 + tasks unchecked + `openspec validate --strict`;dispatch mode 从 evidence frontmatter `triggered_by_command` 字段判定;自 enhance-workflow-automation-runtime-enforcement change 起 + 4 runtime fence:`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity` / `_check_worktree_path`,protocol gate `runtime_enforcement_protocol_version: v1`)
+- `tools/forgeue_finish_gate.py` — 中心化最后防线(evidence 完整性 + frontmatter 全检 + cross-check + writeback 真实性 + tasks unchecked + `openspec validate --strict`;dispatch mode 从 evidence frontmatter `triggered_by_command` 字段判定;**自 retire-parallel-and-worktree-fully P2 后 v1 advisory 3 fence**:`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity`,protocol gate `runtime_enforcement_protocol_version: v1`;原 `_check_worktree_path` + 6 v2/v3 fence 全 retire)
 - `tools/forgeue_subagent_budget.py` — ADR-009 token-budget tracker(informational + soft WARNING;`exit 0` 始终,**不**做 hard gate;与 ADR-007 vendor API 双扣边界**根本不同**)
 - `tools/forgeue_skill_cascade_check.py` — D-SkillCascadeCheck:静态扫 SKILL.md `## Integration` 段验证 dependency 全 invoke;8 root probe 链(CLI flag / env var / repo-local / Anthropic plugin cache 最新 version / 其他 plugin / Codex / `${CODEX_HOME}` / `.agents/skills`);命令模板 Preflight Skill Cascade section 调用
-- `tools/forgeue_preflight_wrapper.py`(W1;自 `enhance-workflow-automation-executable-enforcement` change 起)— D-W1-ReceiptSchema:wrapper 自管 isolated worktree(`git worktree add/list --porcelain` subprocess + cwd realpath 校验,不依赖 SKILL invoke);写 13-field receipt JSON(含 `is_isolated_worktree: true` + `worktree_action ∈ {created, reused}`)到 `<change>/preflight_receipts/<receipt_id>.json`;exit codes 0/5/6/7;`/forgeue:change-apply-{subagent,parallel}` Preflight Worktree section 自动调用
-- `tools/forgeue_dispatch_ledger.py`(W3;自 `enhance-workflow-automation-executable-enforcement` change 起)— D-W3-LedgerFormat:JSONL append-only ledger(`<change>/dispatch_ledger.jsonl`)+ `append`/`verify` 子命令 + 7 字段 + 6 VALID_ROLES enum;命令模板 post-dispatch capture 真实 agent_id(关闭 round 1 synthetic UUID 漏洞)
+- `tools/forgeue_enum_cross_ref_check.py`(2026-05-06 micro-bugfix)— canonical frozenset ↔ docs `<name> ∈ {…}` 描述 set-equality diff;AST 扫 `tools/*.py` 抽 `_VALID_*` / `*_VALUES` / `*_TYPES` / `*_COMMANDS` 字面声明,与 `CLAUDE.md` + `docs/ai_workflow/forgeue_integrated_ai_workflow.md` 中 3 个 mapped enum(`autonomy_decision` / `triggered_by_command` / `task_granularity`)做 diff;exit 0/2/1;`/forgeue:change-doc-sync` Step 4b 自动调用,DRIFT 阻断 S8。`--show-all` 诊断时显示未映射 advisory(原 5 mapped enum 中 `worktree_consent_outcome` + `worktree_mode` 在 retire-parallel-and-worktree-fully 后 retire,3 mapped)
 
 **12-key audit frontmatter**:每份 formal evidence(`execution/` / `review/` / `verification/`)必含 8 个 always-required key(`change_id` / `stage` / `evidence_type` / `contract_refs` / `aligned_with_contract` / `detected_env` / `triggered_by` / `codex_plugin_available`)+ 4 个 conditional key(`drift_decision` / `writeback_commit` / `drift_reason` / `reasoning_notes_anchor`,在 `aligned_with_contract: false` 时必填);`notes/` helper 子目录不强制。
 
-**Runtime enforcement frontmatter 字段**(v1 自 `enhance-workflow-automation-runtime-enforcement` change 起;v2 自 `enhance-workflow-automation-executable-enforcement` change 起):
+**v1 advisory runtime fence frontmatter 字段**(沿 ADR-011 baseline + retire-parallel-and-worktree-fully P2 简化后):`runtime_enforcement_protocol_version: v1` 标记触发 3 advisory fence(`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity`);相关字段:`skill_cascade_audit` dict / `subagent_continuity` dict / `task_granularity` ∈ {phase, per-file, sub-task} / `triggered_by_command: change-apply-subagent`(仅 subagent 触发 4 类 per-task evidence REQUIRED check)。
 
-**v1 字段**(沿 ADR-011):`runtime_enforcement_protocol_version: v1` 标记触发 4 fence;`worktree_path`(D-WorktreeEnforce + D-DirectWorktreeRefinement:仅 subagent + parallel 强制)/ `skill_cascade_audit` dict / `subagent_continuity` dict / `task_granularity` ∈ {phase, per-file, sub-task} / `task_independence_assertion` + `task_files_disjoint`(仅 parallel)。
+**dispatch matrix**(沿 D-ActiveVsArchivedReplayBoundary,retire-parallel-and-worktree-fully P2):无 `runtime_enforcement_protocol_version` 字段(legacy ADR-010)→ skip 全 fence pass-through;`v1` → 走 v1 advisory fence。**Active 路径 evidence + present-but-invalid value**(`v2` / `v3` / typo / null / empty / `v4`)→ BLOCKER `unknown_protocol_version`(防止 controller typo silent bypass);**archived 路径 evidence + 任何 unknown value** → legacy pass-through(归档不动;沿 D-ArchivedReplayCompat,archived `runtime-enforcement` / `executable-enforcement` / `restore-consent-gate` / `ledger-binding` 4 历史 change replay 兼容)。
 
-**v2 新字段**(沿 ADR-012):`runtime_enforcement_protocol_version: v2` 触发 v1 + v2 fence(v2 = v1 + additional checks);加 `worktree_receipt_path`(W1 receipt JSON 相对路径)/ `dispatch_ledger_path: dispatch_ledger.jsonl`(W3 固定值)/ `task_files_actual: list of {implementer_agent_id, files: [...]}`(W2 parallel only;含 untracked file)/ `degraded_to: null 或 change-apply-subagent` + `degradation_reason: null / actual_file_overlap_detected / dirty_implementer_worktree`(W2 自动降级)/ `pre_dispatch_metadata: advisory` + `ledger_forgery_resistance: advisory`(F2/F3 round 1 inline writeback advisory 标注 — 真 cryptographic enforcement 留 follow-on `enhance-workflow-automation-ledger-binding`)。
-
-**dispatch matrix**:无 `runtime_enforcement_protocol_version` 字段(legacy)→ skip 全部 v1/v2 fence pass-through;`v1` → 走 v1 fence;`v2` → 走 v1 + v2 fence。**archived `enhance-workflow-automation-runtime-enforcement` 等历史 change replay 兼容**。
-
-**v2 命令模板 wiring**:`/forgeue:change-apply-{subagent,parallel}` Preflight Subagent Discipline section MANDATORY invoke `Skill(subagent-driven-discipline)`(sister skill,Layer 2 wiring;沉淀 controller-side 40% scenario judgment + Trigger Type Matrix retrospect)。
+**ADR-011/012/013/ledger-binding retire 历史**(2026-05-06 archived `retire-parallel-and-worktree-fully`):
+- ADR-011 D-WorktreeEnforce + ADR-012(W1 wrapper / W2 actual diff / W3 ledger / parallel dispatch)+ ADR-013 D-RestoreConsentGate + ledger-binding(HMAC chain / 11-field v3 schema / cryptographic enforcement)全部 ForgeUE-level 强制层整 retire
+- 沿 D-HardRetireScope + user 拍板 wide retire(B option):"不再支持 subagent 并行处理任务,在这个阶段也不要支持 worktree,将 worktree 的功能和 superpowers 保持一致"
+- worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke + 自家 Step 0 consent gate(无 ForgeUE-level mandatory invoke / 无 receipt JSON / 无 outcome × mode 状态机 / 无 dispatch ledger)
+- parallel dispatch 路径不再支持(沿 D-PostRetireParallelStrategy);若后续需要走独立 change re-propose
+- archived 4 change evidence 不动(沿"归档即冻结"原则);archived 路径 v2/v3 字段 → finish_gate legacy pass-through 兼容
 
 **4 类 DRIFT taxonomy**:`evidence_introduces_decision_not_in_contract` / `evidence_references_missing_anchor` / `evidence_contradicts_contract` / `evidence_exposes_contract_gap`(`forgeue_change_state.py --writeback-check` exit 5)。
 

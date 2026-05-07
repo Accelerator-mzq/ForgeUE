@@ -196,44 +196,29 @@ D. 建议 patch
 
 完整协议见 [`forgeue_integrated_ai_workflow.md` §C Autonomy Boundary Protocol](forgeue_integrated_ai_workflow.md)。
 
-### 4.4-bis Runtime Enforcement(自 `enhance-workflow-automation-runtime-enforcement` change 起,2026-05-05)
+### 4.4-bis v1 Advisory Runtime Fence(沿 ADR-011 baseline,retire-parallel-and-worktree-fully P2 后简化)
 
-ForgeUE workflow 在 D-AutonomyBoundary 简化协议之上引入 **runtime enforcement layer**(advisory not deterministic — 命令模板显式步骤 + LLM 自报 frontmatter declaration + finish_gate audit),涵盖 4 维 fence + 1 个新命令 + 8 个 Preflight section:
+> **Retire 历史**(2026-05-06,archived `retire-parallel-and-worktree-fully`):ADR-011(`enhance-workflow-automation-runtime-enforcement`)+ ADR-012(`enhance-workflow-automation-executable-enforcement`)+ ADR-013(`restore-superpowers-worktree-consent-gate`)+ ledger-binding(`enhance-workflow-automation-ledger-binding`)4 archived change 引入的 ForgeUE-level worktree / parallel dispatch / dispatch ledger / sister skill 强制层整 retire(沿 D-HardRetireScope wide retire;user 拍板 B option:"不再支持 subagent 并行处理任务,在这个阶段也不要支持 worktree,将 worktree 的功能和 superpowers 保持一致")。Active 工作流退回 ADR-010 baseline + v1 advisory fence。原 §4.4-bis ADR-011 / §4.4-ter ADR-012 / §4.4-quater ADR-013 3 节合并为本节简述 + retire 历史指针。
 
-**4 fence**(`tools/forgeue_finish_gate.py`):
+`tools/forgeue_finish_gate.py` 内 3 个 v1 advisory fence(沿 ADR-011 baseline 沉淀):
 
-- `_check_skill_cascade` — implementation evidence MUST 含 `skill_cascade_audit` dict(`invoked_skills` list + `cascade_check_pass_at` ISO timestamp);`tools/forgeue_skill_cascade_check.py` 工具静态扫 SKILL.md `## Integration` 段验证 dependency 全 invoke
-- `_check_round_fix_continuity` — `subagent-driven-development` 协议 round 2 fix MUST `SendMessage` to same implementer;round 2 reviewer re-review MUST 给 same reviewer;evidence frontmatter `subagent_continuity` dict 记录 round 1/2 agent ID
-- `_check_task_granularity` — Controller MUST 在 `/forgeue:change-apply-*` 命令调用时显式声明 task 粒度(`phase` / `per-file` / `sub-task`)
-- `_check_worktree_path` — implementation evidence by `change-apply-{subagent,parallel}` MUST 含 `worktree_path` 字段(non-null);`change-apply-direct` 沿 archived `2026-05-04-adopt-subagent-driven-development` D-Worktree-Detail 第 5 项不强制(D-DirectWorktreeRefinement)
+| Fence | D-decision | evidence frontmatter 检查 |
+|---|---|---|
+| `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict |
+| `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict 一致性 |
+| `_check_task_granularity` | D-TaskGranularityDeclaration | `task_granularity` ∈ {phase, per-file, sub-task} |
 
-**Protocol gating**(D-ProtocolVersionMigration):4 fence 仅对含 `runtime_enforcement_protocol_version: v1` 的 evidence 生效;legacy archived evidence 全 pass-through。
+**Protocol gating**(D-ProtocolVersionMigration + D-ActiveVsArchivedReplayBoundary,沿 retire-parallel-and-worktree-fully P2):
+- `runtime_enforcement_protocol_version: v1` evidence → 走 v1 advisory fence
+- 缺字段(legacy ADR-010)→ 全 fence pass-through
+- **Active 路径 evidence + present-but-invalid value**(`v2` / `v3` / typo)→ BLOCKER `unknown_protocol_version`
+- **Archived 路径 evidence + 任何 unknown value** → legacy pass-through(归档不动)
 
-**新命令 `/forgeue:change-apply-parallel`**(D-ParallelDispatch):invoke `superpowers:dispatching-parallel-agents` SKILL,暴露并行 dispatch 路径;controller 显式判定 task 独立后路由(`task_independence_assertion: true` + `task_files_disjoint: [<file-set>...]` 字段;命令前自动 verify file overlap)。Active forgeue 命令数从 9 → 10。
+**Retire 范围**:删 7 工具/命令文件(~5066 LOC delete)+ 编辑 5 命令模板 + sister skill `subagent-driven-discipline` partial retire(保留主体)+ backbone skill 整改;Active 工作流退回 ADR-010 baseline + v1 advisory 3 fence;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke(无 ForgeUE-level 强制层)。
 
-**8 Preflight section**(D-PreflightProtocol;命令模板首段强制):
-- `change-apply-subagent` / `change-apply-parallel` 含 3 段(Worktree + Skill Cascade + Task Granularity)
-- `change-apply-direct` 含 2 段(Skill Cascade + Task Granularity;沿 D-DirectWorktreeRefinement 不含 Worktree)
-- `change-plan` / `change-debug` / `change-verify` / `change-review` / `change-doc-sync` 含 1 段(Skill Cascade)
-- `change-finish` / `change-status` / codex `/review` / `/adversarial-review` 不含(纯工具 / 只读 / 纯 codex CLI dispatch,disclaimer 路径)
+**Archived 4 change replay 兼容**(沿 D-ArchivedReplayCompat):archived `runtime-enforcement` / `executable-enforcement` / `restore-consent-gate` / `ledger-binding` evidence 不动;P5 实测 31 → 29 blocker(2 v2 fence blocker 消失,匹配期望)。
 
-**真 deterministic enforcement** 留 follow-on `enhance-workflow-automation-executable-enforcement`(W1 executable preflight wrapper + machine-generated receipt JSON / W2 actual changed-files diff overlap detection / W3 dispatch ledger 命令层 wrapper)。
-
-完整规则见 [`forgeue_integrated_ai_workflow.md` §C.7 Runtime Enforcement Protocol](forgeue_integrated_ai_workflow.md) + ADR-011。
-
-### 4.4-ter Executable Enforcement v2(自 `enhance-workflow-automation-executable-enforcement` change 起,2026-05-05)
-
-ADR-011 v1 是 advisory not deterministic(R6 限制)。本 change 升级 v2 为 **executable enforcement layer**:
-
-- **W1 wrapper**(`tools/forgeue_preflight_wrapper.py`):wrapper 自管 isolated worktree(`git worktree` subprocess + cwd realpath 校验)+ 13-field receipt JSON(含 `is_isolated_worktree` + `worktree_action`)+ exit codes 0/5/6/7
-- **W2 actual diff**:`/forgeue:change-apply-parallel` 主 session 自动跑 `git status --porcelain=v1` precondition + `git diff -z` + `git ls-files --others --exclude-standard -z` 合集(含 untracked)+ overlap 自动降级 sequential;abort log 沿 ForgeUE 产物路径不 `/tmp/`
-- **W3 ledger**(`tools/forgeue_dispatch_ledger.py`):JSONL append-only + `append`/`verify` 子命令 + post-dispatch capture 真实 agent_id(关闭 round 1 synthetic UUID 漏洞)
-- **protocol_version v2 + 4 fence**:`forgeue_finish_gate.py` 加 `_check_worktree_path_v2` / `_check_round_fix_continuity_v2` / `_check_file_overlap_actual` / `_check_dispatch_ledger`;v2 = v1 + additional checks(向后兼容)
-- **DogfoodGap**:本 change 实施时 W1 wrapper 还没 ship → 本 change evidence 仍 v1;P5.5 v2 e2e fixture(`tests/integration/test_v2_e2e_synthetic_change.py`)= archive 必过 gate
-- **F2/F3 deferred to follow-on `enhance-workflow-automation-ledger-binding`**:wrapper-bound dispatch + cryptographic ledger signing(advisory limitation 暴露在 evidence frontmatter `pre_dispatch_metadata: advisory` + `ledger_forgery_resistance: advisory` 字段)
-- **Subagent Discipline Layer 2 wiring**:`/forgeue:change-apply-{subagent,parallel}` MANDATORY invoke `Skill(subagent-driven-discipline)` sister skill(controller-side scenario judgment)
-
-完整规则见 [`forgeue_integrated_ai_workflow.md` §C.8 Executable Enforcement Layer v2](forgeue_integrated_ai_workflow.md) + ADR-012。
+完整规则见 [`forgeue_integrated_ai_workflow.md` §C.7 v1 Advisory Runtime Fence](forgeue_integrated_ai_workflow.md) + archived `openspec/changes/archive/<date>-retire-parallel-and-worktree-fully/`(15 D-decision + codex round 1+P5 verification accepted-codex)。
 
 ### 4.5 tasks.md 必含段模板
 

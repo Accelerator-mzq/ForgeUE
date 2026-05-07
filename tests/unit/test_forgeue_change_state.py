@@ -819,3 +819,171 @@ def test_subagent_drift_cli_exits_5(tmp_path):
     data = json.loads(proc.stdout)
     types = [d["type"] for d in data["drifts"]]
     assert fcs.DRIFT_CONTRA in types
+
+
+# ---------------------------------------------------------------------------
+# P3 Sub-task 1: list_followon_inherited
+# ---------------------------------------------------------------------------
+
+
+def test_list_followon_inherited_extracts_inherited_entries(tmp_path):
+    """有 inherited 标记的条目被正确提取,cancelled 条目不混入。"""
+    from tools.forgeue_change_state import list_followon_inherited
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """# Tasks
+
+## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **followon-a** (沿前一 change 继承) — desc
+- [x] P12.2 (follow-on tracking): **followon-b** [cancelled-completed: abc1234] — desc
+- [ ] P12.3 (follow-on tracking): **followon-c** (沿前一 change 继承) — desc unchecked but inherited
+- [x] P12.4 (follow-on tracking): **followon-d** [cancelled-superseded by some-id] — desc
+""",
+        encoding="utf-8",
+    )
+    result = list_followon_inherited(change_dir)
+    assert "followon-a" in result
+    assert "followon-c" in result
+    assert "followon-b" not in result  # cancelled-completed, 不是 inherited
+    assert "followon-d" not in result  # cancelled-superseded, 不是 inherited
+
+
+def test_list_followon_inherited_empty_when_no_inherited(tmp_path):
+    """无 inherited 文字时返回空列表。"""
+    from tools.forgeue_change_state import list_followon_inherited
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **only-cancelled** [cancelled-completed: abc] — desc
+""",
+        encoding="utf-8",
+    )
+    assert list_followon_inherited(change_dir) == []
+
+
+def test_list_followon_inherited_no_tasks_md_returns_empty(tmp_path):
+    """tasks.md 不存在时容错返回空列表。"""
+    from tools.forgeue_change_state import list_followon_inherited
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    assert list_followon_inherited(change_dir) == []
+
+
+# ---------------------------------------------------------------------------
+# P3 Sub-task 2: list_followon_cancelled
+# ---------------------------------------------------------------------------
+
+
+def test_list_followon_cancelled_categorizes_by_type(tmp_path):
+    """3 类 cancelled tag 被正确分组,每条含 id + ref 字段。"""
+    from tools.forgeue_change_state import list_followon_cancelled
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **followon-a** [cancelled-superseded by new-change] — desc
+- [x] P12.2 (follow-on tracking): **followon-b** [cancelled-not-applicable: out-of-scope] — desc
+- [x] P12.3 (follow-on tracking): **followon-c** [cancelled-completed: abc1234] — desc
+- [x] P12.4 (follow-on tracking): **followon-d** [cancelled-completed: def5678 evidence: notes/foo.md] — desc
+""",
+        encoding="utf-8",
+    )
+    result = list_followon_cancelled(change_dir)
+    # cancelled-superseded
+    assert len(result["cancelled_superseded"]) == 1
+    assert result["cancelled_superseded"][0]["id"] == "followon-a"
+    # cancelled-not-applicable
+    assert len(result["cancelled_not_applicable"]) == 1
+    assert "out-of-scope" in result["cancelled_not_applicable"][0]["ref"]
+    # cancelled-completed(含 2 条)
+    assert len(result["cancelled_completed"]) == 2
+    completed_ids = [e["id"] for e in result["cancelled_completed"]]
+    assert "followon-c" in completed_ids
+    assert "followon-d" in completed_ids
+
+
+def test_list_followon_cancelled_empty_when_no_cancelled(tmp_path):
+    """无 cancelled 条目时,3 个 key 均返回空列表。"""
+    from tools.forgeue_change_state import list_followon_cancelled
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        "## P0 baseline\n- [x] 1.1 baseline\n",
+        encoding="utf-8",
+    )
+    result = list_followon_cancelled(change_dir)
+    assert all(v == [] for v in result.values())
+
+
+def test_list_followon_cancelled_no_tasks_md_returns_empty_structure(tmp_path):
+    """tasks.md 不存在时返回含 3 个空列表的 dict。"""
+    from tools.forgeue_change_state import list_followon_cancelled
+
+    change_dir = tmp_path / "change"
+    change_dir.mkdir()
+    result = list_followon_cancelled(change_dir)
+    assert set(result.keys()) == {"cancelled_superseded", "cancelled_not_applicable", "cancelled_completed"}
+    assert all(v == [] for v in result.values())
+
+
+# ---------------------------------------------------------------------------
+# P3 Sub-task 3+4: argparse flags + CLI integration tests
+# ---------------------------------------------------------------------------
+
+
+def test_change_state_cli_list_followon_inherited_json(tmp_path):
+    """CLI --list-followon-inherited --json 输出含预期 inherited id。"""
+    # 构建 mock change 目录结构(tasks.md 含 inherited 条目)
+    openspec = tmp_path / "openspec" / "changes"
+    openspec.mkdir(parents=True)
+    change_dir = openspec / "test-followon-cli"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **inherit-a** (沿前一 change 继承) — some desc
+- [x] P12.2 (follow-on tracking): **cancelled-x** [cancelled-completed: abc] — desc
+""",
+        encoding="utf-8",
+    )
+    result = _run_cli(
+        tmp_path,
+        ["--change", "test-followon-cli", "--list-followon-inherited", "--json"],
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    data = json.loads(result.stdout)
+    assert "inherited" in data
+    assert "inherit-a" in data["inherited"]
+    assert "cancelled-x" not in data["inherited"]
+
+
+def test_change_state_cli_list_followon_cancelled_json(tmp_path):
+    """CLI --list-followon-cancelled --json 输出含 cancelled-* 分组结构。"""
+    openspec = tmp_path / "openspec" / "changes"
+    openspec.mkdir(parents=True)
+    change_dir = openspec / "test-cancelled-cli"
+    change_dir.mkdir()
+    (change_dir / "tasks.md").write_text(
+        """## P12 (follow-on tracking)
+- [x] P12.1 (follow-on tracking): **sup-a** [cancelled-superseded by other-change] — desc
+- [x] P12.2 (follow-on tracking): **comp-b** [cancelled-completed: deadbeef] — desc
+""",
+        encoding="utf-8",
+    )
+    result = _run_cli(
+        tmp_path,
+        ["--change", "test-cancelled-cli", "--list-followon-cancelled", "--json"],
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}"
+    data = json.loads(result.stdout)
+    assert set(data.keys()) == {"cancelled_superseded", "cancelled_not_applicable", "cancelled_completed"}
+    sup_ids = [e["id"] for e in data["cancelled_superseded"]]
+    assert "sup-a" in sup_ids
+    comp_ids = [e["id"] for e in data["cancelled_completed"]]
+    assert "comp-b" in comp_ids
