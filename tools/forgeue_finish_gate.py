@@ -1979,6 +1979,95 @@ def _validate_cancel_tag_not_applicable(reason: str) -> "str | None":
     return f"cancel_reason_not_in_enum_got_{first_token or '<empty>'}"
 
 
+def _validate_cancel_tag_completed(
+    tag_value: str,
+    followon_entry: dict,
+    repo: "Path | None" = None,
+) -> "str | None":
+    """Round 1 F2 + Round 2 F3-r2: strict commit existence + commit-touches +
+    evidence escape hatch.
+
+    tag_value format:
+      '<commit-ref>'  OR  '<commit-ref> evidence: <path>'
+
+    Steps:
+      1. 解析 tag_value,分离 commit_ref 和可选 evidence_path
+      2. git rev-parse --verify <commit_ref> → 存在性校验
+      3. git diff-tree --name-only -r <commit_ref> → touched_files 集合
+      4. 构建 relevant_paths(entry.source + entry.contract_refs)
+      5. touched ∩ relevant != ∅ → PASS
+      6. evidence_path 存在 → escape hatch PASS
+      7. 否则 → BLOCKER
+
+    Returns:
+        None — PASS
+        str  — BLOCKER reason string
+    """
+    repo = repo or Path.cwd()
+    # Step 1: 解析 commit_ref 和 evidence_path
+    parts = tag_value.split(" evidence: ", maxsplit=1)
+    commit_ref = parts[0].strip()
+    evidence_path = parts[1].strip() if len(parts) == 2 else None
+
+    # 空 commit_ref → 特殊 BLOCKER
+    if not commit_ref:
+        return "cancel_commit_empty"
+
+    # Step 2: git rev-parse --verify <commit_ref>
+    rev_parse = subprocess.run(
+        ["git", "rev-parse", "--verify", commit_ref],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if rev_parse.returncode != 0:
+        return f"cancel_commit_not_found_got_{commit_ref}"
+
+    # Step 3: git diff-tree --name-only -r <commit_ref>
+    diff_tree = subprocess.run(
+        ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", commit_ref],
+        cwd=str(repo),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    touched_files: set[str] = set()
+    if diff_tree.returncode == 0:
+        for line in diff_tree.stdout.splitlines():
+            line_stripped = line.strip()
+            if line_stripped:
+                touched_files.add(line_stripped)
+
+    # Step 4: 构建 relevant_paths(entry.source + entry.contract_refs)
+    relevant_paths: set[str] = set()
+    source = followon_entry.get("source", "")
+    if isinstance(source, str) and source:
+        relevant_paths.add(source.strip())
+    contract_refs = followon_entry.get("contract_refs", [])
+    if isinstance(contract_refs, list):
+        for ref in contract_refs:
+            if isinstance(ref, str) and ref:
+                relevant_paths.add(ref.strip())
+
+    # Step 5: commit-touches intersection
+    if touched_files & relevant_paths:
+        return None
+
+    # Step 6: evidence escape hatch
+    if evidence_path:
+        candidate = Path(evidence_path)
+        if not candidate.is_absolute():
+            candidate = repo / evidence_path
+        if candidate.exists():
+            return None
+        # evidence path 指定但不存在 → 特定 BLOCKER(帮助诊断)
+        return f"cancel_evidence_path_not_found_{commit_ref}_evidence_{evidence_path}"
+
+    # Step 7: 全不通过 → BLOCKER
+    return f"cancel_commit_does_not_touch_followon_or_provide_evidence_got_{commit_ref}"
+
+
 def _validate_cancel_tag_superseded(change_id: str, repo: "Path | None" = None) -> "str | None":
     """Round 1 F2 fix: validate cancelled-superseded ref by change-id existence.
 

@@ -3203,3 +3203,152 @@ def test_validate_cancel_tag_not_applicable_whitespace_only_blocker():
 
     result = _validate_cancel_tag_not_applicable("   ")
     assert result == "cancel_reason_not_in_enum_got_<empty>"
+
+
+# ---------------------------------------------------------------------------
+# P2.d.3 — _validate_cancel_tag_completed (round 1 F2 + round 2 F3-r2)
+# ---------------------------------------------------------------------------
+
+
+class _FakeProcess:
+    """subprocess.CompletedProcess 最简 stub。"""
+
+    def __init__(self, returncode: int, stdout: str = "", stderr: str = ""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def _make_git_run_mock(commit_exists: bool, touched_files: list[str]):
+    """构造 subprocess.run 的 mock 函数:
+    - git rev-parse → 0(存在)或 1(不存在)
+    - git diff-tree → 0 + touched_files 输出
+    """
+    def _mock(args, **kwargs):
+        if "rev-parse" in args:
+            rc = 0 if commit_exists else 1
+            return _FakeProcess(rc, "abc1234abc\n" if commit_exists else "")
+        if "diff-tree" in args:
+            stdout = "\n".join(touched_files) + "\n" if touched_files else ""
+            return _FakeProcess(0, stdout)
+        return _FakeProcess(1)
+    return _mock
+
+
+def test_validate_cancel_tag_completed_commit_not_found_blocker(monkeypatch, tmp_path):
+    """commit 不存在 → BLOCKER cancel_commit_not_found_got_<ref>。"""
+    import tools.forgeue_finish_gate as m
+
+    monkeypatch.setattr(m.subprocess, "run", _make_git_run_mock(commit_exists=False, touched_files=[]))
+
+    result = m._validate_cancel_tag_completed("deadbeef", {}, repo=tmp_path)
+    assert result == "cancel_commit_not_found_got_deadbeef"
+
+
+def test_validate_cancel_tag_completed_commit_touches_source_pass(monkeypatch, tmp_path):
+    """commit touches followon entry source 文件 → PASS。"""
+    import tools.forgeue_finish_gate as m
+
+    entry = {"source": "openspec/backlog/active.md", "id": "followon-x"}
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["openspec/backlog/active.md"]),
+    )
+
+    result = m._validate_cancel_tag_completed("abc1234", entry, repo=tmp_path)
+    assert result is None
+
+
+def test_validate_cancel_tag_completed_commit_touches_contract_refs_pass(monkeypatch, tmp_path):
+    """commit touches entry contract_refs 文件之一 → PASS。"""
+    import tools.forgeue_finish_gate as m
+
+    entry = {
+        "source": "openspec/backlog/active.md",
+        "contract_refs": ["docs/design/LLD.md", "tools/forgeue_finish_gate.py"],
+    }
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["tools/forgeue_finish_gate.py"]),
+    )
+
+    result = m._validate_cancel_tag_completed("abc1234", entry, repo=tmp_path)
+    assert result is None
+
+
+def test_validate_cancel_tag_completed_evidence_escape_hatch_pass(monkeypatch, tmp_path):
+    """commit 不 touch 相关路径,但 evidence 路径存在 → escape hatch PASS。"""
+    import tools.forgeue_finish_gate as m
+
+    # 建立 evidence 文件
+    evidence_file = tmp_path / "openspec" / "changes" / "my-change" / "notes" / "evidence.md"
+    evidence_file.parent.mkdir(parents=True)
+    evidence_file.write_text("evidence content", encoding="utf-8")
+
+    entry = {"source": "openspec/backlog/active.md"}
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["some/other/file.py"]),
+    )
+
+    # tag_value 含 "evidence:" 字段(使用 tmp_path 的相对路径)
+    evidence_rel = "openspec/changes/my-change/notes/evidence.md"
+    tag_value = f"abc1234 evidence: {evidence_rel}"
+
+    result = m._validate_cancel_tag_completed(tag_value, entry, repo=tmp_path)
+    assert result is None
+
+
+def test_validate_cancel_tag_completed_evidence_path_missing_blocker(monkeypatch, tmp_path):
+    """commit 不 touch 相关路径,evidence 路径也不存在 → BLOCKER(evidence path not found)。"""
+    import tools.forgeue_finish_gate as m
+
+    entry = {"source": "openspec/backlog/active.md"}
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["unrelated.py"]),
+    )
+
+    tag_value = "abc1234 evidence: openspec/changes/ghost/notes/missing.md"
+    result = m._validate_cancel_tag_completed(tag_value, entry, repo=tmp_path)
+    assert result is not None
+    assert "cancel_evidence_path_not_found" in result
+    assert "abc1234" in result
+
+
+def test_validate_cancel_tag_completed_no_escape_no_touch_blocker(monkeypatch, tmp_path):
+    """commit 不 touch 相关路径,且无 evidence 字段 → BLOCKER(commit does not touch)。"""
+    import tools.forgeue_finish_gate as m
+
+    entry = {"source": "openspec/backlog/active.md"}
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["unrelated.py"]),
+    )
+
+    result = m._validate_cancel_tag_completed("abc1234", entry, repo=tmp_path)
+    assert result == "cancel_commit_does_not_touch_followon_or_provide_evidence_got_abc1234"
+
+
+def test_validate_cancel_tag_completed_empty_tag_blocker(monkeypatch, tmp_path):
+    """空 tag_value → BLOCKER cancel_commit_empty。"""
+    import tools.forgeue_finish_gate as m
+
+    result = m._validate_cancel_tag_completed("", {}, repo=tmp_path)
+    assert result == "cancel_commit_empty"
+
+
+def test_validate_cancel_tag_completed_no_contract_refs_field_tolerant(monkeypatch, tmp_path):
+    """followon entry 不含 contract_refs 字段 → tolerant get with default [] → 无 crash。"""
+    import tools.forgeue_finish_gate as m
+
+    # entry 只含 source,无 contract_refs
+    entry = {"source": "openspec/backlog/active.md"}
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["openspec/backlog/active.md"]),
+    )
+
+    result = m._validate_cancel_tag_completed("abc1234", entry, repo=tmp_path)
+    # source 被 touch → PASS
+    assert result is None
