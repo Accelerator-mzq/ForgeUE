@@ -3352,3 +3352,124 @@ def test_validate_cancel_tag_completed_no_contract_refs_field_tolerant(monkeypat
     result = m._validate_cancel_tag_completed("abc1234", entry, repo=tmp_path)
     # source 被 touch → PASS
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# P2.d.4 — _validate_cancel_refs aggregation
+# ---------------------------------------------------------------------------
+
+
+def test_validate_cancel_refs_empty_resolved_returns_empty_list(tmp_path):
+    """resolved 列表为空 → blockers 列表为空。"""
+    from tools.forgeue_finish_gate import _validate_cancel_refs
+
+    result = _validate_cancel_refs(resolved=[], registry_entries={}, repo=tmp_path)
+    assert result == []
+
+
+def test_validate_cancel_refs_dispatches_superseded(monkeypatch, tmp_path):
+    """tag_type=cancelled-superseded → dispatch 到 _validate_cancel_tag_superseded。"""
+    import tools.forgeue_finish_gate as m
+
+    # 建立 active change 目录(让 superseded check 通过)
+    active_dir = tmp_path / "openspec" / "changes" / "successor-change"
+    active_dir.mkdir(parents=True)
+
+    resolved = [
+        {"id": "followon-a", "tag_type": "cancelled-superseded", "tag_value": "successor-change"}
+    ]
+    result = m._validate_cancel_refs(resolved, registry_entries={}, repo=tmp_path)
+    # active 路径存在 → PASS → 空列表
+    assert result == []
+
+
+def test_validate_cancel_refs_dispatches_not_applicable(tmp_path):
+    """tag_type=cancelled-not-applicable → dispatch 到 _validate_cancel_tag_not_applicable。"""
+    from tools.forgeue_finish_gate import _validate_cancel_refs
+
+    resolved = [
+        {"id": "followon-b", "tag_type": "cancelled-not-applicable", "tag_value": "out-of-scope (no longer relevant)"}
+    ]
+    result = _validate_cancel_refs(resolved, registry_entries={}, repo=tmp_path)
+    # valid enum prefix → PASS → 空列表
+    assert result == []
+
+
+def test_validate_cancel_refs_dispatches_completed(monkeypatch, tmp_path):
+    """tag_type=cancelled-completed → dispatch 到 _validate_cancel_tag_completed。"""
+    import tools.forgeue_finish_gate as m
+
+    entry = {"source": "openspec/backlog/active.md"}
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["openspec/backlog/active.md"]),
+    )
+
+    resolved = [
+        {"id": "followon-c", "tag_type": "cancelled-completed", "tag_value": "abc1234"}
+    ]
+    registry_entries = {"followon-c": entry}
+    result = m._validate_cancel_refs(resolved, registry_entries=registry_entries, repo=tmp_path)
+    # source touched → PASS → 空列表
+    assert result == []
+
+
+def test_validate_cancel_refs_unknown_tag_type_blocker(tmp_path):
+    """未知 tag_type → return BLOCKER 含 cancel_unknown_tag_type。"""
+    from tools.forgeue_finish_gate import _validate_cancel_refs
+
+    resolved = [
+        {"id": "followon-x", "tag_type": "cancelled-magic", "tag_value": "whatever"}
+    ]
+    result = _validate_cancel_refs(resolved, registry_entries={}, repo=tmp_path)
+    assert len(result) == 1
+    assert "followon-x" in result[0]
+    assert "cancel_unknown_tag_type" in result[0]
+    assert "cancelled-magic" in result[0]
+
+
+def test_validate_cancel_refs_aggregates_mixed_pass_and_blocker(monkeypatch, tmp_path):
+    """混合 PASS + BLOCKER → 只收集 BLOCKER,格式 '<id>: <reason>'。"""
+    import tools.forgeue_finish_gate as m
+
+    # cancelled-superseded: active 存在 → PASS
+    active_dir = tmp_path / "openspec" / "changes" / "real-successor"
+    active_dir.mkdir(parents=True)
+
+    # cancelled-not-applicable: invalid reason → BLOCKER
+    # cancelled-superseded: ghost-change 不存在 → BLOCKER
+
+    resolved = [
+        {"id": "followon-ok", "tag_type": "cancelled-superseded", "tag_value": "real-successor"},
+        {"id": "followon-bad", "tag_type": "cancelled-not-applicable", "tag_value": "我懒"},
+        {"id": "followon-ghost", "tag_type": "cancelled-superseded", "tag_value": "ghost-change"},
+    ]
+    (tmp_path / "openspec" / "changes").mkdir(parents=True, exist_ok=True)
+
+    result = m._validate_cancel_refs(resolved, registry_entries={}, repo=tmp_path)
+    # 仅 followon-bad 和 followon-ghost 应产生 BLOCKER
+    assert len(result) == 2
+    ids = [r.split(":")[0] for r in result]
+    assert "followon-ok" not in ids
+    assert "followon-bad" in ids
+    assert "followon-ghost" in ids
+
+
+def test_validate_cancel_refs_completed_missing_registry_entry_tolerant(monkeypatch, tmp_path):
+    """cancelled-completed 但 registry_entries 中无该 id → tolerant get {} → 无 crash。"""
+    import tools.forgeue_finish_gate as m
+
+    # commit 存在但不 touch 任何相关路径(entry 为空 dict → relevant_paths 为空集)
+    monkeypatch.setattr(
+        m.subprocess, "run",
+        _make_git_run_mock(commit_exists=True, touched_files=["some/file.py"]),
+    )
+
+    resolved = [
+        {"id": "followon-missing", "tag_type": "cancelled-completed", "tag_value": "abc1234"}
+    ]
+    # registry_entries 中没有 followon-missing
+    result = m._validate_cancel_refs(resolved, registry_entries={}, repo=tmp_path)
+    # entry 为 {} → relevant_paths 为空 → commit-touches 空交集 → no evidence → BLOCKER
+    assert len(result) == 1
+    assert "followon-missing" in result[0]

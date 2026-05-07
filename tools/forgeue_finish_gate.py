@@ -2097,6 +2097,46 @@ def _validate_cancel_tag_superseded(change_id: str, repo: "Path | None" = None) 
     return f"cancel_ref_not_found_superseded_by_{change_id}"
 
 
+def _validate_cancel_refs(
+    resolved: "list[dict]",
+    registry_entries: "dict[str, dict]",
+    repo: "Path | None" = None,
+) -> "list[str]":
+    """Aggregation: dispatch each resolved cancel tag to corresponding validator.
+
+    沿 design.md D-FenceParseStrategy 阶段 3 第 4 步。
+
+    resolved item format (from _extract_followon_tracking_section):
+      {"id": <followon-id>, "tag_type": "cancelled-<X>", "tag_value": <value>}
+
+    Returns:
+        []         — all PASS(无 BLOCKER)
+        [str, ...] — BLOCKER reason strings,格式 "<followon-id>: <reason>"
+    """
+    blockers: list[str] = []
+    for item in resolved:
+        item_id = item.get("id", "")
+        tag_type = item.get("tag_type", "")
+        tag_value = item.get("tag_value", "")
+
+        if tag_type == "cancelled-superseded":
+            err = _validate_cancel_tag_superseded(tag_value, repo)
+        elif tag_type == "cancelled-not-applicable":
+            err = _validate_cancel_tag_not_applicable(tag_value)
+        elif tag_type == "cancelled-completed":
+            # tolerant get: 若 registry 中无该 id → 使用空 dict
+            entry = registry_entries.get(item_id, {})
+            err = _validate_cancel_tag_completed(tag_value, entry, repo)
+        else:
+            # 未知 tag_type → BLOCKER
+            err = f"cancel_unknown_tag_type_{item_id}_got_{tag_type}"
+
+        if err is not None:
+            blockers.append(f"{item_id}: {err}")
+
+    return blockers
+
+
 # ---------------------------------------------------------------------------
 # P2.c — fence 阶段 2 archived tasks.md 兜底源
 # ---------------------------------------------------------------------------
