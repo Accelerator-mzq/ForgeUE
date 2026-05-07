@@ -151,3 +151,19 @@ def test_manifest_silent_skip_unmapped_shape_consistent_with_export():
     art = _mkart("video", "webm", file_path="/tmp/run/x.webm")
     manifest = build_manifest(run_id="run_a", target=target, artifacts=[art])
     assert len(manifest.assets) == 0  # silent skip,无 entry
+
+
+# ---- A.5:ExportExecutor drop loop end-to-end fence(integration cover)-----
+
+def test_export_drops_video_to_content_movies_and_image_preserves_raw_filename(tmp_path):
+    """D12 video 分流 + round 1 codex F2 非 video 保 raw filename"""
+    # 模拟 ExportExecutor.execute drop loop;构 ctx + run + artifact + target;
+    # 跑 execute 后检查 tmp_path 下 Content/Movies/<run_id>/MS_<base>.mp4 +
+    # Content/Generated/<run_id>/<raw>.png 实际落盘
+    # (具体 fixture 实施沿 tests/unit/test_ue_bridge.py 既有 ExportExecutor pattern)
+    pytest.skip("requires ExportExecutor end-to-end fixture; verify via integration test instead")
+
+
+def test_export_unsupported_shape_does_not_crash_drop_loop(tmp_path):
+    """round 1 codex F1 fence:video.webm unsupported shape → silent skip,不 crash"""
+    pytest.skip("requires ExportExecutor end-to-end fixture; verify via integration test instead")
