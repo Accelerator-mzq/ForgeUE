@@ -5,9 +5,9 @@ license: MIT
 compatibility: Claude Code Agent tool + python -m pytest;sister to superpowers:subagent-driven-development(generic 3-stage process)
 metadata:
   author: forgeue (initial seed)
-  version: "2.5"
+  version: "2.6"
   scenario_subtype_count: 28
-  case_study_count: 4
+  case_study_count: 5
   retrospect_protocol: trigger-type-matrix(4 types × per-type intensity)  # Type 2 parallel retired in retire-parallel-and-worktree-fully (2026-05-06)
   worktree_consent_policy: superpowers-upstream-using-git-worktrees  # retire ForgeUE-level worktree consent gate;沿 upstream Step 0 consent gate
 ---
@@ -439,7 +439,91 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 **Cost vs all-Opus alternative**:实际 $X vs Opus 估 $Y → 节省 ratio
 ```
 
-### Case 4: ForgeUE / fix-finish-gate-archived-replay-compat / P0-P3+S6(Type 1 3-stage retrospect)
+### Case 5: ForgeUE / centralize-followon-backlog-registry / P2.a-P2.h+P3(Type 1 3-stage retrospect)
+
+**Date**:2026-05-07
+**Project context**:Workflow protocol extension change(集中 follow-on backlog registry + 2 archive-stage blocker fence + 14 helpers + 命令模板更新);9 phase(P2.a-P2.h + P3)× 串行 subagent dispatch + 1 final reviewer。本 change 是 self-referential — 自家 fence 守门 own data file,P5 dogfood 期 fence 在真实 repo 上实测 catch 2 real cross-document drift。
+
+**Subagent dispatch**(Type 1 3-stage,9 phase × ~3 subagent + final reviewer = ~22 dispatch):
+
+| Phase | Subagent role | Scenario subtype | Model | Verdict |
+|---|---|---|---|---|
+| P2.a | implementer + spec_review + code_quality(separate)| §1.1.1 mechanical(完整 code 模板)+ §1.2.1 + §1.3.1 | Sonnet | ✅ all PASS;regex hint bug subagent 自纠 |
+| P2.b | implementer + separate spec/code_quality | §1.1.3 multi-file integration(F1+F1-r2+F2-r2 fix)| Sonnet | ✅ all PASS |
+| P2.c | implementer + **combined spec+code_quality** | §1.1.1 + combined review | Sonnet | ✅ aligned + pass |
+| P2.d | implementer + combined | §1.1.3(cancel ref strict + commit-touches + escape hatch)| Sonnet | ✅ aligned + pass |
+| P2.e | implementer + combined | §1.1.3(archived.md append-only git diff)| Sonnet | ✅ aligned + pass |
+| P2.f | implementer + combined | §1.1.4 algorithmic(orchestrator 4-stage + TDD red→green)| Sonnet | ✅ aligned + pass(1 advisory `dir()` dead-code) |
+| P2.g | implementer + combined | §1.1.3(SRS table parse + consistency fence)| Sonnet | ✅ aligned + pass(architectural note dual parser duplication) |
+| P2.h | implementer + combined | §1.4.2 integration test + production data validation | Sonnet | ✅ aligned + pass(parser bug 暴露) |
+| P3 | implementer + combined | §1.1.3(argparse 子命令)| Sonnet | ✅ aligned + pass(advisory private fn cross-module call) |
+
+**Real issues caught / failed**(Type 1 mandatory Q1-Q6 retrospect 实证):
+
+| Issue | Severity | Caught by | Pattern subtype |
+|---|---|---|---|
+| **P2.h subagent 选 workaround 不 fix root cause**(`_parse_tbd_pointer_entries` body boundary bleed → 选择降 test 阈值 8 + disclose 而非修 parser)| Important(controller 后续必须 inline fix `5427f18`)| controller dogfood pytest + Read code | **Subagent prefers workaround over root-cause-fix when prompt says append-only / 不改既有**;controller prompt 副作用 — append-only 强约束让 subagent constraint-adherence 过度 |
+| **P2.g 创建 dual parser**(`_REGISTRY_ENTRY_HEADING_RE` lowercase 不 match TBD-XXX → 加新 `_parse_tbd_pointer_entries` 而非扩 regex)| Minor architectural duplication(reviewer accepted as design partition,但 flagged `_TBD_POINTER_FIELD_RE` 与 `_REGISTRY_FIELD_RE` 内容相同 alias-able)| Combined reviewer architectural note | 同上 Pattern;但 reviewer 接受 acceptable trade-off 因 partition 语义 OK |
+| **P2.f `"baseline_sha" not in dir()` dead-code 自披露未 fix**(implementer disclose 但不 inline fix)| Minor advisory | Combined reviewer | 同上 Pattern;subagent 沿 prompt scope 只标 advisory 让 controller 后续 cleanup |
+| **P2.a regex hint bug 自纠**(`\(follow-on\)` 强制括号 prompt hint 不 match `## P12 — follow-on tracking` 无括号格式;subagent 改为 `\(?follow-on\)?` optional + disclose)| Resolved(implementer self-correct)| Subagent self-disclosure | Subagent capability validation — 知 hint 与实测冲突主动 fix |
+| **P5 fence dogfood 暴露 GBK encoding crash**(`subprocess.run` 无 `encoding="utf-8"` 在 Windows 中文环境 stdout=None)| Important(controller fix `646989c`)| controller P5 dogfood | **Capability validation** — fence 设计目标(catch real systemic gap)100% 达成 |
+| **P5 fence dogfood 暴露 SRS-acceptance cross-document drift**(`retire-parallel-and-worktree-fully` re-index TBD-009 → TBD-013 时漏 sync SRS;只在 acceptance_report 加)| Important(controller fix `646989c`)| controller P5 dogfood | **Capability validation** — fence 真实 catch retire 期遗留的 cross-document drift |
+
+**Lesson reinforce / new pattern surfaced**:
+
+- **Pattern H new — Subagent prefers workaround over root-cause-fix when prompt says "append-only / 不改既有 helper"**(P2.h / P2.g / P2.f 共 3 处实证):
+  - controller prompt 写"append-only / 不改既有 helper"等强约束时,subagent 严格遵守,代价是错失 root-cause fix 机会
+  - P2.h 案例:遇 `_parse_tbd_pointer_entries` body boundary bleed 真 bug → subagent 选择降 test 阈值(workaround disclose)而非扩 regex 加 H2/H3 boundary(root cause)。controller 必须后续 inline fix
+  - P2.g 案例:遇 `_REGISTRY_ENTRY_HEADING_RE` lowercase 不 match TBD-XXX → subagent 加新 parser 而非扩 regex(创 dual parser duplication)
+  - P2.f 案例:写 `"baseline_sha" not in dir()` dead-code → subagent 自披露但 disclose-only 未 fix(reviewer advisory 标记)
+  - **Mitigation pattern**:dispatch prompt **显式说**"遇 implementation limitation(regex / parser / fence behavior)优先 fix root cause(扩既有 helper / 改 regex)而非 workaround;只有当 root cause fix 超出本 phase scope(影响其他 phase)才 disclose + 留 follow-on"
+  - **Trade-off**:append-only 约束有价值(防 cross-phase regression),但应对"修 vs 不修"决策给 explicit branch logic 而非 hard "不改"
+
+- **Pattern I new — Combined spec_review + code_quality_review acceptable for trivial single-helper phases**(P2.c / P2.e / P2.g / P2.h / P3 5 phases 实证):
+  - SKILL §3.4 default 是 Type 1 三 separate dispatch(implementer + spec_reviewer + code_quality_reviewer)
+  - Trivial single-helper phases(scope < 50 LOC + 单一职责 / formulaic CRUD-like / 复用既有 helper)— combined reviewer subagent 能产 2 evidence files(spec_review + code_quality_review 同 dispatch ID)
+  - 节省 ~$0.6 per phase × 5 phases = ~$3 budget saved without rigor 显著降低
+  - Cost vs separate 比例:combined 约 50% cost,rigor ~75-85%
+  - **Mitigation**:phases with > 50 LOC OR 涉及 design judgment OR cross-file integration → 仍走 separate dispatch;combined 仅适用 single-helper / single-test-file / formulaic phases
+  - 沿 ForgeUE memory `feedback_self_reference_overcaution` 不过度 ceremony 哲学
+
+- **Pattern A reinforced**(沿 Case 1/2/3/4):**Sonnet implementer + reviewer 在 §1.1.3 multi-file integration tasks 上稳定**(本 case P2.b/P2.d 共 31 + 14 = 45 tests + zero regression);Sonnet 是 ForgeUE workflow protocol 改造的合适 default tier
+
+- **Pattern J reinforced — fence dogfood 暴露 real cross-document drift**(本 case validates protocol 设计):本 change 是 self-referential — `_check_srs_registry_consistency` fence 在 P5 dogfood 期实测 catch SRS-acceptance TBD-009/TBD-013 sync gap(retire 期遗留)。**Capability validation** — protocol 设计目标(catch systemic drift)100% 达成。沿 Case 4 同款 fence dogfood 价值 reinforce。
+
+**Cost vs all-Opus alternative**:9 phase × ~22 dispatch ~$8.17 informational + retrospect Opus(~$0.50)= ~$8.67 vs 全 Opus 估 ~$25-35 → 节省 ~$16-26。Pattern I(combined review for trivial)节省 ~$3 in this case。
+
+**§6 catalog new row**(Q4 + Pattern H new):
+
+| Subagent failure mode | Pattern that prevents | Case studies |
+|---|---|---|
+| **Subagent prefers workaround over root-cause-fix when prompt says append-only / 不改既有 helper**(append-only 强约束副作用;workaround 路径包括降阈值 / 加 dup helper / 留 dead-code 仅自披露)| dispatch prompt 显式分支:"遇 implementation limitation 优先 fix root cause(扩既有 helper / 改 regex);只有 root cause fix 超本 phase scope 才 workaround + disclose + 留 follow-on" | Case 5 P2.f / P2.g / P2.h |
+
+**§3.4 Retrospect verdict per phase**:
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P2.a | No | No | No | No | No | No(Sonnet 在 §1.1.1 mechanical 合格)| **SKIP** |
+| P2.b | No | No | No | No | No | No | **SKIP** |
+| P2.c | No | No | No | No | No | No | **SKIP** |
+| P2.d | No | No | No | No | No | No | **SKIP** |
+| P2.e | No | No | No | No | No | No | **SKIP** |
+| P2.f | No | No | Marginal(advisory only,no fix)| **Yes**(Pattern H precursor)| No | No | **Partial trigger**(Pattern H 累积) |
+| P2.g | No | No | No | **Yes**(Pattern H 累积 — dual parser due to append-only)| No | No | **Partial trigger** |
+| P2.h | No | No | **Yes**(controller inline fix `5427f18`)| **Yes**(Pattern H confirmed)| No | No | **Add Case** — Q3+Q4 |
+| P3 | No | No | No | No | No | No(Sonnet 在 §1.1.3 子命令合格)| **SKIP** |
+| (P5 dogfood,non-subagent)| n/a | n/a | controller fix `646989c` | n/a | n/a | n/a | (capability validation,non-failure) |
+
+**Controller self-reflection**(沿 ForgeUE memory `feedback_verify_external_reviews` + `feedback_self_reference_overcaution` reinforce):
+
+- 本 case 22 subagent dispatch 整体工作质量 **B+**(constraint adherence 100% / zero regression / deviation 主动 disclose / 错率 ~3%)
+- 主要 systemic issue 是 controller prompt 副作用(append-only 约束让 subagent 偏向 workaround)— Pattern H 新发现
+- combined reviewer cost optimization(Pattern I)在 trivial phase 验证有效,节省 ~$3 而 rigor 损失可控
+- self-referential dogfood validation(P5 catch real drift)是本 change 独特 capability validation,**Pattern J 沿 Case 4 reinforce** — fence dogfood 是 protocol 设计目标的物理 anchor
+
+---
+
+
 
 **Date**:2026-05-07
 **Project context**:Workflow tooling micro-bugfix change(fix `tools/forgeue_finish_gate.py` regex + per-format threshold + repo-relative archive detection;closes 2 retire-parallel P0 baseline follow-on);4 phase × 3 subagent + S6 final review
@@ -669,6 +753,7 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 | **Haiku code_quality false-positive on fixture-cross-module-trace tasks**(reviewer 任务需追踪 fixture / helper 跨多文件语义,Haiku confident 但 trace 错)| §1.3.X model 误用 — Haiku 替代 Sonnet 在 fixture-trace 类任务 | 任何 review 涉及 trace fixture / helper / 跨模块语义 → §1.3.3/§1.3.4 Sonnet MANDATORY;controller dispatch 前问"reviewer 需 trace 多少文件 / fixture?"超 1 文件即升 Sonnet | controller override reviewer verdict + 沿 §3.2 cross-verify(沿 Case 4 P1 实例) |
 | **phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**(controller 没在 phase 完成后 commit,reviewer 看 `git diff` 把上 phase 改动归给本 phase)| §7 controller workflow 漏 — phase 间未 commit | 每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer;reviewer prompt 明示 "diff base = 上 phase commit SHA" | controller override boundary verdict + 补 commit phase boundary(沿 Case 4 P2 实例) |
 | **`git stash` 不能 revert 已 commit baseline drift**(verify task 用 stash 验证 "pre-existing",但 stash 仅暂存 working-tree;已 commit drift 不在 stash scope)| §1.7.2 verify task 缺 baseline 区分协议 | 用 `git diff <plan-stage-commit>~..<plan-stage-commit> -- <suspect-file>`;dispatch prompt 给 plan stage commit SHA + 明示 "baseline 必早于 plan stage commit" | controller 自检 catch self-drift + 修 frontmatter(沿 Case 4 P3 实例) |
+| **Subagent prefers workaround over root-cause-fix when prompt says append-only / 不改既有 helper**(append-only 强约束副作用;workaround 路径包括降阈值 / 加 dup helper / 留 dead-code 仅自披露)| Implementation 任务 § (§1.1.1 / §1.1.2 / §1.1.3)dispatch prompt 显式分支:"遇 implementation limitation(regex 不 match / parser body bleed / fence dead-code)优先 fix root cause(扩既有 helper / 改 regex);只有 root cause fix 超本 phase scope(影响其他 phase / cross-cutting refactor)才 workaround + disclose + 留 follow-on" | controller dogfood + inline fix(沿 Case 5 P2.f/P2.g/P2.h 实例) |
 
 ---
 
