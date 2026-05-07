@@ -2185,6 +2185,174 @@ def _check_archived_tasks_fallback(
 
 
 # ---------------------------------------------------------------------------
+# P2.e — archived.md append-only 校验(centralize-followon-backlog-registry)
+# D-TombstoneProtocol:"tombstone 一旦写入 archived.md 不得修改或删除"
+# ---------------------------------------------------------------------------
+
+
+def _check_archived_md_append_only(
+    prior_sha: "str | None",
+    repo: "Path | None" = None,
+) -> "dict[str, list[str]]":
+    """Round 1 F1 (D-TombstoneProtocol append-only): archived.md 不得删除或修改
+    既有 tombstone entry 的 4 个 protected fields。
+
+    通过 git diff prior_sha..HEAD 对 openspec/backlog/archived.md 做逐行分析:
+    - history_lost: 纯删除行触及既有 entry block 的 H3 标题行
+    - immutable_field_modified: '- **field**: ...' 紧跟 '+ **field**: ...' 触及
+      4 个 protected fields(archived_at_commit / archived_in_change /
+      cancellation_reason / registry_entry_snapshot)
+
+    Returns:
+        dict with keys "history_lost" (list[str]) and "immutable_field_modified"
+        (list[str], format "<entry-id>:<field>").
+        Empty lists indicate no violation.
+        prior_sha=None / archived.md 不存在于 baseline → tolerant return empty.
+    """
+    repo = repo or Path.cwd()
+    result: dict[str, list[str]] = {"history_lost": [], "immutable_field_modified": []}
+
+    # prior_sha 为 None 时 no-op(兼容 change 第一次 finish gate 无 baseline)
+    if not prior_sha:
+        return result
+
+    diff_proc = subprocess.run(
+        ["git", "diff", prior_sha, "HEAD", "--", "openspec/backlog/archived.md"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # 非零 returncode 或无 diff 输出 → no-op tolerant
+    if diff_proc.returncode != 0 or not diff_proc.stdout.strip():
+        return result
+
+    diff_lines = diff_proc.stdout.splitlines()
+
+    # 4 个 protected field 名(D-TombstoneProtocol)
+    _PROTECTED_FIELDS = frozenset(
+        ("archived_at_commit", "archived_in_change", "cancellation_reason", "registry_entry_snapshot")
+    )
+
+    # H3 entry 标题行模式:### `<id>`
+    _H3_RE = re.compile(r"^###\s+`([a-z0-9][a-z0-9-]*)`\s*$")
+    # protected field 行模式:- **<field>**: <value>
+    _FIELD_RE = re.compile(r"^-\s+\*\*([a-z_]+)\*\*\s*:")
+
+    current_entry_id = ""
+    history_lost_set: set[str] = set()
+    field_modified_set: set[str] = set()
+
+    i = 0
+    while i < len(diff_lines):
+        line = diff_lines[i]
+
+        # 跳过 diff 元数据行(--- +++ @@ diff index)
+        if (
+            line.startswith("---")
+            or line.startswith("+++")
+            or line.startswith("@@")
+            or line.startswith("diff --git")
+            or line.startswith("index ")
+        ):
+            i += 1
+            continue
+
+        # 提取 diff 前缀(+/-/空格)和内容
+        if line.startswith("+") and not line.startswith("+++"):
+            prefix = "+"
+            content = line[1:]
+        elif line.startswith("-") and not line.startswith("---"):
+            prefix = "-"
+            content = line[1:]
+        elif line.startswith(" "):
+            prefix = " "
+            content = line[1:]
+        else:
+            # 其他行(如空行等)
+            i += 1
+            continue
+
+        stripped = content.strip()
+
+        # 上下文行和新增行都可以更新 current_entry_id(追踪当前所在 entry)
+        h3_match = _H3_RE.match(stripped)
+        if h3_match:
+            # 对于删除行(- ### `id`):这是 entry H3 被删除本身
+            if prefix == "-":
+                entry_id = h3_match.group(1)
+                # 检查下一非元数据行是否为对应 + 行(判断是否为 rename 而非纯删除)
+                next_idx = i + 1
+                while next_idx < len(diff_lines):
+                    nl = diff_lines[next_idx]
+                    if nl.startswith("@@") or nl.startswith("diff ") or nl.startswith("index "):
+                        break
+                    if nl.startswith("+") and not nl.startswith("+++"):
+                        # 有对应 + 行 → rename/modify,不算纯删除
+                        break
+                    if nl.startswith("-") or nl.startswith(" "):
+                        # 继续扫描
+                        next_idx += 1
+                        continue
+                    next_idx += 1
+
+                # 判断是否有紧随的 + H3 行(同 id rename 不计为 history_lost)
+                # 简化判断:扫描前向 3 行内找 + H3
+                paired_add_found = False
+                for j in range(i + 1, min(i + 4, len(diff_lines))):
+                    jl = diff_lines[j]
+                    if jl.startswith("+") and not jl.startswith("+++"):
+                        jstripped = jl[1:].strip()
+                        jh3 = _H3_RE.match(jstripped)
+                        if jh3 and jh3.group(1) == entry_id:
+                            paired_add_found = True
+                            break
+                    elif jl.startswith("-"):
+                        # 继续找
+                        continue
+                    else:
+                        break
+
+                if not paired_add_found:
+                    history_lost_set.add(entry_id)
+                # H3 删除行不更新 current_entry_id(保持上一 entry 的 id 追踪)
+            else:
+                # 上下文行或新增行 → 更新 current entry 追踪
+                current_entry_id = h3_match.group(1)
+            i += 1
+            continue
+
+        # 检测 protected field 的 modify pair(- 行紧跟 + 行)
+        if prefix == "-" and current_entry_id:
+            field_match = _FIELD_RE.match(stripped)
+            if field_match and field_match.group(1) in _PROTECTED_FIELDS:
+                field_name = field_match.group(1)
+                # 扫描后续行,找是否紧跟对应 + field 行(modify pair)
+                for j in range(i + 1, min(i + 4, len(diff_lines))):
+                    jl = diff_lines[j]
+                    if jl.startswith("+") and not jl.startswith("+++"):
+                        jstripped = jl[1:].strip()
+                        jfm = _FIELD_RE.match(jstripped)
+                        if jfm and jfm.group(1) == field_name:
+                            # 确认是 modify pair
+                            field_modified_set.add(f"{current_entry_id}:{field_name}")
+                            break
+                        elif jfm:
+                            # 不同 field 的 + 行,停止
+                            break
+                    elif jl.startswith(" ") or jl.startswith("-"):
+                        continue
+                    else:
+                        break
+
+        i += 1
+
+    result["history_lost"] = sorted(history_lost_set)
+    result["immutable_field_modified"] = sorted(field_modified_set)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 

@@ -3473,3 +3473,140 @@ def test_validate_cancel_refs_completed_missing_registry_entry_tolerant(monkeypa
     # entry 为 {} → relevant_paths 为空 → commit-touches 空交集 → no evidence → BLOCKER
     assert len(result) == 1
     assert "followon-missing" in result[0]
+
+
+# ---------------------------------------------------------------------------
+# P2.e — _check_archived_md_append_only 测试(centralize-followon-backlog-registry)
+# ---------------------------------------------------------------------------
+
+
+def test_check_archived_md_append_only_pure_append_passes(tmp_path):
+    """新 tombstone 追加到文件末尾 → history_lost/immutable_field_modified 均为空。"""
+    from tools.forgeue_finish_gate import _check_archived_md_append_only
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@test")
+    _git(tmp_path, "config", "user.name", "test")
+    backlog = tmp_path / "openspec" / "backlog"
+    backlog.mkdir(parents=True)
+    archived = backlog / "archived.md"
+    archived.write_text(
+        "# Archived\n\n"
+        "### `entry-a`\n\n"
+        "- **archived_at_commit**: aaaa1111\n"
+        "- **archived_in_change**: change-foo\n"
+        "- **cancellation_reason**: cancelled-completed: aaaa\n"
+        "- **registry_entry_snapshot**: {}\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v1 initial")
+    prior_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+    # 追加新 entry-b
+    archived.write_text(
+        archived.read_text(encoding="utf-8")
+        + "\n### `entry-b`\n\n"
+        "- **archived_at_commit**: bbbb2222\n"
+        "- **archived_in_change**: change-bar\n"
+        "- **cancellation_reason**: cancelled-superseded by something\n"
+        "- **registry_entry_snapshot**: {}\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v2 append entry-b")
+
+    result = _check_archived_md_append_only(prior_sha, tmp_path)
+    assert result["history_lost"] == []
+    assert result["immutable_field_modified"] == []
+
+
+def test_check_archived_md_append_only_entry_deletion_blocks(tmp_path):
+    """既有 tombstone entry 被删除 → history_lost 列出该 entry id。"""
+    from tools.forgeue_finish_gate import _check_archived_md_append_only
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@test")
+    _git(tmp_path, "config", "user.name", "test")
+    backlog = tmp_path / "openspec" / "backlog"
+    backlog.mkdir(parents=True)
+    archived = backlog / "archived.md"
+    archived.write_text(
+        "# Archived\n\n"
+        "### `entry-victim`\n\n"
+        "- **archived_at_commit**: aaaa1111\n"
+        "- **archived_in_change**: change-foo\n"
+        "- **cancellation_reason**: cancelled-completed: aaaa\n"
+        "- **registry_entry_snapshot**: {}\n\n"
+        "### `entry-keeper`\n\n"
+        "- **archived_at_commit**: bbbb2222\n"
+        "- **archived_in_change**: change-bar\n"
+        "- **cancellation_reason**: cancelled-superseded by something\n"
+        "- **registry_entry_snapshot**: {}\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v1 initial")
+    prior_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+    # 删除 entry-victim,只保留 entry-keeper
+    archived.write_text(
+        "# Archived\n\n"
+        "### `entry-keeper`\n\n"
+        "- **archived_at_commit**: bbbb2222\n"
+        "- **archived_in_change**: change-bar\n"
+        "- **cancellation_reason**: cancelled-superseded by something\n"
+        "- **registry_entry_snapshot**: {}\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v2 delete entry-victim")
+
+    result = _check_archived_md_append_only(prior_sha, tmp_path)
+    assert "entry-victim" in result["history_lost"]
+
+
+def test_check_archived_md_append_only_field_modification_blocks(tmp_path):
+    """既有 entry 的 protected field 被修改 → immutable_field_modified 列出 entry:field。"""
+    from tools.forgeue_finish_gate import _check_archived_md_append_only
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@test")
+    _git(tmp_path, "config", "user.name", "test")
+    backlog = tmp_path / "openspec" / "backlog"
+    backlog.mkdir(parents=True)
+    archived = backlog / "archived.md"
+    archived.write_text(
+        "### `entry-modified`\n\n"
+        "- **archived_at_commit**: aaaa1111\n"
+        "- **archived_in_change**: change-foo\n"
+        "- **cancellation_reason**: cancelled-completed: aaaa\n"
+        "- **registry_entry_snapshot**: {}\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v1 initial")
+    prior_sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
+
+    # 修改 archived_at_commit 字段值
+    archived.write_text(
+        "### `entry-modified`\n\n"
+        "- **archived_at_commit**: cccc3333\n"
+        "- **archived_in_change**: change-foo\n"
+        "- **cancellation_reason**: cancelled-completed: aaaa\n"
+        "- **registry_entry_snapshot**: {}\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "v2 modify archived_at_commit")
+
+    result = _check_archived_md_append_only(prior_sha, tmp_path)
+    assert any("archived_at_commit" in s for s in result["immutable_field_modified"])
+
+
+def test_check_archived_md_append_only_no_prior_sha_returns_empty(tmp_path):
+    """prior_sha=None → no-op,返回空 dict(两个空 list)。"""
+    from tools.forgeue_finish_gate import _check_archived_md_append_only
+
+    result = _check_archived_md_append_only(None, tmp_path)
+    assert result == {"history_lost": [], "immutable_field_modified": []}
