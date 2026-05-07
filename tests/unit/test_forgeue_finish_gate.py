@@ -2646,3 +2646,31 @@ def test_extract_followon_tracking_section_compatible_with_p_prefix_em_dash(tmp_
 """, encoding="utf-8")
     result = _extract_followon_tracking_section(tasks_md)
     assert result["unchecked"] == ["archived-style-followon"]
+
+
+# ---------------------------------------------------------------------------
+# P2.a Helper 2: _find_latest_archived_change
+# ---------------------------------------------------------------------------
+
+
+def test_find_latest_archived_change_returns_most_recent(tmp_path):
+    from tools.forgeue_finish_gate import _find_latest_archived_change
+    archive_dir = tmp_path / "openspec" / "changes" / "archive"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "2026-05-06-retire-parallel-and-worktree-fully").mkdir()
+    (archive_dir / "2026-05-07-fix-finish-gate-archived-replay-compat").mkdir()
+    (archive_dir / "2026-04-22-some-old-change").mkdir()
+    result = _find_latest_archived_change(tmp_path)
+    assert result is not None
+    assert result.name == "2026-05-07-fix-finish-gate-archived-replay-compat"
+
+
+def test_find_latest_archived_change_empty_archive_returns_none(tmp_path):
+    from tools.forgeue_finish_gate import _find_latest_archived_change
+    (tmp_path / "openspec" / "changes" / "archive").mkdir(parents=True)
+    assert _find_latest_archived_change(tmp_path) is None
+
+
+def test_find_latest_archived_change_no_archive_dir_returns_none(tmp_path):
+    from tools.forgeue_finish_gate import _find_latest_archived_change
+    assert _find_latest_archived_change(tmp_path) is None
