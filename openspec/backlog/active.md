@@ -4,6 +4,77 @@
 
 23 entries 总(8 workflow-protocol + 9 requirements-tbd-pointer + 6 capability-boundary)。
 
+> **Parser 注意**:requirements-tbd-pointer section 排在所有 lowercase section 之前,避免 parser body-boundary bleed(uppercase TBD-XXX heading 不被 lowercase regex 识别;排在最后会导致最后一条 lowercase entry 字段被 TBD section 覆盖)。
+
+---
+
+## Requirements-tbd-pointer(9)
+
+> 双源 cross-link:本 section pointer 至 SRS §7.3 active TBD;详细 trigger / 状态见 SRS。
+
+### `TBD-001`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-001
+- **description**: `bridge_execute` 模式启用条件
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-002`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-002
+- **description**: Audio worker(远端 AudioCraft / ElevenLabs 接入;baseline 已 ship,远端协议待独立 follow-on)
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-003`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-003
+- **description**: WS 鉴权 / 多租户 session
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-004`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-004
+- **description**: FBX self-containment 校验
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-005`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-005
+- **description**: DashScope / Tripo3D 下辖 parser 实装
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-010`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-010
+- **description**: GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改原生 async 路径 + ComfyUI lifecycle 扩 ensure_running
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-011`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-011
+- **description**: ModelRegistry schema 扩 `ProviderDef.kind` + extra fields(`model-registry-provider-kind-schema` 后续 change)
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-012`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-012
+- **description**: `repo-put-streaming-payload` zero-copy(D4 副作用,大文件 stream copy)
+- **category**: requirements-tbd-pointer
+- **status**: active
+
+### `TBD-013`
+
+- **source**: `docs/requirements/SRS.md` §7.3 TBD-013
+- **description**: RemoteControl HTTP bridge(future bridge_execute,A1 立项)
+- **category**: requirements-tbd-pointer
+- **status**: active
+
 ---
 
 ## Workflow-protocol(8)
@@ -86,75 +157,6 @@
 - **category**: workflow-protocol
 - **retire-impact-status**: unaffected
 - **priority**: low
-- **status**: active
-
----
-
-## Requirements-tbd-pointer(9)
-
-> 双源 cross-link:本 section pointer 至 SRS §7.3 active TBD;详细 trigger / 状态见 SRS。
-
-### `TBD-001`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-001
-- **description**: `bridge_execute` 模式启用条件
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-002`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-002
-- **description**: Audio worker(远端 AudioCraft / ElevenLabs 接入;baseline 已 ship,远端协议待独立 follow-on)
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-003`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-003
-- **description**: WS 鉴权 / 多租户 session
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-004`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-004
-- **description**: FBX self-containment 校验
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-005`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-005
-- **description**: DashScope / Tripo3D 下辖 parser 实装
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-010`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-010
-- **description**: GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改原生 async 路径 + ComfyUI lifecycle 扩 ensure_running
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-011`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-011
-- **description**: ModelRegistry schema 扩 `ProviderDef.kind` + extra fields(`model-registry-provider-kind-schema` 后续 change)
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-012`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-012
-- **description**: `repo-put-streaming-payload` zero-copy(D4 副作用,大文件 stream copy)
-- **category**: requirements-tbd-pointer
-- **status**: active
-
-### `TBD-013`
-
-- **source**: `docs/requirements/SRS.md` §7.3 TBD-013
-- **description**: RemoteControl HTTP bridge(future bridge_execute,A1 立项)
-- **category**: requirements-tbd-pointer
 - **status**: active
 
 ---
