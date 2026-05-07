@@ -2832,3 +2832,45 @@ def test_get_active_md_at_commit_missing_file_returns_empty(tmp_path):
     _git(tmp_path, "commit", "-q", "-m", "init no active.md")
     sha = _git(tmp_path, "rev-parse", "HEAD").stdout.strip()
     assert _get_active_md_at_commit(tmp_path, sha) == ""
+
+
+# ---------------------------------------------------------------------------
+# P2.b Helper 3: _diff_registry_entries
+# ---------------------------------------------------------------------------
+
+
+def test_diff_registry_entries_detects_added_removed_status_changed():
+    from tools.forgeue_finish_gate import _diff_registry_entries
+    prior = {
+        "entry-a": {"id": "entry-a", "status": "active"},
+        "entry-b": {"id": "entry-b", "status": "active"},
+        "entry-c": {"id": "entry-c", "status": "active"},
+    }
+    current = {
+        "entry-a": {"id": "entry-a", "status": "active"},          # 不变
+        # entry-b 被删除
+        "entry-c": {"id": "entry-c", "status": "cancelled-completed"},  # status 变化
+        "entry-d": {"id": "entry-d", "status": "active"},           # 新增
+    }
+    diff = _diff_registry_entries(prior, current)
+    assert diff["added"] == ["entry-d"]
+    assert diff["removed"] == ["entry-b"]
+    assert diff["status_changed_to_cancelled"] == ["entry-c"]
+
+
+def test_diff_registry_entries_no_change():
+    from tools.forgeue_finish_gate import _diff_registry_entries
+    prior = {"entry-a": {"id": "entry-a", "status": "active"}}
+    current = {"entry-a": {"id": "entry-a", "status": "active"}}
+    diff = _diff_registry_entries(prior, current)
+    assert diff == {"added": [], "removed": [], "status_changed_to_cancelled": []}
+
+
+def test_diff_registry_entries_status_changed_only_to_cancelled_prefix():
+    """status 从 active 变为非 cancelled-* 前缀(如 inherited)不计入 status_changed_to_cancelled。
+    只有 cancelled-* 前缀才是 protocol 相关的转变。"""
+    from tools.forgeue_finish_gate import _diff_registry_entries
+    prior = {"entry-a": {"id": "entry-a", "status": "active"}}
+    current = {"entry-a": {"id": "entry-a", "status": "inherited"}}
+    diff = _diff_registry_entries(prior, current)
+    assert diff["status_changed_to_cancelled"] == []

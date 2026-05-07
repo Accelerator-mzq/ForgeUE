@@ -1608,6 +1608,36 @@ def _get_active_md_at_commit(repo: "Path", sha: str) -> str:
     return result.stdout if result.returncode == 0 else ""
 
 
+def _diff_registry_entries(prior: "dict", current: "dict") -> "dict[str, list[str]]":
+    """计算两个 parsed registry dict 之间的 add/remove/status-changed diff。
+
+    用于 _check_followon_continuity 阶段 1(active.md self-diff),
+    检测应在 archived.md 中有对应 tombstone 的 entries
+    (removed + status_changed_to_cancelled-* 路径)。
+
+    返回:
+    - "added": list[str] — 在 current 中新增的 id
+    - "removed": list[str] — 在 prior 中存在但 current 中缺失的 id
+    - "status_changed_to_cancelled": list[str] — 同时存在于 prior/current,
+      prior status==active 且 current status 以 "cancelled-" 开头的 id
+    """
+    prior_ids = set(prior.keys())
+    current_ids = set(current.keys())
+    added = sorted(current_ids - prior_ids)
+    removed = sorted(prior_ids - current_ids)
+    # 只检测 active → cancelled-* 的转变(protocol 相关转变)
+    status_changed_to_cancelled = sorted(
+        id_ for id_ in (prior_ids & current_ids)
+        if prior[id_].get("status") == "active"
+        and current[id_].get("status", "").startswith("cancelled-")
+    )
+    return {
+        "added": added,
+        "removed": removed,
+        "status_changed_to_cancelled": status_changed_to_cancelled,
+    }
+
+
 # ---------------------------------------------------------------------------
 # openspec validate --strict
 # ---------------------------------------------------------------------------
