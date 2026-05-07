@@ -1530,6 +1530,51 @@ def _find_latest_archived_change(repo: "Path | None" = None) -> "Path | None":
     return candidates[0] if candidates else None
 
 
+def _parse_srs_tbd_table(srs_md_path: "Path") -> "dict[str, str]":
+    """解析 SRS.md §7.3 未决事项 table,返回 {TBD-XXX: status} dict。
+
+    Status 检测:扫描行内容中是否含 ✅ / ⚠️ baseline / ❌ / ⏳ emoji 标记。
+    均不含 → 默认 ⏳。
+
+    Tolerant:文件不存在 / 无 §7.3 / 表为空 → 返回 {}。
+    """
+    if not srs_md_path.is_file():
+        return {}
+    text = srs_md_path.read_text(encoding="utf-8")
+    # 找 §7.3 section(支持 ## 7.3 / ### 7.3)
+    section_match = re.search(r"^###?\s+7\.3\s+", text, re.MULTILINE)
+    if not section_match:
+        return {}
+    section_start = section_match.end()
+    # 找下一个 H2 边界
+    next_section = re.search(r"^##\s+", text[section_start:], re.MULTILINE)
+    section_text = (
+        text[section_start: section_start + next_section.start()]
+        if next_section
+        else text[section_start:]
+    )
+    result: dict[str, str] = {}
+    for line in section_text.splitlines():
+        # 匹配 `| TBD-XXX | ...`
+        m = re.match(r"^\|\s*(TBD-\d+)\s*\|", line)
+        if not m:
+            continue
+        tbd_id = m.group(1)
+        # 状态检测:顺序优先 ✅ > ⚠️ baseline > ❌ > ⏳ > default
+        if "✅" in line:
+            status = "✅"
+        elif "⚠️ baseline" in line or "⚠️" in line:
+            status = "⚠️ baseline"
+        elif "❌" in line:
+            status = "❌"
+        elif "⏳" in line:
+            status = "⏳"
+        else:
+            status = "⏳"  # 默认:无明确标记视为 pending
+        result[tbd_id] = status
+    return result
+
+
 def _parse_registry_md(active_md_path: "Path") -> "dict[str, dict]":
     """解析 openspec/backlog/active.md H3 entries。
 

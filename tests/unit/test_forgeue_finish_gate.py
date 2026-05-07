@@ -3735,3 +3735,91 @@ def test_check_followon_continuity_runs_via_build_report_when_active_md_entry_de
         f"Expected blocker with tombstone_missing_for_entry-orphan, "
         f"got: {blocker_details}"
     )
+
+
+# ---------------------------------------------------------------------------
+# P2.g — _parse_srs_tbd_table 单元测试(round 1 F3 fix)
+# ---------------------------------------------------------------------------
+
+
+def test_parse_srs_tbd_table_extracts_tbd_with_statuses(tmp_path):
+    """4 种状态标记全部被正确识别:✅ / ⚠️ baseline / ❌ / 默认 ⏳。"""
+    from tools.forgeue_finish_gate import _parse_srs_tbd_table
+    srs = tmp_path / "SRS.md"
+    srs.write_text(
+        "# SRS\n\n"
+        "### 7.3 未决事项\n\n"
+        "| 编号 | 事项 | 目标决议日期 |\n"
+        "| --- | --- | --- |\n"
+        "| TBD-001 | foo | x |\n"
+        "| TBD-002 | bar ✅ done | y |\n"
+        "| TBD-003 | baz ⚠️ baseline | z |\n"
+        "| TBD-004 | qux ❌ pending | w |\n"
+        "\n"
+        "## 8 Other\n",
+        encoding="utf-8",
+    )
+    result = _parse_srs_tbd_table(srs)
+    # TBD-001:无任何标记 → 默认 ⏳
+    assert result["TBD-001"] == "⏳"
+    # TBD-002:含 ✅
+    assert result["TBD-002"] == "✅"
+    # TBD-003:含 ⚠️ baseline
+    assert result["TBD-003"] == "⚠️ baseline"
+    # TBD-004:含 ❌
+    assert result["TBD-004"] == "❌"
+    # 共 4 条
+    assert len(result) == 4
+
+
+def test_parse_srs_tbd_table_missing_file_returns_empty(tmp_path):
+    """文件不存在 → 返回 {}(tolerant)。"""
+    from tools.forgeue_finish_gate import _parse_srs_tbd_table
+    result = _parse_srs_tbd_table(tmp_path / "nonexistent.md")
+    assert result == {}
+
+
+def test_parse_srs_tbd_table_no_section_returns_empty(tmp_path):
+    """SRS.md 无 §7.3 section → 返回 {}。"""
+    from tools.forgeue_finish_gate import _parse_srs_tbd_table
+    srs = tmp_path / "SRS.md"
+    srs.write_text("# SRS\n\nno 7.3 section here\n", encoding="utf-8")
+    result = _parse_srs_tbd_table(srs)
+    assert result == {}
+
+
+def test_parse_srs_tbd_table_pending_emoji_recognized(tmp_path):
+    """含 ⏳ 标记 → 识别为 ⏳(不走 default)。"""
+    from tools.forgeue_finish_gate import _parse_srs_tbd_table
+    srs = tmp_path / "SRS.md"
+    srs.write_text(
+        "# SRS\n\n"
+        "### 7.3 未决事项\n\n"
+        "| 编号 | 事项 | 目标决议日期 |\n"
+        "| --- | --- | --- |\n"
+        "| TBD-005 | pending item ⏳ | 2026-Q2 |\n"
+        "\n",
+        encoding="utf-8",
+    )
+    result = _parse_srs_tbd_table(srs)
+    assert result["TBD-005"] == "⏳"
+
+
+def test_parse_srs_tbd_table_section_boundary_respects_next_h2(tmp_path):
+    """§7.3 section 只解析到下一个 ## H2,不泄漏到其他 section 的行。"""
+    from tools.forgeue_finish_gate import _parse_srs_tbd_table
+    srs = tmp_path / "SRS.md"
+    srs.write_text(
+        "# SRS\n\n"
+        "### 7.3 未决事项\n\n"
+        "| 编号 | 事项 | 目标决议日期 |\n"
+        "| --- | --- | --- |\n"
+        "| TBD-010 | in-section | date |\n"
+        "\n"
+        "## 8 其他章节\n\n"
+        "| TBD-999 | NOT in section | date |\n",
+        encoding="utf-8",
+    )
+    result = _parse_srs_tbd_table(srs)
+    assert "TBD-010" in result
+    assert "TBD-999" not in result
