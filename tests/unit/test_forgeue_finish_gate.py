@@ -3610,3 +3610,128 @@ def test_check_archived_md_append_only_no_prior_sha_returns_empty(tmp_path):
 
     result = _check_archived_md_append_only(None, tmp_path)
     assert result == {"history_lost": [], "immutable_field_modified": []}
+
+
+# ---------------------------------------------------------------------------
+# P2.f — _check_followon_continuity orchestrator + register TDD
+# ---------------------------------------------------------------------------
+
+
+def test_followon_fences_remain_registered():
+    """Anti-regression:防止 register tuple 被未来重构静默删除。
+
+    _check_followon_continuity 必须出现在 build_report 函数体中。
+    """
+    import inspect
+    src = inspect.getsource(fg.build_report)
+    assert "_check_followon_continuity" in src, (
+        "_check_followon_continuity not registered in build_report"
+    )
+
+
+def test_check_followon_continuity_runs_via_build_report_when_active_md_entry_deleted_without_tombstone(tmp_path):
+    """Round 3 F2-r3 end-to-end fence-register guardrail:
+    build_report MUST invoke _check_followon_continuity。
+
+    fixture 构造:
+    1. git init + 写 archived change 目录(作为 baseline 锚点)
+    2. 写 openspec/backlog/active.md baseline 含 entry-orphan(全小写 id,符合 registry regex)
+    3. commit baseline
+    4. 写 archive change dir → commit(使 _get_change_baseline_commit 能取到 sha)
+    5. 删除 active.md entry-orphan(不写 archived.md tombstone)
+    6. commit 新状态
+    7. 搭建 active change 目录(含 minimal required evidence)
+    8. build_report → 期望 blocker 含 tombstone_missing_for_entry-orphan
+    """
+    # Step 1: git init
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "test@test")
+    _git(tmp_path, "config", "user.name", "test")
+
+    # Step 2: active.md baseline 含 entry-orphan(全小写,符合 _REGISTRY_ENTRY_HEADING_RE)
+    backlog_dir = tmp_path / "openspec" / "backlog"
+    backlog_dir.mkdir(parents=True)
+    active_md = backlog_dir / "active.md"
+    active_md.write_text(
+        "# Follow-on Backlog\n\n"
+        "### `entry-orphan`\n\n"
+        "- **source**: design.md\n"
+        "- **description**: Test follow-on entry that will be orphaned\n"
+        "- **trigger**: P2.f test\n"
+        "- **category**: enhancement\n"
+        "- **retire-impact-status**: follow-on\n"
+        "- **priority**: low\n"
+        "- **status**: active\n\n",
+        encoding="utf-8",
+    )
+    # 建 archived.md(空)
+    archived_md = backlog_dir / "archived.md"
+    archived_md.write_text("# Archived\n\n", encoding="utf-8")
+
+    # Step 3: commit baseline active.md
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "baseline: active.md with entry-orphan")
+
+    # Step 4: 写 archived change dir → commit(使 _get_change_baseline_commit 有 anchor)
+    archived_change = tmp_path / "openspec" / "changes" / "archive" / "2026-05-07-prior-change"
+    archived_change.mkdir(parents=True)
+    (archived_change / "proposal.md").write_text("# Prior change\n", encoding="utf-8")
+    (archived_change / "tasks.md").write_text(
+        "# Tasks\n\n## Follow-on Tracking\n\n(none)\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "archive: prior-change (baseline anchor)")
+
+    # Step 5: 删除 entry-orphan 但不写 tombstone(故意违规)
+    active_md.write_text(
+        "# Follow-on Backlog\n\n(no active entries)\n",
+        encoding="utf-8",
+    )
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "remove entry-orphan without tombstone (intentional violation)")
+
+    # Step 6: 搭建 active change 目录 + minimal required evidence
+    change_id = "centralize-followon-backlog-registry"
+    b = ChangeBuilder(repo=tmp_path, change_id=change_id)
+    b.write_proposal()
+    b.write_design()
+    b.write_tasks(anchors=["1.1"], checkmarks_under_3=True)
+    b.write_evidence(
+        "verification", "verify_report.md",
+        evidence_type="verify_report", stage="S5", body="OK\n",
+    )
+    b.write_evidence(
+        "verification", "doc_sync_report.md",
+        evidence_type="doc_sync_report", stage="S7", body="DRIFT 0\n",
+    )
+    b.write_evidence(
+        "review", "superpowers_review.md",
+        evidence_type="superpowers_review", stage="S6", body="Finalize OK\n",
+    )
+
+    # Step 7: run build_report(cursor env → codex evidence OPTIONAL)
+    report = fg.build_report(
+        repo=tmp_path,
+        change_id=change_id,
+        detected_env="cursor",
+        codex_plugin_available=False,
+        no_validate=True,
+    )
+    assert report is not None, "build_report returned None (change not found)"
+
+    # Step 8: 期望有 blocker 含 tombstone_missing_for_entry-orphan
+    blocker_details = " | ".join(f"{b.type}: {b.detail}" for b in report.blockers)
+    assert report.blockers, (
+        f"Expected at least one blocker (tombstone_missing_for_entry-orphan), "
+        f"got 0. All blockers: {blocker_details}"
+    )
+    # 至少一个 blocker 含 tombstone_missing_for 文本
+    tombstone_blockers = [
+        b for b in report.blockers
+        if "tombstone_missing_for" in b.type or "tombstone_missing_for" in b.detail
+    ]
+    assert tombstone_blockers, (
+        f"Expected blocker with tombstone_missing_for_entry-orphan, "
+        f"got: {blocker_details}"
+    )

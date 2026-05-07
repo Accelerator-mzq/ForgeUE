@@ -1842,6 +1842,12 @@ def build_report(
     blockers.extend(fm_blockers)
     blockers.extend(check_tasks_unchecked(change_dir))
 
+    # P2.f — follow-on backlog continuity fence(centralize-followon-backlog-registry)
+    # 4 阶段检查:active.md self-diff + archived tasks.md 兜底 +
+    # cancel ref strict validation + archived.md append-only
+    for reason in _check_followon_continuity(change_dir, change_id, repo):
+        blockers.append(Blocker(type="followon_continuity_violation", detail=reason))
+
     if not no_validate:
         # archive/ 路径下 skip openspec validate(沿 design.md D-OpenSpecValidateArchiveSkip):
         # upstream openspec CLI 不识别 `openspec/changes/archive/<dated-id>/` 路径,
@@ -2350,6 +2356,142 @@ def _check_archived_md_append_only(
     result["history_lost"] = sorted(history_lost_set)
     result["immutable_field_modified"] = sorted(field_modified_set)
     return result
+
+
+# ---------------------------------------------------------------------------
+# P2.f — _check_followon_continuity orchestrator(centralize-followon-backlog-registry)
+# 把 P2.a-P2.e 的 8 个 helper 串联成主 fence。
+# 对应 design.md D-FenceParseStrategy 4 阶段:
+#   阶段 1 active.md self-diff + 阶段 2 archived tasks.md 兜底 +
+#   阶段 3 cancel ref strict validation + 阶段 4 archived.md append-only
+# ---------------------------------------------------------------------------
+
+
+def _check_followon_continuity(
+    change_dir: "Path",
+    change_id: str,
+    repo: "Path | None" = None,
+) -> "list[str]":
+    """Follow-on backlog continuity fence — 4 阶段聚合检查。
+
+    返回空 list 表示全部通过;非空 list 包含各条 BLOCKER reason string。
+
+    调用方(build_report)将每条 reason 转为 Blocker(type=..., detail=reason)。
+
+    阶段 1 active.md self-diff:
+        - 获取 baseline sha(最新 archived change 的 commit)
+        - 对比 prior/current active.md entries
+        - removed 或 status_changed_to_cancelled 的 entry 须在 archived.md 有 tombstone
+        - 找到 tombstone → 调 _validate_tombstone_consistency 5-point 校验
+
+    阶段 2 archived tasks.md 兜底:
+        - 检测 prior archived tasks.md follow-on tracking section 中 unchecked 项
+        - 当前 change tasks.md 必须全部继承声明
+
+    阶段 3 cancel ref strict validation:
+        - 从当前 tasks.md 提取 resolved cancel tag list
+        - 调 _validate_cancel_refs 逐条严格校验
+
+    阶段 4 archived.md append-only:
+        - 校验 archived.md 历史条目不被删除或修改 protected fields
+    """
+    repo = repo or Path.cwd()
+    blockers: list[str] = []
+
+    # === 阶段 1: active.md self-diff ===
+    baseline_sha = _get_change_baseline_commit(repo)
+    if baseline_sha is not None:
+        # 读取 baseline 时的 active.md 内容
+        prior_text = _get_active_md_at_commit(repo, baseline_sha)
+
+        # 用 tmp 文件解析 prior active.md(复用 _parse_registry_md 需要 Path)
+        import tempfile
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", encoding="utf-8", delete=False
+        ) as tmp_f:
+            tmp_f.write(prior_text)
+            tmp_path_str = tmp_f.name
+        try:
+            prior_entries = _parse_registry_md(Path(tmp_path_str))
+        finally:
+            try:
+                Path(tmp_path_str).unlink(missing_ok=True)
+            except OSError:
+                pass
+
+        # 读取当前 active.md
+        current_active_md = repo / "openspec" / "backlog" / "active.md"
+        current_entries = _parse_registry_md(current_active_md)
+
+        # 计算 diff
+        diff = _diff_registry_entries(prior_entries, current_entries)
+
+        # 读 archived.md tombstone dict
+        archived_md_path = repo / "openspec" / "backlog" / "archived.md"
+        archived_entries = _parse_archived_md(archived_md_path)
+
+        # 读 current change tasks.md follow-on tracking section(用于 tombstone 5-point 校验)
+        current_tasks_md = change_dir / "tasks.md"
+        tasks_section: dict = {"unchecked": [], "resolved": []}
+        if current_tasks_md.is_file():
+            tasks_section = _extract_followon_tracking_section(current_tasks_md)
+
+        # 对每个 removed / status_changed_to_cancelled entry 检查 tombstone
+        need_tombstone_ids: list[str] = (
+            diff.get("removed", []) + diff.get("status_changed_to_cancelled", [])
+        )
+        for entry_id in need_tombstone_ids:
+            if entry_id not in archived_entries:
+                # 找不到 tombstone → BLOCKER
+                blockers.append(f"tombstone_missing_for_{entry_id}")
+            else:
+                # 找到 tombstone → 5-point 校验
+                tombstone = archived_entries[entry_id]
+                baseline_entry = prior_entries.get(entry_id, {})
+                # 从 tasks_section.resolved 找到对应 cancel tag
+                tasks_cancel_tag: dict = {}
+                for item in tasks_section.get("resolved", []):
+                    if item.get("id") == entry_id:
+                        tasks_cancel_tag = {
+                            "type": item.get("tag_type", ""),
+                            "value": item.get("tag_value", ""),
+                        }
+                        break
+                consistency_err = _validate_tombstone_consistency(
+                    tombstone, baseline_entry, change_id, tasks_cancel_tag
+                )
+                if consistency_err is not None:
+                    blockers.append(consistency_err)
+
+    # === 阶段 2: archived tasks.md 兜底 ===
+    fallback = _check_archived_tasks_fallback(change_id, repo)
+    for missing_id in fallback.get("missing_inherited", []):
+        blockers.append(f"archived_followon_not_declared_{missing_id}")
+
+    # === 阶段 3: cancel ref strict validation ===
+    current_tasks_md = change_dir / "tasks.md"
+    if current_tasks_md.is_file():
+        tasks_info = _extract_followon_tracking_section(current_tasks_md)
+        resolved = tasks_info.get("resolved", [])
+        # 读当前 active.md entries(用于 cancelled-completed entry 查字段)
+        current_active_md = repo / "openspec" / "backlog" / "active.md"
+        current_entries_for_cancel = _parse_registry_md(current_active_md)
+        # _validate_cancel_refs 仅对 resolved 列表做严格校验
+        cancel_ref_errors = _validate_cancel_refs(resolved, current_entries_for_cancel, repo)
+        for err in cancel_ref_errors:
+            blockers.append(err)
+
+    # === 阶段 4: archived.md append-only ===
+    # baseline_sha 可能在阶段 1 已计算(或 None);re-use
+    if "baseline_sha" not in dir():
+        baseline_sha = _get_change_baseline_commit(repo)
+    append_only = _check_archived_md_append_only(baseline_sha, repo)
+    for lost_id in append_only.get("history_lost", []):
+        blockers.append(f"archived_md_history_lost_{lost_id}")
+    for field_key in append_only.get("immutable_field_modified", []):
+        blockers.append(f"archived_md_immutable_field_modified_{field_key}")
+
+    return blockers
 
 
 # ---------------------------------------------------------------------------
