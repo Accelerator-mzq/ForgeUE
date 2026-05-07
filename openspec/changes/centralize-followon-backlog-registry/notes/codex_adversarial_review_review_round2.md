@@ -11,7 +11,10 @@ contract_refs:
   - execution/execution_plan.md
   - execution/micro_tasks.md
 aligned_with_contract: false
-drift_decision: pending
+drift_decision: written-back-to-design
+writeback_commit: 50841663e5d43e1baa91e31c9fa9abeb861d5f94
+drift_reason: Round 2 3 finding(F1-r2 baseline anchor / F2-r2 tombstone 5-point consistency / F3-r2 commit-touches strict + escape hatch)全 accepted-codex inline writeback by user 拍板 (a) 选项;design.md / specs/.../spec.md / tasks.md / micro_tasks.md 同 batch update。详见 review/design_cross_check.md ## F/G + commit 5084166。
+reasoning_notes_anchor: review/design_cross_check.md#f-round-2-codex-findings-resolution
 detected_env: claude-code
 triggered_by: forgeue:change-plan
 codex_plugin_available: true

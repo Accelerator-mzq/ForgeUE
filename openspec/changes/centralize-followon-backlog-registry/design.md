@@ -271,6 +271,20 @@ followon_continuity:
 
 **Rollback strategy**:本 change 在 `dev` branch 实施(沿 ForgeUE 流程),archive 前可 `git reset --hard` 回滚到本 change 启动 commit `f14e581`(retire-parallel-and-worktree-fully archive commit)或后续。若 archive 后发现 `_check_followon_continuity` fence 误报阻断历史 change replay → 走新 follow-on `fix-followon-continuity-fence-historical-replay`(归档不动原则)。
 
+## Reasoning Notes
+
+### pre-existing-pytest-fail-disputed-permanent-drift
+
+P0.1 baseline 实测 `tests/unit/test_forgeue_cross_check_format.py::test_real_cross_check_files_have_evidence_type` 1 fail。**根因**:archived `enhance-workflow-automation-ledger-binding/review/review_cross_check.md` 用 `evidence_type: review_cross_check`(retire era 历史 schema),不在 test 允许 enum `('design_cross_check', 'plan_cross_check', 'implementation_cross_check')` 内。**追溯**:retire P5 `verify_report.md` L72 已标识为 follow-on `fix-cross-check-format-test-enum-extension`,但 retire 期未把它放入 P12 follow-on tracking(只在 verify_report.md 提及)— 这正是 centralize-followon-backlog-registry 协议要 catch 的 systemic gap 案例。
+
+**本 change disposition**:`disputed-permanent-drift`。理由:
+- 本 fail 非本 change 引入;
+- 修复 scope(扩 test enum 至 4-class)不在本 change 4 deliverable 内(沿 ForgeUE memory `feedback_partial_vs_whole_retire_audit` 严控 scope 边界);
+- 已 backfill 到 active.md P1.3.8(`fix-cross-check-format-test-enum-extension`)+ 详 dogfood discovery 文档于 verification/baseline.md `## Dogfood 暴露 — registry backfill scope adjustment`;
+- 修复方案明确简单(test enum 扩到 4 类),独立 follow-on change 即可;留 follow-on backlog 在本 change ship 后由 user 启动。
+
+**Anchor target**:本段(`#pre-existing-pytest-fail-disputed-permanent-drift`)被 `verification/verify_report.md` frontmatter `reasoning_notes_anchor` 引用,作为 disputed-permanent-drift 决策依据(沿 spec.md `## Reasoning Notes anchor` requirement)。
+
 ## Open Questions
 
 - **Q1**:registry 文件位置 `openspec/backlog/active.md` vs `openspec/changes/_backlog/active.md` 哪个更符合 OpenSpec 上游约定?**默认选 `openspec/backlog/`**(单独子目录,与 `changes/` / `specs/` 平级,语义清楚)。

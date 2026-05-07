@@ -2277,10 +2277,12 @@ def _check_archived_md_append_only(
         cwd=repo,
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
-    # 非零 returncode 或无 diff 输出 → no-op tolerant
-    if diff_proc.returncode != 0 or not diff_proc.stdout.strip():
+    # 非零 returncode 或无 diff 输出 → no-op tolerant(P5 dogfood fix:GBK decode 错误时 stdout 可能为 None)
+    if diff_proc.returncode != 0 or not diff_proc.stdout or not diff_proc.stdout.strip():
         return result
 
     diff_lines = diff_proc.stdout.splitlines()

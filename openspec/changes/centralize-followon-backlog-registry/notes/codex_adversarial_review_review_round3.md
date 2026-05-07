@@ -9,7 +9,10 @@ contract_refs:
   - tasks.md
   - proposal.md
 aligned_with_contract: false
-drift_decision: pending
+drift_decision: written-back-to-tasks
+writeback_commit: c75924e11a9f5f9b25e7c068273ad77112347153
+drift_reason: Round 3 3 finding(F1-r3 删 --check-followon-continuity flag 用 aggregate / F2-r3 P2.f TDD 端到端守门 / F3-r3 phase decision table 单 Mode 列重写)全 accepted-codex inline writeback;proposal.md / tasks.md / execution_plan.md / micro_tasks.md 同 batch update。详见 review/plan_cross_check.md ## B/C/D + commit c75924e。
+reasoning_notes_anchor: review/plan_cross_check.md#b-codex-findings--resolution
 detected_env: claude-code
 triggered_by: forgeue:change-apply-subagent
 codex_plugin_available: true

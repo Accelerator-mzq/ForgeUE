@@ -8,7 +8,10 @@ contract_refs:
   - proposal.md
   - specs/examples-and-acceptance/spec.md
 aligned_with_contract: false
-drift_decision: pending
+drift_decision: written-back-to-design
+writeback_commit: 125eae1d1c3682cd7a5e18e7fb3706c34e482e9a
+drift_reason: Round 1 4 finding(F1 active.md hard source-of-truth + F2 cancel ref strict + F3 SRS↔registry fence enforce + F4 followon_continuity 4-list schema)全 accepted-codex inline writeback;design.md / proposal.md / specs/.../spec.md / tasks.md 同 batch update。详见 review/design_cross_check.md ## B/C/D + commit 125eae1。
+reasoning_notes_anchor: review/design_cross_check.md#b-codex-findings--resolution
 detected_env: claude-code
 triggered_by: forgeue:change-plan
 codex_plugin_available: true

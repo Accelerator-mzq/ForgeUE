@@ -7,7 +7,10 @@ contract_refs:
   - proposal.md
   - specs/examples-and-acceptance/spec.md
 aligned_with_contract: false
-drift_decision: pending
+drift_decision: written-back-to-design
+writeback_commit: 125eae1d1c3682cd7a5e18e7fb3706c34e482e9a
+drift_reason: S2 design stage round 1+2 codex adversarial review 共 7 finding 全 accepted-codex inline writeback(round 1 commit 125eae1 / round 2 commit 5084166;详见 review/design_cross_check.md ## B/F);本 stub 是 S2 stage consolidated reference,真实 verbatim + Resolution disposition 见 cross-check + round1/round2 evidence。
+reasoning_notes_anchor: review/design_cross_check.md#round-summary
 detected_env: claude-code
 triggered_by: forgeue:change-plan
 codex_plugin_available: true
