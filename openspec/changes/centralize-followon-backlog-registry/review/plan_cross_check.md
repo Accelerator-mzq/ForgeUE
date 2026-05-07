@@ -14,9 +14,9 @@ codex_plugin_available: true
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_plan_review.md
 created_at: 2026-05-07T17:30:00Z
-resolved_at: null
-resolution_summary: null
-disputed_open: null
+resolved_at: 2026-05-07T17:25:00Z
+resolution_summary: S3 plan stage round 3 close;3 finding accepted-codex inline writeback (commit c75924e — F1-r3 删 flag 改 aggregate / F2-r3 P2.f TDD 端到端守门 / F3-r3 phase decision table 单 Mode 列重写);3 round 总计 10 finding 全 inline writeback,disputed_open=0 across all rounds
+disputed_open: 0
 runtime_enforcement_protocol_version: v1
 triggered_by_command: change-apply-subagent
 task_granularity: phase
@@ -101,12 +101,57 @@ skill_cascade_audit:
 
 ## B. codex Findings × Resolution
 
-(待 codex `/codex:adversarial-review` 完成后填充)
+Round 3 codex `/codex:adversarial-review` job `bcc58sszb` verdict `needs-attention`,3 finding 全 plan-stage correctness bug(无 design 立场翻转)。
+
+| ID | P | Finding | file:line | Independent Verify | Resolution | writeback_commit |
+|---|---|---|---|---|---|---|
+| **F1-r3** | P1 high | P4 calls `--check-followon-continuity` flag,but argparse 未实现该 flag → P4 实施时 argparse 失败 | `tasks.md:118` (P4.1) + `proposal.md:14` reference + `tools/forgeue_finish_gate.py:1691-1704` argparse 仅 `--change/--json/--no-validate` | ✅ TRUE — 实测 finish_gate parser 无 `--check-followon-continuity` flag | **accepted-codex** — 删 flag,改用 aggregate finish_gate(沿 codex 推荐 (a) 简化路径);proposal.md:14 + tasks.md P4.1 + micro_tasks.md P4.1 同 batch update | `c75924e` |
+| **F2-r3** | P1 high | P2.f register 缺端到端 red test;若 implementer 漏 register,helper 单测仍 PASS + P5.3 假绿 | `micro_tasks.md:617-622` (P2.f 仅 register tuple append,无 end-to-end build_report 测试) | ✅ TRUE — P2.f 实施步骤未含 failing fence-not-registered red test;P2.h tests 测 helper isolation,无 build_report 端到端 | **accepted-codex** — P2.f 改 TDD 5 sub-task(red → green → regression test);加端到端 fixture exercising both fences via full CLI;`test_followon_fences_remain_registered` anti-regression | `c75924e` |
+| **F3-r3** | P2 medium | Phase decision table 内部矛盾(P1 行同时勾两 mode 列) | `execution_plan.md:168-174` 实测 P1 行同时填"subagent dispatch — 22 entries"+ ✓ direct 列 | ✅ TRUE — table 双 mode 列 + P1 行双勾,controller 不知该 dispatch 还是 direct | **accepted-codex** — 表重写为单 Mode 列 + Rationale 列;P0/P1/P4-P8 direct;P2.a-P2.h + P3 subagent | `c75924e` |
+
+### B.1 与 ## A 期望 codex challenge surface 对照
+
+| Claude `## A.4` 期望 | 实际 round 3 命中 | Disposition |
+|---|---|---|
+| Phase decision table P2.f / P4 / P3 mode | ✅ F3-r3 命中 P1 行不一致 + 间接触 P2.f mode 决策(F2-r3 推 P2.f 改 TDD,事实上提升到 subagent rigor 同款) | accepted-codex |
+| Subagent dispatch 顺序 + P2.h 整合 vs per-phase | ❌ 未提(round 3 无 P2.h dispatch 顺序 challenge) | 沿 ## A 立场 |
+| Task granularity phase vs sub-task | ❌ 未提 | 沿 ## A 立场 phase |
+| TDD 强制度 | ✅ F2-r3 命中(P2.f 缺 TDD red 是 TDD enforcement gap) | accepted-codex |
+| 越界检测协议 | ❌ 未提 | 沿 ## A 立场 |
+| Cross-cutting commit testing | ❌ 未提(round 3 未 challenge P2.h.2 test_validate_cancel_tag_completed cross-cutting case) | 沿 ## A 立场;留 P2.h 实施期 fixture 设计时 sanity check |
+| Evidence frontmatter consistency | ❌ 未提 | 沿 ## A 立场 |
+| P6 Documentation Sync Gate | ❌ 未提 | 沿 ## A 立场 direct |
+| (新)F1-r3 P4 flag mismatch | ❌ Claude `## A` 未预期 — 是 plan↔proposal 实施一致性 gap | 真核心 implementation correctness fix |
+
+### B.2 Resolution scope
+
+- **F1-r3 + F2-r3 + F3-r3 全 accepted-codex inline writeback**(无 design 立场翻转;纯 plan correctness fix)
+- 无 disputed-pending,无 escalation-to-user 需求
 
 ## C. Disputed Count
 
-`disputed_open: null`(codex review 尚未跑)
+`disputed_open: 0`(round 3 3 finding 全 accepted-codex inline writeback;commit `c75924e`)
 
-## D. Independent Verification
+> S4-S5 implementation 阻断条件解除。Round 3 close;**总 round 数 3**(S2 design x2 + S3 plan x1);**总 finding 10**(round 1 4 + round 2 3 + round 3 3);全 inline writeback,disputed_open=0 across all rounds。
 
-(待 B/C 段填充后逐条独立验证 file:line)
+## D. Independent Verification(沿 ForgeUE memory `feedback_verify_external_reviews`)
+
+| ID | Codex claim file:line | Claude verify | Verdict |
+|---|---|---|---|
+| F1-r3 | `tasks.md:118` P4.1 调 `--check-followon-continuity` flag | Read tasks.md:118 实测 P4.1 行原文 `调 \`python tools/forgeue_finish_gate.py --check-followon-continuity --change <id>\`(blocker)`;Read `tools/forgeue_finish_gate.py:1691-1704` argparse 仅 `--change/--json/--no-validate`,无 `--check-followon-continuity` | ✅ TRUE |
+| F2-r3 | `micro_tasks.md:617-622` P2.f 仅 register tuple append | Read micro_tasks.md:617-622 实测 P2.f section 仅 3 sub-task("找 register 处" + "append" + "fence 输出统一格式");无 failing test step + 无 end-to-end build_report fixture | ✅ TRUE |
+| F3-r3 | `execution_plan.md:168-174` Phase decision table P1 双勾 | Read execution_plan.md:168-174 实测 P1 行 markdown 同时填 "subagent dispatch — 22 entries 写入颗粒度" 第 2 列 + ✓ 第 3 列 | ✅ TRUE |
+
+**全 3 round 3 finding 独立 file:line VERIFIED TRUE,无伪 finding。**
+
+### D.1 Resolution disposition
+
+- **F1-r3 + F2-r3 + F3-r3 全 accepted-codex**(commit `c75924e`):pure plan-stage correctness fix,无 design 立场翻转,无 user 升级需求
+- `disputed_open: 0`,S4-S5 推进解锁
+
+### D.2 Frontmatter update
+
+frontmatter `resolved_at`: 2026-05-07T17:25:00Z
+frontmatter `resolution_summary`:S3 plan stage round 3 close;3 finding accepted-codex inline writeback (commit c75924e — F1-r3 删 flag 改 aggregate / F2-r3 P2.f TDD 端到端守门 / F3-r3 phase decision table 单 Mode 列重写);3 round 总计 10 finding 全 inline writeback,disputed_open=0 across all rounds
+frontmatter `disputed_open`: 0
+
