@@ -27,7 +27,7 @@ Rules (§E.1 — framework only DECLARES; UE-side script EXECUTES):
 from __future__ import annotations
 
 import re
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Iterable
 
 from framework.core.artifact import Artifact
@@ -128,7 +128,12 @@ _SAFE_NAME = re.compile(r"[^A-Za-z0-9_]+")
 
 
 class ManifestBuildError(ValueError):
-    """Raised when a manifest cannot be built from the given artifacts."""
+    """Raised when a manifest cannot be built from the given artifacts.
+
+    Reserved for future structural errors. Phase A 收敛后(A.4)`build_manifest`
+    不再 raise 此类(原 non-file payload errors.append 路径已被 `is_manifest_importable`
+    silent skip 取代);保留 public symbol 防外部消费者依赖,便于将来加新 error category。
+    """
 
 
 def build_manifest(
@@ -149,7 +154,6 @@ def build_manifest(
     """
     run_asset_folder = f"{target.asset_root.rstrip('/')}/{run_id}"
     entries: list[UEAssetEntry] = []
-    errors: list[str] = []
 
     for art in artifacts:
         if selected_artifact_ids is not None and art.artifact_id not in selected_artifact_ids:
@@ -197,9 +201,6 @@ def build_manifest(
                          "frame_count", "fps", "loop", "play_on_open"}
             },
         ))
-
-    if errors:
-        raise ManifestBuildError("\n".join(errors))
 
     expected = set(target.expected_asset_kinds or [])
     seen_kinds = {e.asset_kind for e in entries}
