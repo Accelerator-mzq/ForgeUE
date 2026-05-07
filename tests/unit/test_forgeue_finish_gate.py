@@ -3123,3 +3123,83 @@ def test_validate_cancel_tag_superseded_archive_multiple_matches_pass(tmp_path):
 
     result = _validate_cancel_tag_superseded("target-change", repo=tmp_path)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# P2.d.2 — _validate_cancel_tag_not_applicable (round 1 F2 — 5 reason enum)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_cancel_tag_not_applicable_retire_superseded_pass():
+    """reason='retire-superseded' → PASS(return None)。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    assert _validate_cancel_tag_not_applicable("retire-superseded") is None
+
+
+def test_validate_cancel_tag_not_applicable_out_of_scope_pass():
+    """reason='out-of-scope' → PASS(return None)。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    assert _validate_cancel_tag_not_applicable("out-of-scope") is None
+
+
+def test_validate_cancel_tag_not_applicable_scope_changed_pass():
+    """reason='scope-changed' → PASS(return None)。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    assert _validate_cancel_tag_not_applicable("scope-changed") is None
+
+
+def test_validate_cancel_tag_not_applicable_obsolete_pass():
+    """reason='obsolete' → PASS(return None)。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    assert _validate_cancel_tag_not_applicable("obsolete") is None
+
+
+def test_validate_cancel_tag_not_applicable_infeasible_pass():
+    """reason='infeasible' → PASS(return None)。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    assert _validate_cancel_tag_not_applicable("infeasible") is None
+
+
+def test_validate_cancel_tag_not_applicable_with_free_form_suffix_pass():
+    """enum 前缀后带自由文本说明 → 仍然 PASS。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    assert _validate_cancel_tag_not_applicable("out-of-scope (本 change 不修无关 bug)") is None
+
+
+def test_validate_cancel_tag_not_applicable_empty_blocker():
+    """空 reason → return BLOCKER。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    result = _validate_cancel_tag_not_applicable("")
+    assert result == "cancel_reason_not_in_enum_got_<empty>"
+
+
+def test_validate_cancel_tag_not_applicable_arbitrary_text_blocker():
+    """随意文本如'我懒' → return BLOCKER。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    result = _validate_cancel_tag_not_applicable("我懒")
+    assert result is not None
+    assert result.startswith("cancel_reason_not_in_enum_got_")
+
+
+def test_validate_cancel_tag_not_applicable_unknown_prefix_blocker():
+    """unknown-reason → return BLOCKER。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    result = _validate_cancel_tag_not_applicable("unknown-reason extra text")
+    assert result == "cancel_reason_not_in_enum_got_unknown-reason"
+
+
+def test_validate_cancel_tag_not_applicable_whitespace_only_blocker():
+    """纯空白字符 → strip 后空 → BLOCKER。"""
+    from tools.forgeue_finish_gate import _validate_cancel_tag_not_applicable
+
+    result = _validate_cancel_tag_not_applicable("   ")
+    assert result == "cancel_reason_not_in_enum_got_<empty>"

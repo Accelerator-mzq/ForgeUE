@@ -1956,6 +1956,29 @@ _VALID_CANCEL_REASON_PREFIXES: frozenset[str] = frozenset({
 })
 
 
+def _validate_cancel_tag_not_applicable(reason: str) -> "str | None":
+    """Round 1 F2 fix: validate cancelled-not-applicable reason against 5-class enum.
+
+    允许 enum 前缀后跟任意自由文本补充说明(e.g. 'out-of-scope (本 change 不修无关 bug)' OK)。
+    '我懒' / 空字符串 / 未知前缀 → BLOCKER。
+
+    Allowed enum values:
+      retire-superseded / out-of-scope / scope-changed / obsolete / infeasible
+
+    Returns:
+        None — PASS(reason 以有效枚举值开头)
+        str  — BLOCKER reason string
+    """
+    reason = (reason or "").strip()
+    # 提取第一个 token(以空白 / 括号为分隔符)
+    first_token = reason.split(maxsplit=1)[0] if reason else ""
+    # 去除 token 末尾的标点符号(:,))
+    first_token = first_token.rstrip(":,)")
+    if first_token in _VALID_CANCEL_REASON_PREFIXES:
+        return None
+    return f"cancel_reason_not_in_enum_got_{first_token or '<empty>'}"
+
+
 def _validate_cancel_tag_superseded(change_id: str, repo: "Path | None" = None) -> "str | None":
     """Round 1 F2 fix: validate cancelled-superseded ref by change-id existence.
 
