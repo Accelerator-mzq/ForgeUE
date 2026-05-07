@@ -106,12 +106,12 @@
 
 ## P4. 命令模板更新
 
-- [ ] P4.1 改 `.claude/commands/forgeue/change-finish.md` `## Preflight` section 加 `## Preflight Followon Continuity` 子段:调 aggregate `python tools/forgeue_finish_gate.py --change <id>`(沿既有 fence dispatch loop;两 fence `_check_followon_continuity` + `_check_srs_registry_consistency` 在 P2.f register 后自动 run;blocker;**round 3 codex F1-r3 inline writeback** — 删除原"专用 flag `--check-followon-continuity`"沿 codex 推荐 (a) 简化路径,避免 argparse 失败 + 入口分叉)
-- [ ] P4.2 改 `.claude/commands/forgeue/change-status.md` `## Output Format` section 加 `### Followon Backlog` block:列 inherited 计数 + cancelled 分类计数 + 与 active registry diff
-- [ ] P4.3 改 `.claude/commands/forgeue/change-status.md` `## Steps` section 加 step:调 `python tools/forgeue_change_state.py --change <id> --list-followon-inherited --list-followon-cancelled --json` 提取数据
-- [ ] P4.4 改 `.claude/commands/forgeue/change-apply-subagent.md` evidence frontmatter 模板:加 `followon_continuity` 字段(可空 — 仅 archive 阶段强制)
-- [ ] P4.5 改 `.claude/commands/forgeue/change-apply-direct.md` evidence frontmatter 模板:同款加 `followon_continuity` 字段
-- [ ] P4.6 grep markdown lint test(`tests/unit/test_forgeue_workflow_plugin_invocation.py`)确认命令模板 `Skill(...)` invocation 不变(本 change 不引入新 skill)
+- [x] P4.1 `change-finish.md` 检查项 list 加 2 新 fence(`_check_followon_continuity` / `_check_srs_registry_consistency`)BLOCKER type 描述
+- [x] P4.2 `change-status.md` Output Format 加 `### Followon Backlog` block(inherited 计数 + 3-class cancelled 计数 + registry diff)
+- [x] P4.3 `change-status.md` Steps 加新 step 4 调 `--list-followon-{inherited,cancelled}`
+- [x] P4.4 `change-apply-subagent.md` evidence frontmatter 模板加 `followon_continuity` 字段(4-list)
+- [x] P4.5 `change-apply-direct.md` Guardrails 加 `followon_continuity` 字段说明(archive-stage required)
+- [x] P4.6 `pytest tests/unit/test_forgeue_workflow_plugin_invocation.py` 5 PASS(markdown lint 不破)
 
 ## P5. Verify(L0/L1/L2 + codex hook)
 

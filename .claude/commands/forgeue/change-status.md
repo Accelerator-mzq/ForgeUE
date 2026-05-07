@@ -17,7 +17,10 @@ tags: [forgeue, workflow, status, readonly]
    - 推断当前 state(S0-S9)
    - evidence 子目录文件清单(`notes/` / `execution/` / `review/` / `verification/`)
    - 每份 evidence frontmatter 的 `aligned_with_contract` / `drift_decision` / `writeback_commit`
-4. **渲染报告** — 见 Output Format。
+4. **查 followon backlog 状态**(自 `centralize-followon-backlog-registry` 起):
+   - `python tools/forgeue_change_state.py --change <id> --list-followon-inherited --json` 取本 change 继承的 follow-on ids
+   - `python tools/forgeue_change_state.py --change <id> --list-followon-cancelled --json` 取本 change cancelled-* 分类(`cancelled_superseded` / `cancelled_not_applicable` / `cancelled_completed`)
+5. **渲染报告** — 见 Output Format。
 
 **Output Format**
 
@@ -38,6 +41,13 @@ tags: [forgeue, workflow, status, readonly]
 - drift_decision pending — <count>
 - written-back-to-* — <count> (with commit refs)
 - disputed-permanent-drift — <count> (with reasoning_notes_anchor)
+
+### Followon Backlog
+- inherited: <count> (ids: <id-list>)
+- cancelled-superseded: <count> (ids + supersedes ref)
+- cancelled-not-applicable: <count> (ids + reason)
+- cancelled-completed: <count> (ids + commit ref)
+- registry diff: <new entries pending sync to openspec/backlog/active.md | aligned>
 
 ### Next Actions
 <state-specific suggestion: e.g., "S2 → S3: run /forgeue:change-plan <id>">

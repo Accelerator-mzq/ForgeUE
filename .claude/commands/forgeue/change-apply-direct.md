@@ -102,6 +102,7 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
 - **必跑 writeback 检测**;DRIFT type 3/4 阻断 S5。
 - **direct 路径不进 isolated worktree**(主 worktree 实施;如需 worktree 隔离请改走 `/forgeue:change-apply-subagent` 或自由 invoke `Skill(superpowers:using-git-worktrees)`)。
 - **direct 路径 evidence shape 与 subagent 路径不同**:本路径产 `tdd_log` + `debug_log`(沿现 evidence 协议),**不产** `subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review` 4 类 per-task evidence。`forgeue_finish_gate.py` 从 evidence frontmatter `triggered_by_command` 字段判定 dispatch mode,direct 路径无该 audit field → 不报缺失 4 类 subagent evidence。
+- **`followon_continuity` 字段**(自 `centralize-followon-backlog-registry` 起):archive-stage evidence(`verification/finish_gate_report.md` / `review/superpowers_review.md` final / `notes/retrospective.md`)MUST 含此 13th conditional 字段(4-list:`inherited` / `cancelled_superseded` / `cancelled_not_applicable` / `cancelled_completed`);非 archive-stage evidence(tdd_log / debug_log)可空。
 
 ## Decision Delegation
 

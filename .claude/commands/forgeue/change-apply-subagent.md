@@ -154,6 +154,12 @@ subagent_continuity:  # round 2+ fix 同 implementer / 同 reviewer 一致性
   round_2_review_reviewer_id: <agent-id>  # MUST same as round_1_reviewer
 autonomy_decision: claude_codex_concurred | claude_autonomous | user_required | user_overrode
 codex_review_ref: <reference>(若 autonomy_decision == claude_codex_concurred)
+# --- followon_continuity(可空字段;archive 阶段 evidence required;非 archive evidence 可空)---
+followon_continuity:  # 自 centralize-followon-backlog-registry 起;仅 archive-stage evidence 强制
+  inherited: [<followon-id>, ...]
+  cancelled_superseded: [{id: ..., supersedes: <new-change-id>}, ...]
+  cancelled_not_applicable: [{id: ..., reason: <enum>+free-form}, ...]
+  cancelled_completed: [{id: ..., commit: <commit-ref>}, ...]
 ---
 ```
 
