@@ -13,9 +13,9 @@ codex_plugin_available: true
 autonomy_decision: claude_codex_concurred
 codex_review_ref: review/codex_design_review.md
 created_at: 2026-05-06T14:50:00Z
-resolved_at: null
-resolution_summary: null
-disputed_open: null
+resolved_at: 2026-05-07T14:10:00Z
+resolution_summary: round 1 4 finding 全 accepted-codex inline writeback (F1+F2 立场翻转 user 拍板 (a) accept;F3+F4 obvious fix);writeback_commit 125eae1 单 batch 同时是 4 finding 的 ref + sync adjustments for fix-finish-gate-archived-replay-compat 88a8aec merge(backfill 24→22 + baseline 1576→1753 + P12 inheritance chain re-anchor)
+disputed_open: 0
 runtime_enforcement_protocol_version: v1
 skill_cascade_audit:
   invoked_skills:
@@ -87,12 +87,12 @@ skill_cascade_audit:
 
 Round 1 codex `/codex:adversarial-review` job `bddjc7ohy` verdict `needs-attention`,4 finding。
 
-| ID | P | Finding | file:line | Independent Verify | Resolution | Reason |
+| ID | P | Finding | file:line | Independent Verify | Resolution | writeback_commit |
 |---|---|---|---|---|---|---|
-| **F1** | P1 high | Fence 仅扫 latest archived tasks.md,registry 自身(active.md / archived.md)丢项不被守门 — controller hand-edit 删 active.md 行不会被 fence 发现 | `specs/examples-and-acceptance/spec.md:22-24` + `design.md:131-146`(D-FenceParseStrategy 仅写"扫前一 archived change tasks.md") | ✅ TRUE — fence requirement step 4 仅"与本 change tasks.md 同名 section 比对",未扫 active.md 增删改 | **disputed-pending(user 拍板)** | 涉及 design 立场翻转:原 D-FenceStrictness + D-FenceParseStrategy 立场是从 archived tasks.md 反推 → 改 active.md 为正向 source-of-truth + diff/tombstone 协议是大改;触发 Fence #4 用户先验显式约束(memory `feedback_autonomy_boundary_simplified.md`:design.md 不匹配触发升级) |
-| **F2** | P1 high | Cancel 协议仅识别语法 tag,无 supersedes id 解析 / commit 触达校验 / reason enum,controller hand-edit 写虚假 reason 即绕过 fence | `design.md:76-83`(D-FenceStrictness 4 类 cancel) + `specs/examples-and-acceptance/spec.md:32-35`(scenario "valid supersedes ref" 但无校验逻辑) | ✅ TRUE — design 4 类 cancel tag 仅文字识别,fence 实现步骤 5 仅"列出 cancelled-* 配套 ref 缺失",未校验 ref 真实性 | **disputed-pending(user 拍板)** | design.md A.1 D-FenceStrictness Claude 立场是"free-form 是 trade-off"vs codex 主张 strict validation;立场翻转触发升级 |
-| **F3** | P2 medium | SRS↔registry consistency 仅在 design 写约定,spec 无 fence requirement / scenario | `design.md:148-156`(D-CrossLinkSync 写"由 _check_followon_continuity fence 守门 — fence 扩展扫 SRS §7.3 diff")vs `specs/examples-and-acceptance/spec.md:22-24` fence requirement 只写扫 archived tasks.md | ✅ TRUE — design 主张但 spec scenario 缺失;若 SRS §7.3 TBD 完成或新增,registry pointer 会孤儿/缺漏,无 enforce | **accepted-codex inline writeback** | obvious fix:加 SRS↔registry consistency requirement + scenario(等价集合 / 状态变化同步) |
-| **F4** | P2 medium | `followon_continuity` schema 在 proposal vs design/spec 间冲突 | `proposal.md:9`(`inherited_count / cancelled_count / cancellation_refs` 3-key dict)vs `design.md:117-125` + `specs/...:55-60` 4-list(`inherited` / `cancelled_superseded` / `cancelled_not_applicable` / `cancelled_completed`) | ✅ TRUE — schema 文字直接 mismatch;实施期 parser/template 互不兼容 | **accepted-codex inline writeback** | obvious fix:统一为 4-list 结构(沿 design/spec 已有定义);proposal.md L9 改 |
+| **F1** | P1 high | Fence 仅扫 latest archived tasks.md,registry 自身丢项不被守门 | `specs/...:22-24` + `design.md:131-146` | ✅ TRUE | **accepted-codex** — user 2026-05-07 拍板 (a);D-FenceStrictness + D-FenceParseStrategy 立场翻转 + 加 D-TombstoneProtocol 新决策;active.md self-diff + archived.md append-only tombstone 4 字段 schema | `125eae1` |
+| **F2** | P1 high | Cancel 协议仅识别语法 tag,无 ref/commit/reason enum 校验 | `design.md:76-83` + `specs/...:32-35` | ✅ TRUE | **accepted-codex** — user 2026-05-07 拍板 (a);strict ref validation:5 类 reason enum + Path.exists supersedes id 校验 + git rev-parse commit 校验(commit-touches 留 follow-on `tighten-cancel-completed-commit-touches-validation`) | `125eae1` |
+| **F3** | P2 medium | SRS↔registry consistency 在 design 写约定但 spec 无 fence requirement / scenario | `design.md:148-156` vs `specs/...:22-24` | ✅ TRUE | **accepted-codex** — D-CrossLinkSync 升级为 fence enforce(`_check_srs_registry_consistency` 独立 fence);spec 加新 ADDED Requirement + 2 scenarios(SRS 加新 TBD 无 pointer BLOCKER / SRS TBD 完成未同步 BLOCKER) | `125eae1` |
+| **F4** | P2 medium | `followon_continuity` schema proposal vs design/spec 冲突 | `proposal.md:9` vs `design.md:117-125` | ✅ TRUE | **accepted-codex** — proposal.md L9 改 4-list canonical schema 沿 design/spec | `125eae1` |
 
 ### B.1 与 ## A 期望 codex challenge surface 的对照
 
@@ -115,9 +115,9 @@ Round 1 codex `/codex:adversarial-review` job `bddjc7ohy` verdict `needs-attenti
 
 ## C. Disputed Count
 
-`disputed_open: 2`(F1 + F2)
+`disputed_open: 0`(round 1 4 finding 全 accepted-codex inline writeback;commit `125eae1`)
 
-> S3 阻断条件触发(沿 design.md §3 Cross-check Protocol `## C` `disputed_open > 0` 阻断 S3)。
+> S3 阻断条件解除。round 1 close;预估总 round 数 2(预期 round 2 codex re-review 验证 F1+F2 大改是否引入新 risk surface)。
 
 ## D. Independent Verification(沿 ForgeUE memory `feedback_verify_external_reviews`)
 
@@ -130,18 +130,31 @@ Round 1 codex `/codex:adversarial-review` job `bddjc7ohy` verdict `needs-attenti
 
 **所有 4 finding 独立验证 TRUE,无伪 finding。**
 
-### D.1 Resolution disposition
+### D.1 Resolution disposition(round 1 close 状态;2026-05-07T14:10:00Z)
 
-- **F3 + F4 accepted-codex**:Claude 可自主 inline writeback fix;不阻断 S3
-- **F1 + F2 disputed-pending**:升级 user 拍板(memory `feedback_autonomy_boundary_simplified.md` Fence #4 — design.md 不匹配触发升级)
+- **F1 + F2** accepted-codex by user 拍板 (a);writeback_commit `125eae1`;design.md / proposal.md / specs.md / tasks.md 四件套同步改动入此 commit
+- **F3 + F4** accepted-codex inline writeback;writeback_commit `125eae1`(同 batch)
 
-### D.2 给 user 的拍板请求(F1 + F2)
+`disputed_open: 0`,S3 阻断解除。
 
-详见本文件下方 `## E. Escalation to User` 段。本段是临时附加段,user 拍板后 close + 整理 cross-check 主结构。
+### D.2 Sync adjustments for fix-finish-gate-archived-replay-compat merge(2026-05-07,non-codex 触发)
+
+User 通报 `fix-finish-gate-archived-replay-compat` 已合入 dev(commit `88a8aec`),触发 Claude 主动 sync 4 处:
+
+| File | Adjustment |
+|---|---|
+| `proposal.md` | Backfill scope 24 → 22 active(7 workflow-protocol + 9 SRS + 6 capability)+ 3 archived.md tombstone 首批 |
+| `design.md` D-BackfillScope | List rewrite 9 → 7 + 3 tombstone 表 |
+| `design.md` D-FenceParseStrategy | 注脚 latest archive 是 micro-bugfix 无 P12 退化为 no-op,阶段 1 self-truth 主源仍守门 |
+| `tasks.md` P0.1 / P1.3 / P1.6 | baseline 1576 → 1753;workflow-protocol 9 → 7 entries;archived.md 3 项 tombstone |
+| `tasks.md` P12 inheritance | latest archive 无 P12 → 实质 inherit 自祖父 retire 4 follow-on(2 closed-by-fix-change cancelled-completed:88a8aec / 2 仍 active inherited) |
+| `specs/...spec.md` | 24 → 22 entries 描述 + tombstone scenario 用 88a8aec 真 commit + 3 archived 首批 entry list |
+
+Sync adjustments 与 codex F1-F4 inline writeback 合 single commit(α 选项;`125eae1`),叙事更紧凑 + ref 单一。
 
 ---
 
-## E. Escalation to User(F1 + F2 design 立场翻转)
+## E. Escalation to User(已 close 2026-05-07T14:10:00Z;user 拍板 (a) accept F1 + F2 全集)
 
 ### E.1 F1 - active.md source-of-truth fence 改造
 
@@ -207,5 +220,9 @@ Round 1 codex `/codex:adversarial-review` job `bddjc7ohy` verdict `needs-attenti
 
 **Claude 倾向**:**(a) Accept F1 + F2 全集**
 
-请 user 拍板。
+**User 决议(2026-05-07T14:10:00Z)**:**(a) Accept F1 + F2 全集**
+
+writeback 实施完成 commit `125eae1`(单 batch;含 sync adjustments for fix-finish-gate-archived-replay-compat `88a8aec` merge)。
+
+`## A` 冻结的 5 期望 codex challenge surface 中,F1 + F2 是 codex 真贡献(`## A.5` Claude 未预期 surface);F3 + F4 也命中 obvious fix。round 1 验证 codex review hook 价值 — 若没跑 codex,本 change 会以"换文档位置"伪 fix 状态 ship。
 
