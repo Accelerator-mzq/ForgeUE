@@ -2727,3 +2727,31 @@ def test_parse_registry_md_partial_fields_tolerant(tmp_path):
     entries = _parse_registry_md(registry)
     assert entries["partial-entry"]["status"] == "active"
     assert entries["partial-entry"].get("description") is None
+
+
+# ---------------------------------------------------------------------------
+# P2.a Helper 4: _parse_archived_md
+# ---------------------------------------------------------------------------
+
+
+def test_parse_archived_md_extracts_tombstone(tmp_path):
+    from tools.forgeue_finish_gate import _parse_archived_md
+    archived = tmp_path / "archived.md"
+    archived.write_text("""# Archived Follow-on Backlog
+
+### `entry-x`
+
+- **archived_at_commit**: 8a42c71e921f2b241b4a7c6beb97dcd697bdcc49
+- **archived_in_change**: enhance-workflow-automation-ledger-binding
+- **cancellation_reason**: cancelled-superseded by enhance-workflow-automation-ledger-binding
+- **registry_entry_snapshot**: {"id":"entry-x","status":"cancelled-superseded"}
+""", encoding="utf-8")
+    entries = _parse_archived_md(archived)
+    assert "entry-x" in entries
+    assert entries["entry-x"]["archived_at_commit"].startswith("8a42c71")
+    assert entries["entry-x"]["cancellation_reason"].startswith("cancelled-superseded")
+
+
+def test_parse_archived_md_missing_file_returns_empty(tmp_path):
+    from tools.forgeue_finish_gate import _parse_archived_md
+    assert _parse_archived_md(tmp_path / "nonexistent.md") == {}
