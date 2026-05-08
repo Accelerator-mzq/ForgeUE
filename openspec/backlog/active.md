@@ -77,7 +77,7 @@
 
 ---
 
-## Workflow-protocol(8)
+## Workflow-protocol(11)
 
 ### `enhance-workflow-automation-handoff-persistence`
 
