@@ -1326,8 +1326,10 @@ def test_p4_export_drops_video_mp4_to_content_movies_directly(tmp_path: Path):
         f"期望 1 条 drop_file 记录指向 Movies/ 路径,"
         f"实际 drop_records={[(e.kind, e.target_object_path) for e in drop_records]}"
     )
-    # POSIX-style relative path(沿 Phase A.6 export.py L102-125 契约)
-    assert video_drops[0].target_object_path.replace("\\", "/") == expected_source_uri, (
+    # POSIX-style relative path raw equality(round 3 codex F1 修订:export.py 改用
+    # `.as_posix()` 后,drop target_object_path 与 manifest source_uri 跨平台均 forward slash;
+    # 不再需要 `.replace("\\", "/")` normalize 规避)
+    assert video_drops[0].target_object_path == expected_source_uri, (
         f"drop_file target_object_path 与 manifest source_uri 不一致:"
         f"drop={video_drops[0].target_object_path!r} vs manifest={expected_source_uri!r}"
     )

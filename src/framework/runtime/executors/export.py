@@ -131,7 +131,9 @@ class ExportExecutor(StepExecutor):
                     kind="drop_file",
                     status="success",
                     source_uri=art.payload_ref.file_path,
-                    target_object_path=str(target_fs.relative_to(Path(target.project_root))),
+                    # round 3 codex F1 修订:统一 POSIX-style 与 manifest source_uri 一致
+                    # (Windows str() 给 backslash,与 manifest 的 forward slash 不一致 → audit 隐患)
+                    target_object_path=target_fs.relative_to(Path(target.project_root)).as_posix(),
                 ))
 
         # Build manifest + plan (even on dry-run — the plan is the deliverable)
