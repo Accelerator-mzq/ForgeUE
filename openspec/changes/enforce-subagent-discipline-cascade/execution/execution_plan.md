@@ -31,6 +31,7 @@ skill_cascade_audit:
     - superpowers:brainstorming
   cascade_check_pass_at: 2026-05-08T13:36:01Z
 autonomy_decision: claude_codex_concurred
+codex_review_ref: notes/codex_adversarial_review_review_round1.md
 ---
 
 # enforce-subagent-discipline-cascade Implementation Plan

@@ -3,13 +3,23 @@ change_id: enforce-subagent-discipline-cascade
 stage: S2
 evidence_type: design_cross_check
 disputed_open: 0
-contract_refs: [design.md#D1, design.md#D2, design.md#D3, design.md#D4, design.md#D5, design.md#D6, design.md#D7, proposal.md, tasks.md]
+contract_refs:
+  - design.md#D1
+  - design.md#D2
+  - design.md#D3
+  - design.md#D4
+  - design.md#D5
+  - design.md#D6
+  - design.md#D7
+  - proposal.md
+  - tasks.md
 aligned_with_contract: true
 detected_env: claude-code
 triggered_by: forgeue:change-plan
 codex_plugin_available: true
 created_at: 2026-05-08T13:36:01Z
 autonomy_decision: claude_codex_concurred
+codex_review_ref: notes/codex_adversarial_review_review_round1.md
 runtime_enforcement_protocol_version: v1
 skill_cascade_audit:
   invoked_skills:

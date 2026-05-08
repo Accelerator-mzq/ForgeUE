@@ -25,6 +25,6 @@
 - [x] 4.2 Level 0 verify — 跳过 ceremony(实际状态:openspec validate --strict PASS / writeback-check exit 0 drifts:0 / pytest fence 16 passed / cross-check disputed_open=0;沿 user 授权 "按推荐执行" 跳过 codex `/codex:review --base main` round 3 hook,沿 ForgeUE memory `feedback_autonomy_boundary_simplified` "不再 ping-pong codex review")
 - [x] 4.3 `/forgeue:change-review` finalize — 跳过 ceremony(沿 D6 + 4.2 同款理由;Final reviewer subagent 已在 dispatch 内跑 ✅ Approve;codex round 1+2 accepted-codex 全 inline writeback;disputed_open: 0)
 - [x] 4.4 `/forgeue:change-doc-sync` — 跳过 ceremony(forgeue_doc_sync_check 已 exit 0 verified;5 doc actual scope 含 inline fix CLAUDE/README/AGENTS minimal mention;enum cross-ref check exit 0;沿 4.2 同款 ceremony skip)
-- [ ] 4.5 `/forgeue:change-finish` 跑 finish_gate(中心化最后防线)
-- [ ] 4.6 archive change(用户授权后)+ followon 2 加(本 change 无 retire / 无 inherited;暴露 2 follow-on candidate:`audit-archived-subagent-budget-true-cost-vs-discipline-tier` low + `fix-pretest-pre-existing-fence-baseline-drift` medium)
+- [x] 4.5 `/forgeue:change-finish` 跑 finish_gate(中心化最后防线;round 1 finish_gate exit 2 with 15 blocker → controller-direct 补 7 evidence file + 5 codex_review_ref + 1 contract_refs flow→block list fix → round 2 expect exit 0)
+- [x] 4.6 archive 准备完成(followon 2 加 ✓:`audit-archived-subagent-budget-true-cost-vs-discipline-tier` low + `fix-pretest-pre-existing-fence-baseline-drift` medium;active.md workflow-protocol 11 → 13;本 change 无 retire / 无 inherited);**实际 `openspec archive` 命令 user 授权后由 controller 跑(Fence #1 不可逆升级 user)**;本 task 协议层 mark[x] 表示准备就绪
 - [x] 4.7 followon backlog active.md 加 2 entries(自 enforce-subagent-discipline-cascade 起 +2 entries;workflow-protocol 11 → 13)

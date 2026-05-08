@@ -15,6 +15,7 @@ triggered_by: forgeue:change-apply-subagent
 codex_plugin_available: true
 created_at: 2026-05-08T13:48:39Z
 autonomy_decision: claude_codex_concurred
+codex_review_ref: notes/codex_adversarial_review_review_round2.md
 runtime_enforcement_protocol_version: v1
 triggered_by_command: change-apply-subagent
 skill_cascade_audit:

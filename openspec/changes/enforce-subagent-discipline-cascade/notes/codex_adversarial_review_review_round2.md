@@ -21,6 +21,7 @@ disputed_open: 0
 resolved_at: 2026-05-08T13:48:39Z
 runtime_enforcement_protocol_version: v1
 autonomy_decision: claude_codex_concurred
+codex_review_ref: notes/codex_adversarial_review_review_round2.md
 ---
 
 # Codex Adversarial Review (Round 2)
