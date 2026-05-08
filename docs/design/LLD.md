@@ -1213,6 +1213,17 @@ def build(self, run_id: str, ue_target: UEOutputTarget,
 - `inline` 载体的 importable artifact → raise(只接受 `file` 载体)
 - `expected_asset_kinds` 声明了但 manifest 里缺 kind → flag warning
 
+#### 9.1.1 D12 路径分流 helpers(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
+
+`manifest_builder.py` 加 2 个 public helper:
+
+- `is_manifest_importable(art: Artifact) -> bool`:art 是否在 `_KIND_MAP` 命中(`payload.kind == file AND _KIND_MAP.get((modality, shape)) is not None`)。`ExportExecutor._is_importable` 与 `build_manifest` 都 defer 此 helper,消除原"modality whitelist + shape map miss"双源(沿 round 1 codex F1 + D10)。video.webm 等 unsupported shape 在两处都 silent skip 行为对齐,不会在 export drop loop crash。
+- `derive_drop_target(art, *, target: UEOutputTarget, run_id: str) -> tuple[Path, str]`:返回 `(drop_dir, target_filename)` —— video → `(<project_root>/Content/Movies/<run_id>, MS_<base>.mp4)`;其他 importable modality → `(<project_root>/Content/Generated/<run_id>, raw_basename)`(NG1 保 raw filename,沿 round 1 codex F2 + D1 修订)。`build_manifest` 用此 helper 计算 `UEAssetEntry.source_uri`,与 `ExportExecutor` drop 物理路径单源一致;`_KIND_MAP` miss(defensive)→ fall-through 非 video 分支返 raw basename,**不 raise**(沿 D10 + round 1 codex F1)。
+
+#### 9.1.2 ExportExecutor drop loop D12 split(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
+
+`ExportExecutor.execute()` drop loop 调用 `derive_drop_target(art, target=ctx.task.ue_target, run_id=ctx.run.run_id)` 获 `(drop_dir, target_filename)`,`drop_dir.mkdir(parents=True, exist_ok=True)` + `shutil.copy2(src_fs, drop_dir / target_filename)`。permission denied evidence 显式 `skip_reason="permission_denied"`(F-C↔F-D 协议)。控制面 `evidence.json` `target_object_path` 反映物理 drop 路径相对 project_root(POSIX-style via `str(Path(...).relative_to(project_root))`)。
+
 ### 9.2 ImportPlanBuilder(`import_plan_builder.py`)
 
 ```
@@ -1250,11 +1261,14 @@ def inspect_asset_exists(project_root: Path, object_path: str) -> bool
 
 ```
 def make_record(op_id, kind, status, source_uri=None,
-                target_object_path=None, log_ref=None, error=None) -> dict
+                target_object_path=None, log_ref=None, error=None,
+                skip_reason=None) -> dict
 def append(path: Path, record: dict) -> None    # 原子追加
 ```
 
 **原子写**:临时文件 + `os.replace`,避免半行写入。
+
+**`skip_reason` 字段**(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08):`Literal["permission_denied", "no_handler"] | None = None`。区分 skipped record 的来源类型,使 `ue_scripts/run_import.py` pre-scan filter 可精确仅过滤 `permission_denied`(framework 端 `PermissionPolicy` 拒绝)而不误吞 `no_handler`(UE 端无 handler dispatch)skipped。default `None` 后向兼容旧 evidence(legacy fixture Pydantic load 走 None 路径)。
 
 ### 9.6 validate_manifest
 
