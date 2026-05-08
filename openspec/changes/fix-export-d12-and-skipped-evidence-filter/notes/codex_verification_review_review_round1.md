@@ -1,3 +1,11 @@
+---
+change_id: fix-export-d12-and-skipped-evidence-filter
+stage: S5
+evidence_type: codex_verification_review
+review_round: 1
+note_kind: raw_verbatim
+---
+
 # Codex Review
 
 Target: branch diff against main

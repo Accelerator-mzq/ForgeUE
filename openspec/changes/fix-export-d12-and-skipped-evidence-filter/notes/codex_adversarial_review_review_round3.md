@@ -1,3 +1,11 @@
+---
+change_id: fix-export-d12-and-skipped-evidence-filter
+stage: S6
+evidence_type: codex_adversarial_review
+review_round: 3
+note_kind: raw_verbatim
+---
+
 # Codex Adversarial Review
 
 Target: working tree diff
