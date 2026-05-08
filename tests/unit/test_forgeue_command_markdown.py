@@ -343,7 +343,7 @@ def test_change_apply_subagent_cascade_includes_subagent_driven_discipline():
     # 取 invoked_skills: 后到 cascade_check_pass_at(下一字段)止 作为 block-list 范围
     next_field_idx = template_section.find("cascade_check_pass_at", invoked_skills_idx)
     if next_field_idx == -1:
-        # fallback:取 invoked_skills: 后 1000 字符
+        # fallback:1000 chars >> actual block (~140 chars);safe headroom for skill list growth
         next_field_idx = invoked_skills_idx + 1000
     block_list_section = template_section[invoked_skills_idx:next_field_idx]
     assert "subagent-driven-discipline" in block_list_section, (
@@ -365,10 +365,13 @@ def test_change_apply_subagent_dispatch_step_references_discipline_section_1():
     assert "discipline §1" in text or "subagent-driven-discipline` skill §1" in text, (
         "Steps 第 8 sub-step should reference discipline §1 (28-subtype model tier table)"
     )
-    # quick reference table 关键 3 row 同时存在
-    assert "implementer" in text, "Quick reference table missing 'implementer' row"
-    assert "spec_reviewer" in text, "Quick reference table missing 'spec_reviewer' row"
-    assert "code_quality" in text, "Quick reference table missing 'code_quality' row"
+    # quick reference table 关键 3 row 同时存在(沿 codex round 2 code_quality
+    # Important fix:用 "| <name>" pipe-delimited 格式 strict assert 表格 row,
+    # 防止 narrative 文本中的 "implementer" / "spec_reviewer" / "code_quality"
+    # 单词出现导致 vacuous PASS — implementer 在文件 narrative 22 处出现)
+    assert "| implementer" in text, "Quick reference table missing 'implementer' row(pipe-delimited)"
+    assert "| spec_reviewer" in text, "Quick reference table missing 'spec_reviewer' row(pipe-delimited)"
+    assert "| code_quality" in text, "Quick reference table missing 'code_quality' row(pipe-delimited)"
 
 
 def test_change_apply_direct_does_not_reference_subagent_driven_discipline():
