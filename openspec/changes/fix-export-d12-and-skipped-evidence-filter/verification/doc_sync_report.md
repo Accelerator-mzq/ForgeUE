@@ -47,7 +47,7 @@ skill_cascade_audit:
 | `README.md` | OPTIONAL | **B 不需要更新** | user-facing 入口未变 | skip |
 | `CHANGELOG.md` | DRIFT(REQUIRED)| **A 必须更新** | commit-touching change,Unreleased section 必收(沿 §4.2)| applied |
 | `CLAUDE.md` | OPTIONAL | **A 必须更新**(轻量)| ComfyUI 接入段 video D12 路径责任前移到 framework 需补注 | applied |
-| `AGENTS.md` | OPTIONAL | **B 不需要更新** | grep AGENTS.md 无 mentions of `Content/Generated/` video 路径,无需机械同步 | skip |
+| `AGENTS.md` | OPTIONAL | **A 必须更新**(post-user-correction)| AGENTS.md L3 charter 明文 "本文件与 CLAUDE.md 内容保持同步;面向 Codex CLI / Cursor / Aider / 通义灵码";L14 既有 video D12 路径描述需补 D12 责任划分 update 段(与 CLAUDE.md L41 同款补注)| applied(post-correction) |
 
 ## A 类应用 patch(5 文档)
 
@@ -58,6 +58,7 @@ skill_cascade_audit:
 | `docs/testing/test_spec.md` | §10.2 v1.6 row(2026-05-08;27 fence + 4 P4 + 1 rewrite + 1700→1727)| `1ea2844` |
 | `CHANGELOG.md` | Unreleased Added 段顶部 8 子项条目(F-C path split / F-C Evidence schema / F-D run_import + evidence_writer + domain_video / 测试矩阵 / codex review / L2+P4 evidence / subagent dispatch / 2 follow-on cancelled-completed)| `1ea2844` |
 | `CLAUDE.md` | ComfyUI 接入段 L41 D12 责任划分 update 补注(framework 前移 + Evidence skip_reason)| `1ea2844` |
+| `AGENTS.md` | ComfyUI 接入快查段 L14 之后加 D12 责任划分 update 补注(与 CLAUDE.md L41 同款;沿 AGENTS.md L3 charter "两份一起改";post-user-correction)| `<this commit>` |
 
 ## B 类不更新(5 文档)
 
@@ -67,7 +68,7 @@ skill_cascade_audit:
 | `docs/requirements/SRS.md` | 无 FR/NFR change(implementation alignment 本质;沿 design D9)|
 | `docs/acceptance/acceptance_report.md` | 无 FR/NFR 状态变化 |
 | `README.md` | user-facing 入口未变(framework.run / examples / probes 全保持)|
-| `AGENTS.md` | grep 无 video 路径 mention(沿 §4.2 不机械同步)|
+| ~~`AGENTS.md`~~ | ~~grep 无 video 路径 mention~~ → **post-user-correction reclassified to A 类**:AGENTS.md L3 charter 明文 "两份一起改",L14 既有 video D12 路径描述需补 D12 责任划分 update 段(与 CLAUDE.md L41 同款)|
 
 ## C 类 doc drift
 
