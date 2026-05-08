@@ -2,6 +2,7 @@
 change_id: enforce-subagent-discipline-cascade
 stage: S2
 evidence_type: design_cross_check
+disputed_open: 0
 contract_refs: [design.md#D1, design.md#D2, design.md#D3, design.md#D4, design.md#D5, design.md#D6, design.md#D7, proposal.md, tasks.md]
 aligned_with_contract: true
 detected_env: claude-code

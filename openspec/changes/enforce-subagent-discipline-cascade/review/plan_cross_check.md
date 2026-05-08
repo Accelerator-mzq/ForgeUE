@@ -2,6 +2,7 @@
 change_id: enforce-subagent-discipline-cascade
 stage: S3
 evidence_type: plan_cross_check
+disputed_open: 0
 contract_refs:
   - openspec/changes/enforce-subagent-discipline-cascade/execution/execution_plan.md
   - openspec/changes/enforce-subagent-discipline-cascade/execution/micro_tasks.md
