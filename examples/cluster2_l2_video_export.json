@@ -1,0 +1,81 @@
+{
+  "task": {
+    "task_id": "task_cluster2_l2_video_export",
+    "task_type": "ue_export",
+    "run_mode": "production",
+    "title": "Cluster-2 L2 live: video t2v -> UE manifest_only export (D12 path split end-to-end)",
+    "description": "Phase C.2 L2 evidence. Bundle: ComfyUI Wan 2.1 1.3B 5sec video -> ExportExecutor manifest_only(no review/no verdict, legacy path). Verifies framework drop video.mp4 -> Content/Movies/<run_id>/MS_<base>.mp4 + manifest source_uri matches drop path + Content/Generated/<run_id>/ does not contain raw mp4 garbage.",
+    "input_payload": {
+      "prompt": "uplifting space scene, cinematic camera dolly forward, ethereal lighting"
+    },
+    "expected_output": {
+      "artifact_types": ["video_asset", "ue_asset_manifest", "ue_import_plan", "export_bundle"]
+    },
+    "project_id": "proj_cluster2_l2_video",
+    "ue_target": {
+      "project_name": "ForgeUEDemo",
+      "project_root": "D:/UnrealProjects/ForgeUEDemo",
+      "asset_root": "/Game/Generated/ClusterTwo",
+      "asset_naming_policy": "house_rules",
+      "expected_asset_kinds": ["file_media_source"],
+      "import_mode": "manifest_only",
+      "validation_hooks": []
+    },
+    "determinism_policy": {
+      "seed_propagation": true,
+      "model_version_lock": true,
+      "hash_verify_on_resume": true
+    }
+  },
+  "workflow": {
+    "workflow_id": "wf_cluster2_l2_video_export",
+    "name": "cluster2_l2_video_export",
+    "version": "1.0.0",
+    "entry_step_id": "step_video",
+    "step_ids": ["step_video", "step_export"]
+  },
+  "steps": [
+    {
+      "step_id": "step_video",
+      "type": "generate",
+      "name": "comfy-local-text-to-video",
+      "risk_level": "medium",
+      "capability_ref": "video.t2v",
+      "provider_policy": {
+        "capability_required": "video.t2v",
+        "models_ref": "video_local"
+      },
+      "retry_policy": {
+        "max_attempts": 2,
+        "backoff": "fixed",
+        "retry_on": ["timeout", "provider_error"]
+      },
+      "config": {
+        "num_candidates": 1,
+        "seed": 5042,
+        "worker_timeout_s": 1800,
+        "spec": {
+          "comfy_workflow": "Vedio/Wan2.1-T2V-1.3B_native_5sec",
+          "comfy_params": {
+            "positive_prompt": "uplifting space scene, cinematic camera dolly forward, ethereal lighting",
+            "negative_prompt": "blurry, low quality, distorted, watermark, worst quality, jpeg artifacts",
+            "width": 832,
+            "height": 480,
+            "num_frames": 81,
+            "seed": 5042,
+            "steps": 25
+          },
+          "comfy_lifecycle": "none"
+        }
+      }
+    },
+    {
+      "step_id": "step_export",
+      "type": "export",
+      "name": "ue-manifest-export",
+      "risk_level": "low",
+      "capability_ref": "ue.export",
+      "depends_on": ["step_video"]
+    }
+  ]
+}
