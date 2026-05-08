@@ -6,9 +6,9 @@ contract_refs:
   - design.md
   - openspec/changes/fix-export-d12-and-skipped-evidence-filter/specs/ue-export-bridge/spec.md
   - openspec/changes/fix-export-d12-and-skipped-evidence-filter/verification/verify_report.md
-aligned_with_contract: false
-drift_decision: written-back-to-design
-writeback_commit: bff0fb7e14b9d3dffdc4ed8bf8ccee98281965a4
+aligned_with_contract: true
+drift_decision: null
+writeback_commit: null
 drift_reason: S6 finalize round 3 codex adversarial mixed-scope review 2 finding 全 accepted-codex inline writeback;F1 (P2 medium) 承 round1-F3 evidence drop path Windows backslash 与 manifest POSIX source_uri 不一致 → fix `export.py:134` 改 `.as_posix()` + P4 integration test 删 `.replace("\\", "/")` normalize;F2 (P2 medium) S5 verification review 5 follow-on(F1-F5)未入 active.md → 5 entry 加 active.md workflow-protocol section(13 entries 总,从 8 上升)。详 review/subagent_final_review.md final assessment + notes/codex_adversarial_review_review_round3.md verbatim。
 reasoning_notes_anchor: review/subagent_final_review.md
 detected_env: claude-code
