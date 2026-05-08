@@ -168,21 +168,43 @@ declared dependency 列了 3 个 superpowers skill,**漏 `subagent-driven-discip
 - controller 主 session 自身的 model 由 user 选(Opus 4.7 / Sonnet 4.6 / 等),不在 cascade 范围
 - 若 controller direct 路径偶有派 ad-hoc 单点 subagent(如 codex review),codex 自家命令(`/codex:adversarial-review`)不在 ForgeUE-side cascade 范围(沿 codex command N/A disclaimer)
 
-### D6:本 change subagent dispatch 用什么 model(self-reference dogfood)?
+### D6:本 change 走 subagent 还是 direct 路径?
 
 **选项**:
 
 | 选项 | 描述 |
 |---|---|
-| **α(选)** | direct 路径(`/forgeue:change-apply-direct`)— 本 change scope 极小(命令模板 3 处 edit + 1-2 fence test + doc-sync),< 3 micro-task → direct 协议适用 |
-| β | subagent dispatch 路径,本 change 自验证新 cascade(implementer + reviewer + final review)|
+| α | direct 路径(`/forgeue:change-apply-direct`)— 沿"轻量 change < 3 micro-task"argument |
+| **β(选)** | subagent dispatch 路径(`/forgeue:change-apply-subagent`)— 修改 workflow 协议自身的 change 默认 subagent + 本 change 自验证新 cascade 协议 |
 
-**决定**:**α**
+**决定**:**β**
 
-**理由**:
-- 沿 `/forgeue:change-apply-subagent` 命令描述自家约定 "**轻量 change(< 3 micro-task)/ budget 紧张时改走 `/forgeue:change-apply-direct`**"
-- 本 change 实施核心是 markdown 命令模板修订(3 处 edit)+ 1-2 fence test;不到 3 真正 micro-task,subagent dispatch overhead 远大于 controller 自跑
-- self-reference dogfood 不必强 — discipline cascade 协议在后续 non-trivial change 自然验证(沿 ADR-013 dogfood `worktree_consent_outcome` 同款 - 后续 change 自然验证 not self-reference)
+**理由**(沿 ForgeUE memory `feedback_self_reference_overcaution`,2026-05-06 user push back trigger):
+
+1. **Dispatch flow 主体未被改/删** — 本 change 仅在 `change-apply-subagent.md` 命令模板内加 3 处内容(Preflight cascade `--invoked` 列表 + Steps 第 8 sub-step + evidence frontmatter template);dispatch flow 主体(派 implementer + 2 reviewer + final reviewer + 4 类 per-task evidence)完全不动 → subagent 路径自身仍可用
+2. **Commit-by-commit forward progress 成立** — Phase A commit 命令模板修订后,Phase B subagent 派 implementer 跑 fence test 时读的是改完的命令模板(已含 discipline cascade 强制),不存在同一 phase 内 subagent 同时改命令文件 + 调用该命令的循环 self-reference
+3. **本 change 是 workflow 协议层修订** — destructive 操作 risk 面虽小,但修改协议契约本身(cascade declared dependency)需要 spec reviewer + code quality reviewer 守门,subagent 4 类 per-task evidence 完整 audit trail 比 direct 路径单 implementer evidence 更可靠
+4. **self-reference dogfood 是本 change 唯一可行的协议自验证窗口** — 修订 cascade 协议的 change 自身走该 cascade 协议是最直接的 acceptance test;dispatch 时 controller 必须显式按 discipline §1 表选 model + cascade `--invoked` 列表必须含 `subagent-driven-discipline`,直接验证修订生效
+5. **工程量评估**:Phase A(3 处 markdown edit)+ Phase B(1-2 fence test 新建)+ Phase D(2 文档同步)~3-4 micro-task,处于 direct 边界但不显著低于;subagent overhead vs cascade dogfood 验证价值 trade-off 偏向 subagent
+
+**实施 model tier 选择**(沿 D2 + discipline §1):
+
+| Phase × subagent role | discipline §1 subtype | model |
+|---|---|---|
+| Phase A implementer(markdown 命令模板 3 处 edit;mechanical replace)| §1.1.1 mechanical | `haiku` |
+| Phase A spec_reviewer(对照 design.md G1-G3 + tasks 1.1-1.3)| §1.2.1 string match | `haiku` |
+| Phase A code_quality reviewer(markdown 文件无 runtime;只是格式正确性)| §1.3.1 style | `haiku` |
+| Phase B implementer(fence test 新建 / extend;pattern matching ForgeUE 既有命令模板测试)| §1.1.2 pattern | `haiku` 或 `sonnet` |
+| Phase B spec_reviewer(对照 design D3 + tasks 2.1-2.3)| §1.2.1 string match | `haiku` |
+| Phase B code_quality reviewer(pytest fence 真实跑 + assertions)| §1.3.4 runtime correctness MANDATORY | `sonnet` |
+| Phase D doc-sync 实施者(2 处 markdown semantic edit)| §1.5.2 semantic rewrite | `sonnet` |
+| Final reviewer(cross-phase consistency + cascade dogfood 协议自验证)| §1.3.3 + §1.3.4 | `sonnet` |
+
+**Drift writeback**:
+
+- `drift_decision: written-back-to-design`
+- `drift_reason: design.md D6 当前选 α direct,与 ForgeUE memory feedback_self_reference_overcaution 协议(workflow 协议 change 默认 subagent + dispatch flow 主体未动 + commit-by-commit forward progress 成立 → 走 subagent)冲突;切到 β subagent 路径自验证 cascade 协议`
+- `writeback_commit`(本次 inline writeback commit)
 
 ### D7:Doc-sync scope — 是否需更新 `subagent-driven-discipline` skill 自身?
 
@@ -225,7 +247,7 @@ declared dependency 列了 3 个 superpowers skill,**漏 `subagent-driven-discip
 
 4. **Phase D**:doc-sync(`forgeue_integrated_ai_workflow.md` §B 命令矩阵 `change-apply-subagent` 行 + `CHANGELOG.md`)
 
-5. **Phase E**:verify + review + finish + archive(direct 路径 controller 自跑;无 subagent dispatch)
+5. **Phase E**:verify + review + finish + archive(走 `/forgeue:change-apply-subagent` 整 dispatch flow;Phase A/B/D 各派 implementer + spec_reviewer + code_quality reviewer + Final reviewer 跨 phase consistency)
 
 **Rollback**:git revert 命令模板 commit + fence test commit + doc 同步 commit;不影响其他 change 因为 archived path 走 legacy pass-through。
 

@@ -22,7 +22,7 @@
 
 - [ ] 4.1 跑全套 `python -m pytest -q` 期望 baseline + ~2 fence(2.2 + 2.3)无回归
 - [ ] 4.2 Level 0 verify(`/forgeue:change-verify enforce-subagent-discipline-cascade --level 0`)+ codex `/codex:review --base main` verification hook
-- [ ] 4.3 `/forgeue:change-review` finalize(本 change scope 极小,direct 路径 controller 自跑;Superpowers `requesting-code-review` skill self-invoke 不必派 final reviewer subagent)+ codex `/codex:adversarial-review --background` mixed scope
+- [ ] 4.3 `/forgeue:change-review` finalize(沿 D6 切 subagent dispatch 后,Final reviewer subagent 已在 Phase E subagent dispatch 内跑;此 step 仅 Superpowers `requesting-code-review` skill controller-side wrap-up + codex `/codex:adversarial-review --background` mixed scope)
 - [ ] 4.4 `/forgeue:change-doc-sync` 走 Documentation Sync Gate(10 文档 + README §4.3 提示词 + 应用 [REQUIRED];本 change 多数 SKIP)
 - [ ] 4.5 `/forgeue:change-finish` 跑 finish_gate(中心化最后防线)
 - [ ] 4.6 archive change(用户授权后)+ followon 0(本 change 无 retire / 无 inherited;只暴露 1 follow-on candidate `audit-archived-subagent-budget-true-cost-vs-discipline-tier` 加入 active.md 但不 retire)
