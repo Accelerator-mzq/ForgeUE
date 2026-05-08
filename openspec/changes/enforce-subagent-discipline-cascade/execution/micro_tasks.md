@@ -126,14 +126,16 @@ codex_review_ref: openspec/changes/enforce-subagent-discipline-cascade/notes/cod
 **Evidence**:
 - `review/subagent_final_review.md`(`evidence_type: subagent_final_review`;**MUST 含 4 项验证 result** 沿 D6.1)
 
-**Final reviewer 4 项验证(MUST 在 evidence body 中显式列出 result)**:
+**Final reviewer 6 项验证(MUST 在 evidence body 中显式列出 result;沿 design.md D6.1 + codex round 1 F2 + round 2 F2 accepted-codex)**:
 
-1. Phase A evidence(`task_1_*.md`)`bootstrap_phase: true` + `cascade_enforcement_source: controller_manual` ✓ / ✗
-2. Phase B/D evidence(`task_2_*.md` / `task_3_*.md`)`bootstrap_phase: false` + `cascade_enforcement_source: command_template_auto` ✓ / ✗
-3. Phase A commit 时间戳 < Phase B/D dispatch 时间戳:`git log --pretty='%H %ci' -- .claude/commands/forgeue/change-apply-subagent.md` ✓ / ✗
-4. Phase B/D cascade `--invoked` 列表自 Phase A commit 后含 `subagent-driven-discipline`:`git show <Phase A commit>:.claude/commands/forgeue/change-apply-subagent.md | grep '\\-\\-invoked'` ✓ / ✗
+1. Phase A evidence body `## Dogfood Acceptance` 段含 `bootstrap_phase: true` + `cascade_enforcement_source: controller_manual` ✓ / ✗
+2. Phase B/D evidence body `## Dogfood Acceptance` 段含 `bootstrap_phase: false` + `cascade_enforcement_source: command_template_auto` ✓ / ✗
+3. Phase A commit 时间戳:`git log --pretty='%H %cI' -- .claude/commands/forgeue/change-apply-subagent.md` 取 Phase A commit ISO 时间;Phase B/D evidence 文件 mtime 或 stage timestamp 晚于此 ✓ / ✗
+4. Phase A 命令模板 commit 内容:`git show <Phase A commit>:.claude/commands/forgeue/change-apply-subagent.md | grep '\\-\\-invoked'` 验证 `--invoked` 行已含 `subagent-driven-discipline` ✓ / ✗
+5. **Phase B/D evidence frontmatter cascade declared content** — 逐 Phase B/D evidence file 解析 frontmatter,assert `skill_cascade_audit.invoked_skills` block-list 含 `subagent-driven-discipline` ✓ / ✗
+6. **Phase B/D cascade 时间窗口** — 逐 Phase B/D evidence file 取 `skill_cascade_audit.cascade_check_pass_at` ISO 时间,assert 大于 Phase A 命令模板 commit ISO 时间(沿第 3 项时间戳)✓ / ✗
 
-任一 ✗ → Final reviewer return `disputed-permanent-drift` + writeback design.md D6.1。
+任一 ✗ → Final reviewer return BLOCKED + Phase B/D evidence frontmatter `aligned_with_contract: false` + `drift_decision: disputed-permanent-drift`(本 change 实施失败信号;writeback design.md D6.1)。
 
 ---
 

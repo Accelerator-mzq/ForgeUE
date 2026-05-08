@@ -134,12 +134,17 @@ declared dependency 列了 3 个 superpowers skill,**漏 `subagent-driven-discip
 - ForgeUE 既有命令模板测试 file 实际名为 `test_forgeue_command_markdown.py`(不是早期命名假设的 `test_forgeue_command_templates.py`);沿"既有命令模板测试模式"原则直接扩
 - γ 粒度过细,one file per command template 太细碎
 
-**实施**(沿 codex round 1 F1 [high] accepted-codex writeback `[本 commit]`):
+**实施**(沿 codex round 2 F1 [high] accepted-codex writeback `[本 commit]`,前序 round 1 F1 同 accepted):
 
 3 个 fence case 覆盖 specificity:
 
-1. **正向 assertion 1**(`change-apply-subagent.md` cascade 接入)— `test_change_apply_subagent_cascade_includes_subagent_driven_discipline`:`Path(".claude/commands/forgeue/change-apply-subagent.md").read_text()` 含 `subagent-driven-discipline` 字符串 ≥ 2 次(Preflight `--invoked` 行 + frontmatter `invoked_skills:` template list 行)
+1. **正向 section-aware assertion 1**(`change-apply-subagent.md` Preflight cascade 接入 + frontmatter template 接入)— `test_change_apply_subagent_cascade_includes_subagent_driven_discipline`:**section-aware parse**(沿 round 2 F1 accepted-codex,替代全文件 count):
+   - 解析 `### Preflight Skill Cascade` section,定位 shell block 内 `--invoked` 行,assert 含 `subagent-driven-discipline`
+   - 解析 Evidence Frontmatter Template section,定位 `skill_cascade_audit.invoked_skills` YAML block-list,assert 该 block-list 含 `subagent-driven-discipline`
+   - **不**用全文件 `text.count(...) >= N`(round 2 F1 暴露:quick reference table inline 后 string 自然出现 ≥ 1 次,即使 `--invoked` / frontmatter template 漏改也可能 fence 误通过)
+
 2. **正向 assertion 2**(`change-apply-subagent.md` Steps 第 8 sub-step model tier 引用)— `test_change_apply_subagent_dispatch_step_references_discipline_section_1`:read_text 含 `discipline §1` 引用 + 含 model tier quick reference table 关键 row(`implementer` + `spec_reviewer` + `code_quality` 同时存在)
+
 3. **负向 assertion**(`change-apply-direct.md` 不接入 — NG2 边界)— `test_change_apply_direct_does_not_reference_subagent_driven_discipline`:`Path(".claude/commands/forgeue/change-apply-direct.md").read_text()` **不含** `subagent-driven-discipline` 字符串(direct 路径无 subagent dispatch → discipline §1 model tier 协议无 dispatch 触发面;防协议反向漂移 — direct 误加 cascade 或 future change 整 retire subagent 但漏改 direct)
 
 **Archived 路径不扫**(verbal note 不需 assertion):fence file `CMD_DIR = .claude/commands/forgeue/` 只扫 active 命令文件;archived 在 `openspec/changes/archive/` 不在该 path,fence 自动不扫(沿 ForgeUE archive policy "归档即冻结")。
@@ -236,20 +241,24 @@ declared dependency 列了 3 个 superpowers skill,**漏 `subagent-driven-discip
 - justification: <reason if bootstrap_phase: true,e.g. "Phase A 修改命令模板,cascade enforce 路径尚未生效,controller 主动 invoke discipline">
 ```
 
-**Final reviewer 责任**(沿 codex 建议 "在 tasks/final reviewer evidence 中记录这一顺序"):
+**Final reviewer 责任**(沿 codex round 1 F2 + round 2 F2 accepted-codex,**6 项验证**逐 evidence file 验真实性):
 
-Final reviewer subagent 在 cross-phase consistency review 中 MUST 验证:
+Final reviewer subagent 在 cross-phase consistency review 中 MUST 验证(任一 ✗ → BLOCKED + writeback design.md D6.1 标 disputed-permanent-drift):
 
-1. Phase A evidence `bootstrap_phase: true` + `cascade_enforcement_source: controller_manual`
-2. Phase B/D evidence `bootstrap_phase: false` + `cascade_enforcement_source: command_template_auto`
-3. Phase A commit 时间戳 < Phase B/D dispatch 时间戳(commit-by-commit forward progress 实际成立)
-4. Phase B/D cascade `--invoked` 列表读自更新后的命令模板(可通过 `git log --oneline -- .claude/commands/forgeue/change-apply-subagent.md` 验证 Phase A commit 已 land)
+1. **Phase A evidence body 标识**:`task_1_*.md` body 内 `## Dogfood Acceptance` 段含 `bootstrap_phase: true` + `cascade_enforcement_source: controller_manual`
+2. **Phase B/D evidence body 标识**:`task_2_*.md` / `task_3_*.md` body 内 `## Dogfood Acceptance` 段含 `bootstrap_phase: false` + `cascade_enforcement_source: command_template_auto`
+3. **Phase A commit 时序**:`git log --pretty='%H %cI' -- .claude/commands/forgeue/change-apply-subagent.md` 取 Phase A commit ISO 时间;Phase B/D evidence frontmatter `triggered_by` 时间戳(从 evidence 文件 mtime 或 stage timestamp 推断)晚于 Phase A commit 时间
+4. **Phase A 命令模板 commit 内容**:`git show <Phase A commit>:.claude/commands/forgeue/change-apply-subagent.md | grep '\\-\\-invoked'` 验证 `--invoked` 行已含 `subagent-driven-discipline`(证 commit 内容已生效,但**不**单独证 Phase B/D 实际跑了该版本)
+5. **Phase B/D evidence frontmatter cascade declared content**(沿 round 2 F2 accepted-codex):逐 Phase B/D evidence file 解析 frontmatter,assert `skill_cascade_audit.invoked_skills` block-list 含 `subagent-driven-discipline`(**实际 dispatch 时 cascade declared dependency 真的含 discipline 的硬证据**)
+6. **Phase B/D cascade 时间窗口**(沿 round 2 F2 accepted-codex):逐 Phase B/D evidence file 取 `skill_cascade_audit.cascade_check_pass_at` ISO 时间,assert 大于 Phase A 命令模板 commit ISO 时间(沿第 3 项取的时间戳;证 Phase B/D cascade check 实际在 Phase A commit 之后跑,而非旧模板时期 backfill)
+
+**实施**:Final reviewer subagent 在 review 输出 evidence body 必含 6 项 verdict 表,每项标 ✓ / ✗ + 证据(file path + 提取的字段值 + 时间戳)。任一 ✗ → return BLOCKED + Phase B/D evidence frontmatter `aligned_with_contract: false` + `drift_decision: disputed-permanent-drift`(本 change 实施失败信号)。
 
 **Writeback**:
 
 - `drift_decision: written-back-to-design`
-- `drift_reason: codex round 1 F2 [medium] 暴露 Phase A bootstrap vs Phase B/D acceptance 启动顺序悖论;新增 D6.1 区分协议 + Final reviewer 4 项验证责任`
-- `writeback_commit`(本次 inline writeback commit)
+- `drift_reason: codex round 1 F2 [medium] + round 2 F2 [high]: Final reviewer 验证 4 项扩为 6 项,加 Phase B/D evidence frontmatter cascade 真实性 + 时间窗口验证(防止 controller 自由文本伪证据)`
+- `writeback_commit`(本次 + 后续 inline writeback commit)
 
 ### D7:Doc-sync scope — 是否需更新 `subagent-driven-discipline` skill 自身?
 

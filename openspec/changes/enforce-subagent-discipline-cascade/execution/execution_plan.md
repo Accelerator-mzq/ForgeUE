@@ -186,20 +186,87 @@ Expected: `True <size>`
 
 ```python
 def test_change_apply_subagent_cascade_includes_subagent_driven_discipline():
-    """tasks.md §2.2 fence: change-apply-subagent.md cascade declared
-    dependency 必含 subagent-driven-discipline(Preflight `--invoked` 行 +
-    evidence frontmatter `skill_cascade_audit.invoked_skills` template)。
+    """tasks.md §2.2 fence (sections-aware assertion，沿 codex round 2 F1
+    [high] accepted-codex):change-apply-subagent.md cascade declared
+    dependency 必含 subagent-driven-discipline,逐 section 精确断言:
+      1. ### Preflight Skill Cascade section 内 shell block 的 --invoked 行
+         含 subagent-driven-discipline
+      2. Evidence Frontmatter Template section 的 skill_cascade_audit.invoked_skills
+         YAML block-list 含 subagent-driven-discipline
 
     根因:cluster-2 change `fix-export-d12-and-skipped-evidence-filter`
     暴露 11 dispatch 全 default Opus 4.7,因为 cascade 漏 invoke discipline
     skill;本 fence 防回归。
+
+    Round 2 F1 暴露 round 1 全文件 count 实施(text.count(...) >= 2)
+    的退化:quick reference table inline 后字符串自然出现 ≥ 1 次,即使
+    --invoked / frontmatter template 漏改也可能误通过;改为 section-aware。
     """
     text = (CMD_DIR / "change-apply-subagent.md").read_text(encoding="utf-8")
-    occurrences = text.count("subagent-driven-discipline")
-    assert occurrences >= 2, (
-        f"change-apply-subagent.md should reference 'subagent-driven-discipline' "
-        f"at least 2 times (Preflight cascade `--invoked` line + frontmatter "
-        f"`invoked_skills:` template list line); found {occurrences}"
+
+    # 1. Preflight Skill Cascade section 的 --invoked 行
+    preflight_idx = text.find("### Preflight Skill Cascade")
+    assert preflight_idx != -1, (
+        "change-apply-subagent.md must contain '### Preflight Skill Cascade' section"
+    )
+    # section 边界:下一个 "### " 同级 heading 或 "## " 上级 heading
+    next_h3 = text.find("\n### ", preflight_idx + 1)
+    next_h2 = text.find("\n## ", preflight_idx + 1)
+    candidates = [i for i in (next_h3, next_h2) if i > 0]
+    section_end = min(candidates) if candidates else len(text)
+    preflight_section = text[preflight_idx:section_end]
+
+    # 在 preflight_section 内找 --invoked 行(可能跨多行;shell line continuation \\)
+    invoked_lines = [
+        line for line in preflight_section.splitlines()
+        if "--invoked" in line
+    ]
+    assert invoked_lines, (
+        "Preflight Skill Cascade section must contain a '--invoked' line "
+        "in its shell block"
+    )
+    # 任一 --invoked 行后续应含 subagent-driven-discipline(可能在同行或紧邻续行)
+    # 简化:检查 preflight_section 内 --invoked 行所在的 shell block 含 subagent-driven-discipline
+    # 取 --invoked 行起到下一空白行止作为 shell command block
+    cascade_block_lines = []
+    in_block = False
+    for line in preflight_section.splitlines():
+        if "--invoked" in line:
+            in_block = True
+        if in_block:
+            cascade_block_lines.append(line)
+            if line.strip() == "" and cascade_block_lines[:-1]:
+                break
+    cascade_block = "\n".join(cascade_block_lines)
+    assert "subagent-driven-discipline" in cascade_block, (
+        "Preflight Skill Cascade section's `--invoked` shell block must include "
+        f"'subagent-driven-discipline'. Found cascade block:\n{cascade_block}"
+    )
+
+    # 2. Evidence Frontmatter Template section 的 skill_cascade_audit.invoked_skills
+    template_idx = text.find("Evidence Frontmatter Template")
+    assert template_idx != -1, (
+        "change-apply-subagent.md must contain 'Evidence Frontmatter Template' section"
+    )
+    template_section = text[template_idx:]
+
+    audit_idx = template_section.find("skill_cascade_audit:")
+    assert audit_idx != -1, (
+        "Evidence Frontmatter Template section must contain 'skill_cascade_audit:' field"
+    )
+    invoked_skills_idx = template_section.find("invoked_skills:", audit_idx)
+    assert invoked_skills_idx != -1, (
+        "skill_cascade_audit must contain 'invoked_skills:' field"
+    )
+    # 取 invoked_skills: 后到 cascade_check_pass_at(下一字段)止 作为 block-list 范围
+    next_field_idx = template_section.find("cascade_check_pass_at", invoked_skills_idx)
+    if next_field_idx == -1:
+        # fallback:取 invoked_skills: 后 1000 字符
+        next_field_idx = invoked_skills_idx + 1000
+    block_list_section = template_section[invoked_skills_idx:next_field_idx]
+    assert "subagent-driven-discipline" in block_list_section, (
+        "skill_cascade_audit.invoked_skills YAML block-list must include "
+        f"'subagent-driven-discipline'. Found block-list section:\n{block_list_section}"
     )
 ```
 
@@ -346,14 +413,17 @@ Expected: Level 0 PASS;codex review verdict consume
 
 (Note: 沿 tasks.md 4.3 inline writeback — Final reviewer subagent 已在 change-apply-subagent 内跑;此 step 仅 controller-side wrap-up)。
 
-**Final reviewer 4 项验证责任**(沿 design.md D6.1 + codex round 1 F2 accepted-codex):
-1. Phase A evidence(`task_1_*.md`)`bootstrap_phase: true` + `cascade_enforcement_source: controller_manual`
-2. Phase B/D evidence(`task_2_*.md` / `task_3_*.md`)`bootstrap_phase: false` + `cascade_enforcement_source: command_template_auto`
-3. Phase A commit 时间戳 < Phase B/D dispatch 时间戳(commit-by-commit forward progress 实际成立 — 通过 `git log --pretty='%H %ci' -- .claude/commands/forgeue/change-apply-subagent.md` 验证)
-4. Phase B/D cascade `--invoked` 列表读自更新后的命令模板(可通过 `git show <Phase A commit>:.claude/commands/forgeue/change-apply-subagent.md | grep '\\-\\-invoked'` 验证)
+**Final reviewer 6 项验证责任**(沿 design.md D6.1 + codex round 1 F2 + round 2 F2 accepted-codex,任一 ✗ → BLOCKED):
+
+1. Phase A evidence body `## Dogfood Acceptance` 段含 `bootstrap_phase: true` + `cascade_enforcement_source: controller_manual`(`task_1_*.md`)
+2. Phase B/D evidence body `## Dogfood Acceptance` 段含 `bootstrap_phase: false` + `cascade_enforcement_source: command_template_auto`(`task_2_*.md` / `task_3_*.md`)
+3. Phase A commit 时间戳:`git log --pretty='%H %cI' -- .claude/commands/forgeue/change-apply-subagent.md`,取 Phase A commit ISO 时间;Phase B/D evidence 文件 mtime 或 stage timestamp 晚于此
+4. Phase A 命令模板 commit 内容:`git show <Phase A commit>:.claude/commands/forgeue/change-apply-subagent.md | grep '\\-\\-invoked'` 验证 `--invoked` 行已含 `subagent-driven-discipline`
+5. **Phase B/D evidence frontmatter cascade declared content**(沿 round 2 F2)— 逐 Phase B/D evidence file 解析 frontmatter,assert `skill_cascade_audit.invoked_skills` block-list 含 `subagent-driven-discipline`(实际 dispatch 时硬证据)
+6. **Phase B/D cascade 时间窗口**(沿 round 2 F2)— 逐 Phase B/D evidence file 取 `skill_cascade_audit.cascade_check_pass_at` ISO 时间,assert 大于 Phase A 命令模板 commit ISO 时间(沿第 3 项时间戳;证 Phase B/D cascade check 实际跑在 Phase A commit 之后)
 
 Run: `/forgeue:change-review enforce-subagent-discipline-cascade` + codex `/codex:adversarial-review --background` mixed scope
-Expected: cross-check disputed_open=0;Final reviewer evidence 含 4 项验证 result
+Expected: cross-check disputed_open=0;Final reviewer evidence body 含 6 项验证表(✓ / ✗ + 证据 file path + 提取字段值 + 时间戳)
 
 - [ ] **Step 4.4: `/forgeue:change-doc-sync`**
 
@@ -393,7 +463,7 @@ git commit -m "docs(forgeue): add followon audit-archived-subagent-budget-true-c
 | G1 cascade `--invoked` 加 discipline | Task 1.1 |
 | G2 Steps 第 8 model tier sub-step + table | Task 1.2 |
 | G3 evidence frontmatter template 加 discipline | Task 1.3 |
-| G4 1-2 fence test(实际 3 fence — 加 negative assertion 沿 F1 accepted-codex)| Task 2.2 + 2.4 + 2.6 |
+| G4 1-2 fence test(实际 3 fence — Step 2.2 section-aware 沿 round 2 F1 accepted-codex;Step 2.4 model tier reference;Step 2.6 negative assertion 沿 round 1 F1)| Task 2.2 + 2.4 + 2.6 |
 | G5 doc-sync §B 命令矩阵 + CHANGELOG | Task 3.2 + 3.3 |
 | D6 走 subagent dispatch 路径(self-reference dogfood)| 整 plan via `/forgeue:change-apply-subagent` |
 | D6.1 bootstrap vs acceptance phase 区分(沿 F2 accepted-codex)| Bootstrap Phase 协议段 + 每 Task 必加 `## Dogfood Acceptance` body section + Task 4 Final reviewer 4 项验证责任 |

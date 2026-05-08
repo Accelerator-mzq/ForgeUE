@@ -7,7 +7,7 @@
 ## 2. Phase B — Fence test 静态扫(2 case)
 
 - [ ] 2.1 检查 `tests/unit/test_forgeue_command_templates.py` 是否存在(`Glob` 命中);若存在 append;若不存在新建 stdlib-only 文件
-- [ ] 2.2 加 case `test_change_apply_subagent_cascade_includes_subagent_driven_discipline`:`Path(".claude/commands/forgeue/change-apply-subagent.md").read_text()` 含 `subagent-driven-discipline` 字符串至少 2 次(Preflight Cascade `--invoked` 行 + frontmatter `invoked_skills:` template list 行)
+- [ ] 2.2 加 case `test_change_apply_subagent_cascade_includes_subagent_driven_discipline`(沿 codex round 2 F1 [high] accepted-codex,**section-aware assertion** 替代全文件 count):解析 `### Preflight Skill Cascade` section 的 shell block `--invoked` 行 assert 含 `subagent-driven-discipline`;解析 Evidence Frontmatter Template section 的 `skill_cascade_audit.invoked_skills` YAML block-list assert 含 `subagent-driven-discipline`
 - [ ] 2.3 加 case `test_change_apply_subagent_dispatch_step_references_discipline_section_1`:同 file read_text 含 `subagent-driven-discipline` 或 `discipline §1` 引用 + 含 model tier quick reference table(grep `implementer` + `spec_reviewer` + `code_quality` 3 row 同时存在)
 - [ ] 2.4 加 case `test_change_apply_direct_does_not_reference_subagent_driven_discipline`(沿 codex round 1 F1 [high] accepted-codex):`Path(".claude/commands/forgeue/change-apply-direct.md").read_text()` **不含** `subagent-driven-discipline` 字符串(NG2 negative assertion;direct 路径无 subagent dispatch → 防协议反向漂移)
 - [ ] 2.5 跑 `python -m pytest tests/unit/test_forgeue_command_markdown.py -v` 期望全 PASS(既有 case + 3 新 case;file name 为 `test_forgeue_command_markdown.py`,沿 D-DriftCandidate-1 accepted-claude inline writeback)
