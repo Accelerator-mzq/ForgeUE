@@ -99,6 +99,11 @@ class ExportExecutor(StepExecutor):
         copied_manifest_entries_ids: set[str] = set()
         file_drop_evidence: list[Evidence] = []
         if not dry_run:
+            # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase A:
+            # drop loop 用 derive_drop_target — D12 路径分流(video → Movies / 非
+            # video → Generated)+ UE naming for video / raw basename for non-video
+            # 沿 design D1 + D10 + round 1 codex F1+F2 修订
+            from framework.ue_bridge.manifest_builder import derive_drop_target
             for art in importable:
                 src_fs = self._resolve_source_path(ctx, art)
                 if src_fs is None:
@@ -112,7 +117,12 @@ class ExportExecutor(StepExecutor):
                         error=f"cannot resolve source file for {art.artifact_id}",
                     ))
                     continue
-                target_fs = run_folder / Path(art.payload_ref.file_path).name
+                # D12 路径分流 + UE naming(video) / raw basename(non-video)
+                drop_dir, target_filename = derive_drop_target(
+                    art, target=target, run_id=ctx.run.run_id,
+                )
+                drop_dir.mkdir(parents=True, exist_ok=True)
+                target_fs = drop_dir / target_filename
                 shutil.copy2(src_fs, target_fs)
                 copied_manifest_entries_ids.add(art.artifact_id)
                 file_drop_evidence.append(Evidence(
@@ -121,7 +131,9 @@ class ExportExecutor(StepExecutor):
                     kind="drop_file",
                     status="success",
                     source_uri=art.payload_ref.file_path,
-                    target_object_path=str(target_fs.relative_to(Path(target.project_root))),
+                    # round 3 codex F1 修订:统一 POSIX-style 与 manifest source_uri 一致
+                    # (Windows str() 给 backslash,与 manifest 的 forward slash 不一致 → audit 隐患)
+                    target_object_path=target_fs.relative_to(Path(target.project_root)).as_posix(),
                 ))
 
         # Build manifest + plan (even on dry-run — the plan is the deliverable)
@@ -146,6 +158,10 @@ class ExportExecutor(StepExecutor):
         plan = build_import_plan(manifest, plan_id=f"p_{ctx.run.run_id}")
 
         # Permission mask — emit skipped Evidence for denied op kinds
+        # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase A:
+        # 加 skip_reason="permission_denied" 区分 framework PermissionPolicy denied
+        # vs UE-side no-handler skipped(沿 design D3 + spec.md "Evidence schema
+        # includes skip_reason enum field" Requirement)
         denied_evidence: list[Evidence] = []
         for op in plan.operations:
             if not is_op_allowed(self._permission, op):
@@ -154,6 +170,7 @@ class ExportExecutor(StepExecutor):
                     op_id=op.op_id,
                     kind=op.kind,
                     status="skipped",
+                    skip_reason="permission_denied",
                     error="PermissionPolicy does not grant this op kind",
                 ))
 
@@ -210,14 +227,12 @@ class ExportExecutor(StepExecutor):
 
     @staticmethod
     def _is_importable(art: Artifact) -> bool:
-        # OpenSpec change comfy-agent-cli-video-adoption Phase 3 round-2 F1 修订:
-        # whitelist 加 "video" — D-Runner-Extension + D1 决策驱动;否则 video Artifact
-        # 在此被静默过滤,不进 manifest_builder → P4 真机看不到 .uasset(沿 round-2
-        # F1 codex finding 揭示的盲点)。
-        return (
-            art.payload_ref.kind == PayloadKind.file
-            and art.artifact_type.modality in {"image", "mesh", "audio", "video", "material"}
-        )
+        # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase A:
+        # 收敛到 _KIND_MAP 单一真源(沿 design D10 + round 1 codex F1 修订);
+        # 旧 modality-only whitelist 与 manifest_builder shape-aware filter 不一致,
+        # 导致 unsupported shape(如 video.webm)在新 derive_drop_target 路径下 crash export
+        from framework.ue_bridge.manifest_builder import is_manifest_importable
+        return is_manifest_importable(art)
 
     @staticmethod
     def _collect_upstream(ctx: StepContext) -> list[Artifact]:

@@ -31,7 +31,20 @@ def make_record(
     *, op_id: str, kind: str, status: str,
     source_uri: str | None = None, target_object_path: str | None = None,
     log_ref: str | None = None, error: str | None = None,
+    skip_reason: str | None = None,
 ) -> dict:
+    """构造一条 Evidence 记录 dict。
+
+    OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase B.1:
+    新增 optional `skip_reason` kwarg(双侧统一协议)。
+    - framework `ExportExecutor` 写 `skip_reason="permission_denied"` 表示
+      PermissionPolicy 拒绝;
+    - UE-side `run_import.py` 写 `skip_reason="no_handler"` 表示无对应
+      handler dispatch(unknown op kind)。
+    legacy 调用(不传 kwarg)时字段 = None,与既有 dict 风格一致(其他
+    optional 字段如 source_uri / target_object_path / log_ref / error 也都
+    None default)。
+    """
     return {
         "evidence_item_id": new_evidence_id(),
         "op_id": op_id,
@@ -41,4 +54,5 @@ def make_record(
         "target_object_path": target_object_path,
         "log_ref": log_ref,
         "error": error,
+        "skip_reason": skip_reason,
     }

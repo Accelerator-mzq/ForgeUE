@@ -27,7 +27,7 @@ Rules (§E.1 — framework only DECLARES; UE-side script EXECUTES):
 from __future__ import annotations
 
 import re
-from pathlib import PurePosixPath
+from pathlib import Path
 from typing import Iterable
 
 from framework.core.artifact import Artifact
@@ -58,6 +58,24 @@ _KIND_MAP: dict[tuple[str, str], str] = {
 }
 
 
+def is_manifest_importable(art: Artifact) -> bool:
+    """art 是否在 _KIND_MAP 命中 — manifest 能力的单一真源.
+
+    Used by `ExportExecutor._is_importable` AND `manifest_builder.build_manifest`
+    to keep import filtering consistent across modules(沿 OpenSpec change
+    fix-export-d12-and-skipped-evidence-filter design D10 — round 1 codex F1
+    修订:消除 modality whitelist 与 _KIND_MAP shape map 双源).
+
+    返回 True 必须同时满足:
+    1. payload_ref.kind == PayloadKind.file(只能导入 file-backed Artifact)
+    2. (modality, shape) 在 _KIND_MAP 命中(unsupported shape 如 video.webm 返 False)
+    """
+    # 中文注释:single source check — 把 ExportExecutor 与 build_manifest filter 收敛到一处
+    if art.payload_ref.kind != PayloadKind.file:
+        return False
+    return _KIND_MAP.get((art.artifact_type.modality, art.artifact_type.shape)) is not None
+
+
 _PREFIX_BY_KIND: dict[str, str] = {
     "texture": "T_",
     "sound_wave": "S_",
@@ -68,11 +86,54 @@ _PREFIX_BY_KIND: dict[str, str] = {
 }
 
 
+def derive_drop_target(
+    art: Artifact, *, target: UEOutputTarget, run_id: str,
+) -> tuple[Path, str]:
+    """返回 (drop_dir, target_filename) — D12 路径分流 + UE naming for video,
+    raw basename for non-video.
+
+    Precondition: caller MUST 用 `is_manifest_importable(art)` filter;
+    若 _KIND_MAP miss(defensive)→ fall through 非 video 分支返 raw basename,
+    不 raise(沿 OpenSpec change fix-export-d12-and-skipped-evidence-filter
+    design D10 + round 1 codex F1 修订).
+
+    - video + `_KIND_MAP[(modality, shape)] == "file_media_source"` →
+        (Movies/<run_id>, MS_<base>.mp4)
+    - 其他 importable modality(image/audio/mesh/material)→
+        (Generated/<run_id>, raw_basename)
+        其中 raw_basename = Path(art.payload_ref.file_path).name(沿 design D1 修订:
+        round 1 codex F2 — 非 video 不改 filename, 避免 NG1 超范围 + 同 display_name
+        collision)
+    """
+    # 中文注释:project_root 由 UEOutputTarget 提供绝对路径
+    project_root = Path(target.project_root)
+    kind = _KIND_MAP.get((art.artifact_type.modality, art.artifact_type.shape))
+    if kind == "file_media_source" and art.artifact_type.modality == "video":
+        # video → Content/Movies/<run_id>/MS_<base>.<ext>(D12 packaging path 分流)
+        ue_name = _derive_ue_name(art, kind=kind, policy=target.asset_naming_policy)
+        ext = Path(art.payload_ref.file_path).suffix or ".mp4"
+        return (
+            project_root / "Content" / "Movies" / run_id,
+            f"{ue_name}{ext}",
+        )
+    # 非 video importable + defensive _KIND_MAP miss fall-through(round 1 codex F1)
+    # 沿 design D1 修订:image/audio/mesh/material 保 raw basename(不走 UE naming)
+    return (
+        project_root / "Content" / "Generated" / run_id,
+        Path(art.payload_ref.file_path).name,
+    )
+
+
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_]+")
 
 
 class ManifestBuildError(ValueError):
-    """Raised when a manifest cannot be built from the given artifacts."""
+    """Raised when a manifest cannot be built from the given artifacts.
+
+    Reserved for future structural errors. Phase A 收敛后(A.4)`build_manifest`
+    不再 raise 此类(原 non-file payload errors.append 路径已被 `is_manifest_importable`
+    silent skip 取代);保留 public symbol 防外部消费者依赖,便于将来加新 error category。
+    """
 
 
 def build_manifest(
@@ -93,25 +154,29 @@ def build_manifest(
     """
     run_asset_folder = f"{target.asset_root.rstrip('/')}/{run_id}"
     entries: list[UEAssetEntry] = []
-    errors: list[str] = []
 
     for art in artifacts:
         if selected_artifact_ids is not None and art.artifact_id not in selected_artifact_ids:
             continue
-        kind = _KIND_MAP.get((art.artifact_type.modality, art.artifact_type.shape))
-        if kind is None:
-            # Non-importable artifact (e.g. bundle / report / text) — skip silently.
+        # OpenSpec change fix-export-d12-and-skipped-evidence-filter Phase A:
+        # filter 收敛到 is_manifest_importable 单源(沿 design D10 + round 1 codex F1);
+        # 旧"_KIND_MAP miss silent skip + payload.kind != file → errors.append"双 branch
+        # 合并到一处 helper,与 ExportExecutor._is_importable 共用同一 single source
+        if not is_manifest_importable(art):
+            # Non-importable artifact (bundle / report / text / unmapped shape /
+            # non-file payload)— silent skip.
             continue
-        if art.payload_ref.kind != PayloadKind.file:
-            errors.append(
-                f"{art.artifact_id}: {art.artifact_type.internal} must be file-backed "
-                f"(got {art.payload_ref.kind.value})"
-            )
-            continue
+        # is_manifest_importable 已确保 _KIND_MAP 命中 + file payload;此处直接 dict 访问
+        kind = _KIND_MAP[(art.artifact_type.modality, art.artifact_type.shape)]
         ue_name = _derive_ue_name(art, kind=kind, policy=target.asset_naming_policy)
         target_obj_path = f"{run_asset_folder}/{ue_name}"
         target_pkg_path = target_obj_path   # Package + object paths coincide in UE 5.x naming
-        source_uri = str(PurePosixPath(art.payload_ref.file_path))
+        # source_uri 从 derive_drop_target 计算(沿 design D1 修订 — 单源契约)
+        # video → Content/Movies/<run_id>/MS_<base>.mp4
+        # 非 video → Content/Generated/<run_id>/<raw basename>
+        drop_dir, filename = derive_drop_target(art, target=target, run_id=run_id)
+        drop_relative = drop_dir.relative_to(Path(target.project_root)).as_posix()
+        source_uri = f"{drop_relative}/{filename}"
         entries.append(UEAssetEntry(
             asset_entry_id=f"ae_{art.artifact_id}",
             artifact_id=art.artifact_id,
@@ -136,9 +201,6 @@ def build_manifest(
                          "frame_count", "fps", "loop", "play_on_open"}
             },
         ))
-
-    if errors:
-        raise ManifestBuildError("\n".join(errors))
 
     expected = set(target.expected_asset_kinds or [])
     seen_kinds = {e.asset_kind for e in entries}

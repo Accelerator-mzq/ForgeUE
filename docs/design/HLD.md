@@ -409,6 +409,19 @@ ForgeUE 将策略分为 5 类,互不覆盖:
 | Material | 定义 | 只读 | 创建(需 allow) |
 | Sound Cue | 定义 | 只读 | 创建(需 allow) |
 
+### 7.5 D12 路径分流(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
+
+`ExportExecutor` drop loop 与 `manifest_builder.build_manifest` 共用 `manifest_builder.derive_drop_target(art, *, target, run_id)` helper 计算 framework 端落盘路径(单源契约):
+
+| Modality | drop dir | filename |
+| --- | --- | --- |
+| video(`_KIND_MAP[("video", "mp4")] == "file_media_source"`) | `<project_root>/Content/Movies/<run_id>/` | `MS_<base>.mp4`(沿 `_derive_ue_name`) |
+| image / audio / mesh / material | `<project_root>/Content/Generated/<run_id>/` | `Path(art.payload_ref.file_path).name`(raw artifact basename) |
+
+video mp4 落 `Content/Movies/` 是 UE 5.x packaging 协议要求(Movies/ 被打包为 standalone movie file 而非 .uasset 内嵌);非 video 仍落 `Content/Generated/` 沿用旧行为(`fix-export-d12-and-skipped-evidence-filter` 严守 NG1,不引入跨 modality silent filename change)。控制面三文件(`manifest.json` / `import_plan.json` / `evidence.json`)始终落 `Content/Generated/<run_id>/`(沿 §7 既有契约)。
+
+UE 端 `domain_video.import_video_entry` 不再 copy mp4(framework 已落 D12 final 位置),仅创建 `unreal.FileMediaSource` `.uasset` 在 `<project_root>/Content/Generated/<asset_root>/<run_id>/` 并设 `file_path = "Movies/<run_id>/MS_<base>.mp4"`(从 source_uri 单源派生,加 D12 layout fence + source/target mismatch fence)。
+
 ---
 
 ## 8. Provider 层与 ModelRegistry

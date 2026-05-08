@@ -109,7 +109,11 @@ def test_manifest_builder_skips_selected_filter(tmp_path):
     assert {e.artifact_id for e in manifest.assets} == {"keep"}
 
 
-def test_manifest_builder_rejects_inline_importable(tmp_path):
+def test_manifest_builder_silently_skips_inline_importable(tmp_path):
+    """OpenSpec change fix-export-d12-and-skipped-evidence-filter D10 修订:
+    inline payload 在新 is_manifest_importable 单源 filter 下 silent skip(返 False);
+    旧 build_manifest "errors.append + raise ManifestBuildError" 路径折叠到 single-
+    source filter,与 ExportExecutor._is_importable 行为对齐(沿 round 1 codex F1)。"""
     proj = _fake_ue_project(tmp_path)
     repo = _repo(tmp_path / "a")
     t = _target(proj)
@@ -121,8 +125,10 @@ def test_manifest_builder_rejects_inline_importable(tmp_path):
         payload_kind=PayloadKind.inline,
         producer=ProducerRef(run_id="r", step_id="g"),
     )
-    with pytest.raises(ManifestBuildError):
-        build_manifest(run_id="r", target=t, artifacts=list(repo))
+    # D10 修订:不再 raise,silent skip(沿 _KIND_MAP miss / non-file payload 同款)
+    manifest = build_manifest(run_id="r", target=t, artifacts=list(repo))
+    assert len(manifest.assets) == 0, \
+        "inline payload 应被 is_manifest_importable filter silent skip(D10)"
 
 
 def test_manifest_builder_flags_missing_expected_kinds(tmp_path):
@@ -192,9 +198,11 @@ def test_is_op_allowed_grants_import_file_media_source_under_default_policy():
 
 
 def test_is_importable_accepts_image_mesh_audio_material_video_after_phase3_extension():
-    """Round-2 F1:ExportExecutor._is_importable modality whitelist 加 "video" —
-    沿 image / mesh / audio / material 同款 default-allow tier。Forward-compatible
-    (既有 modality 仍 pass;只加 video)。"""
+    """Round-2 F1 + OpenSpec change fix-export-d12-and-skipped-evidence-filter D10:
+    ExportExecutor._is_importable 收敛到 _KIND_MAP 单一真源(shape-aware filter);
+    既有 5 modality 在 _KIND_MAP 命中的 shape 仍 pass;unsupported shape(如 dummy)
+    现在静默 skip(沿 design D10 + round 1 codex F1 修订:消除 modality whitelist 与
+    shape map 双源)。"""
     from framework.runtime.executors.export import ExportExecutor
 
     # Mock minimal Artifact-like with file payload
@@ -210,10 +218,25 @@ def test_is_importable_accepts_image_mesh_audio_material_video_after_phase3_exte
             self.artifact_type.modality = modality
             self.artifact_type.shape = shape
 
-    # 5 modalities all pass post-Phase 3
-    for modality in ("image", "mesh", "audio", "video", "material"):
-        art = _MockArt(modality=modality, shape="dummy")
-        assert ExportExecutor._is_importable(art), f"{modality} 应通过 _is_importable"
+    # 5 modalities all pass post-Phase 3 with valid shapes (_KIND_MAP 命中)
+    # OpenSpec change D10 修订:从 modality-only whitelist 切到 shape-aware
+    valid_modality_shape = [
+        ("image", "raster"),
+        ("mesh", "gltf"),
+        ("audio", "waveform"),
+        ("video", "mp4"),
+        ("material", "definition"),
+    ]
+    for modality, shape in valid_modality_shape:
+        art = _MockArt(modality=modality, shape=shape)
+        assert ExportExecutor._is_importable(art), f"{modality}.{shape} 应通过 _is_importable"
+
+    # OpenSpec change D10 + round 1 codex F1 修订:unsupported shape(_KIND_MAP miss)
+    # 现在 silent skip(原 modality-only whitelist pass 行为已废弃)。
+    # video.webm 是 follow-on `comfy-video-webm-adoption` 等待解锁的典型 case
+    art_unsupported = _MockArt(modality="video", shape="webm")
+    assert not ExportExecutor._is_importable(art_unsupported), \
+        "unsupported shape(video.webm)在 _KIND_MAP miss → silent skip(D10)"
 
     # blob payload 仍 fail(只允许 file payload)
     class _BlobArt:

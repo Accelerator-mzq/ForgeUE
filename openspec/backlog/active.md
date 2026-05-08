@@ -2,7 +2,7 @@
 
 > 当前 active follow-on entries(自 `centralize-followon-backlog-registry` change 起,2026-05-07)。Schema 见 [README.md](README.md)。
 
-23 entries 总(8 workflow-protocol + 9 requirements-tbd-pointer + 6 capability-boundary)。
+26 entries 总(11 workflow-protocol + 9 requirements-tbd-pointer + 6 capability-boundary;**自 fix-export-d12-and-skipped-evidence-filter 起 2 entries retire to archived.md** — `fix-video-export-path-split-d12-violation`(F-C 修)+ `fix-run-import-skipped-filter-permission-only`(F-D 修))。
 
 > **Parser 注意**:requirements-tbd-pointer section 排在所有 lowercase section 之前,避免 parser body-boundary bleed(uppercase TBD-XXX heading 不被 lowercase regex 识别;排在最后会导致最后一条 lowercase entry 字段被 TBD section 覆盖)。
 
@@ -77,27 +77,7 @@
 
 ---
 
-## Workflow-protocol(8)
-
-### `fix-video-export-path-split-d12-violation`
-
-- **source**: `archived/2026-05-06-retire-parallel-and-worktree-fully/verification/verify_report.md` L83 + `review/codex_verification_review.md` F3
-- **description**: `src/framework/runtime/executors/export.py:219` 视频 drop loop 路径分流违 D12(mp4 应 `Content/Movies/` 不应 `Content/Generated/`)。Pre-existing branch work `5d81f13`,非 retire 引入。
-- **trigger**: 第一个 video pipeline 真用例 import to `Content/Movies/` 路径报错 / 用户主动 cleanup
-- **category**: workflow-protocol
-- **retire-impact-status**: unaffected
-- **priority**: medium
-- **status**: active
-
-### `fix-run-import-skipped-filter-permission-only`
-
-- **source**: `archived/2026-05-06-retire-parallel-and-worktree-fully/verification/verify_report.md` L84 + `review/codex_verification_review.md` F4
-- **description**: `ue_scripts/run_import.py:69-70` 把所有 `status="skipped"` 当 PermissionPolicy deny;旧版 UE 脚本 `no UE-side handler` 等非权限 skipped 也被静默跳过。Pre-existing `f9fdf5e`。
-- **trigger**: P4 UE 真机 commandlet 报漏 import 现象 / 用户实证 skipped 类型扩展
-- **category**: workflow-protocol
-- **retire-impact-status**: unaffected
-- **priority**: low
-- **status**: active
+## Workflow-protocol(11)
 
 ### `enhance-workflow-automation-handoff-persistence`
 
@@ -154,6 +134,56 @@
 - **source**: `archived/2026-05-06-retire-parallel-and-worktree-fully/verification/verify_report.md` L72(non-P12 mention)+ **本 change `centralize-followon-backlog-registry` P0.1 dogfood 暴露**
 - **description**: `tests/unit/test_forgeue_cross_check_format.py::test_real_cross_check_files_have_evidence_type` 允许 enum `('design_cross_check', 'plan_cross_check', 'implementation_cross_check')` 扩 `review_cross_check`(archived `enhance-workflow-automation-ledger-binding/review/review_cross_check.md` 用此 evidence_type 类型,test 误报 fail)。
 - **trigger**: 用户决定修复持续 1 pre-existing fail / 本 change archive 后 test 仍 fail 时
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: low
+- **status**: active
+
+### `fix-finish-gate-completed-cancel-uses-baseline-entries`
+
+- **source**: `openspec/changes/fix-export-d12-and-skipped-evidence-filter/review/codex_verification_review.md` F1(S5 codex /codex:review --base main mixed-scope review 暴露)+ trigger commit `703f848`(2026-05-07,centralize-followon-backlog-registry P2.d.3)
+- **description**: `tools/forgeue_finish_gate.py:2529-2532` `_validate_cancel_tag_completed` 用当前 active.md 构造 registry_entries,已 retire 到 archived.md 的 id 找不到 → source/contract_refs 比对漏 → 实际触达相关文件的裸 commit 也被误报,只能靠 `evidence:` escape hatch 绕过。应改用 baseline/prior entry 或 tombstone snapshot 校验 completed commit。
+- **trigger**: 下次 cluster-2 类 retire follow-on change 完成时 / 用户主动启动该 follow-on
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: medium
+- **status**: active
+
+### `fix-finish-gate-followon-regex-allow-tbd-uppercase`
+
+- **source**: `openspec/changes/fix-export-d12-and-skipped-evidence-filter/review/codex_verification_review.md` F2 + trigger commit `4487c60`(2026-05-07,centralize-followon-backlog-registry P2.f)
+- **description**: `tools/forgeue_finish_gate.py:1464-1471` follow-on item / registry heading regex 仅接受 `[a-z0-9-]+`,SRS TBD 大写编号(`TBD-001` 等)不匹配 → 当某 TBD 完成并从 active registry 移除时,`_check_followon_continuity` 看不到 prior/current 条目或 tasks 声明,tombstone/cancel 校验被跳过,只剩 SRS set check;违反 README 中三类 active entry 都走 tombstone 的协议。
+- **trigger**: 第一个 SRS TBD 进 cancelled-completed 流程时 tombstone 协议失效 / 用户主动启动该 follow-on
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: medium
+- **status**: active
+
+### `fix-finish-gate-tombstone-empty-cancel-tag-bypass`
+
+- **source**: `openspec/changes/fix-export-d12-and-skipped-evidence-filter/review/codex_verification_review.md` F3 + trigger commit `703f848`(2026-05-07)
+- **description**: `tools/forgeue_finish_gate.py:1741-1743` 若 active.md 条目被移除且 archived.md 写了 tombstone,但当前 tasks.md 漏写对应 resolved cancel 行 → `tasks_cancel_tag` 为空 dict,`expected_reason_prefix` 变成空字符串,`cancellation_reason.startswith("")` 永远 true → 缺失 tasks cancel 声明的 tombstone 误通过 5-point 一致性 fence。应显式要求 tag type 非空并匹配。
+- **trigger**: 用户实证某 archived change tombstone 写了但 tasks 漏 cancel tag 的 inconsistency / 用户主动启动该 follow-on
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: medium
+- **status**: active
+
+### `fix-finish-gate-archived-md-protected-field-deletion`
+
+- **source**: `openspec/changes/fix-export-d12-and-skipped-evidence-filter/review/codex_verification_review.md` F4 + trigger commit `1a13d89`(2026-05-07,centralize-followon-backlog-registry P2.e)
+- **description**: `tools/forgeue_finish_gate.py:2388-2396` archived tombstone 4 protected fields(archived_at_commit / registry_entry_snapshot / cancellation_reason / tasks_cancel_tag)的 append-only fence 仅在 `- **field**` 后 4 行内找到 `+ **field**` modify pair 时记录违规;若保留 H3 entry 但直接删除 protected field 不替换 → 循环不添加任何 blocker → field deletion 漏报。应加"protected field 删除不补"路径检测。
+- **trigger**: 用户手动编辑 archived.md tombstone 删 protected field 的 inconsistency / 用户主动启动该 follow-on
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: medium
+- **status**: active
+
+### `fix-enum-cross-ref-check-windows-gbk-print`
+
+- **source**: `openspec/changes/fix-export-d12-and-skipped-evidence-filter/review/codex_verification_review.md` F5 + trigger commit micro-bugfix(2026-05-06,enum cross-ref check tool 引入)
+- **description**: `tools/forgeue_enum_cross_ref_check.py:330` 该工具 docstring 声称 ASCII-only / Windows GBK 安全,但 actionable warning 文本输出 Unicode `in` 和 ellipsis,且 `main()` 没像其他 ForgeUE tools 调 `_common.setup_utf8_stdout()` 或 ASCII coercion。Windows GBK 环境只要出现 mapped enum 缺文档或 docs-only enum warning,`print()` 可能 raise `UnicodeEncodeError` 中断 doc-sync gate。
+- **trigger**: 第一次 mapped enum 缺文档触发 actionable WARN 在 GBK Windows session(本会话 actionable WARN 4 项 console 已 mojibake,latent regression risk)/ 用户主动启动该 follow-on
 - **category**: workflow-protocol
 - **retire-impact-status**: unaffected
 - **priority**: low
