@@ -168,7 +168,7 @@ env-conditional + plugin-conditional 双重 enforce(由 `tools/forgeue_env_detec
 
 **命令分流**:`/forgeue:change-apply` 拆为两条独立命令(沿 design.md D-Default,**不**走 env flag facade):
 
-- `/forgeue:change-apply-subagent <id>` — **default 路径**;invoke `superpowers:subagent-driven-development` skill;每 task 派 implementer + spec compliance reviewer + code quality reviewer subagent + 全 task 完成后 final reviewer subagent;落 4 类 per-task evidence;**REQUIRED** `superpowers:using-git-worktrees`(isolated worktree);ADR-009 token-budget tracker informational
+- `/forgeue:change-apply-subagent <id>` — **default 路径**;invoke `superpowers:subagent-driven-development` skill;每 task 派 implementer + spec compliance reviewer + code quality reviewer subagent + 全 task 完成后 final reviewer subagent;落 4 类 per-task evidence;**REQUIRED** `superpowers:using-git-worktrees`(isolated worktree);ADR-009 token-budget tracker informational;**cascade declared dependency 含 `subagent-driven-discipline` companion skill**(自 `enforce-subagent-discipline-cascade` change 起;ForgeUE-side skill 协议化 model tier 选择 + dispatch §1 28-subtype 表)
 - `/forgeue:change-apply-direct <id>` — **fallback 路径**;沿原 `executing-plans + TDD` 编排;落 `tdd_log` / `debug_log`;不派 subagent;不需要 worktree isolation;轻量 change(< 3 micro-task)/ budget 紧张时使用
 
 **4 类 per-task evidence schema**(扁平命名;沿 `forgeue_finish_gate.py` frontmatter-indexed 范式):

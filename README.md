@@ -380,7 +380,7 @@ OpenSpec change `fuse-openspec-superpowers-workflow` 引入中心化融合工作
 |---|---|
 | `/forgeue:change-status` | 列 active changes / state / evidence(只读) |
 | `/forgeue:change-plan` | S2→S3:codex `/codex:adversarial-review` design hook + Superpowers writing-plans + 锚点检测 |
-| `/forgeue:change-apply-subagent` | **default sequential for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill;每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence + `subagent_budget.log`;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke;ADR-009 token-budget tracker informational |
+| `/forgeue:change-apply-subagent` | **default sequential for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill + cascade declared dependency 含 `subagent-driven-discipline` companion skill(自 `enforce-subagent-discipline-cascade` change 起;ForgeUE-side skill 协议化 model tier 选择);每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence + `subagent_budget.log`;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke;ADR-009 token-budget tracker informational |
 | `/forgeue:change-apply-direct` | **fallback for S3→S4-S5**;沿原 `executing-plans + TDD`;落 `tdd_log` / `debug_log`;不派 subagent;主 worktree 实施(沿 D-DirectWorktreeRefinement);轻量 change / budget 紧张时使用 |
 | `/forgeue:change-debug` | 显式调 Superpowers `systematic-debugging`;debug_log 增量,暴露异常缺口必回写 |
 | `/forgeue:change-verify` | Level 0/1/2 + codex `/codex:review --base main` 验证 hook |

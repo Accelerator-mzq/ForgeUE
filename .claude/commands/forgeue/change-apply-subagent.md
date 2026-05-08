@@ -26,7 +26,7 @@ S3→S4-S5 transition(default 路径,自 `adopt-subagent-driven-development` cha
 ```bash
 python tools/forgeue_skill_cascade_check.py \
     --skill superpowers:subagent-driven-development \
-    --invoked superpowers:test-driven-development,superpowers:requesting-code-review,superpowers:finishing-a-development-branch
+    --invoked superpowers:test-driven-development,superpowers:requesting-code-review,superpowers:finishing-a-development-branch,subagent-driven-discipline
 ```
 
 - exit 0 → cascade OK,记录 invoked skill 列表
@@ -68,6 +68,23 @@ evidence frontmatter MUST 加 `runtime_enforcement_protocol_version: v1` 字段�
     - subagent **不被授权**读 `execution/micro_tasks.md` / `execution/execution_plan.md` 任何 plan 文件 — 仅接收主 session 提取后的完整 prompt 文本
     - `tasks.md#X.Y` 锚点引用作 audit trail 进 evidence frontmatter `contract_refs`,**不**直接进入 subagent prompt(subagent 不知道 tasks.md 存在)
     - skill 内部协议(implementer / spec reviewer / code quality reviewer prompt 模板)由 Superpowers 自管,ForgeUE 不复制 / 不引用
+    - **Sub-step 8.x: Model tier 显式选择(沿 `subagent-driven-discipline` skill §1)**:每个 dispatch 前 controller MUST 按 discipline §1 28-subtype × model tier 表选 model,且显式在 `Agent` tool 调用传 `model:` 参数(不依赖 parent session inherit default)。Quick reference:
+
+      | Subagent role | discipline §1 subtype | model 默认 |
+      |---|---|---|
+      | implementer(完整 plan inline)| §1.1.1 mechanical | `haiku` |
+      | implementer(pattern matching)| §1.1.2 | `haiku` 或 `sonnet` |
+      | implementer(multi-file integration)| §1.1.3 | `sonnet` |
+      | implementer(algorithmic / architectural design)| §1.1.4 / §1.1.5 | `opus` MANDATORY |
+      | spec_reviewer(string matching)| §1.2.1 / §1.2.2 | `haiku` |
+      | spec_reviewer(cross-phase reasoning)| §1.2.3 | `sonnet` |
+      | code_quality(style / lint)| §1.3.1 | `haiku` |
+      | code_quality(runtime correctness)| §1.3.4 | `sonnet` MANDATORY |
+      | final reviewer(cross-phase consistency)| §1.3.3 + §1.3.4 | `sonnet` |
+      | doc-sync(mechanical replace)| §1.5.1 | `haiku` 或 direct(no subagent)|
+      | doc-sync(semantic rewrite)| §1.5.2 | `sonnet` |
+
+      完整 28-subtype 决策见 `subagent-driven-discipline` skill §1。Override 路径:若 task subtype 难判 / 跨多 subtype,controller 可选 higher tier(如把 §1.1.2 default `haiku` 升 `sonnet`),但 evidence body Token usage 段必须显式记录决策理由。
 9. **每 task 完成后 evidence 收口**(D-EvidenceSchema 4 类 evidence):
     - 主 session Claude 把每个 subagent return 落盘为 4 类 per-task evidence 文件(全部 12-key frontmatter):
       - `execution/task_<n>_implementer.md` — `evidence_type: subagent_implementer_report`
@@ -144,6 +161,7 @@ triggered_by_command: change-apply-subagent
 skill_cascade_audit:
   invoked_skills:
     - superpowers:subagent-driven-development
+    - subagent-driven-discipline
     # ... add more as needed (block-list)
   cascade_check_pass_at: <ISO-8601-timestamp>
 task_granularity: phase | per-file | sub-task

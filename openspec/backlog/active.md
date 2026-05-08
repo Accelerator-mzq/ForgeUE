@@ -2,7 +2,7 @@
 
 > 当前 active follow-on entries(自 `centralize-followon-backlog-registry` change 起,2026-05-07)。Schema 见 [README.md](README.md)。
 
-26 entries 总(11 workflow-protocol + 9 requirements-tbd-pointer + 6 capability-boundary;**自 fix-export-d12-and-skipped-evidence-filter 起 2 entries retire to archived.md** — `fix-video-export-path-split-d12-violation`(F-C 修)+ `fix-run-import-skipped-filter-permission-only`(F-D 修))。
+28 entries 总(13 workflow-protocol + 9 requirements-tbd-pointer + 6 capability-boundary;**自 fix-export-d12-and-skipped-evidence-filter 起 2 entries retire to archived.md** — `fix-video-export-path-split-d12-violation`(F-C 修)+ `fix-run-import-skipped-filter-permission-only`(F-D 修);**自 enforce-subagent-discipline-cascade 起 +2 entries** — `audit-archived-subagent-budget-true-cost-vs-discipline-tier`(low,纯事实 audit)+ `fix-pretest-pre-existing-fence-baseline-drift`(medium,catch-up 2 pre-existing baseline fail))。
 
 > **Parser 注意**:requirements-tbd-pointer section 排在所有 lowercase section 之前,避免 parser body-boundary bleed(uppercase TBD-XXX heading 不被 lowercase regex 识别;排在最后会导致最后一条 lowercase entry 字段被 TBD section 覆盖)。
 
@@ -77,7 +77,7 @@
 
 ---
 
-## Workflow-protocol(11)
+## Workflow-protocol(13)
 
 ### `enhance-workflow-automation-handoff-persistence`
 
@@ -187,6 +187,26 @@
 - **category**: workflow-protocol
 - **retire-impact-status**: unaffected
 - **priority**: low
+- **status**: active
+
+### `audit-archived-subagent-budget-true-cost-vs-discipline-tier`
+
+- **source**: `openspec/changes/enforce-subagent-discipline-cascade/proposal.md`(2026-05-08,cluster-2 change `fix-export-d12-and-skipped-evidence-filter` 11 dispatch 全 default Opus 4.7 暴露事实)
+- **description**: 已 archived `fix-export-d12-and-skipped-evidence-filter` change 的 `verification/subagent_budget.log` 11 dispatch 全 default 继承 Opus 4.7(应按 discipline §1 表大多用 haiku/sonnet),真实 cost 估约 `$7-10` vs budget log 填的 `$3.21`(填错 model 字段)。本 follow-on 仅做事实 audit,不补改 archived budget log(沿 D4 archived 不动协议)。
+- **trigger**: 用户想了解 archived change subagent dispatch 真实 cost vs discipline tier 推荐对比时启动
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: low
+- **status**: active
+
+### `fix-pretest-pre-existing-fence-baseline-drift`
+
+- **source**: `openspec/changes/enforce-subagent-discipline-cascade/execution/`(2026-05-08,Phase E.1 全套 pytest 暴露 2 pre-existing baseline fail)
+- **description**: 2 pre-existing baseline fail 待修(本 change scope 外 catch-up):(1)`tests/unit/test_followon_registry.py::TestActiveMdSchema::test_active_md_known_workflow_protocol_entries_present` — `fix-export-d12-and-skipped-evidence-filter` retire `fix-video-export-path-split-d12-violation` + `fix-run-import-skipped-filter-permission-only` 到 archived.md 时未同步 fence test `expected_ids` 列表;(2)`tests/unit/test_forgeue_cross_check_format.py::test_real_cross_check_files_have_evidence_type` — `enhance-workflow-automation-ledger-binding` + `retire-parallel-and-worktree-fully` archived change 含 `evidence_type='review_cross_check'` 但 fence 期望 ∈ {design_cross_check, plan_cross_check, implementation_cross_check}。两 fail 都是 retire 期遗留(fence 与 archived files 不同步)。
+- **trigger**: 用户想清理 pytest baseline 0 fail 时启动;或下个 change 实施需 baseline 0 fail 时(本 change finish_gate 不直接跑 pytest baseline,所以 archive 不阻断)
+- **category**: workflow-protocol
+- **retire-impact-status**: unaffected
+- **priority**: medium
 - **status**: active
 
 ---
