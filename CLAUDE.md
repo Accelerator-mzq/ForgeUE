@@ -251,7 +251,7 @@ Claude 默认拍板 + 自动 invoke `/codex:review` 二次验证。**以下 6 �
 
 - `/forgeue:change-status` — 列 active changes / state / evidence(只读)
 - `/forgeue:change-plan` — S2→S3:codex `/codex:adversarial-review` design hook + Superpowers `writing-plans` + 锚点检测
-- `/forgeue:change-apply-subagent` — **default sequential for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill;每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`)+ `subagent_budget.log`;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke
+- `/forgeue:change-apply-subagent` — **default sequential for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill;每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence(`subagent_implementer_report` / `subagent_spec_review` / `subagent_code_quality_review` / `subagent_final_review`)+ `subagent_budget.log`;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke;**cascade declared dependency 含 `subagent-driven-discipline` companion skill**(自 `enforce-subagent-discipline-cascade` change 起;ForgeUE-side skill 协议化 model tier 选择 + 沿 §1 28-subtype 表)
 - `/forgeue:change-apply-direct` — **fallback for S3→S4-S5**;沿原 `executing-plans` / `test-driven-development`;落 `tdd_log` / `debug_log`;不派 subagent;主 worktree 实施(沿 D-DirectWorktreeRefinement);轻量 change(< 3 micro-task)/ budget 紧张时使用
 - `/forgeue:change-debug` — 显式调 Superpowers `systematic-debugging`;debug_log 增量,暴露异常缺口必回写
 - `/forgeue:change-verify` — Level 0 / 1 / 2 + codex `/codex:review --base main` 验证 hook
