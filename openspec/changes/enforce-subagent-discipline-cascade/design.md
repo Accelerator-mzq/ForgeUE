@@ -299,7 +299,7 @@ Final reviewer subagent 在 cross-phase consistency review 中 MUST 验证(任�
 
 3. **Phase C**(无 — 本 change 无 L2 / 无 P4 真机)
 
-4. **Phase D**:doc-sync(`forgeue_integrated_ai_workflow.md` §B 命令矩阵 `change-apply-subagent` 行 + `CHANGELOG.md`)
+4. **Phase D**:doc-sync(nominal scope:`forgeue_integrated_ai_workflow.md` §B 命令矩阵 `change-apply-subagent` 行 + `CHANGELOG.md`;实施时 `forgeue_doc_sync_check.py` 启发式 `ai_workflow_changed=True` 把 `README.md` / `CLAUDE.md` / `AGENTS.md` 标 REQUIRED → 实际 scope 扩为 5 file。沿 ForgeUE memory `feedback_doc_reader_usefulness_audit` audit 实际 reader usefulness:CLAUDE.md(主 reader,protocol 协议化 sync)+ README.md(用户面向 workflow ref)+ AGENTS.md(跨 agent runtime 一致)— controller inline 加 1 line minimal mention 到这 3 doc 让 doc-sync exit 0。Inline writeback 自 implementation 阶段暴露 contract gap [本 commit])
 
 5. **Phase E**:verify + review + finish + archive(走 `/forgeue:change-apply-subagent` 整 dispatch flow;Phase A/B/D 各派 implementer + spec_reviewer + code_quality reviewer + Final reviewer 跨 phase consistency)
 
