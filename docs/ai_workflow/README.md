@@ -48,7 +48,7 @@ proposal → design → tasks → implementation → validation → review → D
 ### 2.3 Tasks(implementation steps)
 
 - 每个 task 必须能被 Claude Code 或其他 coding agent **独立执行并验证**。
-- `tasks.md` **末尾必须含** `## Documentation Sync` 段,见 §4.1。
+- `tasks.md` **末尾必须含** `## Documentation Sync` 段,见 `CLAUDE.md` §Documentation Sync Gate 段。
 - 测试相关 task **禁止硬编码测试总数**;以 `python -m pytest -q` 实际输出为准。
 - 付费 provider 相关 task 默认 opt-in(`FORGEUE_PROBE_*=1`),framework 层测试走 `FakeAdapter` / `FakeComfyWorker`。
 
@@ -185,7 +185,7 @@ proposal → design → tasks → implementation → validation → review → D
 | S4 systematic debug | — | — | `/forgeue:change-debug <id>`(显式调 Superpowers `systematic-debugging`)|
 | Level 0/1/2 验证 | — | — | `/forgeue:change-verify <id> --level 0\|1\|2`(`forgeue_verify` + codex `/codex:review --base <main>`)|
 | review finalize | — | — | `/forgeue:change-review <id>`(`superpowers_review` finalize + codex adversarial review + blocker 回写)|
-| 触发 Sync Gate | 粘 §4.3 提示词 | 同上 | `/forgeue:change-doc-sync <id>`(`forgeue_doc_sync_check` 静态扫描 + §4.3 提示词 + 应用 [REQUIRED])|
+| 触发 Sync Gate | 见 `CLAUDE.md` §Documentation Sync Gate 段 | 同上 | `/forgeue:change-doc-sync <id>`(`forgeue_doc_sync_check` 静态扫描 + 应用 [REQUIRED])|
 | Finish Gate | — | — | `/forgeue:change-finish <id>`(`forgeue_finish_gate` 中心化最后防线;evidence frontmatter 全检 + cross-check disputed_open + writeback_commit `git rev-parse` + `git show --stat` 二次校验)|
 | 归档 change | `/opsx:archive <name>` | 手工移动 + sync spec | —(走 `/opsx:archive`;ForgeUE 不包 facade,sync-specs 由 OpenSpec 自动跑)|
 
