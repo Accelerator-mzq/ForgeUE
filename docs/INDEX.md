@@ -44,9 +44,7 @@ acceptance_report   对应 SRS + test_spec 状态
 
 | 位置 | 用途 |
 | --- | --- |
-| [`ai_workflow/forgeue_quickstart.md`](ai_workflow/forgeue_quickstart.md) | **ForgeUE Integrated AI Change Workflow 5 分钟上手**(按 S0-S9 dev stage 组织;每条命令做什么 / 产出什么 / 关键检查) |
 | [`ai_workflow/README.md`](ai_workflow/README.md) | OpenSpec 主流程 + Documentation Sync Gate 主规则(契约层) |
-| [`ai_workflow/forgeue_integrated_ai_workflow.md`](ai_workflow/forgeue_integrated_ai_workflow.md) | ForgeUE 工作流深度契约(4 section:fusion contract / phase gate / sync gate / state machine) |
 | [`ai_workflow/validation_matrix.md`](ai_workflow/validation_matrix.md) | Level 0/1/2 验证命令矩阵 |
 | [`api_des/`](api_des/) | 五家 provider 的 API 契约参考(GLM / Qwen / Qwen-Image(-Edit) / HunYuan) |
 | [`archive/`](archive/) | 历史文档归档(plan_v1 + 评审报告 + 早期方案),仅作史料 |

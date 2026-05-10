@@ -548,3 +548,35 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | TBD-T-001 | 接入 Linux CI(当前仅本地 Windows 验证) |
 | TBD-T-002 | 覆盖率工具接入(`pytest-cov` 补量化指标) |
 | TBD-T-003 | Live LLM smoke 固化为可选 CI job |
+
+---
+
+## Level 2 — ComfyUI 真机验证(user 手工)
+
+> **自 OpenSpec change `retire-forgeue-protocol-layer-fully`(2026-05-10)起**:Level 2 ComfyUI 验证由 user 手工跑命令矩阵;`tools/forgeue_verify.py` wrapper 已 retire。沿 `openspec/specs/probe-and-validation/spec.md` MODIFIED Requirement 工具无关 contract:**`comfy/local*` 虚拟模型 id + 禁止 `--comfy-url` flag + 禁止 LiteLLM wildcard fallback**。
+
+### 4 Capability 命令矩阵
+
+**前置(双终端工作流,沿 `CLAUDE.md` ComfyUI 接入段)**:
+- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管)
+- 终端 2:export env + 跑 ForgeUE
+
+**通用 env**:
+```bash
+export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
+# FORGEUE_COMFY_PYTHON_EXE 留空 → sys.executable
+# FORGEUE_COMFY_LIFECYCLE 留空 → "none"
+```
+
+| Capability | Bundle path | 额外 env | 命令 |
+|---|---|---|---|
+| **Image** | `examples/comfy_local_smoke.json` | (无) | `python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>` |
+| **Mesh** | `examples/comfy_local_smoke_mesh.json` | `FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input` | `python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>` |
+| **Audio** | `examples/comfy_local_smoke_audio.json` | (无) | `python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id <id>` |
+| **Video** | `examples/comfy_local_smoke_video.json` | (无) | `python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>` |
+
+### 警告:false-positive PASS 防范
+
+- **禁止传 `--comfy-url` flag**:silently 被 `framework.run` 忽略,fallback 到 `FakeComfyWorker`(deprecated by `comfy-agent-cli-adoption` v1.6,2026-05-02 archived)。
+- **禁止用走 LiteLLM wildcard 的 bundle**:silently fallback 到 `FakeComfyWorker`,verification 变 false-positive PASS(没真跑 ComfyUI subprocess)。
+- **检查方法**:bundle `provider_policy.models_ref` 必须解析至 `comfy/local` / `comfy/local-mesh` / `comfy/local-audio` / `comfy/local-video` 之一(`config/models.yaml` aliases 定义);若用 `qwen/*` / `hunyuan/*` 之类 alias → 走 LiteLLMAdapter wildcard → silently fallback FakeComfyWorker。
