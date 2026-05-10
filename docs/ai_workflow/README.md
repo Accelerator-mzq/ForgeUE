@@ -1,15 +1,11 @@
 # ForgeUE AI Workflow
 
-> **第一次用 ForgeUE Integrated AI Change Workflow?** 先读 [`forgeue_quickstart.md`](forgeue_quickstart.md)(5 分钟上手,按 S0-S9 dev stage 组织);本文档是 OpenSpec 主流程契约规则参考。
-
-本文档面向 AI 编码代理(Claude Code、Codex CLI、其他通用 agent),说明 ForgeUE 在 2026-04-24 之后采用的 OpenSpec 主流程、Documentation Sync Gate 的主规则,以及与 `docs/` 五件套之间的权威关系。
+本文档面向 AI 编码代理(Claude Code、Codex CLI、其他通用 agent),说明 ForgeUE 在 2026-04-24 之后采用的 OpenSpec 主流程,以及与 `docs/` 五件套之间的权威关系。
 
 > 相关文档
 > - 行为契约层:`openspec/specs/`(8 个 capability spec)
 > - 未来变更入口:`openspec/changes/`
 > - 需求 / 设计 / 测试 / 验收长期文档:`docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md`
-> - **ForgeUE 工作流上手指南**:[`docs/ai_workflow/forgeue_quickstart.md`](forgeue_quickstart.md)
-> - ForgeUE 工作流深度契约:[`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](forgeue_integrated_ai_workflow.md)
 > - 验证命令矩阵:`docs/ai_workflow/validation_matrix.md`
 > - AI 协作约定:`CLAUDE.md`(Claude Code 专用)、`AGENTS.md`(Codex CLI / Cursor / Aider 等通用 agent)
 
@@ -83,7 +79,7 @@ proposal → design → tasks → implementation → validation → review → D
 
 ### 2.8 Documentation Sync Gate
 
-见 §4。每个非平凡 change 在 archive / merge 前必经。
+每个非平凡 change 在 archive / merge 前必须对十份长期文档做 sync 检查。主规则见 `CLAUDE.md` §Documentation Sync Gate 段。
 
 ### 2.9 Archive
 
@@ -110,147 +106,15 @@ proposal → design → tasks → implementation → validation → review → D
 
 ---
 
-## 4. Documentation Sync Gate(主规则)
-
-> 每个非平凡 OpenSpec change 在 archive / merge 前**必经** Documentation Sync Gate。
-
-### 4.1 必须检查的十份文档
-
-| # | 文件 | 更新触发条件 |
-|---|---|---|
-| 1 | `openspec/specs/*` | change 引入 / 修改 / 删除的行为在 archive 后必须反映到主 spec |
-| 2 | `docs/requirements/SRS.md` | 需求 / 用户可见行为变更 |
-| 3 | `docs/design/HLD.md` | 架构边界 / 模块职责变更 |
-| 4 | `docs/design/LLD.md` | 接口 / 模型 / CLI entry / 文件级设计变更 |
-| 5 | `docs/testing/test_spec.md` | 测试策略 / fixture / 验证矩阵变更 |
-| 6 | `docs/acceptance/acceptance_report.md` | 验收状态变更(新 FR 通过、TBD 关闭、真机验收达成) |
-| 7 | `README.md` | 用户可见工作流 / 命令 / 入口变更 |
-| 8 | `CHANGELOG.md` | 任何合并到 main 的有意义变更 |
-| 9 | `CLAUDE.md` | AI 协作约定变更(Claude Code 视角) |
-| 10 | `AGENTS.md` | AI 协作约定变更(其他 agent 视角);与 CLAUDE.md 同步 |
-
-### 4.2 核心原则
-
-- **不机械同步**:不是每个 change 都要动十份文件。很多 change 只触动其中 2-3 份。
-- **不更新的要记录原因**:在 change 的 tasks.md Documentation Sync 段里明确写"跳过 HLD 原因:本 change 未触及架构边界"。
-- **Drift 显式化**:若 docs / tests / code / CHANGELOG 冲突,标记为 doc drift,要求人工确认,**不自行猜测**哪个对。
-- **数字以实测为准**:涉及测试总数、覆盖率、耗时,以 `python -m pytest -q` 实际结果为准。
-- **五件套保持长篇**:docs/ 不因为 OpenSpec 存在而被瘦身;它是长期知识库,OpenSpec 是契约抽取。
-
-### 4.3 固定提示词(agent 调用)
-
-将以下提示词粘到 change archive 前的 agent 会话:
-
-```
-现在进入 Documentation Sync Gate。
-
-请基于当前 OpenSpec change、代码 diff、测试结果和已有文档,判断哪些长期文档需要同步。
-
-必须检查:
-1. openspec/specs/*
-2. docs/requirements/SRS.md
-3. docs/design/HLD.md
-4. docs/design/LLD.md
-5. docs/testing/test_spec.md
-6. docs/acceptance/acceptance_report.md
-7. README.md
-8. CHANGELOG.md
-9. CLAUDE.md
-10. AGENTS.md
-
-请输出:
-
-A. 必须更新的文档
-   - 文件路径
-   - 更新原因
-   - 建议修改摘要
-
-B. 不需要更新的文档
-   - 文件路径
-   - 不更新原因
-
-C. 存在 doc drift 的地方
-   - 冲突内容
-   - 涉及文件
-   - 建议以哪个事实来源为准
-   - 是否需要人工确认
-
-D. 建议 patch
-   - 只修改必要文档
-   - 不要机械同步所有文档
-   - 不要把 OpenSpec change 全文复制进 docs
-   - 不要把 docs 长文复制进 OpenSpec
-
-在我确认前,先不要写文件。
-```
-
-### 4.4 决策权下放与 Autonomy Boundary
-
-自 `enhance-workflow-automation` change(2026-05-05)起,ForgeUE workflow 默认走**Claude 自主路径**,减少 rubber-stamp 式 ping-pong:
-
-- **默认自主**:Claude 提案 + 同步 invoke `/codex:review`(大 scope 默认 background);Claude+Codex 一致 → 直接执行,evidence frontmatter `autonomy_decision: claude_codex_concurred`
-- **6 类 fence 必须升级用户**(无条件):不可逆操作 / 跨 change 决策 / Claude+Codex 冲突 / 用户先验约束 / 钱(ADR-007)/ Secret 安全
-- **autonomy_decision 字段**:每条 implementation evidence 必填(`claude_autonomous` / `claude_codex_concurred` / `user_required` / `user_overrode`);`claude_codex_concurred` 必配 `codex_review_ref`
-- **Codex 默认 background**:`/codex:review` / `/codex:adversarial-review` 默认 background 分发;仅极小 scope(≤2 files / ≤50 lines / 非 adversarial / 下一步必须等结果)才前台 wait
-- **Codex 多轮 context bridge**:同 change_id + 同 review_type 的 round N→N+1 prompt 首段自动注入 round N evidence 文件 reference,防止重提已解决 finding
-
-完整协议见 [`forgeue_integrated_ai_workflow.md` §C Autonomy Boundary Protocol](forgeue_integrated_ai_workflow.md)。
-
-### 4.4-bis v1 Advisory Runtime Fence(沿 ADR-011 baseline,retire-parallel-and-worktree-fully P2 后简化)
-
-> **Retire 历史**(2026-05-06,archived `retire-parallel-and-worktree-fully`):ADR-011(`enhance-workflow-automation-runtime-enforcement`)+ ADR-012(`enhance-workflow-automation-executable-enforcement`)+ ADR-013(`restore-superpowers-worktree-consent-gate`)+ ledger-binding(`enhance-workflow-automation-ledger-binding`)4 archived change 引入的 ForgeUE-level worktree / parallel dispatch / dispatch ledger / sister skill 强制层整 retire(沿 D-HardRetireScope wide retire;user 拍板 B option:"不再支持 subagent 并行处理任务,在这个阶段也不要支持 worktree,将 worktree 的功能和 superpowers 保持一致")。Active 工作流退回 ADR-010 baseline + v1 advisory fence。原 §4.4-bis ADR-011 / §4.4-ter ADR-012 / §4.4-quater ADR-013 3 节合并为本节简述 + retire 历史指针。
-
-`tools/forgeue_finish_gate.py` 内 3 个 v1 advisory fence(沿 ADR-011 baseline 沉淀):
-
-| Fence | D-decision | evidence frontmatter 检查 |
-|---|---|---|
-| `_check_skill_cascade` | D-SkillCascadeCheck | `skill_cascade_audit` dict |
-| `_check_round_fix_continuity` | D-RoundFixContinuity | `subagent_continuity` dict 一致性 |
-| `_check_task_granularity` | D-TaskGranularityDeclaration | `task_granularity` ∈ {phase, per-file, sub-task} |
-
-**Protocol gating**(D-ProtocolVersionMigration + D-ActiveVsArchivedReplayBoundary,沿 retire-parallel-and-worktree-fully P2):
-- `runtime_enforcement_protocol_version: v1` evidence → 走 v1 advisory fence
-- 缺字段(legacy ADR-010)→ 全 fence pass-through
-- **Active 路径 evidence + present-but-invalid value**(`v2` / `v3` / typo)→ BLOCKER `unknown_protocol_version`
-- **Archived 路径 evidence + 任何 unknown value** → legacy pass-through(归档不动)
-
-**Retire 范围**:删 7 工具/命令文件(~5066 LOC delete)+ 编辑 5 命令模板 + sister skill `subagent-driven-discipline` partial retire(保留主体)+ backbone skill 整改;Active 工作流退回 ADR-010 baseline + v1 advisory 3 fence;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke(无 ForgeUE-level 强制层)。
-
-**Archived 4 change replay 兼容**(沿 D-ArchivedReplayCompat):archived `runtime-enforcement` / `executable-enforcement` / `restore-consent-gate` / `ledger-binding` evidence 不动;P5 实测 31 → 29 blocker(2 v2 fence blocker 消失,匹配期望)。
-
-完整规则见 [`forgeue_integrated_ai_workflow.md` §C.7 v1 Advisory Runtime Fence](forgeue_integrated_ai_workflow.md) + archived `openspec/changes/archive/<date>-retire-parallel-and-worktree-fully/`(15 D-decision + codex round 1+P5 verification accepted-codex)。
-
-### 4.5 tasks.md 必含段模板
-
-每个 change 的 `tasks.md` 末尾必须含:
-
-```markdown
-## Documentation Sync
-
-- [ ] Check whether openspec/specs/* needs update after archive
-- [ ] Check whether docs/requirements/SRS.md needs update
-- [ ] Check whether docs/design/HLD.md needs update
-- [ ] Check whether docs/design/LLD.md needs update
-- [ ] Check whether docs/testing/test_spec.md needs update
-- [ ] Check whether docs/acceptance/acceptance_report.md needs update
-- [ ] Check whether README.md needs update
-- [ ] Check whether CHANGELOG.md needs update
-- [ ] Check whether CLAUDE.md needs update
-- [ ] Check whether AGENTS.md needs update
-- [ ] Record skipped docs with reason
-- [ ] Mark doc drift for human confirmation if sources conflict
-```
-
----
 
 ## 5. Agent 分工
 
 | Agent | 地位 | 备注 |
 |---|---|---|
 | Claude Code | 主实现 agent | 读 `CLAUDE.md` + 本文件;用 `/opsx:*` slash command |
-| Codex CLI(GPT-5.4)| 交叉评审 | 读 `AGENTS.md` + 本文件;`openspec new change` / `openspec status` CLI 等价形式。Claude Code 内通过 codex-plugin-cc 自动 stage cross-review(S2/S3 doc-level 强制 cross-check / S5 code-level 单向挑错 / S6 adversarial mixed scope),blocker 涉及 contract 必须回写;`/codex:rescue` 在 ForgeUE workflow 内**禁用**(详 `forgeue_integrated_ai_workflow.md` §B.5),工作流外仍可 ad-hoc。Claude Code 之外 env 由用户自决 review 是否接入 |
+| Codex CLI(GPT-5.4)| 交叉评审 | 读 `AGENTS.md` + 本文件;`openspec new change` / `openspec status` CLI 等价形式。Claude Code 内通过 codex-plugin-cc 自动 stage cross-review(S2/S3 doc-level 强制 cross-check / S5 code-level 单向挑错 / S6 adversarial mixed scope),blocker 涉及 contract 必须回写;`/codex:rescue` 在 ForgeUE workflow 内**禁用**(详 `CLAUDE.md`),工作流外仍可 ad-hoc。Claude Code 之外 env 由用户自决 review 是否接入 |
 | 其他通用 agent(Cursor / Aider / 通义灵码)| 辅助编码 | 读 `AGENTS.md` + 本文件;语义与 Claude Code 一致,措辞按各自工具定位 |
-| Superpowers | **OpenSpec evidence 生成器**(2026-04-26 升级,详 `forgeue_integrated_ai_workflow.md` §A + §B.3 + §B.6) | 跨 env 装(`/plugin install superpowers@claude-plugins-official`);brainstorming / writing-plans / TDD / debugging / requesting-code-review / verification-before-completion 等 skill auto-trigger,产物绑 active change 子目录(`openspec/changes/<id>/{notes,execution,review,verification}/`);实施暴露的 contract 漏洞**必须回写**到 OpenSpec contract artifact(evidence frontmatter `aligned_with_contract: false` 必带 `drift_decision`,详 `forgeue_integrated_ai_workflow.md` §E.4 writeback 协议(原 §D.4 在 enhance-workflow-automation change 后顺延))。`using-git-worktrees` **REQUIRED for `/forgeue:change-apply-subagent`**(自 `adopt-subagent-driven-development` change 起;主 session Claude 起 isolated worktree + commit untracked + cwd 切换 + evidence 同步回主分支);`subagent-driven-development` **default for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational,与 ADR-007 vendor API 双扣边界根本不同) |
+| Superpowers | **OpenSpec evidence 生成器**(2026-04-26 升级) | 跨 env 装(`/plugin install superpowers@claude-plugins-official`);brainstorming / writing-plans / TDD / debugging / requesting-code-review / verification-before-completion 等 skill auto-trigger,产物绑 active change 子目录(`openspec/changes/<id>/{notes,execution,review,verification}/`);实施暴露的 contract 漏洞**必须回写**到 OpenSpec contract artifact(evidence frontmatter `aligned_with_contract: false` 必带 `drift_decision`,详 `CLAUDE.md` writeback 协议)。`using-git-worktrees` **REQUIRED for `/forgeue:change-apply-subagent`**(自 `adopt-subagent-driven-development` change 起;主 session Claude 起 isolated worktree + commit untracked + cwd 切换 + evidence 同步回主分支);`subagent-driven-development` **default for `/forgeue:change-apply-subagent`**(ADR-009 token-budget tracker informational,与 ADR-007 vendor API 双扣边界根本不同) |
 | gstack | **不进入主线** | 只能作为临时外部审查工具,不归档其产物 |
 
 > 当前仓库未声明其他 agent,不要在 change artifact 里引用未声明的 agent 名。
@@ -311,7 +175,7 @@ D. 建议 patch
 
 ## 8. 进入下一阶段的入口
 
-| 动作 | Claude Code(OpenSpec)| Codex / 其他 agent | ForgeUE(`/forgeue:change-*`,详 `forgeue_integrated_ai_workflow.md` §B)|
+| 动作 | Claude Code(OpenSpec)| Codex / 其他 agent | ForgeUE(`/forgeue:change-*`,详 `CLAUDE.md` §ForgeUE Integrated AI Change Workflow)|
 |---|---|---|---|
 | 新建 change | `/opsx:propose <name>` | `openspec new change "<name>"` | —(走 `/opsx:new` / `/opsx:propose`;ForgeUE 不包 facade,强调 OpenSpec 中心地位)|
 | 查看 change 状态 | `/opsx:apply <name>`(会先调 status) | `openspec status --change "<name>"` | `/forgeue:change-status [<id>]`(调 `forgeue_change_state`;列 active changes / state / evidence + 回写状态)|
