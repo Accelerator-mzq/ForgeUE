@@ -441,53 +441,6 @@ The system SHALL provide a `probes/provider/probe_comfy_audio.py` script that ex
 - **WHEN** Python imports the module (`importlib.import_module("probes.provider.probe_comfy_audio")` without invoking `main()`)
 - **THEN** no env var is read or written, no directory is created, no network / subprocess call is made; the existing `tests/unit/test_probe_framework.py::test_glm_probes_have_no_import_side_effects` fence (or equivalent) covers `probe_comfy_audio.py` with the same import-only invariant
 
-### Requirement: forgeue_verify.py Level 2 ComfyUI steps SHALL exercise the agent CLI subprocess path (NOT the deprecated HTTP path)
-
-The system SHALL ensure that `tools/forgeue_verify.py` Level 2 ComfyUI verification
-steps invoke `python -m framework.run` with bundles that resolve to the
-`comfy/local*` virtual model ids (`comfy/local` for image / `comfy/local-mesh`
-for mesh / `comfy/local-audio` for audio), so that the dispatch chain reaches
-the ComfyAgentWorker subprocess CLI path. Steps MUST NOT pass the deprecated
-`--comfy-url` flag, and MUST NOT use bundles whose only ComfyUI route is via
-the wildcard LiteLLM router fallback (which silently falls back to
-FakeComfyWorker when no `comfy/local` route is declared).
-
-#### Scenario: Level 2 image verification dispatches to ComfyAgentWorker
-
-- **GIVEN** `FORGEUE_VERIFY_LIVE_COMFY=1` and ComfyUI server is running with
-  `FORGEUE_COMFY_SCRIPTS_DIR` env set
-- **WHEN** `forgeue_verify.py --level 2` runs the `live-comfy-image` step
-- **THEN** the step SHALL use `examples/comfy_local_smoke.json` (which declares
-  `provider_policy.models_ref: image_local` resolving to `comfy/local`)
-- **AND** the framework dispatch SHALL hit
-  `GenerateImageExecutor._should_use_worker_path() == True` and run via
-  `ComfyAgentWorker.generate()` subprocess
-- **AND** the step MUST NOT pass `--comfy-url` flag
-
-#### Scenario: Level 2 mesh and audio verification have dedicated env vars
-
-- **GIVEN** `FORGEUE_VERIFY_LIVE_COMFY_MESH=1` (mesh) or
-  `FORGEUE_VERIFY_LIVE_COMFY_AUDIO=1` (audio)
-- **WHEN** `forgeue_verify.py --level 2` runs the corresponding step
-- **THEN** the mesh step SHALL use `examples/comfy_local_smoke_mesh.json`
-  (resolving to `comfy/local-mesh`) and require `FORGEUE_COMFY_INPUT_DIR` env
-- **AND** the audio step SHALL use `examples/comfy_local_smoke_audio.json`
-  (resolving to `comfy/local-audio`) and require only `FORGEUE_COMFY_SCRIPTS_DIR`
-  env (no input dir, audio is text-to-audio with no source bytes)
-- **AND** each step is independently opt-in (one env var per capability)
-
-#### Scenario: Stale bundle and deprecated flag never reach the verify command
-
-- **GIVEN** the Level 2 plan structure
-- **WHEN** any developer or audit reads `tools/forgeue_verify.py` `_build_plan()`
-- **THEN** there MUST NOT be any remaining reference to
-  `examples/image_pipeline.json` as a Live Comfy verify target
-- **AND** there MUST NOT be any remaining `--comfy-url` flag in the Level 2
-  command list (the flag was deprecated by `comfy-agent-cli-adoption` v1.6
-  and is silently ignored by `framework.run` falling back to
-  FakeComfyWorker — which made the original Level 2 step a false-positive
-  passing without ever exercising real ComfyUI)
-
 ### Requirement: ComfyUI video capability dispatch has dedicated regression fences
 
 The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/unit/test_generate_video_comfy.py` + `tests/unit/test_video_worker.py` for video executor / ABC concerns) with a dedicated section of fences guarding the video capability dispatch contract introduced by `comfy-agent-cli-video-adoption`. The new fences SHALL include at least the following named tests:
@@ -652,6 +605,43 @@ The system SHALL provide a `probes/provider/probe_comfy_video.py` script that ex
 - **GIVEN** the `probes/provider/probe_comfy_video.py` source file
 - **WHEN** Python imports the module (`importlib.import_module("probes.provider.probe_comfy_video")` without invoking `main()`)
 - **THEN** no env var is read or written, no directory is created, no network / subprocess call is made; the existing `tests/unit/test_probe_framework.py::test_glm_probes_have_no_import_side_effects` fence (or equivalent) covers `probe_comfy_video.py` with the same import-only invariant
+
+### Requirement: Level 2 ComfyUI verification SHALL dispatch via `comfy/local*` virtual model ids to the ComfyAgentWorker subprocess path (NOT the deprecated HTTP path)
+
+The system SHALL ensure that Level 2 ComfyUI verification(image / mesh / audio / video capability)dispatches via bundles whose `provider_policy.models_ref` resolves to `comfy/local*` virtual model ids(`comfy/local` for image / `comfy/local-mesh` for mesh / `comfy/local-audio` for audio / `comfy/local-video` for video),so that the dispatch chain reaches the `ComfyAgentWorker` subprocess CLI path(`python -m comfyui_api ...`)defined in `src/framework/providers/comfy_agent_worker.py`. Level 2 verification commands MUST NOT pass the deprecated `--comfy-url` flag(silently ignored by `framework.run` and falls back to `FakeComfyWorker`),and MUST NOT use bundles whose only ComfyUI route is via the wildcard `LiteLLMAdapter` fallback(silently routed to `FakeComfyWorker` when no `comfy/local*` route is declared,producing false-positive PASS without exercising real ComfyUI subprocess).
+
+The verification mechanism SHALL be **tool-agnostic**(自 `retire-forgeue-protocol-layer-fully` 起,2026-05-10):无 `tools/forgeue_verify.py` wrapper / 无 `_build_plan()` 内部清单。Level 2 验证由 user 手工跑 `python -m pytest` 或 `python -m framework.run` 命令:
+
+- **Image** capability:`python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>`(bundle 含 `provider_policy.models_ref: image_local` 解析至 `comfy/local`)
+- **Mesh** capability:`python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>`(bundle 解析至 `comfy/local-mesh`,需 `FORGEUE_COMFY_INPUT_DIR` env)
+- **Audio** capability:`python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id <id>`(bundle 解析至 `comfy/local-audio`)
+- **Video** capability:`python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>`(bundle 解析至 `comfy/local-video`)
+
+User SHALL document the Level 2 verification matrix in `docs/testing/test_spec.md` Level 2 验证章节,包含 4 capability × bundle path × env requirement matrix + 显式提醒"禁止传 `--comfy-url` flag(silently FakeComfyWorker fallback);禁止用走 LiteLLM wildcard 的 bundle"。
+
+#### Scenario: Level 2 image verification dispatches to ComfyAgentWorker
+
+- **GIVEN** `FORGEUE_COMFY_SCRIPTS_DIR` env set + ComfyUI server is running
+- **WHEN** user runs `python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>`
+- **THEN** the bundle SHALL declare `provider_policy.models_ref: image_local` resolving to `comfy/local`
+- **AND** framework dispatch SHALL hit `GenerateImageExecutor._should_use_worker_path() == True` and run via `ComfyAgentWorker.generate()` subprocess
+- **AND** the command MUST NOT contain `--comfy-url` flag
+
+#### Scenario: Level 2 mesh / audio / video verification dispatches to capability-specific ComfyAgentWorker subprocess
+
+- **GIVEN** the corresponding env(mesh: `FORGEUE_COMFY_SCRIPTS_DIR` + `FORGEUE_COMFY_INPUT_DIR`;audio: `FORGEUE_COMFY_SCRIPTS_DIR`;video: `FORGEUE_COMFY_SCRIPTS_DIR`)
+- **WHEN** user runs corresponding `python -m framework.run --task examples/comfy_local_smoke_<cap>.json --live-llm`
+- **THEN** dispatch SHALL reach the capability-specific `ComfyAgentWorker.generate_<cap>()` subprocess
+- **AND** the bundle SHALL resolve to `comfy/local-<cap>` (mesh / audio / video) virtual model id
+- **AND** the command MUST NOT contain `--comfy-url` flag
+
+#### Scenario: Stale bundle and deprecated flag SHALL NOT silently pass via wildcard fallback
+
+- **GIVEN** the Level 2 verification matrix documented in `docs/testing/test_spec.md`
+- **WHEN** any developer or audit reads the matrix
+- **THEN** the matrix MUST NOT contain any `--comfy-url` flag in command examples
+- **AND** the matrix MUST NOT reference `examples/image_pipeline.json` as a Level 2 target(deprecated by `comfy-agent-cli-adoption` v1.6;silently falls back to `FakeComfyWorker`)
+- **AND** the matrix SHALL display the warning "禁止传 `--comfy-url` flag;禁止用走 LiteLLM wildcard 的 bundle(否则 silently FakeComfyWorker fallback,verification 变成 false-positive PASS)"
 
 ## Invariants
 
