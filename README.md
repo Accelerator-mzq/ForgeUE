@@ -357,44 +357,17 @@ python -m pytest -v -k p3           # 关键字过滤
 
 ## AI Workflow / OpenSpec
 
-2026-04-24 起,ForgeUE 采用 OpenSpec 作为 AI 主工作流。非平凡需求走 change 流程(proposal → design → tasks → implementation → validation → review → Documentation Sync Gate → archive);小 bugfix 可轻量处理,但必须补测试或说明验证方式。
+ForgeUE 采用 OpenSpec 作为 AI 主工作流。非平凡需求走 change 流程(`/opsx:propose <name>` → proposal → design → tasks → implementation)+ Superpowers 全套(brainstorming → writing-plans → subagent-driven-development → requesting-code-review → verification-before-completion)。Codex CLI opt-in(`/codex:adversarial-review` design hook + `/codex:review --base main` final hook)。小 bugfix 可轻量处理,但必须补测试或说明验证方式。详见 `CLAUDE.md`。
 
 | 入口 | 用途 |
 |---|---|
-| [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) | OpenSpec 主流程 + Documentation Sync Gate 主规则 |
+| [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) | OpenSpec 主流程规则 |
 | [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
 | [`openspec/specs/`](openspec/specs/) | 当前行为契约层:8 个 capability spec(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
 | [`openspec/changes/`](openspec/changes/) | 未来变更入口 |
+| [`openspec/backlog/active.md`](openspec/backlog/active.md) | Follow-on backlog registry |
 
-`docs/` 五件套仍是长期权威;OpenSpec 通过"契约抽取"与之互补,不替代。详见 `docs/ai_workflow/README.md`。
-
-### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
-
-> **新用户 5 分钟上手**:[`docs/ai_workflow/forgeue_quickstart.md`](docs/ai_workflow/forgeue_quickstart.md)(按 S0-S9 dev stage 组织;每条命令做什么 / 产出什么 / 关键检查)。
-
-OpenSpec change `fuse-openspec-superpowers-workflow` 引入中心化融合工作流:OpenSpec(契约锚点)× Superpowers(evidence 生成器)× codex-plugin-cc(stage cross-review hook)。OpenSpec change artifact 是唯一规范源,evidence 服务于契约,实施暴露的契约漏洞必须回写到 design / proposal / tasks。
-
-9 个 Claude slash 命令(对应 S0-S9 状态机各 stage;自 `adopt-subagent-driven-development` change 起 `change-apply` 拆为 subagent + direct;**自 `retire-parallel-and-worktree-fully` change 起,2026-05-06,`change-apply-parallel` 整 retire**,命令矩阵 10 → 9):
-
-| 命令 | 用途 |
-|---|---|
-| `/forgeue:change-status` | 列 active changes / state / evidence(只读) |
-| `/forgeue:change-plan` | S2→S3:codex `/codex:adversarial-review` design hook + Superpowers writing-plans + 锚点检测 |
-| `/forgeue:change-apply-subagent` | **default sequential for S3→S4-S5**;invoke Superpowers `subagent-driven-development` skill + cascade declared dependency 含 `subagent-driven-discipline` companion skill(自 `enforce-subagent-discipline-cascade` change 起;ForgeUE-side skill 协议化 model tier 选择);每 task 派 implementer + spec reviewer + code quality reviewer subagent + final reviewer;落 4 类 per-task evidence + `subagent_budget.log`;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke;ADR-009 token-budget tracker informational |
-| `/forgeue:change-apply-direct` | **fallback for S3→S4-S5**;沿原 `executing-plans + TDD`;落 `tdd_log` / `debug_log`;不派 subagent;主 worktree 实施(沿 D-DirectWorktreeRefinement);轻量 change / budget 紧张时使用 |
-| `/forgeue:change-debug` | 显式调 Superpowers `systematic-debugging`;debug_log 增量,暴露异常缺口必回写 |
-| `/forgeue:change-verify` | Level 0/1/2 + codex `/codex:review --base main` 验证 hook |
-| `/forgeue:change-review` | Superpowers `requesting-code-review` + codex `/codex:adversarial-review` mixed scope + blocker 回写 |
-| `/forgeue:change-doc-sync` | Documentation Sync Gate(10 文档静态扫 + §4.3 提示词 + 应用 [REQUIRED]) |
-| `/forgeue:change-finish` | Finish Gate(中心化最后防线,12-key frontmatter + writeback 真实性 + cross-check `disputed_open == 0`) |
-
-8 个 stdlib-only 工具支撑(自 `retire-parallel-and-worktree-fully` change 起,2026-05-06 retire `forgeue_preflight_wrapper.py` + `forgeue_dispatch_ledger.py` + `_forgeue_ledger_crypto.py` 3 工具,11+1 → 8):`tools/forgeue_env_detect.py` / `forgeue_change_state.py`(回写检测主力,4 类 subagent evidence DRIFT detector)/ `forgeue_verify.py` / `forgeue_doc_sync_check.py` / `forgeue_finish_gate.py`(含 `_check_autonomy_boundary` + **3 v1 advisory runtime fence**:`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity`;protocol gate `runtime_enforcement_protocol_version: v1` 沿 D-ActiveVsArchivedReplayBoundary;active 路径 present-but-invalid value → BLOCKER;archived 路径 → legacy pass-through)/ `forgeue_subagent_budget.py`(ADR-009 informational tracker)/ `forgeue_skill_cascade_check.py`(D-SkillCascadeCheck)/ `forgeue_enum_cross_ref_check.py`(canonical frozenset ↔ docs enum drift detector;3 mapped enum:autonomy_decision / triggered_by_command / task_granularity)。完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)。
-
-**自 `enhance-workflow-automation` change(ADR-010):Claude 默认自主拍板 + codex 二次验证;6 类 fence(不可逆 / 跨 change / review 冲突 / 用户约束 / 钱 / 安全)无条件升级用户。`/codex:review` 默认 background 分发;Codex 多轮 review 自动注入前轮 context 防止重提已解决 finding。**
-
-**自 `retire-parallel-and-worktree-fully` change(2026-05-06)**:整 retire ADR-011(`enhance-workflow-automation-runtime-enforcement`)+ ADR-012(`enhance-workflow-automation-executable-enforcement`)+ ADR-013(`restore-superpowers-worktree-consent-gate`)+ ledger-binding(`enhance-workflow-automation-ledger-binding`)4 archived change 引入的 ForgeUE-level worktree / parallel dispatch / dispatch ledger / sister skill 强制层(沿 D-HardRetireScope wide retire;user 拍板 B option:"不再支持 subagent 并行处理任务,在这个阶段也不要支持 worktree,将 worktree 的功能和 superpowers 保持一致")。删 7 工具/命令文件 + 编辑 5 命令模板 + sister skill partial retire(保留主体 retire-无关基础设施)+ ~5066 LOC delete。Active 工作流退回 ADR-010 baseline + v1 advisory 3 fence;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke + 自家 Step 0 consent gate(无 ForgeUE-level 强制层)。Archived 4 change evidence 不动(沿 D-ArchivedReplayCompat;archived 路径 + v2/v3/unknown protocol value → finish_gate legacy pass-through)。完整 retire 范围见 [archived `retire-parallel-and-worktree-fully/proposal.md`](openspec/changes/archive/) + 15 D-decision(11 设计阶段 + 4 codex round 1 inline writeback)。**
-
-**自 `centralize-followon-backlog-registry` change(2026-05-07)**:加集中 follow-on backlog registry [`openspec/backlog/active.md`](openspec/backlog/active.md)+ [`archived.md`](openspec/backlog/archived.md)+ 协议 [README.md](openspec/backlog/README.md)。补"ForgeUE 当前没有集中 follow-on 记录位置"systemic gap。双源:registry 收 archive-tracking + capability-boundary + SRS pointer;`docs/requirements/SRS.md` §7.3 仍是需求层 backlog;两边 cross-link 不重复。Cancel 4 类:`inherited` / `cancelled-superseded by <id>` / `cancelled-not-applicable: <enum>`(5 类 enum)/ `cancelled-completed: <commit-ref>`(strict commit-touches + evidence escape hatch)。新加 2 archive-stage blocker fence(`_check_followon_continuity` + `_check_srs_registry_consistency`)守门 active.md self-diff + tombstone 5-point consistency + archived.md append-only + SRS↔registry set 等价 + 状态变化同步。3 round codex adversarial review 全 disputed_open=0(round 1+2 design + round 3 plan;10 finding 全 inline writeback)。新增 ~110 unit test + 2 helpers in `forgeue_change_state.py`(`--list-followon-{inherited,cancelled}`)+ `### Followon Backlog` block in `/forgeue:change-status`。
+`docs/` 五件套仍是长期权威;OpenSpec 通过"契约抽取"与之互补,不替代。
 
 ---
 

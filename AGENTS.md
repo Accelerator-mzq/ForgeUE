@@ -173,7 +173,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ## OpenSpec 工作流(2026-04-24 启用)
 
-> 本节与 `CLAUDE.md` §"OpenSpec 工作流" 保持语义同步。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md)。
+> 本节与 `CLAUDE.md` §"OpenSpec 工作流" 保持语义同步。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) 和 [`openspec/backlog/README.md`](openspec/backlog/README.md)。
 
 ### 什么时候走 change,什么时候直接改代码
 
@@ -206,71 +206,12 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 集中 follow-on 记录位置:[`openspec/backlog/active.md`](openspec/backlog/active.md)+ [`openspec/backlog/archived.md`](openspec/backlog/archived.md)+ [`openspec/backlog/README.md`](openspec/backlog/README.md)(协议)。
 
-- 双源:registry(archive-tracking + capability-boundary + SRS pointer)+ SRS §7.3 TBD(需求层);`_check_srs_registry_consistency` fence 守门 set 等价。
-- Cancel 4 类:`inherited` / `cancelled-superseded by <id>` / `cancelled-not-applicable: <enum>`(5 类 enum)/ `cancelled-completed: <commit>`(strict commit-touches + evidence escape hatch)。
-- Fence:archive 阶段 `_check_followon_continuity` + `_check_srs_registry_consistency` 守门;漏继承 / 失效 ref → BLOCKER。
-- 查询:`/forgeue:change-status <id>` `### Followon Backlog` section。
+- 双源:registry(archive-tracking + capability-boundary + SRS pointer)+ SRS §7.3 TBD(需求层);两边 set 等价由 user 自维护(自 `retire-forgeue-protocol-layer-fully` 起,fence 守门已 retire,git history 替代 audit trail)。
+- Cancel 4 类:`inherited` / `cancelled-superseded by <id>` / `cancelled-not-applicable: <enum>`(5 类 enum)/ `cancelled-completed: <commit>`(by convention,无 fence 守门)。
+- 状态查询:检查 `openspec/backlog/active.md` 查看当前活跃 follow-on 项。
 
-### Documentation Sync Gate(摘要)
+### Codex Convention
 
-每个非平凡 change 在 archive 或 merge 前必须执行 Documentation Sync Gate(完整规则见 `docs/ai_workflow/README.md` §4)。
+**Convention**:重要 design 阶段先跑 `/codex:adversarial-review`(catch latent design smell);final review 跑 `/codex:review --base main`(catch cross-archive mixed-scope)。沿 OpenSpec change `retire-forgeue-protocol-layer-fully`(2026-05-10)。
 
-必须检查的 10 份文档:`openspec/specs/*` / `docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md` / `README.md` / `CHANGELOG.md` / `CLAUDE.md` / `AGENTS.md`。
-
-规则:不机械同步;不更新必须记录原因;docs / tests / code / CHANGELOG 冲突时标记 doc drift,不自行猜测。触发提示词见 `docs/ai_workflow/README.md` §4.3。
-
-### 决策权下放与 Autonomy Boundary(自 `enhance-workflow-automation` change 起,ADR-010)
-
-Claude 默认拍板执行 + 自动 codex 二次验证。**以下 6 类 fence 无条件升级到用户**:
-
-1. **不可逆操作** — `git push` / `archive change` / `git reset --hard` / `git branch -D` / 删非临时文件 / `commit --amend` 已 push
-2. **跨 change 决策** — 修改非本 change scope 的 D-decision / 动其他 active change 的 contract artifact
-3. **Claude+Codex review 冲突** — verdict 不一致(D-FenceTaxonomy Verdict Normalization 判定)
-4. **用户先验显式约束** — `CLAUDE.md` / `AGENTS.md` / `MEMORY.md` 内 explicit fence rule 触发
-5. **钱** — 任何 vendor API paid call(ADR-007 边界)
-6. **Secret / 安全** — `.env` 写入 / `*api_key*` / `*credential*` / `*secret*` 文件操作
-
-每条 implementation evidence frontmatter 必填 `autonomy_decision` 字段(`claude_autonomous` / `claude_codex_concurred` / `user_required` / `user_overrode`);`concurred` 必配 `codex_review_ref`。`/codex:review` / `/codex:adversarial-review` 默认 background;Codex 多轮 review(同 change_id + 同 review_type)round N+1 prompt 首段自动注入 round N evidence reference,防止重提已解决 finding。完整协议见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md` §C](docs/ai_workflow/forgeue_integrated_ai_workflow.md)。
-
-### ForgeUE Integrated AI Change Workflow(2026-04-27 启用)
-
-> 本节与 `CLAUDE.md` §"ForgeUE Integrated AI Change Workflow" 保持语义同步;视角调整为 Codex / 其他外部 agent。
-
-中心化融合 OpenSpec × Superpowers × codex-plugin-cc。**由 Claude Code 主导编排**,Codex 通过 `/codex:*` slash commands 在 plan / apply / verify / review 4 个 stage 各 1-2 次接受 cross-review 调用。Codex / 其他 agent 视角:
-
-- **不调 `/codex:rescue` 在工作流内**:rescue 是单点修复 helper,与 stage gate / cross-check 协议正交。框架级 systematic-debugging 走 Claude `/forgeue:change-debug` + Superpowers skill。
-- **review-gate hook 默认禁用**:`~/.claude/settings.json` 含 `--enable-review-gate` 由 `forgeue_finish_gate` WARN 提示用户 disable(stage gate 与 review-gate 重复且常冲突)。
-- **每个 codex review 输出**(`/codex:review` / `/codex:adversarial-review`)需被 Claude 端独立验证 file:line 真实性后,作为 `review/codex_*_review.md` evidence 落 12-key frontmatter;blocker 涉及 contract 必须回写到 design / proposal / tasks(`drift_decision: written-back-to-*` + 真实 `writeback_commit`,由 `forgeue_finish_gate` `git rev-parse <sha>` + `git show --stat <sha>` 二次校验)。
-- **codex 自决何时调 review**:Claude 在每个 stage 触发 `/codex:adversarial-review` / `/codex:review --base main` 时给出 prompt + scope,Codex 自主裁决 finding,不预设结论;Claude 端的 cross-check matrix 必含 `## A. Claude's Decision Summary (frozen before codex run)` / `## B. Cross-check Matrix` / `## C. Disputed Items Pending Resolution` / `## D. Verification Note` 4 段,`## A` 在 codex 调用前冻结。
-- **`disputed-permanent-drift`**:若 codex finding 被 cross-check 标记为 permanent disagreement,evidence frontmatter 用 `drift_decision: disputed-permanent-drift` + ≥ 50 字 `drift_reason` + `reasoning_notes_anchor` 指向 `design.md ## Reasoning Notes` 段对应 anchor(段落 ≥ 20 词且 ≥ 60 非空白字符;由 `forgeue_finish_gate` 强制)。
-- **`/forgeue:change-apply` 已拆为两条**(自 `adopt-subagent-driven-development` change 起):`/forgeue:change-apply-subagent`(default;invoke Superpowers `subagent-driven-development` skill + cascade declared dependency 含 `subagent-driven-discipline` companion skill 自 `enforce-subagent-discipline-cascade` change 起;每 task 派 implementer + spec / code quality reviewer subagent + final reviewer;落 4 类 per-task evidence;worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke)+ `/forgeue:change-apply-direct`(fallback;沿原 `executing-plans + TDD`;轻量 change / budget 紧张时使用)。新增 ADR-009(token-budget tracker informational;`tools/forgeue_subagent_budget.py`;与 ADR-007 vendor API 双扣边界**根本不同**:LLM token 不会双扣)。`forgeue_change_state.py --writeback-check` DRIFT detector 已扩 4 类 subagent evidence_type,subagent review 报 contract gap 时阻断 S5/S7/S8 推进。
-- **`/forgeue:change-apply-parallel` 已 retire**(自 archived `retire-parallel-and-worktree-fully` change,2026-05-06):并行 dispatch 路径不再支持(沿 D-PostRetireParallelStrategy);若后续需要并行需重新 propose 独立 change。Active forgeue 命令矩阵从 10 → 9。
-- **7 SKILL-invoke 命令 Preflight section**(D-PreflightProtocol;命令模板首段强制):subagent + direct 含 2 段(Skill Cascade + Task Granularity);plan/debug/verify/review/doc-sync 含 1 段(Skill Cascade);change-finish + change-status + codex /review + /adversarial-review 不含(纯工具 / 只读 / 纯 CLI dispatch,disclaimer 路径)。任一 preflight fail → 命令 abort。**worktree section 整 retire**(沿 retire-parallel-and-worktree-fully P4;worktree 沿 Superpowers upstream OPTIONAL,无 ForgeUE-level 强制)。
-- **3 v1 advisory runtime fence**(`tools/forgeue_finish_gate.py`):`_check_skill_cascade`(D-SkillCascadeCheck:`skill_cascade_audit` dict 完整性 + ISO timestamp)/ `_check_round_fix_continuity`(D-RoundFixContinuity:round 1/2 implementer + reviewer ID 一致)/ `_check_task_granularity`(D-TaskGranularityDeclaration:`task_granularity` ∈ {phase, per-file, sub-task})。Protocol gate `runtime_enforcement_protocol_version: v1`;无字段视为 legacy(fence pass-through;archived 历史 change replay 兼容);active 路径 + present-but-invalid value(typo / `v2` / `v3`)→ BLOCKER `unknown_protocol_version`(沿 D-ActiveVsArchivedReplayBoundary)。
-- **新增工具 `tools/forgeue_skill_cascade_check.py`**(D-SkillCascadeCheck):静态扫 SKILL.md `## Integration` 段验证 dependency 全 invoke;8 root probe 链(CLI flag / env var / repo-local / Anthropic plugin cache / Codex / `${CODEX_HOME}` / `.agents/skills`)在不同 IDE / agent 环境跑都能命中正确 SKILL.md。
-
-### Retired ADR-011/012/013/ledger-binding(自 archived `retire-parallel-and-worktree-fully` change 起,2026-05-06)
-
-ADR-011 + ADR-012(W1 wrapper / W2 actual diff / W3 ledger / parallel dispatch)+ ADR-013 D-RestoreConsentGate + ledger-binding(HMAC chain / 11-field v3 schema / cryptographic enforcement)全部 ForgeUE-level 强制层整 retire(沿 D-HardRetireScope wide retire;user 拍板 B option:"不再支持 subagent 并行处理任务,在这个阶段也不要支持 worktree,将 worktree 的功能和 superpowers 保持一致")。
-
-**Retire 内容**:
-- 工具:`forgeue_preflight_wrapper.py`(W1)+ `forgeue_dispatch_ledger.py`(W3)+ `_forgeue_ledger_crypto.py`(ledger crypto helper)整文件删除(~1475 LOC)
-- 命令:`/forgeue:change-apply-parallel.md` 整文件删除;命令矩阵 10 → 9
-- Fence:`forgeue_finish_gate.py` 内 7 fence + 2 helper + 3 常量删除(`_check_worktree_path` / `_check_worktree_consent_outcome` / `_check_worktree_mode_consistency` / `_check_parallel_decline_fallback` / `_check_dispatch_ledger` / `_check_ledger_terminal_proof` / `_check_ledger_forgery_resistance_consistency` 等);v1 advisory 3 fence(`_check_skill_cascade` / `_check_round_fix_continuity` / `_check_task_granularity`)保留
-- Sister skill `subagent-driven-discipline`:删 §3.4.2 Type 2 parallel + §3.5 Worktree Consent Policy 段;v2.3 → v2.4;主体内容(§1 scenario taxonomy / §2 cheap-model reliability / §3-main / §4 / §5 historical case / §6-§9 meta)保留
-- Frontmatter v2/v3 字段全 retire:`worktree_consent_outcome` / `worktree_mode` / `worktree_path` / `worktree_receipt_path` / `dispatch_ledger_path` / `task_files_actual` / `degraded_to` / `degradation_reason` / `pre_dispatch_metadata` / `ledger_forgery_resistance` / `ledger_line_count` / `ledger_final_hmac`(12 字段)
-- 测试:`tests/unit/test_dispatch_ledger.py` + `test_preflight_wrapper.py` + `tests/integration/test_v2_e2e_synthetic_change.py` 整删 + 命令模板 markdown 测试 17 retire-related test 删
-
-**保留**:
-- ADR-010 advisory baseline(autonomy boundary 6 fence + 12-key audit frontmatter + 4 类 DRIFT taxonomy + Documentation Sync Gate + S0-S9 状态机)
-- v1 advisory 3 fence(skill_cascade / round_fix_continuity / task_granularity)+ `runtime_enforcement_protocol_version: v1` 字段 + `triggered_by_command: change-apply-subagent`
-- worktree 沿 Superpowers upstream `using-git-worktrees` SKILL OPTIONAL invoke + 自家 Step 0 consent gate(无 ForgeUE-level 强制层)
-
-**Archived 4 change replay 兼容**(沿 D-ArchivedReplayCompat + D-ActiveVsArchivedReplayBoundary):
-- archived 4 change(`runtime-enforcement` / `executable-enforcement` / `restore-consent-gate` / `ledger-binding`)evidence **不动**(归档即冻结)
-- archived 路径 + 任何 v2/v3/unknown protocol value → finish_gate legacy pass-through(沿 D-ArchivedReplayCompat;P5 实测 31 → 29 blocker,2 v2 fence blocker 消失)
-- active 路径 + present-but-invalid value(typo / `v2` / `v3` / `v4` / null / empty)→ BLOCKER `unknown_protocol_version`(沿 D-ActiveVsArchivedReplayBoundary;防 controller typo silent bypass)
-
-完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md) §C(post-retire ADR-010 baseline + v1 advisory)+ archived `openspec/changes/archive/2026-05-XX-retire-parallel-and-worktree-fully/`(15 D-decision + codex round 1 4 finding accepted-codex)。
-
-完整规则见 [`docs/ai_workflow/forgeue_integrated_ai_workflow.md`](docs/ai_workflow/forgeue_integrated_ai_workflow.md)。
+Codex review 意见必须**独立对照代码验证**,不把 claim 当结论。`/codex:review` / `/codex:adversarial-review` 输出作为参考,由 Claude Code 端验证 file:line 真实性后决策。`review-gate hook` 默认禁用(与 OpenSpec stage gate 重复且常冲突)。
