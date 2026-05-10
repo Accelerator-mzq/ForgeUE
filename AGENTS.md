@@ -171,9 +171,9 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 - 决策风格:先给论证 + 选项 + 代价,用户拍板后(如"全改"/"方案 A")一次执行到位,不中途 micro-confirm
 - `python -c` / heredoc 等 ad-hoc 脚本用 ASCII 标记(`[OK]` / `[FAIL]`),避免 Windows GBK stdout 吞 emoji
 
-## OpenSpec 工作流(2026-04-24 启用)
+## OpenSpec 工作流
 
-> 本节与 `CLAUDE.md` §"OpenSpec 工作流" 保持语义同步。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) 和 [`openspec/backlog/README.md`](openspec/backlog/README.md)。
+> 本节与 `CLAUDE.md` § 工作流 段保持语义同步(自 `retire-forgeue-protocol-layer-fully` 起,2026-05-10)。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) 和 [`openspec/backlog/README.md`](openspec/backlog/README.md)。
 
 ### 什么时候走 change,什么时候直接改代码
 
