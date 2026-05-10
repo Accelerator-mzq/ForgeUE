@@ -172,7 +172,7 @@ proposal → design → tasks → implementation → validation → review → a
 | 动作 | Claude Code(OpenSpec)| Codex / 其他 agent |
 |---|---|---|
 | 新建 change | `/opsx:propose <name>` | `openspec new change "<name>"` |
-| 查看 change 状态 | `/opsx:apply <name>`(会先调 status) | `openspec status --change "<name>"` |
+| 查看 change 状态 | `openspec status --change "<name>"`(直跑 CLI;无独立 slash) | `openspec status --change "<name>"` |
 | 进入 implementation | `/opsx:apply <name>` | `openspec apply "<name>"` |
 | Level 0/1/2 验证 | `/opsx:verify <name>` | `openspec validate` |
 | review finalize | `/opsx:verify <name>` | codex adversarial review |

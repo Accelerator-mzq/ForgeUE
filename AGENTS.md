@@ -1,6 +1,6 @@
 # ForgeUE — Agent 项目上下文
 
-> 本文件与 `CLAUDE.md` 内容保持同步。CLAUDE.md 面向 Claude Code,AGENT.md 面向其他 AI 编码代理(Codex CLI / Cursor / Aider / 通义灵码等)。修改项目约定时,两份一起改。
+> 本文件与 `CLAUDE.md` 内容保持同步。CLAUDE.md 面向 Claude Code,AGENTS.md 面向其他 AI 编码代理(Codex CLI / Cursor / Aider / 通义灵码等)。修改项目约定时,两份一起改。
 
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
