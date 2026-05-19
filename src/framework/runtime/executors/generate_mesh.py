@@ -131,7 +131,9 @@ class GenerateMeshExecutor(StepExecutor):
             input_path.write_bytes(source_image_bytes)
 
         python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
+        # Task 10 round 2 Important-2:spec(step config 由来)优先,env 次之,最后 "none"。
+        # spec.comfy_lifecycle 由 bundle task JSON 设置,env FORGEUE_COMFY_LIFECYCLE 作全局 fallback。
+        comfy_lifecycle = spec.get("comfy_lifecycle") or os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
             scripts_dir=Path(scripts_dir),
             model_id="comfy/local-mesh",         # D1 capability dispatch
@@ -139,12 +141,12 @@ class GenerateMeshExecutor(StepExecutor):
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
             python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=lifecycle,
+            default_lifecycle=comfy_lifecycle,
         )
         # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
         # ComfyLifecycleManager.ensure 幂等,重复调用安全)
         if ctx.lifecycle is not None:
-            await ctx.lifecycle.ensure(lifecycle)
+            await ctx.lifecycle.ensure(comfy_lifecycle)
 
         # D9 + R2-F2:内部 retry loop(本地 mesh 走 standard retry,绕开
         # executor 主流程 attempts=1 强制);RetryPolicy.max_attempts 默认 2(policies.py:26)

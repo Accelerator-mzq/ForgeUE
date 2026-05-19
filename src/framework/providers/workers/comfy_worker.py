@@ -400,6 +400,13 @@ class ComfyAgentWorker(ComfyWorker):
         "video": {"images", "glb", "audio"},  # Phase 3 video (D6;reject 其它三 capability output keys)
     }
 
+    # Task 10 round 2:comfy_lifecycle 四合法值集合 — 类级常量,供 __init__ 和
+    # agenerate* 四个方法共同引用,避免重复定义。D6 原 "none"-only gate 已在
+    # TBD-010 executor-async-rewrite 中解锁为集合检查。
+    _VALID_LIFECYCLES: frozenset[str] = frozenset({
+        "none", "ensure_running", "ensure_release", "self_managed_session",
+    })
+
     # Audio capability whitelist(Phase 2 D10:format ∈ {flac, mp3, wav};
     # F5 round-1 magic bytes 二次校验 + F-Plan-4 round-2 path trust-boundary 防护)
     _AUDIO_FORMAT_WHITELIST: set[str] = {"flac", "mp3", "wav"}
@@ -448,11 +455,11 @@ class ComfyAgentWorker(ComfyWorker):
             artifacts_dir.mkdir(parents=True, exist_ok=True)
         # Task 10:解锁 lifecycle gate — 接受四个合法值,集合外才 raise。
         # D6 原锁 "none"-only 已被 TBD-010 executor-async-rewrite 解锁。
-        _VALID_LIFECYCLES = {"none", "ensure_running", "ensure_release", "self_managed_session"}
-        if default_lifecycle not in _VALID_LIFECYCLES:
+        # _VALID_LIFECYCLES 为类级常量(round 2 Important-1:各 agenerate* 复用同一常量)。
+        if default_lifecycle not in self._VALID_LIFECYCLES:
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.__init__: 不支持的 default_lifecycle={default_lifecycle!r}; "
-                f"合法值为 {sorted(_VALID_LIFECYCLES)}。"
+                f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
         # D1: capability dispatch via model_id 推断;unknown id raise(不静默 fallback)。
         # F-Plan-R3-A round-3 修订:audio capability 已加(comfy/local-audio);
@@ -544,11 +551,12 @@ class ComfyAgentWorker(ComfyWorker):
                 "ComfyAgentWorker.agenerate: spec.comfy_params must be a dict"
             )
         lifecycle = spec.get("comfy_lifecycle", "none")
-        if lifecycle != "none":
+        # Task 10 round 2 Important-1:旧 D6 "none"-only gate 替换为集合检查(四合法值)。
+        # 集合外才 raise;合法值列举在消息中便于排查。
+        if lifecycle not in self._VALID_LIFECYCLES:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate: spec.comfy_lifecycle must be "
-                f"'none' in this change scope (got {lifecycle!r}); "
-                f"see SRS TBD-010 for executor-async-rewrite"
+                f"ComfyAgentWorker.agenerate: spec.comfy_lifecycle={lifecycle!r} 不合法; "
+                f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
         per_call_timeout = float(timeout_s) if timeout_s else 300.0
         results: list[ImageCandidate] = []
@@ -908,10 +916,11 @@ class ComfyAgentWorker(ComfyWorker):
                 "ComfyAgentWorker.agenerate_mesh: spec.comfy_params must be a dict"
             )
         lifecycle = spec.get("comfy_lifecycle", "none")
-        if lifecycle != "none":
+        # Task 10 round 2 Important-1:旧 D6 "none"-only gate 替换为集合检查(四合法值)。
+        if lifecycle not in self._VALID_LIFECYCLES:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_mesh: spec.comfy_lifecycle must be "
-                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+                f"ComfyAgentWorker.agenerate_mesh: spec.comfy_lifecycle={lifecycle!r} 不合法; "
+                f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
         image_param_key = spec.get("comfy_image_param_key") or "input_image"
         per_call_timeout = float(timeout_s) if timeout_s else 600.0
@@ -1151,10 +1160,11 @@ class ComfyAgentWorker(ComfyWorker):
                 f"(got {type(comfy_params).__name__})"
             )
         lifecycle = spec.get("comfy_lifecycle", "none")
-        if lifecycle != "none":
+        # Task 10 round 2 Important-1:旧 D6 "none"-only gate 替换为集合检查(四合法值)。
+        if lifecycle not in self._VALID_LIFECYCLES:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_audio: spec.comfy_lifecycle must be "
-                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+                f"ComfyAgentWorker.agenerate_audio: spec.comfy_lifecycle={lifecycle!r} 不合法; "
+                f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
         per_call_timeout = float(timeout_s) if timeout_s else 300.0
 
@@ -1409,10 +1419,11 @@ class ComfyAgentWorker(ComfyWorker):
                 f"(got {type(comfy_params).__name__})"
             )
         lifecycle = spec.get("comfy_lifecycle", "none")
-        if lifecycle != "none":
+        # Task 10 round 2 Important-1:旧 D6 "none"-only gate 替换为集合检查(四合法值)。
+        if lifecycle not in self._VALID_LIFECYCLES:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_video: spec.comfy_lifecycle must be "
-                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+                f"ComfyAgentWorker.agenerate_video: spec.comfy_lifecycle={lifecycle!r} 不合法; "
+                f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
         # D3 默认 worker_timeout_s: 600(Wan T2V 1.3B 5sec ≈ 7 分钟 + 启动余量)
         per_call_timeout = float(timeout_s) if timeout_s else 600.0

@@ -2013,7 +2013,8 @@ async def test_agenerate_audio_accepts_ensure_running_lifecycle(tmp_path, monkey
     fake_stdout = json.dumps({
         "ok": True,
         "outputs": {
-            "audio": [{"filename": str(fake_flac), "format": "flac"}],
+            # audio outputs 是路径字符串列表(与 image/glb 同款协议)
+            "audio": [str(fake_flac)],
             "images": [], "glb": [], "video": [],
         },
     }).encode("utf-8")
@@ -2079,7 +2080,8 @@ async def test_agenerate_video_accepts_ensure_running_lifecycle(tmp_path, monkey
     fake_stdout = json.dumps({
         "ok": True,
         "outputs": {
-            "video": [{"filename": str(fake_mp4), "format": "mp4"}],
+            # video outputs 是路径字符串列表(与 image/audio/glb 同款协议)
+            "video": [str(fake_mp4)],
             "images": [], "glb": [], "audio": [],
         },
     }).encode("utf-8")

@@ -231,7 +231,9 @@ class GenerateVideoExecutor(StepExecutor):
                 "(see CLAUDE.md double-terminal setup)"
             )
         python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
+        # Task 10 round 2 Important-2:spec(step config 由来)优先,env 次之,最后 "none"。
+        # spec.comfy_lifecycle 由 bundle task JSON 设置,env FORGEUE_COMFY_LIFECYCLE 作全局 fallback。
+        comfy_lifecycle = spec.get("comfy_lifecycle") or os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
             scripts_dir=Path(scripts_dir),
             model_id="comfy/local-video",
@@ -239,12 +241,12 @@ class GenerateVideoExecutor(StepExecutor):
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
             python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=lifecycle,
+            default_lifecycle=comfy_lifecycle,
         )
         # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
         # ComfyLifecycleManager.ensure 幂等,重复调用安全)
         if ctx.lifecycle is not None:
-            await ctx.lifecycle.ensure(lifecycle)
+            await ctx.lifecycle.ensure(comfy_lifecycle)
 
         attempts = max(1, policy.max_attempts)
         last_exc: VideoWorkerError | None = None
