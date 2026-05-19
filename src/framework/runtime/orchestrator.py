@@ -211,8 +211,8 @@ class Orchestrator:
             # Linear fast path (also the default path when dag_mode is off).
             # Identical semantics to the pre-Plan-C sync orchestrator —
             # revise loops, checkpoint cache, budget termination all work the
-            # same; difference is `await asyncio.to_thread(executor.execute)`
-            # so the event loop stays free.
+            # same; executors are now native async coroutines awaited
+            # directly on the event loop (no asyncio.to_thread wrapper).
             if not dag_mode:
                 outcome = await self._aexec_one(
                     step=step_map[current], task_obj=task, workflow=workflow,
@@ -383,8 +383,8 @@ class Orchestrator:
         but returns a `_StepOutcome` for the caller to apply in aggregate."""
         # Bind (run_id, step_id) into a ContextVar so adapter-level progress
         # emitters (tokenhub poller, mesh poller) can tag their events with
-        # the correct run_id/step_id. The ContextVar is propagated into the
-        # worker thread by asyncio.to_thread.
+        # the correct run_id/step_id. With native-async executors the
+        # ContextVar is naturally task-local — no cross-thread propagation.
         _run_step_token = set_current_run_step(run_id, step.step_id)
         try:
             return await self._aexec_one_body(
