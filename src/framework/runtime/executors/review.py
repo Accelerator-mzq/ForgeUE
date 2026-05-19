@@ -47,7 +47,8 @@ class ReviewExecutor(StepExecutor):
         self._chief = ChiefJudge(self._judge)
         self._emitter = ReportVerdictEmitter()
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 原生 async 执行:直接 await judge/chief_judge 的 async 方法
         cfg = ctx.step.config or {}
         rubric = _resolve_rubric(cfg)
         mode = ReviewMode(cfg.get("review_mode", ReviewMode.single_judge.value))
@@ -88,7 +89,8 @@ class ReviewExecutor(StepExecutor):
                 raise RuntimeError(
                     f"review step {ctx.step.step_id} (single_judge) needs provider_policy"
                 )
-            single = self._judge.judge(
+            # 使用 async 版 ajudge,不再经 sync shim 包裹
+            single = await self._judge.ajudge(
                 rubric=rubric, candidates=candidates,
                 judge_policy=ctx.step.provider_policy, scope=scope, seed=seed,
                 visual_mode=visual_mode,
@@ -99,7 +101,8 @@ class ReviewExecutor(StepExecutor):
             judge_runs = [single]
         elif mode in (ReviewMode.chief_judge, ReviewMode.multi_judge, ReviewMode.council):
             panel = _resolve_panel(cfg, ctx.step.provider_policy)
-            chief_res = self._chief.judge_with_panel(
+            # 使用 async 版 ajudge_with_panel,panel 内部以 asyncio.gather 并发运行
+            chief_res = await self._chief.ajudge_with_panel(
                 rubric=rubric, candidates=candidates, panel_policies=panel,
                 scope=scope, seed=seed, visual_mode=visual_mode,
             )

@@ -32,7 +32,8 @@ class SelectExecutor(StepExecutor):
     step_type = StepType.select
     capability_ref = "select.by_verdict"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 无 IO 操作,body 不变;async def 使 orchestrator 可以 await 调用
         repo = ctx.repository
         verdict_payload = None
         for aid in ctx.upstream_artifact_ids:

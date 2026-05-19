@@ -58,6 +58,10 @@ class _AlwaysTimeoutRouter:
     def structured(self, *, policy, call_template, schema):
         raise ProviderTimeout("simulated provider timeout")
 
+    async def astructured(self, *, policy, call_template, schema):
+        # async 版も同様に ProviderTimeout を raise(executor async 化対応)
+        raise ProviderTimeout("simulated provider timeout")
+
 
 async def test_generate_structured_reraises_typed_exception_after_retries(tmp_path: Path):
     # RED: executor.execute(ctx) は async 化後 await が必要

@@ -200,7 +200,7 @@ def test_p2_chief_judge_records_dissent(bundle_path: Path, tmp_path: Path):
 
 # ---- T2.5: visual-mode review (L3) ------------------------------------------
 
-def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
+async def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
     """TBD-008 (2026-04-22): use REAL Qwen PNG fixtures (1024×1024, ~1.4MB each)
     instead of the previous `b"\\x89PNG\\r\\n\\x1a\\nVISUAL_A" * 4` byte markers.
 
@@ -308,7 +308,8 @@ def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=image_ids,
     )
-    result = ex.execute(ctx)
+    # ReviewExecutor.execute は async 化済み
+    result = await ex.execute(ctx)
     assert result.metrics["visual_mode"] is True
     assert result.metrics["candidate_count"] == 3
 

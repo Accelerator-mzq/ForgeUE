@@ -27,7 +27,8 @@ class GenerateMockExecutor(StepExecutor):
     step_type = StepType.generate
     capability_ref = "mock.generate"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 无 IO 操作,body 不变;async def 使 orchestrator 可以 await 调用
         payload: dict[str, Any] = {
             "step_id": ctx.step.step_id,
             "seed": ctx.step.config.get("seed", 0),
@@ -57,7 +58,8 @@ class ValidateMockExecutor(StepExecutor):
     step_type = StepType.validate
     capability_ref = "mock.validate"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 无 IO 操作,body 不变;async def 使 orchestrator 可以 await 调用
         validated: list[Artifact] = []
         for aid in ctx.upstream_artifact_ids:
             src = ctx.repository.get(aid)
@@ -98,7 +100,8 @@ class ExportNoopExecutor(StepExecutor):
     step_type = StepType.export
     capability_ref = "mock.export"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 无 IO 操作,body 不变;async def 使 orchestrator 可以 await 调用
         manifest = {
             "run_id": ctx.run.run_id,
             "exported_artifact_ids": list(ctx.upstream_artifact_ids),

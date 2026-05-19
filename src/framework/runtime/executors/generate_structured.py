@@ -6,7 +6,7 @@ ProviderTimeout is honored per RetryPolicy.
 """
 from __future__ import annotations
 
-import time
+import asyncio
 from typing import Callable
 
 from pydantic import BaseModel
@@ -70,7 +70,8 @@ class GenerateStructuredExecutor(StepExecutor):
         self._schemas = schema_registry
         self._prompt = prompt_builder or default_prompt_builder
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 原生 async 执行:直接 await router.astructured,无需 asyncio.to_thread 包裹
         if ctx.step.provider_policy is None:
             raise RuntimeError(
                 f"Step {ctx.step.step_id} is 'text.structured' but has no provider_policy"
@@ -100,7 +101,8 @@ class GenerateStructuredExecutor(StepExecutor):
         for attempt in range(attempts):
             attempt_count = attempt + 1
             try:
-                obj, chosen_model, usage = self._router.structured(
+                # 使用 async 版 astructured,让事件循环在等待期间可调度其他任务
+                obj, chosen_model, usage = await self._router.astructured(
                     policy=ctx.step.provider_policy,
                     call_template=call,
                     schema=schema_cls,
@@ -111,7 +113,7 @@ class GenerateStructuredExecutor(StepExecutor):
                 last_exc = exc
                 if attempt + 1 >= attempts or not _should_retry(policy, exc):
                     break
-                _backoff(policy, attempt)
+                await _backoff(policy, attempt)
                 continue
         if obj is None:
             # Re-raise the original typed exception so FailureModeMap can
@@ -171,7 +173,8 @@ def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     return False
 
 
-def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+async def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+    # async sleep:不阻塞事件循环,让其他协程在 backoff 期间继续运行
     if policy.backoff == "exponential":
-        time.sleep(min(2 ** attempt_zero_based, 8) * 0.01)   # small test-friendly scale
+        await asyncio.sleep(min(2 ** attempt_zero_based, 8) * 0.01)   # small test-friendly scale
     # fixed: no sleep

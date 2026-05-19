@@ -244,7 +244,7 @@ def test_p4_full_pipeline_writes_manifest_plan_and_evidence(tmp_path: Path):
 
 # ---- T2 permission skip emits skipped Evidence -------------------------------
 
-def test_p4_permission_policy_skips_denied_ops(tmp_path: Path):
+async def test_p4_permission_policy_skips_denied_ops(tmp_path: Path):
     """Build a manifest containing a material (Phase C, denied by default)
     and invoke the export path directly — the denied create_material op must
     appear as a skipped Evidence record, not crash the run."""
@@ -311,7 +311,8 @@ def test_p4_permission_policy_skips_denied_ops(tmp_path: Path):
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[tex.artifact_id, mat.artifact_id],
     )
-    result = exporter.execute(ctx)
+    # ExportExecutor.execute は async 化済み
+    result = await exporter.execute(ctx)
     assert result.metrics["dropped_files"] == 2
     assert result.metrics["skipped_ops"] >= 1
 
@@ -325,7 +326,7 @@ def test_p4_permission_policy_skips_denied_ops(tmp_path: Path):
 
 # ---- T3 Verdict.reject short-circuits export --------------------------------
 
-def test_p4_verdict_reject_skips_file_drop(tmp_path: Path):
+async def test_p4_verdict_reject_skips_file_drop(tmp_path: Path):
     ue_project = _fake_ue_project(tmp_path)
     run_id = "run_p4_reject"
 
@@ -383,7 +384,8 @@ def test_p4_verdict_reject_skips_file_drop(tmp_path: Path):
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[tex.artifact_id, verd.artifact_id],
     )
-    result = ExportExecutor().execute(ctx)
+    # ExportExecutor.execute は async 化済み
+    result = await ExportExecutor().execute(ctx)
     assert result.metrics.get("rejected") is True
     run_folder = ue_project / "Content" / "Generated" / run_id
     # No PNGs copied
@@ -395,7 +397,7 @@ def test_p4_verdict_reject_skips_file_drop(tmp_path: Path):
 
 # ---- T4 ue_scripts.run_import walks the plan via stubbed unreal -------------
 
-def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeypatch):
+async def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeypatch):
     """Simulate the UE-side Python entry (ue_scripts/run_import.py) by
     injecting a stub `unreal` module. Asserts that:
     - domain_texture.import_texture_entry calls AssetImportTask the expected
@@ -438,7 +440,8 @@ def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeypatch):
         run_id=run_id, task_id=run_id, project_id="proj_stub", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_stub", trace_id="tr",
     )
-    ExportExecutor().execute(StepContext(
+    # ExportExecutor.execute は async 化済み
+    await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[tex.artifact_id],
     ))
@@ -602,7 +605,7 @@ def test_p4_manifest_and_plan_builders_pure(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video(
+async def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video(
     tmp_path: Path, monkeypatch
 ):
     """D1 P4 真机 stub:`file_media_source` operation kind dispatch 到
@@ -653,7 +656,8 @@ def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_
         run_id=run_id, task_id=run_id, project_id="proj_video_stub", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_video_stub", trace_id="tr",
     )
-    ExportExecutor().execute(StepContext(
+    # ExportExecutor.execute は async 化済み
+    await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],
     ))
@@ -742,7 +746,7 @@ def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_
     assert _FakeAssetTools.calls[0]["asset_name"] == "MS_OpeningScene"
 
 
-def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_path: Path, monkeypatch):
+async def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_path: Path, monkeypatch):
     """codex round-7 verification review P2 round-1:run_import.py MUST honor
     framework-side `PermissionPolicy(allow_import_file_media_source=False)` —
     框架 ExportExecutor 已为被 deny 的 op 写 `status="skipped"` seed evidence,
@@ -788,7 +792,8 @@ def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_path: Pa
     )
     # PermissionPolicy 关键:allow_import_file_media_source=False → ExportExecutor
     # 把 import_file_media_source op 写 status="skipped" seed evidence
-    ExportExecutor(
+    # ExportExecutor.execute は async 化済み
+    await ExportExecutor(
         permission_policy=PermissionPolicy(allow_import_file_media_source=False),
     ).execute(StepContext(
         run=run, task=task, step=step, repository=repo,
@@ -1003,7 +1008,7 @@ def test_p4_domain_video_does_not_import_framework_module():
 # ---------------------------------------------------------------------------
 
 
-def test_p4_export_executor_passes_video_artifact_through_is_importable_to_manifest_builder(
+async def test_p4_export_executor_passes_video_artifact_through_is_importable_to_manifest_builder(
     tmp_path: Path, monkeypatch
 ):
     """Round-2 F1 critical:`ExportExecutor._is_importable` whitelist 加 "video"
@@ -1049,7 +1054,8 @@ def test_p4_export_executor_passes_video_artifact_through_is_importable_to_manif
         run_id=run_id, task_id=run_id, project_id="proj_f1", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_f1", trace_id="tr",
     )
-    ExportExecutor().execute(StepContext(
+    # ExportExecutor.execute は async 化済み
+    await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],
     ))
@@ -1062,7 +1068,7 @@ def test_p4_export_executor_passes_video_artifact_through_is_importable_to_manif
         f"F1 sweep failure:video Artifact 未通过 _is_importable filter,manifest.assets={asset_kinds}"
 
 
-def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest_plan_and_evidence(
+async def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest_plan_and_evidence(
     tmp_path: Path, monkeypatch
 ):
     """Round-2 F1 critical 端到端:video Artifact 经 ExportExecutor pipeline →
@@ -1109,7 +1115,8 @@ def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest
         run_id=run_id, task_id=run_id, project_id="proj_e2e", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_e2e", trace_id="tr",
     )
-    ExportExecutor().execute(StepContext(
+    # ExportExecutor.execute は async 化済み
+    await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],
     ))
@@ -1147,7 +1154,7 @@ def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_manifest
 # ---------------------------------------------------------------------------
 
 
-def _build_video_bundle_via_export(
+async def _build_video_bundle_via_export(
     tmp_path: Path, run_id: str, ue_asset_name: str = "OpeningScene",
 ) -> tuple[Path, Path]:
     """复用 helper:走 framework `ExportExecutor` 真实 pipeline 一遍,得到
@@ -1194,7 +1201,8 @@ def _build_video_bundle_via_export(
         run_id=run_id, task_id=run_id, project_id=f"proj_{run_id}", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id=f"wf_{run_id}", trace_id="tr",
     )
-    ExportExecutor().execute(StepContext(
+    # ExportExecutor.execute は async 化済み
+    await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],
     ))
@@ -1274,7 +1282,7 @@ def _import_run_import_fresh(monkeypatch):
     return run_import
 
 
-def test_p4_export_drops_video_mp4_to_content_movies_directly(tmp_path: Path):
+async def test_p4_export_drops_video_mp4_to_content_movies_directly(tmp_path: Path):
     """Phase C.1 Case 1:framework `ExportExecutor` drop 后:
     1. mp4 物理存在于 `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4`
     2. `Content/Generated/<run_id>/` 下**不**含 raw `*.mp4`(F-C 修复:mp4 不再 leak)
@@ -1285,7 +1293,7 @@ def test_p4_export_drops_video_mp4_to_content_movies_directly(tmp_path: Path):
     (spec MODIFIED domain_video Requirement Scenario 2 + Phase A F-C)。
     """
     run_id = "run_p4_c1_drop_movies"
-    ue_project, run_folder = _build_video_bundle_via_export(
+    ue_project, run_folder = await _build_video_bundle_via_export(
         tmp_path, run_id, ue_asset_name="OpeningScene",
     )
 
@@ -1335,7 +1343,7 @@ def test_p4_export_drops_video_mp4_to_content_movies_directly(tmp_path: Path):
     )
 
 
-def test_p4_domain_video_returns_failed_when_mp4_missing(tmp_path: Path, monkeypatch):
+async def test_p4_domain_video_returns_failed_when_mp4_missing(tmp_path: Path, monkeypatch):
     """Phase C.1 Case 2:防御路径 — `entry["source_uri"]` 指向的物理 mp4 不存在
     → `domain_video.import_video_entry` return failed,evidence.json 含 1 条
     `status="failed"` record + error 提及 "not found" / "missing"。
@@ -1344,7 +1352,7 @@ def test_p4_domain_video_returns_failed_when_mp4_missing(tmp_path: Path, monkeyp
     本 fence 与 unit `test_domain_video_returns_failed_when_source_mp4_missing` 对齐。
     """
     run_id = "run_p4_c2_mp4_missing"
-    ue_project, run_folder = _build_video_bundle_via_export(
+    ue_project, run_folder = await _build_video_bundle_via_export(
         tmp_path, run_id, ue_asset_name="GhostScene",
     )
     # 故意删除 framework drop 的 mp4(模拟 user 误删 / race condition)
@@ -1382,7 +1390,7 @@ def test_p4_domain_video_returns_failed_when_mp4_missing(tmp_path: Path, monkeyp
     )
 
 
-def test_p4_domain_video_rejects_non_d12_source_uri(tmp_path: Path, monkeypatch):
+async def test_p4_domain_video_rejects_non_d12_source_uri(tmp_path: Path, monkeypatch):
     """Phase C.1 Case 3:source_uri 不以 `Content/Movies/` 起首(legacy /
     hand-edit / re-run 残留)→ `domain_video.import_video_entry` return failed,
     error 含 "D12" 或 "Movies/<run_id>/<filename>.mp4 layout" 字样。
@@ -1391,7 +1399,7 @@ def test_p4_domain_video_rejects_non_d12_source_uri(tmp_path: Path, monkeypatch)
     本 fence 与 unit `test_domain_video_rejects_non_d12_source_uri` 对齐。
     """
     run_id = "run_p4_c3_non_d12"
-    ue_project, run_folder = _build_video_bundle_via_export(
+    ue_project, run_folder = await _build_video_bundle_via_export(
         tmp_path, run_id, ue_asset_name="LegacyScene",
     )
     # mutate manifest:把 source_uri 从 D12 Movies/ 改成 Generated/(legacy 路径)
@@ -1434,7 +1442,7 @@ def test_p4_domain_video_rejects_non_d12_source_uri(tmp_path: Path, monkeypatch)
     )
 
 
-def test_p4_domain_video_returns_failed_on_source_target_mismatch(tmp_path: Path, monkeypatch):
+async def test_p4_domain_video_returns_failed_on_source_target_mismatch(tmp_path: Path, monkeypatch):
     """Phase C.1 Case 4:source_uri 反推 (run_id, ue_name) 与 target_object_path
     反推不等(manifest bug / hand-edit / re-run race)→ `domain_video.import_video_entry`
     return failed,error 含 "mismatch" + 双 (run_id, ue_name) tuple values。
@@ -1443,7 +1451,7 @@ def test_p4_domain_video_returns_failed_on_source_target_mismatch(tmp_path: Path
     本 fence 与 unit `test_domain_video_returns_failed_on_source_target_mismatch` 对齐。
     """
     run_id = "run_p4_c4_mismatch"
-    ue_project, run_folder = _build_video_bundle_via_export(
+    ue_project, run_folder = await _build_video_bundle_via_export(
         tmp_path, run_id, ue_asset_name="Scene1",  # framework drop 出 MS_Scene1
     )
     # mutate manifest 注入 mismatch:source_uri 用 run_a/MS_Scene1,target 用 run_b/MS_Scene2
