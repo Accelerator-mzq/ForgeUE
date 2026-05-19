@@ -29,3 +29,6 @@ forge/.cache/
 forge/.monitor/
 .forge-staging-*/
 .forge-backup-*/
+
+# legacy-bridge extract 的 finalize 前 transient draft(finalize 后由 legacy-requirements.yaml 取代)
+forge/legacy-requirements-draft.*

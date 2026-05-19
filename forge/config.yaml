@@ -4,6 +4,11 @@ schema: spec-driven
 test:
   test_command: python -m pytest -q
 
+# legacy-bridge LLM opt-in(2026-05-19 启用 — 跑 legacy-bridge extract 抽 SRS 需求)
+legacy_bridge:
+  allow_llm_calls: true
+  provider: anthropic
+
 # 项目 context（可选）
 # 创建 artifact 时会展示给 AI。
 # 在这里填技术栈、约定、风格指南、领域知识等。
