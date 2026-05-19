@@ -128,3 +128,116 @@ def test_external_process_lifecycle_is_abstract():
     """ExternalProcessLifecycle 是抽象基类,不能直接实例化。"""
     with pytest.raises(TypeError):
         ExternalProcessLifecycle()
+
+
+@pytest.mark.asyncio
+async def test_cancel_then_reensure_does_not_leak(monkeypatch):
+    """回归测试 Important-1:cancel 后重新 ensure 不丢失 ownership。
+
+    场景:
+    1. ensure() 在 _wait_ready 期间被 cancel → _framework_started=True / _ensured=False
+    2. 同一 manager 再次 ensure():此时 status() 返回 True(ComfyUI 已在跑)
+       → 若缺少 _framework_started 守卫,会把 ownership 判为"别人起的"并置 False
+       → release() 就不会调用 _spawn_stop → 进程泄漏
+    3. 有守卫时:_framework_started=True → 跳过 status 探活,直接等 _wait_ready
+       → ensure 完成后 _framework_started 仍为 True
+    4. release("ensure_release", "run_end") 必须调用 _spawn_stop(不泄漏)
+    """
+    # 第一次 ensure 用的 status:down(触发 _spawn_serve)
+    # 第二次 ensure 用的 status:up(ComfyUI 已跑起来了)
+    status_results = [False, True]
+    status_call_count = {"n": 0}
+
+    async def _status(self):
+        # 按顺序返回预设值
+        idx = status_call_count["n"]
+        status_call_count["n"] += 1
+        return status_results[idx] if idx < len(status_results) else True
+
+    serve_count = {"n": 0}
+
+    async def _serve(self):
+        serve_count["n"] += 1
+
+    # 第一次 ensure:_wait_ready 挂起(模拟 cancel 场景)
+    # 第二次 ensure:_wait_ready 立即返回(补完就绪)
+    wait_ready_call_count = {"n": 0}
+
+    async def _wait_ready(self):
+        call = wait_ready_call_count["n"]
+        wait_ready_call_count["n"] += 1
+        if call == 0:
+            # 第一次调用挂起,等待 cancel
+            await asyncio.sleep(100)
+        # 第二次调用立即返回(补完就绪)
+
+    stop_count = {"n": 0}
+
+    async def _stop(self):
+        stop_count["n"] += 1
+
+    monkeypatch.setattr(ComfyLifecycleManager, "status", _status)
+    monkeypatch.setattr(ComfyLifecycleManager, "_spawn_serve", _serve)
+    monkeypatch.setattr(ComfyLifecycleManager, "_wait_ready", _wait_ready)
+    monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _stop)
+
+    mgr = ComfyLifecycleManager(scripts_dir="/fake", poll_interval_s=0.01)
+
+    # 第一次 ensure:在 _wait_ready 期被 cancel
+    t = asyncio.create_task(mgr.ensure("ensure_release"))
+    await asyncio.sleep(0.05)
+    t.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await t
+
+    # 断言:_framework_started 应为 True(ownership 持有中)
+    assert mgr._framework_started is True, "cancel 后 _framework_started 应保持 True"
+    assert mgr._ensured is False, "cancel 后 _ensured 应为 False(未完成 ensure)"
+
+    # 第二次 ensure:status() 返回 True(ComfyUI 已在跑)
+    # 有守卫时:走 _wait_ready 补完就绪路径,_framework_started 保持 True
+    await mgr.ensure("ensure_release")
+    assert mgr._ensured is True
+    # 关键断言:_framework_started 应仍为 True(不被 status=True 误判为"别人起的")
+    assert mgr._framework_started is True, "re-ensure 后 _framework_started 不应被清为 False(ownership 不可丢失)"
+
+    # release 应调用 _spawn_stop(不泄漏)
+    await mgr.release("ensure_release", "run_end")
+    assert stop_count["n"] == 1, "release 必须调用 _spawn_stop(进程不可泄漏)"
+
+
+@pytest.mark.asyncio
+async def test_status_subprocess_timeout_returns_false(monkeypatch):
+    """回归测试 Important-2:status() subprocess 挂起时应超时返回 False,不无限阻塞。
+
+    monkeypatch asyncio.create_subprocess_exec 返回一个 communicate() 永久挂起的假进程。
+    同时把 _STATUS_TIMEOUT_S 改小(0.1s)以加速测试。
+    """
+    import framework.runtime.lifecycle as lc_mod
+
+    # 将超时常量改小以加速测试
+    monkeypatch.setattr(lc_mod, "_STATUS_TIMEOUT_S", 0.1)
+
+    class _HangingProc:
+        """communicate() 永远不返回的假进程对象。"""
+        returncode = None
+
+        async def communicate(self):
+            # 无限挂起,直到被外部 cancel
+            await asyncio.sleep(9999)
+
+        def kill(self):
+            pass  # kill 是同步调用,不做实际操作
+
+        async def wait(self):
+            pass  # best-effort cleanup
+
+    async def _create_hanging_proc(*args, **kwargs):
+        return _HangingProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create_hanging_proc)
+
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    # 应在 _STATUS_TIMEOUT_S(0.1s) 内返回 False,不挂起
+    result = await asyncio.wait_for(mgr.status(), timeout=2.0)
+    assert result is False, "subprocess 挂起时 status() 应返回 False"
