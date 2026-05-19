@@ -1815,3 +1815,59 @@ async def test_comfy_cancel_aborts_server_side_prompt(monkeypatch, tmp_path):
         )
     finally:
         asyncio_mod.create_subprocess_exec = original_create  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# Task 10: comfy_lifecycle 四模式 gate 单测
+# ---------------------------------------------------------------------------
+
+
+def test_comfy_accepts_four_lifecycle_modes(tmp_path):
+    """Task 10 RED fence:ComfyAgentWorker 应接受 lifecycle 四合法值,不 raise。
+
+    解锁前 ComfyAgentWorker.__init__ 只接受 "none"(D6 gate),
+    传入 ensure_running / ensure_release / self_managed_session 会 raise
+    WorkerUnsupportedResponse。解锁后四值均合法。
+    """
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "comfyui_api").mkdir()
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir()
+
+    # 四个合法 lifecycle 值逐一构造 worker,不应 raise
+    for mode in ("none", "ensure_running", "ensure_release", "self_managed_session"):
+        worker = ComfyAgentWorker(
+            scripts_dir=scripts_dir,
+            model_id="comfy/local",
+            run_id="run_test",
+            project_id="proj_test",
+            artifacts_dir=artifacts_dir,
+            default_lifecycle=mode,
+        )
+        assert worker.default_lifecycle == mode, (
+            f"default_lifecycle 应为 {mode!r},实际 {worker.default_lifecycle!r}"
+        )
+
+
+def test_comfy_rejects_unknown_lifecycle(tmp_path):
+    """Task 10 RED fence:ComfyAgentWorker 对集合外的 lifecycle 值应 raise。
+
+    "warp_drive" 不在 {none, ensure_running, ensure_release, self_managed_session} 中,
+    应 raise WorkerUnsupportedResponse(错误消息中包含四个合法值)。
+    """
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "comfyui_api").mkdir()
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir()
+
+    with pytest.raises(WorkerUnsupportedResponse, match="warp_drive"):
+        ComfyAgentWorker(
+            scripts_dir=scripts_dir,
+            model_id="comfy/local",
+            run_id="run_test",
+            project_id="proj_test",
+            artifacts_dir=artifacts_dir,
+            default_lifecycle="warp_drive",
+        )
