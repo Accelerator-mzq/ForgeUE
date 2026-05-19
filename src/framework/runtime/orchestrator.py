@@ -18,6 +18,7 @@ multiple steps at once (DAG fan-out), they're launched concurrently via
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -506,9 +507,12 @@ class Orchestrator:
                 {"run_id": run_id, "step_id": step.step_id, "step_type": step.type.value,
                  "capability_ref": step.capability_ref, "risk_level": step.risk_level.value},
             ):
-                # Run sync executor in a thread so the event loop stays free
-                # (long image/mesh jobs don't block concurrent step tasks).
-                exec_result = await asyncio.to_thread(executor.execute, ctx)
+                # 迁移期 bridge(executor-async-rewrite Task 1-6):executor 逐批转 async,
+                # 转完的走原生 await,未转的仍走 to_thread。后续 Task 全转完后删除本分支。
+                if inspect.iscoroutinefunction(executor.execute):
+                    exec_result = await executor.execute(ctx)
+                else:
+                    exec_result = await asyncio.to_thread(executor.execute, ctx)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
