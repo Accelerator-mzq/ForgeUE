@@ -467,6 +467,9 @@ class ComfyAgentWorker(ComfyWorker):
         self.artifacts_dir = artifacts_dir
         self.model_id = model_id
         self._capability = capability
+        # Task 4 测试钩子:最近一次 _run_once*_async 创建的子进程(供 cancel 测试断言);
+        # 在 __init__ 初始化,避免 agenerate 调用前访问触发 AttributeError
+        self._last_proc: asyncio.subprocess.Process | None = None
         # OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04
         # follow-on for G11-F2):the ComfyUI subprocess outputs files anywhere
         # the CLI's `extract_outputs` resolved them — by default under
@@ -839,6 +842,7 @@ class ComfyAgentWorker(ComfyWorker):
         失败只 warning,不抛(主路径已在 cancel 流程中,abort 仅 best-effort)。
         等待超时 _ABORT_TIMEOUT_S 秒后放弃,不阻塞后续 terminate。
         """
+        ap = None
         try:
             ap = await asyncio.create_subprocess_exec(
                 str(self.python_exe), "-m", "comfyui_api", "cancel",
@@ -849,6 +853,15 @@ class ComfyAgentWorker(ComfyWorker):
             await asyncio.wait_for(ap.wait(), timeout=_ABORT_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 — best-effort,失败只 warning
             _COMFY_LOGGER.warning("comfy prompt abort failed: %s", exc)
+        finally:
+            # abort 子进程 cleanup:wait_for 超时只取消 ap.wait() 协程,不停 ap 进程;
+            # 未退出则 kill,避免 ComfyUI server 挂死时孤儿 CLI 进程累积
+            if ap is not None and ap.returncode is None:
+                try:
+                    ap.kill()
+                    await ap.wait()
+                except Exception:  # noqa: BLE001 — cleanup best-effort
+                    pass
 
     async def agenerate_mesh(
         self,
