@@ -13,7 +13,7 @@
 - **Audio** capability(自 v1.7 Phase 2):`comfy_local_audio` + `audio_local` alias + text-to-audio 单 step;Stable Audio Open 1.0 / ACE-Step manifest;`Audio_Workflows/audio_stable_audio_example` 默认;format whitelist `{flac, mp3, wav}` + magic bytes 二次校验
 - **Video** capability(自 v1.8 Phase 3):`comfy_local_video` + `video_local` alias + text-to-video 单 step;**`Vedio/Wan2.1-T2V-1.3B_native_5sec`** 默认 manifest(D5 上游 `Vedio/` 拼写照实跟随,**不**做翻译;7 分钟 / 6GB VRAM);format **mp4-only**(round-2 F2 + round-3 PF3 sweep,webm follow-on `comfy-video-webm-adoption`)+ **BMFF strict 5-tuple header validation**(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject `box_size==1` largesize + major_brand non-empty);UE bridge `_KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + **D12 packaging path 分流**(mp4 落 `Content/Movies/<run_id>/` packaging 外挂,`.uasset` 落 `Content/Generated/<run_id>/`);5 个 video metadata 顶层字段始终 None(`duration_seconds` / `frame_count` / `width` / `height` / `fps`,留 follow-on `video-metadata-parser`)
 
-  **D12 责任划分 update**(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08):D12 video mp4 路径分流责任**前移到 framework**(`ExportExecutor` drop loop + `manifest_builder.derive_drop_target` 单源 helper);framework 直接落 mp4 到 `Content/Movies/<run_id>/MS_<base>.mp4` final 位置,`domain_video.import_video_entry` 不再 copy(只创建 FileMediaSource `.uasset` + 从 source_uri 派生 `file_path`,加 D12 layout fence + source/target mismatch fence)。Evidence schema 加 `skip_reason: Literal["permission_denied", "no_handler"] | None = None` 字段使 `run_import.py` pre-scan filter 精确仅过滤 framework PermissionPolicy denied 的 skipped(不再误吞 UE-side no-handler skipped)。
+  **D12 责任划分 update**(自 forge change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08):D12 video mp4 路径分流责任**前移到 framework**(`ExportExecutor` drop loop + `manifest_builder.derive_drop_target` 单源 helper);framework 直接落 mp4 到 `Content/Movies/<run_id>/MS_<base>.mp4` final 位置,`domain_video.import_video_entry` 不再 copy(只创建 FileMediaSource `.uasset` + 从 source_uri 派生 `file_path`,加 D12 layout fence + source/target mismatch fence)。Evidence schema 加 `skip_reason: Literal["permission_denied", "no_handler"] | None = None` 字段使 `run_import.py` pre-scan filter 精确仅过滤 framework PermissionPolicy denied 的 skipped(不再误吞 UE-side no-handler skipped)。
 
 **ComfyUI 共享目录新增 ForgeUE 依赖(round-3 PF1 D-Runner-Extension + round-7 R2)**:
 - `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 函数加 `video` collection block(收集 VHS_VideoCombine 节点 legacy `gifs` UI key 装的 video preview dict)— user-authored 修改,ComfyUI 重装时**手工保留**(否则 ForgeUE video L2 evidence 失败);沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式
@@ -171,22 +171,22 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 - 决策风格:先给论证 + 选项 + 代价,用户拍板后(如"全改"/"方案 A")一次执行到位,不中途 micro-confirm
 - `python -c` / heredoc 等 ad-hoc 脚本用 ASCII 标记(`[OK]` / `[FAIL]`),避免 Windows GBK stdout 吞 emoji
 
-## OpenSpec 工作流
+## forge 工作流
 
-> 本节与 `CLAUDE.md` § 工作流 段保持语义同步(自 `retire-forgeue-protocol-layer-fully` 起,2026-05-10)。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) 和 [`openspec/backlog/README.md`](openspec/backlog/README.md)。
+> 本节与 `CLAUDE.md` § 工作流 段保持语义同步。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) 和 [`forge/backlog/README.md`](forge/backlog/README.md)。
 
 ### 什么时候走 change,什么时候直接改代码
 
-- **非平凡**需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先 `openspec new change "<name>"`,查 `openspec status --change "<name>" --json` 拿 apply 依赖,再依序生成 proposal / design / tasks / delta specs。
+- **非平凡**需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 走 `/forge:propose "<name>"` 一次产 proposal / specs / design / tasks 4 件套,再 `/forge:apply` 派子代理实施。
 - **小 bugfix / typo / logic 微调** → 可直接改代码,但必须补回归测试或说明验证方式。
 - 实现只围绕 active change 范围;**禁止**顺手重构无关模块。
 
 ### 与 docs 五件套的关系
 
 - `docs/` 五件套仍是长期权威(需求 / 设计 / 测试 / 验收)。
-- `openspec/specs/` 是精简当前行为契约层,8 个 capability:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`。
-- `openspec/changes/` 是未来变更入口,不用于重写历史。
-- **禁止**把 docs 整篇搬入 openspec,只做契约抽取。
+- `forge/specs/` 是精简当前行为契约层,8 个 capability:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`。
+- `forge/changes/` 是未来变更入口,不用于重写历史。
+- **禁止**把 docs 整篇搬入 forge,只做契约抽取。
 
 ### 事实来源
 
@@ -204,14 +204,14 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ### Follow-on Backlog Registry(自 `centralize-followon-backlog-registry` 启用,2026-05-07)
 
-集中 follow-on 记录位置:[`openspec/backlog/active.md`](openspec/backlog/active.md)+ [`openspec/backlog/archived.md`](openspec/backlog/archived.md)+ [`openspec/backlog/README.md`](openspec/backlog/README.md)(协议)。
+集中 follow-on 记录位置:[`forge/backlog/active.md`](forge/backlog/active.md)+ [`forge/backlog/archived.md`](forge/backlog/archived.md)+ [`forge/backlog/README.md`](forge/backlog/README.md)(协议)。
 
 - 双源:registry(archive-tracking + capability-boundary + SRS pointer)+ SRS §7.3 TBD(需求层);两边 set 等价由 user 自维护(自 `retire-forgeue-protocol-layer-fully` 起,fence 守门已 retire,git history 替代 audit trail)。
 - Cancel 4 类:`inherited` / `cancelled-superseded by <id>` / `cancelled-not-applicable: <enum>`(5 类 enum)/ `cancelled-completed: <commit>`(by convention,无 fence 守门)。
-- 状态查询:检查 `openspec/backlog/active.md` 查看当前活跃 follow-on 项。
+- 状态查询:检查 `forge/backlog/active.md` 查看当前活跃 follow-on 项。
 
 ### Codex Convention
 
-**Convention**:重要 design 阶段先跑 `/codex:adversarial-review`(catch latent design smell);final review 跑 `/codex:review --base main`(catch cross-archive mixed-scope)。沿 OpenSpec change `retire-forgeue-protocol-layer-fully`(2026-05-10)。
+**Convention**:重要 design 阶段先跑 `/codex:adversarial-review`(catch latent design smell);final review 跑 `/codex:review --base main`(catch cross-archive mixed-scope)。沿 forge change `retire-forgeue-protocol-layer-fully`(2026-05-10)。
 
-Codex review 意见必须**独立对照代码验证**,不把 claim 当结论。`/codex:review` / `/codex:adversarial-review` 输出作为参考,由 Claude Code 端验证 file:line 真实性后决策。`review-gate hook` 默认禁用(与 OpenSpec stage gate 重复且常冲突)。
+Codex review 意见必须**独立对照代码验证**,不把 claim 当结论。`/codex:review` / `/codex:adversarial-review` 输出作为参考,由 Claude Code 端验证 file:line 真实性后决策。`review-gate hook` 默认禁用(与 forge 工作流自带的 review / verify 阶段重复且常冲突)。
