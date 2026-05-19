@@ -230,47 +230,76 @@ def test_lifecycle_other_than_none_raises_unsupported_response(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# probe_sync — dry-run preflight (round 3 P2 fix: SYNC, NOT asyncio)
+# probe / aprobe — dry-run preflight (Step 6: aprobe async 主面 + probe_sync sync shim)
 # ---------------------------------------------------------------------------
 
 
 def test_missing_scripts_dir_raises_unsupported_response(tmp_path):
-    """probe_sync rejects non-existent scripts_dir."""
+    """probe_sync(sync shim)拒绝不存在的 scripts_dir — 文件系统守门,无 subprocess。"""
     bogus = tmp_path / "does_not_exist"
     with pytest.raises(WorkerUnsupportedResponse, match="scripts_dir not found"):
         ComfyAgentWorker.probe_sync(bogus, None, timeout_s=5.0)
 
 
 def test_python_module_not_found_raises_unsupported_response(tmp_path):
-    """probe_sync rejects scripts_dir without comfyui_api submodule."""
+    """probe_sync(sync shim)拒绝没有 comfyui_api 子模块的 scripts_dir。"""
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    # Intentionally do NOT create comfyui_api submodule.
+    # 故意不创建 comfyui_api 子模块
     with pytest.raises(WorkerUnsupportedResponse, match="module not found"):
         ComfyAgentWorker.probe_sync(scripts_dir, None, timeout_s=5.0)
 
 
-def test_dry_run_30s_timeout(tmp_path):
-    """probe_sync subprocess.TimeoutExpired → WorkerUnsupportedResponse
-    with hint to start ComfyUI."""
+@pytest.mark.asyncio
+async def test_aprobe_missing_scripts_dir_raises_unsupported_response(tmp_path):
+    """aprobe(async 主面)拒绝不存在的 scripts_dir — 文件系统守门,无 subprocess。"""
+    bogus = tmp_path / "does_not_exist"
+    with pytest.raises(WorkerUnsupportedResponse, match="scripts_dir not found"):
+        await ComfyAgentWorker.aprobe(bogus, None, timeout_s=5.0)
+
+
+@pytest.mark.asyncio
+async def test_aprobe_module_not_found_raises_unsupported_response(tmp_path):
+    """aprobe(async 主面)拒绝没有 comfyui_api 子模块的 scripts_dir。"""
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    # 故意不创建 comfyui_api 子模块
+    with pytest.raises(WorkerUnsupportedResponse, match="module not found"):
+        await ComfyAgentWorker.aprobe(scripts_dir, None, timeout_s=5.0)
+
+
+@pytest.mark.asyncio
+async def test_dry_run_30s_timeout(tmp_path):
+    """aprobe asyncio.TimeoutError → WorkerUnsupportedResponse,含 hint to start ComfyUI。
+    Step 6:probe_sync(sync shim)→ aprobe(async 主面),patch asyncio.create_subprocess_exec。"""
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "comfyui_api").mkdir()
-    with patch("subprocess.run") as run_mock:
-        run_mock.side_effect = subprocess.TimeoutExpired(cmd=["mocked"], timeout=30.0)
+
+    async def _timeout_proc(*a, **kw):
+        # 模拟 asyncio.create_subprocess_exec 返回的进程对象,communicate() 超时
+        raise asyncio.TimeoutError()
+
+    import asyncio as _aio
+    orig = _aio.create_subprocess_exec
+    _aio.create_subprocess_exec = _timeout_proc  # type: ignore[assignment]
+    try:
         with pytest.raises(WorkerUnsupportedResponse, match="timed out"):
-            ComfyAgentWorker.probe_sync(scripts_dir, None, timeout_s=30.0)
+            await ComfyAgentWorker.aprobe(scripts_dir, None, timeout_s=30.0)
+    finally:
+        _aio.create_subprocess_exec = orig  # type: ignore[assignment]
 
 
-def test_probe_sync_nonzero_exit_raises(tmp_path):
-    """probe_sync subprocess returncode != 0 → WorkerUnsupportedResponse."""
+@pytest.mark.asyncio
+async def test_aprobe_nonzero_exit_raises(tmp_path):
+    """aprobe subprocess returncode != 0 → WorkerUnsupportedResponse。
+    Step 6:patch asyncio.create_subprocess_exec 返回 returncode=1 的 fake process。"""
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "comfyui_api").mkdir()
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed("", returncode=1, stderr="connection refused")
+    with _patch_create_subprocess_exec(_make_async_completed("", returncode=1, stderr="connection refused")):
         with pytest.raises(WorkerUnsupportedResponse, match="exit 1"):
-            ComfyAgentWorker.probe_sync(scripts_dir, None, timeout_s=5.0)
+            await ComfyAgentWorker.aprobe(scripts_dir, None, timeout_s=5.0)
 
 
 # ---------------------------------------------------------------------------
@@ -583,10 +612,11 @@ def test_env_unset_raises_unsupported_response(tmp_path, monkeypatch):
         )
 
 
-def test_dry_run_skips_probe_when_no_comfy_local_in_routes(tmp_path, monkeypatch):
-    """DryRunPass._check_comfy_reachability: bundle without comfy/local
-    route SHALL NOT spawn probe_sync subprocess — qwen/glm bundles
-    unaffected on hosts without ComfyUI installed."""
+@pytest.mark.asyncio
+async def test_dry_run_skips_probe_when_no_comfy_local_in_routes(tmp_path, monkeypatch):
+    """DryRunPass._check_comfy_reachability(async): 无 comfy/local route 的 bundle
+    不触发 aprobe subprocess — qwen/glm bundle 在无 ComfyUI 主机上不受影响。
+    Step 6: async _check_comfy_reachability 转换。"""
     from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
@@ -599,16 +629,16 @@ def test_dry_run_skips_probe_when_no_comfy_local_in_routes(tmp_path, monkeypatch
                       api_base=None, kind="image", pricing=None),
     ]
 
-    with patch("subprocess.run") as run_mock:
-        dry_run._check_comfy_reachability(report, steps=[step])
-        # No probe spawn — bundle has no comfy/local.
-        run_mock.assert_not_called()
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+        # 无 comfy/local route — 完全跳过 probe
+        assert run_mock.call_count == 0
 
 
-def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypatch):
-    """DryRunPass._check_comfy_reachability: bundle with comfy/local
-    route triggers sync probe_sync subprocess (round 3 P2 fix:
-    sync, NOT asyncio.run nesting)."""
+@pytest.mark.asyncio
+async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypatch):
+    """DryRunPass._check_comfy_reachability(async): comfy/local route 触发 aprobe subprocess。
+    Step 6: async _check_comfy_reachability + aprobe 转换(原 sync probe_sync 路径已 async 化)。"""
     from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
@@ -626,13 +656,12 @@ def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypatch):
                       kind="image", pricing=None),
     ]
 
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed("ok", returncode=0)
-        dry_run._check_comfy_reachability(report, steps=[step])
-        # Probe spawned exactly once (the single status call).
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+        # aprobe 恰好触发一次(status 子命令)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0][0]
-        assert "comfyui_api" in " ".join(cmd)
+        cmd = run_mock.call_args[0]  # create_subprocess_exec 的 positional args
+        assert "comfyui_api" in " ".join(str(x) for x in cmd)
         assert "status" in cmd
     assert report.checks.get("comfy.cli_reachable") is True
 
@@ -1053,8 +1082,10 @@ def test_generate_mesh_does_not_mutate_caller_spec_comfy_params(tmp_path):
 # ---- dry-run gate extension (P-F4) -------------------------------------------
 
 
-def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monkeypatch):
-    """P-F4: dry-run probe gate 扩为 set membership;comfy/local-mesh route 也触发 probe。"""
+@pytest.mark.asyncio
+async def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monkeypatch):
+    """P-F4: dry-run probe gate 扩为 set membership;comfy/local-mesh route 也触发 aprobe。
+    Step 6: async _check_comfy_reachability 转换。"""
     from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
@@ -1072,19 +1103,20 @@ def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monkeypatc
                       kind="mesh", pricing=None),
     ]
 
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed("ok", returncode=0)
-        dry_run._check_comfy_reachability(report, steps=[step])
-        # comfy/local-mesh 也触发 probe(P-F4 set 扩展)
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+        # comfy/local-mesh 也触发 aprobe(P-F4 set 扩展 + Step 6 async 化)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0][0]
-        assert "comfyui_api" in " ".join(cmd)
+        cmd = run_mock.call_args[0]
+        assert "comfyui_api" in " ".join(str(x) for x in cmd)
         assert "status" in cmd
     assert report.checks.get("comfy.cli_reachable") is True
 
 
-def test_dry_run_skips_probe_when_no_comfy_local_or_local_mesh_in_routes(tmp_path):
-    """regression: 仅 qwen / glm / hunyuan 路径不触发 ComfyUI probe(性能 + 可用性)。"""
+@pytest.mark.asyncio
+async def test_dry_run_skips_probe_when_no_comfy_local_or_local_mesh_in_routes(tmp_path):
+    """regression: 仅 qwen / glm / hunyuan 路径不触发 ComfyUI aprobe(性能 + 可用性)。
+    Step 6: async _check_comfy_reachability 转换。"""
     from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
@@ -1097,8 +1129,8 @@ def test_dry_run_skips_probe_when_no_comfy_local_or_local_mesh_in_routes(tmp_pat
                       api_base=None, kind="mesh", pricing={"per_task_usd": 0.25}),
     ]
 
-    with patch("subprocess.run") as run_mock:
-        dry_run._check_comfy_reachability(report, steps=[step])
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
         assert run_mock.call_count == 0  # 完全跳过 probe
 
 

@@ -515,9 +515,10 @@ def test_generate_audio_metadata_snapshot_is_independent_copy(tmp_path):
 # ---- DryRunPass(commit 6:gate set 扩 audio)----------------------------------
 
 
-def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypatch):
-    """commit 6: dry-run probe gate set 扩 `comfy/local-audio`;route 含 audio 触发 probe。
-    沿 mesh test_dry_run_probe_runs_when_comfy_local_mesh_in_routes 模式。"""
+@pytest.mark.asyncio
+async def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypatch):
+    """commit 6: dry-run probe gate set 扩 `comfy/local-audio`;route 含 audio 触发 aprobe。
+    Step 6: async _check_comfy_reachability + aprobe 转换。"""
     from unittest.mock import MagicMock
     from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
@@ -536,14 +537,12 @@ def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypat
                       kind="audio", pricing=None),
     ]
 
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed("ok", returncode=0)
-        dry_run._check_comfy_reachability(report, steps=[step])
-        # comfy/local-audio 也触发 probe(commit 6 audio gate 扩)
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+        # comfy/local-audio 也触发 aprobe(commit 6 audio gate 扩 + Step 6 async 化)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0][0]
-        assert "-m" in cmd
-        assert "comfyui_api" in cmd
+        cmd = run_mock.call_args[0]
+        assert "comfyui_api" in " ".join(str(x) for x in cmd)
 
 
 # ---- G11-F2 follow-on: path containment for outputs.audio --------------------

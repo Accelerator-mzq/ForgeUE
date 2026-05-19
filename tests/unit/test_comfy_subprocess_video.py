@@ -737,10 +737,11 @@ def test_generate_video_does_not_read_forgeue_comfy_input_dir_env_var(tmp_path, 
 # ---------------------------------------------------------------------------
 
 
-def test_dry_run_probes_comfy_when_comfy_local_video_in_routes(tmp_path, monkeypatch):
-    """commit 9:DryRunPass `_check_comfy_reachability` gate set 扩 `comfy/local-video`
+@pytest.mark.asyncio
+async def test_dry_run_probes_comfy_when_comfy_local_video_in_routes(tmp_path, monkeypatch):
+    """commit 9:DryRunPass `_check_comfy_reachability`(async)gate set 扩 `comfy/local-video`
     (沿 P-F4 + audio commit 6 同款 set membership 模式)— bundle 含 video_local
-    alias 时触发 ComfyUI subprocess probe。
+    alias 时触发 aprobe subprocess。Step 6: async _check_comfy_reachability 转换。
     """
     from unittest.mock import MagicMock
 
@@ -761,12 +762,11 @@ def test_dry_run_probes_comfy_when_comfy_local_video_in_routes(tmp_path, monkeyp
                       kind="video", pricing=None),
     ]
 
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed("ok", returncode=0)
-        dry_run._check_comfy_reachability(report, steps=[step])
-        # comfy/local-video 触发 probe(commit 9 gate 扩)
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+        # comfy/local-video 触发 aprobe(commit 9 gate 扩 + Step 6 async 化)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0][0]
-        assert "comfyui_api" in " ".join(cmd)
+        cmd = run_mock.call_args[0]
+        assert "comfyui_api" in " ".join(str(x) for x in cmd)
         assert "status" in cmd
     assert report.checks.get("comfy.cli_reachable") is True

@@ -136,11 +136,13 @@ def test_p2_bundle_single_judge_emits_report_and_verdict(bundle_path: Path, tmp_
     assert review_cp.metrics["review_mode"] == "single_judge"
 
 
-def test_p2_bundle_dry_run_passes(bundle_path: Path, tmp_path: Path):
-    """Dry-run must accept the canonical P2 bundle (no unresolved bindings)."""
+@pytest.mark.asyncio
+async def test_p2_bundle_dry_run_passes(bundle_path: Path, tmp_path: Path):
+    """Dry-run must accept the canonical P2 bundle (no unresolved bindings).
+    Step 6: DryRunPass.run 转为 async def,await 调用。"""
     from framework.runtime.dry_run_pass import DryRunPass
     bundle = load_task_bundle(bundle_path)
-    report = DryRunPass().run(task=bundle.task, workflow=bundle.workflow, steps=bundle.steps)
+    report = await DryRunPass().run(task=bundle.task, workflow=bundle.workflow, steps=bundle.steps)
     assert report.passed, report.errors
 
 
