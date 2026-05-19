@@ -220,27 +220,35 @@ python -m framework.pricing_probe --apply
 - 本地 ComfyUI 或 Tencent Hunyuan 3D key;
 - 装有 UE 5.x 的机器 + 空白或已有 UE 工程 + `.uproject` 启用 `PythonScriptPlugin`。
 
-### 3.1 ComfyUI HTTP pipeline(P3,真实出图)
+### 3.1 ComfyUI agent CLI pipeline(image / mesh / audio / video,真实出图)
+
+ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。双终端工作流:
 
 ```bash
-# 先起 ComfyUI:http://127.0.0.1:8188
-python -m framework.run \
-    --task examples/image_pipeline.json \
-    --run-id r_comfy \
-    --live-llm \
-    --comfy-url http://127.0.0.1:8188
+# 终端 1:启 ComfyUI(detached,~30-90s 冷启动;用户自管,`python -m factory_v3 stop` 停)
+python -m factory_v3 serve
+
+# 终端 2:export env + 跑 ForgeUE 四 capability 冒烟
+export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
+export FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input   # 仅 mesh 需要
+python -m framework.run --task examples/comfy_local_smoke.json       --live-llm --run-id r_comfy_image
+python -m framework.run --task examples/comfy_local_smoke_mesh.json  --live-llm --run-id r_comfy_mesh
+python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id r_comfy_audio
+python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id r_comfy_video
 ```
 
 ```powershell
-# PowerShell 等价(反斜线续行改写为反引号)
-python -m framework.run `
-    --task examples/image_pipeline.json `
-    --run-id r_comfy `
-    --live-llm `
-    --comfy-url http://127.0.0.1:8188
+# PowerShell 等价(内联 env 拆为 $env: 赋值)
+python -m factory_v3 serve
+$env:FORGEUE_COMFY_SCRIPTS_DIR="D:/AI/ComfyUI/scripts"
+$env:FORGEUE_COMFY_INPUT_DIR="D:/AI/ComfyUI/apps/official-main-git-v092/input"
+python -m framework.run --task examples/comfy_local_smoke.json       --live-llm --run-id r_comfy_image
+python -m framework.run --task examples/comfy_local_smoke_mesh.json  --live-llm --run-id r_comfy_mesh
+python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id r_comfy_audio
+python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id r_comfy_video
 ```
 
-注意:bundle 的 `workflow_graph` 需要手工补,参见 `examples/image_pipeline.json`。
+bundle 用 `image_local` / `mesh_local` / `audio_local` / `video_local` alias + manifest 名(不再 inline `workflow_graph`)。完整 env / manifest / ComfyUI 共享目录依赖见 `CLAUDE.md` § ComfyUI 接入;video L2 单次约 7 分钟。
 
 ### 3.2 Hunyuan 3D mesh 生成(贵族 API,opt-in)
 
@@ -323,7 +331,7 @@ exec(open('<repo>/ue_scripts/run_import.py').read())
 
 ### Level 2 通过条件
 
-- ComfyUI 路径产出真实贴图 Artifact(`file` 载体)
+- ComfyUI 路径产出真实 image / mesh / audio / video Artifact(`file` 载体)
 - Hunyuan 3D 路径产出 `.glb` Artifact(magic bytes `glTF` 校验通过)
 - UE commandlet 或 Console 导入成功,`evidence.json` 记录齐全
 - 任何失败都走 FailureModeMap 分类,不静默重试、不双扣
@@ -336,8 +344,8 @@ exec(open('<repo>/ue_scripts/run_import.py').read())
 |---|---|
 | 真正的测试数量 | Git Bash: `python -m pytest --collect-only -q \| tail -5` · PowerShell: `python -m pytest --collect-only -q \| Select-Object -Last 5` |
 | 某 FR 对应测试 | `docs/acceptance/acceptance_report.md` §4 |
-| 某 bundle 的用途 | `docs/acceptance/acceptance_report.md` §3 + `openspec/specs/examples-and-acceptance/spec.md` |
-| probe 约定 | `probes/README.md` §5 + `openspec/specs/probe-and-validation/spec.md` |
+| 某 bundle 的用途 | `docs/acceptance/acceptance_report.md` §3 + `forge/specs/examples-and-acceptance/spec.md` |
+| probe 约定 | `probes/README.md` §5 + `forge/specs/probe-and-validation/spec.md` |
 | failure mode 映射 | `src/framework/runtime/failure_mode_map.py` + `docs/design/LLD.md` §5.7 |
 | 定价事实 | `config/models.yaml`(`pricing_autogen.sourced_on` + `source_url`) |
 | 贵族 API 策略 | `docs/requirements/SRS.md` ADR-007 + `CHANGELOG.md` TBD-007 |
