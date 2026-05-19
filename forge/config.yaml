@@ -159,25 +159,37 @@ stage_extensions:
   brainstorming:
     - name: codex-adversarial
       enabled: true
+      build_prompt: >
+        node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
+        --output "${PROMPT_FILE}"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
+        --prompt-file "${PROMPT_FILE}"
         --output-log "${OUTPUT_FILE}"
       output: forge/changes/${CHANGE_ID}/.evidence/codex-adversarial-r${ROUND}-a${ATTEMPT}.md
   propose:
     - name: codex-adversarial
       enabled: true
+      build_prompt: >
+        node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
+        --output "${PROMPT_FILE}"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
+        --prompt-file "${PROMPT_FILE}"
         --output-log "${OUTPUT_FILE}"
       output: forge/changes/${CHANGE_ID}/.evidence/codex-adversarial-r${ROUND}-a${ATTEMPT}.md
   apply_critical_plan_review:
     - name: codex-adversarial
       enabled: true
+      build_prompt: >
+        node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
+        --output "${PROMPT_FILE}"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
+        --prompt-file "${PROMPT_FILE}"
         --output-log "${OUTPUT_FILE}"
       output: forge/changes/${CHANGE_ID}/.evidence/codex-adversarial-r${ROUND}-a${ATTEMPT}.md
   review:
@@ -191,8 +203,12 @@ stage_extensions:
   verify:
     - name: codex-adversarial
       enabled: true
+      build_prompt: >
+        node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
+        --output "${PROMPT_FILE}"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
+        --prompt-file "${PROMPT_FILE}"
         --output-log "${OUTPUT_FILE}"
       output: forge/changes/${CHANGE_ID}/.evidence/codex-adversarial-r${ROUND}-a${ATTEMPT}.md
