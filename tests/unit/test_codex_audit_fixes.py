@@ -59,7 +59,8 @@ class _AlwaysTimeoutRouter:
         raise ProviderTimeout("simulated provider timeout")
 
 
-def test_generate_structured_reraises_typed_exception_after_retries(tmp_path: Path):
+async def test_generate_structured_reraises_typed_exception_after_retries(tmp_path: Path):
+    # RED: executor.execute(ctx) は async 化後 await が必要
     from pydantic import BaseModel
 
     class _S(BaseModel):
@@ -91,7 +92,7 @@ def test_generate_structured_reraises_typed_exception_after_retries(tmp_path: Pa
     ctx = StepContext(run=run, task=task, step=step, repository=repo)
 
     with pytest.raises(ProviderTimeout):
-        executor.execute(ctx)
+        await executor.execute(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -531,11 +532,12 @@ def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_select_bare_approve_excludes_explicit_rejects(tmp_path: Path):
+async def test_select_bare_approve_excludes_explicit_rejects(tmp_path: Path):
     """Round 2: bare-approve must still drop ids that the verdict
     EXPLICITLY rejected. Previously the bare-approve branch put rejected
     ids into BOTH selected_ids and rejected_ids; downstream consumers
     only read selected_ids, so the rejection was effectively ignored."""
+    # RED: executor.execute(ctx) は async 化後 await が必要
     backend_reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=backend_reg)
     cand_ids: list[str] = []
@@ -575,14 +577,15 @@ def test_select_bare_approve_excludes_explicit_rejects(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=["v_art", *cand_ids])
-    result = SelectExecutor().execute(ctx)
+    result = await SelectExecutor().execute(ctx)
     payload = repo.read_payload(result.artifacts[0].artifact_id)
     assert "c_1" not in payload["selected_ids"]
     assert payload["selected_ids"] == ["c_0", "c_2"]
     assert payload["rejected_ids"] == ["c_1"]
 
 
-def test_select_bare_approve_keeps_whole_pool(tmp_path: Path):
+async def test_select_bare_approve_keeps_whole_pool(tmp_path: Path):
+    # RED: executor.execute(ctx) は async 化後 await が必要
     backend_reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=backend_reg)
     # Seed two upstream candidate artifacts + one verdict (decision=approve,
@@ -624,7 +627,7 @@ def test_select_bare_approve_keeps_whole_pool(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=["v_art", *cand_ids])
-    result = SelectExecutor().execute(ctx)
+    result = await SelectExecutor().execute(ctx)
     payload = repo.read_payload(result.artifacts[0].artifact_id)
     assert payload["selected_ids"] == cand_ids, (
         f"bare-approve dropped candidates: {payload}"
