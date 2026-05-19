@@ -1,8 +1,0 @@
-{"timestamp": "2026-05-08T22:38:11+08:00", "task_n": 1, "subagent_type": "implementer", "tokens_input": 2000, "tokens_output": 800, "model": "haiku", "usd": 0.05}
-{"timestamp": "2026-05-08T22:38:12+08:00", "task_n": 1, "subagent_type": "spec_review", "tokens_input": 1500, "tokens_output": 600, "model": "haiku", "usd": 0.05}
-{"timestamp": "2026-05-08T22:38:12+08:00", "task_n": 1, "subagent_type": "code_quality_review", "tokens_input": 2500, "tokens_output": 700, "model": "haiku", "usd": 0.05}
-{"timestamp": "2026-05-08T22:38:12+08:00", "task_n": 2, "subagent_type": "implementer", "tokens_input": 3000, "tokens_output": 1500, "model": "sonnet", "usd": 0.3}
-{"timestamp": "2026-05-08T22:38:12+08:00", "task_n": 2, "subagent_type": "spec_review", "tokens_input": 2000, "tokens_output": 700, "model": "haiku", "usd": 0.05}
-{"timestamp": "2026-05-08T22:38:12+08:00", "task_n": 2, "subagent_type": "code_quality_review", "tokens_input": 4000, "tokens_output": 2000, "model": "sonnet", "usd": 0.3}
-{"timestamp": "2026-05-08T22:38:13+08:00", "task_n": 3, "subagent_type": "implementer", "tokens_input": 3500, "tokens_output": 1200, "model": "sonnet", "usd": 0.3}
-{"timestamp": "2026-05-08T22:38:13+08:00", "task_n": 4, "subagent_type": "final_review", "tokens_input": 5000, "tokens_output": 2500, "model": "sonnet", "usd": 0.5}
