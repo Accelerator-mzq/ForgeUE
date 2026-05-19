@@ -51,6 +51,13 @@ from framework.runtime.scheduler import Scheduler
 from framework.runtime.transition_engine import TransitionEngine
 
 
+# cascade-cancel drain 超时上限(秒)。
+# 原生 async executor 的 CancelledError 通常在微秒内传播;
+# 设为 30s 给含外部 I/O 清理的 executor(如 ComfyUI subprocess)足够时间。
+# 超时视为清理卡死 → 显式失败,不静默丢弃。
+_CASCADE_DRAIN_TIMEOUT_S: float = 30.0
+
+
 class DryRunFailed(RuntimeError):
     def __init__(self, report: DryRunReport) -> None:
         super().__init__(f"dry-run failed: {report.errors}")
@@ -321,12 +328,25 @@ class Orchestrator:
                         if value.terminate:
                             cascade_terminate = True
                     if first_exc is not None or cascade_terminate:
-                        # 取消仍在运行的兄弟任务。所有 executor 已为原生 async,
-                        # CancelledError 可直接打入 executor coroutine;
-                        # 但不 await cancelled tasks 以保证 fail-fast 语义——
-                        # 被取消的 coroutine 在后台完成清理,不阻塞主流程。
+                        # 向所有仍在运行的兄弟任务发出取消信号。
                         for p in pending_tasks:
                             p.cancel()
+                        # 原生 async 后 CancelledError 打穿到 executor/worker 真正
+                        # 中断在飞工作。await 确认 sibling 真死;drain 超时是异常
+                        # 兜底 → 显式失败,绝不静默丢弃未停的 task。
+                        if pending_tasks:
+                            done_drain, still_pending = await asyncio.wait(
+                                pending_tasks,
+                                timeout=_CASCADE_DRAIN_TIMEOUT_S,
+                            )
+                            if still_pending:
+                                # 清理卡死:记录卡住的 task 名称 + 标记失败。
+                                # 不再尝试二次 cancel — 由调用方或进程退出清理。
+                                stuck = sorted(t.get_name() for t in still_pending)
+                                for t in still_pending:
+                                    t.cancel()
+                                run.metrics["cancel_drain_timeout"] = stuck
+                                run.status = RunStatus.failed
                         pending_tasks = set()
                         break
             except asyncio.CancelledError:
