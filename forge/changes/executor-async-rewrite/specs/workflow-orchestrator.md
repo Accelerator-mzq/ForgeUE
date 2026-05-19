@@ -3,7 +3,8 @@
 > 本文件是 `workflow-orchestrator` capability 在 `executor-async-rewrite`(TBD-010)
 > change 引入的行为增量:orchestrator 原生 `await` executor 取代 `to_thread`、
 > cascade-cancel 真停(含 drain 超时显式失败)、orchestrator 持有 ComfyUI lifecycle
-> 所有权 + `aclose()` disposal 钩子。每条 Requirement 首行标注 ADDED。
+> 并以 `release(mode, reason)` 四路径释放 + `aclose()` disposal 钩子。每条
+> Requirement 首行标注 ADDED。
 
 ## Requirement: Orchestrator awaits executors as native coroutines
 
@@ -28,14 +29,14 @@ short-circuit in-flight work.
 sibling returns `_StepOutcome(terminate=True)`), the orchestrator SHALL `cancel()` the
 still-pending sibling tasks AND SHALL `await asyncio.wait(pending, timeout=
 _CASCADE_DRAIN_TIMEOUT_S)` so that cancellation actually unwinds the running executors
-/ workers — terminating subprocesses and closing HTTP connections — before the run
-proceeds to its terminal state. The orchestrator SHALL inspect the `(done,
-still_pending)` result: if `still_pending` is non-empty (a cleanup hung past the
-drain timeout) the orchestrator SHALL NOT silently discard those tasks — it SHALL
-record the stuck step ids in `run.metrics["cancel_drain_timeout"]`, re-`cancel()`
-them, and end the run with a failed status. This replaces the prior fire-and-forget
-behavior where cancelled tasks were left to "finish in the background" because
-`asyncio.to_thread` threads could not be interrupted.
+/ workers before the run proceeds to its terminal state. The orchestrator SHALL
+inspect the `(done, still_pending)` result: if `still_pending` is non-empty (a
+cleanup hung past the drain timeout) the orchestrator SHALL NOT silently discard
+those tasks — it SHALL record the stuck step ids in
+`run.metrics["cancel_drain_timeout"]`, re-`cancel()` them, and end the run with a
+failed status. This replaces the prior fire-and-forget behavior where cancelled tasks
+were left to "finish in the background" because `asyncio.to_thread` threads could not
+be interrupted.
 
 ## Scenario: A cascade-cancelled sibling's work actually stops
 
@@ -52,7 +53,7 @@ behavior where cancelled tasks were left to "finish in the background" because
 **Then** the orchestrator records the stuck step id(s) in `run.metrics["cancel_drain_timeout"]`, issues a second `cancel()`, and the run ends with `RunStatus.failed`
 **And** the orchestrator does NOT execute `pending_tasks = set()` as the sole handling — an un-drained task is surfaced as a failure, never silently abandoned
 
-## Requirement: Orchestrator owns the ComfyUI lifecycle and exposes a disposal hook
+## Requirement: Orchestrator owns the ComfyUI lifecycle and releases it with a reason
 
 **ADDED.** When a bundle's `prepared_routes` reference a `comfy/local*` model AND the
 resolved `comfy_lifecycle` (from `step.config.spec.comfy_lifecycle` or the
@@ -62,35 +63,37 @@ For `self_managed_session` the manager SHALL be held at the orchestrator-instanc
 level (`self._lifecycle`) and reused across multiple `arun` calls; for
 `ensure_running` / `ensure_release` it MAY be per-`arun`.
 
-The orchestrator SHALL release the manager in a **mode-aware** way:
+The orchestrator SHALL call `await manager.release(mode, reason)` on each of four
+exit paths, passing the matching `reason`, and SHALL NOT itself decide whether the
+process stops — that is the manager's `(mode, reason)` decision:
 
-- `ensure_running` — never released by the framework (warm reuse).
-- `ensure_release` — released at normal run-end, cascade-terminate, and the
-  `except asyncio.CancelledError` handler.
-- `self_managed_session` — NOT released at normal run-end; released at
-  cascade-terminate, the `except asyncio.CancelledError` handler, and at
-  `Orchestrator.aclose()`.
+| 退出路径 | `reason` |
+|---|---|
+| `arun` normal run-end | `run_end` |
+| cascade-terminate | `cascade` |
+| `except asyncio.CancelledError` handler | `arun_cancel` |
+| `Orchestrator.aclose()` | `orchestrator_close` |
 
-The system SHALL add `Orchestrator.aclose()` (`async def`) which releases the
-orchestrator-instance-level `self_managed_session` manager, and the orchestrator
-SHALL implement async context manager protocol (`__aenter__` / `__aexit__`, the
-latter calling `aclose()`). The CLI (`framework.run`) SHALL call `await
-orch.aclose()` before process exit. A `_released` flag SHALL ensure each manager is
-released at most once per exit path.
+The system SHALL add `Orchestrator.aclose()` (`async def`) which calls
+`release(mode, "orchestrator_close")` on the orchestrator-instance-level manager, and
+the orchestrator SHALL implement async context manager protocol (`__aenter__` /
+`__aexit__`, the latter calling `aclose()`). The CLI (`framework.run`) SHALL call
+`await orch.aclose()` before process exit. A `_released` flag SHALL ensure each
+manager is released at most once per exit path.
 
-## Scenario: ensure_release is released at run-end, self_managed_session is not
+## Scenario: Orchestrator passes the matching reason on each exit path
 
-**Given** two runs — one with `comfy_lifecycle: "ensure_release"`, one with `comfy_lifecycle: "self_managed_session"` — each having constructed a `ComfyLifecycleManager` that the framework started
+**Given** a run with a `comfy_lifecycle != "none"` route that constructed a `ComfyLifecycleManager`
+**When** the run ends normally / a cascade fires / the `arun` task is cancelled / `aclose()` is called
+**Then** the orchestrator calls `release(mode, "run_end")` / `release(mode, "cascade")` / `release(mode, "arun_cancel")` / `release(mode, "orchestrator_close")` respectively
+**And** whether the ComfyUI process actually stops is decided by the manager's `(mode, reason)` table — the orchestrator only reports the correct reason for the path
+
+## Scenario: ensure_release stops at run-end, self_managed_session stops only at aclose
+
+**Given** two runs — one `comfy_lifecycle: "ensure_release"`, one `self_managed_session` — each having started a ComfyUI process
 **When** each run ends normally
-**Then** the `ensure_release` run calls `release("ensure_release")` and stops the ComfyUI process at run-end
-**And** the `self_managed_session` run does NOT stop the ComfyUI process at run-end — it remains up for reuse by a subsequent `arun` on the same orchestrator instance
-
-## Scenario: self_managed_session is released at Orchestrator.aclose
-
-**Given** an orchestrator instance that ran one or more `self_managed_session` runs and started a ComfyUI process
-**When** `await orchestrator.aclose()` is called (directly or via `async with`)
-**Then** the orchestrator releases the orchestrator-instance-level manager and the framework-started ComfyUI process is stopped
-**And** when `aclose()` is called on an orchestrator that never started a managed process, it is a no-op
+**Then** the `ensure_release` run's `release(mode, "run_end")` stops the process; the `self_managed_session` run's `release(mode, "run_end")` is a no-op and the process remains up for reuse by a subsequent `arun`
+**And** when `await orchestrator.aclose()` is later called, `release("self_managed_session", "orchestrator_close")` stops the process; `aclose()` on an orchestrator that never started a managed process is a no-op
 
 ## Scenario: No lifecycle manager for a lifecycle=none run
 
@@ -103,6 +106,7 @@ released at most once per exit path.
 
 - 不改 workflow 调度顺序、ready 判定、risk-ordered scheduling 或 DAG fan-out 的
   opt-in 语义(`parallel_dag`)—— 只换 executor 的执行机制与加 lifecycle 所有权。
+  (comfy-submission 串行锁是 worker 级锁,不改调度。)
 - 不改 revise loop / checkpoint / budget 终止语义。
 - lifecycle manager 不泛化成通用 `ManagedProcessRegistry`(SRS TBD-011 follow-on)。
 
@@ -110,6 +114,6 @@ released at most once per exit path.
 
 - Unit: `tests/unit/test_cascade_cancel.py`(扩 — 取消的 sibling 工作真停探针 +
   drain 超时显式失败)、`tests/unit/test_orchestrator.py`(扩 — lifecycle manager
-  构造条件 + mode-aware release + `aclose()` disposal)。
+  构造条件 + 四路径 `release(mode, reason)` + `aclose()` disposal)。
 - Integration: `tests/integration/test_dag_concurrency.py` 仍全绿。
 - 测试总数不硬编码 —— 以 `python -m pytest -q` 实测为准。

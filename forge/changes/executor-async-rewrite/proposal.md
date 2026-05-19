@@ -38,14 +38,17 @@ SRS §7.3 TBD-010 记录了这个 follow-on。本 change 关闭 TBD-010。
   `asyncio.create_subprocess_exec` + `await asyncio.wait_for(proc.communicate(), ...)`;
   4 个 capability 方法转 async 主面 `agenerate*`,保留 sync `asyncio.run` shim 给
   probe 兼容(沿 `mesh_worker.py` 既有模式)。`FakeComfyWorker` 同步改 async。
-  cancel 时先 `comfyui_api cancel`(`POST /interrupt`)停 ComfyUI 服务端正在跑的
-  prompt,再 terminate CLI 子进程 —— ComfyUI 路径的 cancel 真正停 GPU job。
-- **NEW** `ExternalProcessLifecycle` 抽象基类(`ensure` / `release` / `status`)+
-  唯一具体实现 `ComfyLifecycleManager`(`ensure`/`release` 用 `asyncio.Lock` 并发
-  单飞),支持 `comfy_lifecycle` 三模式 `ensure_running` / `ensure_release` /
-  `self_managed_session`。Orchestrator 持有 manager、经 `StepContext` 新字段下传,
-  mode-aware release(`ensure_release` run-end 拆;`self_managed_session` 经新增
-  `Orchestrator.aclose()` disposal 钩子拆);cancel 路径所有非 none mode 都拆。
+  「submit→poll」段包进程级 `_comfy_submit_lock`(同时只 1 个 comfy prompt 在飞);
+  cancel 时先 `comfyui_api cancel`(`POST /interrupt`,锁内 → 中断的必是本 prompt)
+  停 ComfyUI 服务端 GPU job,再 terminate CLI 子进程。
+- **NEW** `ExternalProcessLifecycle` 抽象基类(`ensure` / `release(mode, reason)` /
+  `status`)+ 唯一具体实现 `ComfyLifecycleManager`(`ensure`/`release` 用
+  `asyncio.Lock` 并发单飞;冷启动 spawn 成功即确立 ownership),支持 `comfy_lifecycle`
+  三模式 `ensure_running` / `ensure_release` / `self_managed_session`。Orchestrator
+  持有 manager、经 `StepContext` 新字段下传,四条退出路径各调 `release(mode, reason)`
+  (`run_end` / `cascade` / `arun_cancel` / `orchestrator_close`),停不停由 manager
+  的 (mode, reason) 决策表定 —— `ensure_release` 前三 reason 任一拆;
+  `self_managed_session` 只在新增的 `Orchestrator.aclose()`(`orchestrator_close`)拆。
 - `comfy_lifecycle` 不再锁死 `"none"`;`FORGEUE_COMFY_LIFECYCLE` env var 开始
   接受全 4 值。
 - 主 spec `provider-routing` 的 lifecycle 相关 Invariant 与 Non-Goal 一并 MODIFIED/

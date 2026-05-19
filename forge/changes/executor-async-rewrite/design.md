@@ -1,10 +1,12 @@
 # Executor 原生 async 重写 — 设计
 
-> **codex round 1 writeback(2026-05-19)**:本设计经一轮 codex adversarial review,
-> 5 finding(2 BLOCKER + 3 MAJOR)全部独立核验属实并 inline 修订 —— cascade drain
-> 显式失败(§2.2)、ComfyUI server-side abort 纳入 scope(§2.3)、`self_managed_session`
-> 经 Orchestrator disposal 钩子闭合(§2.5 / D8)、`ComfyLifecycleManager` 并发单飞
-> (§2.4)、Phase A 增量化(§5)。
+> **codex round 1+2 writeback(2026-05-19)**:本设计经两轮 codex adversarial
+> review,9 finding(round-1:2 BLOCKER+3 MAJOR;round-2:1 BLOCKER+3 MAJOR)全部
+> 独立核验属实并 inline 修订 —— cascade drain 显式失败(§2.2)、ComfyUI server-side
+> abort 纳入 scope + comfy-submission 串行锁解全局 `/interrupt` 歧义(§2.3)、
+> `self_managed_session` 经 `Orchestrator.aclose()` + `release(mode, reason)` ABC
+> 契约闭合(§2.4 / §2.5)、`ComfyLifecycleManager` 并发单飞 + 冷启动 ownership
+> 提前确立(§2.4)、Phase A 增量化且 comfy worker 前置(§5)。
 
 ## 1. 目标与背景
 
@@ -94,35 +96,44 @@ subprocess + `comfyui_api cancel` + 关 HTTP 连接)正常亚秒级完成;30s �
 + dry-run probe)改为:
 
 ```python
-proc = await asyncio.create_subprocess_exec(
-    *cmd, cwd=scripts_dir,
-    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-)
-try:
-    out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s + buffer)
-finally:
-    if proc.returncode is None:          # 仍在跑(cancel / wait_for 超时)
-        await self._abort_comfy_prompt()  # ← server-side abort:先停 GPU job
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=GRACE_S)
-        except asyncio.TimeoutError:
-            proc.kill()
-        await proc.wait()
+async with _comfy_submit_lock():          # 进程级:同时只 1 个 comfy prompt 在飞
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, cwd=scripts_dir,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s + buffer)
+    finally:
+        if proc.returncode is None:          # 仍在跑(cancel / wait_for 超时)
+            await self._abort_comfy_prompt()  # ← server-side abort:先停 GPU job
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=GRACE_S)
+            except asyncio.TimeoutError:
+                proc.kill()
+            await proc.wait()
 ```
 
-**server-side abort 纳入本 change scope**(codex BLOCKER #2;原 design 错误地把它推
-future-work)。核实 `D:/AI/ComfyUI/scripts/comfyui_api/cli.py`:`cancel` 子命令是
-`POST http://127.0.0.1:8188/interrupt` —— **中断 ComfyUI 服务端正在跑的 prompt,
-不需要 prompt_id**(`--prompt-id` 仅用于从队列删 pending)。因为 ForgeUE 每次
-worker 调用是单 prompt 顺序执行,`/interrupt` 命中的就是本 worker 提交的那张图。
-`_abort_comfy_prompt()` 即 `asyncio.create_subprocess_exec(python, -m, comfyui_api,
-cancel, ...)`(短 timeout,best-effort:abort 本身失败只记 warning 不抛,因为主
-路径已在 cancel)。
+**server-side abort 纳入本 change scope**(codex round-1 BLOCKER #2;原 design 错误地
+把它推 future-work)。核实 `D:/AI/ComfyUI/scripts/comfyui_api/cli.py`:`cancel` 子
+命令是 `POST http://127.0.0.1:8188/interrupt` —— **中断 ComfyUI 服务端正在跑的
+prompt**(`--prompt-id` 仅用于从队列删 pending)。`_abort_comfy_prompt()` 即
+`asyncio.create_subprocess_exec(python, -m, comfyui_api, cancel, ...)`(短 timeout,
+best-effort:abort 失败只记 warning 不抛,因为主路径已在 cancel)。
 
-这样 ComfyUI 路径的「cancel 真停」是真的停 —— 服务端 GPU job 被 `/interrupt`,而非
-仅杀掉 CLI wrapper 进程留 GPU 空转。spec `provider-routing` / `workflow-orchestrator`
-的「不再消耗 subprocess time」承诺对 ComfyUI 成立。
+**comfy-submission 进程级串行锁**(codex round-2 BLOCKER 修订):`/interrupt` 是
+ComfyUI 服务端的**全局**操作 —— 中断的是「当前正在跑的那张图」,不区分是谁提交的。
+若 `parallel_dag` 下两个 comfy step 并发,各自往同一个 ComfyUI server 提交 prompt,
+cancel 其中一个时 `/interrupt` 可能打到另一个健康 sibling 的图,而被取消那个的
+prompt 还在队列里没动。修法:`comfy_worker.py` 模块级 `_comfy_submit_lock`
+(`asyncio.Lock`,进程内单例)包住 `agenerate*` 的「submit→poll」整段,保证同一
+时刻 ForgeUE 只有 1 个 comfy prompt 在 ComfyUI server 上 —— `/interrupt` 命中的
+必然是本 worker 的 prompt。代价≈0:ComfyUI 单 GPU 本就串行执行 prompt,锁只是把
+ForgeUE 侧也变成显式串行(DAG fan-out 对非 comfy step 仍并发,不受影响,与
+proposal「不改 workflow 调度并发语义」一致 —— 这是 worker 级锁,非调度改动)。
+
+这样 ComfyUI 路径的「cancel 真停」是真的停 —— 服务端 GPU job 被 `/interrupt` 且
+中断的确是本 worker 的图,而非仅杀 CLI wrapper 留 GPU 空转、或误杀 sibling。
 
 4 个 capability 方法转 async 主面 `agenerate` / `agenerate_mesh` /
 `agenerate_audio` / `agenerate_video`;保留 sync `generate*` 作 `asyncio.run(...)`
@@ -144,30 +155,45 @@ class ExternalProcessLifecycle(ABC):           # ← seam,TBD-011 加第二实�
     @abstractmethod
     async def ensure(self, mode: str) -> None: ...
     @abstractmethod
-    async def release(self, mode: str) -> None: ...
+    async def release(self, mode: str, reason: str) -> None: ...   # reason 见下
     @abstractmethod
     async def status(self) -> bool: ...
 ```
 
+`release` 带 `reason` 参数(codex round-2 MAJOR 修订):`reason ∈ {run_end, cascade,
+arun_cancel, orchestrator_close}`。原设计把 `self_managed_session` 的拆除做成
+`ComfyLifecycleManager` 专有的 `release_session()` —— 那不在 ABC 上,orchestrator
+得 downcast,违反 A+seam(D5):TBD-011 第二个实现就漏了 session 拆除。改为**全部
+teardown 走 ABC 的 `release(mode, reason)`**,(mode, reason) 二维决定行为,ABC 契约
+闭合。
+
 `ComfyLifecycleManager(ExternalProcessLifecycle)` —— 唯一具体实现。**`ensure` /
-`release` 整个状态机用 `asyncio.Lock` 包**(codex MAJOR #4 修订):DAG fan-out 下
-runtime-core spec 把同一个 manager 注入所有 step,两个并发 comfy step 会同时调
-`ensure`;无锁则两者都看到 `_ensured == False` → 同时 `status()` / `_spawn_serve()`
-/ 竞写 `_framework_started` → 重复拉起 / 误停用户进程。`asyncio.Lock` 让完整
-ensure/release 状态机串行化:
+`release` 整个状态机用 `asyncio.Lock` 包**(codex round-1 MAJOR #4 修订):DAG
+fan-out 下同一个 manager 注入所有 step,两个并发 comfy step 同时调 `ensure`,无锁则
+都看到 `_ensured == False` → 同时 `_spawn_serve()` / 竞写 `_framework_started`。
 
 - `status()`:`comfyui_api status`(async subprocess,timeout 30s),解析 JSON。
 - `ensure(mode)`(`async with self._lock`):
-  - `"none"` → no-op(管理器只在非 none 时构造,理论不会走到)。
-  - 非 none:若 `self._ensured` 已 True → 直接 return(幂等)。否则 `status()` 探活;
-    down → `python -m factory_v3 serve`(detached)+ 轮询 `status()` 到 ready(冷启
-    30-90s,bounded timeout,超时 raise);记 `self._framework_started = True`。
-    已 up → `self._framework_started = False`。最后 `self._ensured = True`。
-- `release(mode)`(`async with self._lock`)—— **mode-aware**(codex MAJOR #3 修订):
-  - `"ensure_running"` → no-op(进程暖复用,留着;冷启 30-90s 不应每 run 重启)。
-  - `"ensure_release"` → 若 `self._framework_started`,`python -m factory_v3 stop`。
-  - `"self_managed_session"` → **run-end 不 release**(见 §2.5);只在
-    `Orchestrator.aclose()` 或 cancel 路径 release。
+  - `"none"` → no-op(管理器只在非 none 时构造)。
+  - 非 none:`self._ensured` 已 True → return(幂等)。否则 `status()` 探活;
+    已 up → `self._framework_started = False`;down → `_spawn_serve()`
+    (`factory_v3 serve` detached)→ **成功返回后立刻 `self._framework_started =
+    True`**(codex round-2 MAJOR 修订:原设计在 `_wait_ready()` 之后才置 flag,
+    若 cancel 落在冷启动 `_wait_ready` 期间则 flag 仍 False → release 不停 → 框架
+    起的 ComfyUI 泄漏;「起了就算我们的」,ownership 在 spawn 成功即确立)→
+    `_wait_ready()` 轮询 `status()` 到 ready(冷启 30-90s,bounded timeout,超时
+    raise)。最后 `self._ensured = True`。
+- `release(mode, reason)`(`async with self._lock`,只在 `self._framework_started`
+  为真时才 `factory_v3 stop`)—— (mode, reason) 决策表:
+  | mode \ reason | `run_end` | `cascade` | `arun_cancel` | `orchestrator_close` |
+  |---|---|---|---|---|
+  | `ensure_running` | no-op | no-op | no-op | no-op(暖留) |
+  | `ensure_release` | stop | stop | stop | no-op(已 stop) |
+  | `self_managed_session` | no-op | no-op | no-op | **stop** |
+
+  `self_managed_session` 只在 `orchestrator_close` 拆 —— cascade / arun_cancel 是
+  **run 级**事件,结束的是那个 run 不是 session;session(orchestrator 实例)仍活,
+  后续 `arun` 可复用同一 ComfyUI。语义闭合。
 
 ### 2.5 Orchestrator 持有 lifecycle + disposal 钩子(codex MAJOR #3 修订)
 
@@ -179,16 +205,22 @@ ensure/release 状态机串行化:
 - 经 `StepContext.lifecycle`(新字段,默认 `None`)注入每个 step。
 - comfy executor / worker 需要确保进程在跑时,读 `ctx.lifecycle` 调
   `await ctx.lifecycle.ensure(mode)`。
-- **release 时机(三 mode 不同)**:
-  | mode | run-end 正常结束 | cascade-terminate | `arun` 被 cancel | `Orchestrator.aclose()` |
-  |---|---|---|---|---|
-  | `ensure_running` | no-op | no-op | no-op | no-op(暖留) |
-  | `ensure_release` | `release` | `release` | `release` | (已 release) |
-  | `self_managed_session` | **不 release** | `release` | `release` | `release` |
-- **新增 `Orchestrator.aclose()`**(codex MAJOR #3:为 `self_managed_session`
-  提供 arun 之外的 session 边界)—— `async def aclose(self)`,释放 orchestrator
-  实例级 `self._lifecycle`(`self_managed_session` 在此真正拆)。Orchestrator 同时
-  实现 async context manager(`__aenter__` / `__aexit__` 调 `aclose`)。CLI
+- **release 调用点**:orchestrator 在四条退出路径各调一次
+  `await manager.release(mode, reason)`,`reason` 取该路径对应值;manager 按 §2.4
+  的 (mode, reason) 决策表决定是否真 `factory_v3 stop`:
+  | 退出路径 | 传入 `reason` |
+  |---|---|
+  | `arun` 正常结束 | `run_end` |
+  | cascade-terminate | `cascade` |
+  | `except asyncio.CancelledError` | `arun_cancel` |
+  | `Orchestrator.aclose()` | `orchestrator_close` |
+  orchestrator 无需知道每 mode 的具体语义 —— 它只负责「在对的路径报对的 reason」,
+  停不停由 manager 的决策表定。`ensure_release` 的 manager 在前三条路径任一被拆;
+  `self_managed_session` 的 manager 只在 `aclose()` 被拆。
+- **新增 `Orchestrator.aclose()`**(codex round-1 MAJOR #3:为 `self_managed_session`
+  提供 arun 之外的 session 边界)—— `async def aclose(self)`,对 orchestrator
+  实例级 `self._lifecycle` 调 `release(mode, "orchestrator_close")`。Orchestrator
+  同时实现 async context manager(`__aenter__` / `__aexit__` 调 `aclose`)。CLI
   `framework.run` 在进程退出前调 `await orch.aclose()`(或用 `async with`)。
   单 run 的 CLI 场景:`self_managed_session` ≈ `ensure_running` 但进程在 CLI 退出时
   被干净拆除(而非 `ensure_running` 的暖留);多 `arun` 复用场景:跨 run 共享同一
@@ -263,30 +295,36 @@ async def __aexit__(self, *exc) -> None:  # 调 aclose
 - ADR-007 边界不受影响:本地 ComfyUI `pricing: null` → 非 premium;远端 premium
   `attempts=1`。executor 转 async 是机制改动,不碰计费 / 重试语义。
 
-## 5. 分阶段实施(单个 change 内;codex MAJOR #5 修订 — 增量化)
+## 5. 分阶段实施(单个 change 内;codex round-1 MAJOR #5 + round-2 修订 — 增量化)
 
 原计划 Task 1「11 executor + ABC + orchestrator + 测试」单 commit 原子大爆破,
-codex 指出牺牲 RED/GREEN 可 bisect 性。改为增量:
+codex round-1 指出牺牲 RED/GREEN 可 bisect 性 → 增量化。codex round-2 进一步指出:
+worker-backed executor 转 async 时若 worker 仍 sync,会留「async ABC 但 comfy 调用
+仍 `to_thread(worker.generate)` 不可取消」的中间窗口 → **ComfyAgentWorker
+async-subprocess 必须前置到 worker-backed executor 转换之前**。最终顺序:
 
-- **Phase A — executor async 核心(增量)**:
-  - **临时 bridge**:orchestrator `_aexec_one_body` 先加 `iscoroutinefunction(
-    executor.execute)` 探测 —— async executor 走 `await executor.execute(ctx)`,
-    sync executor 仍走 `await asyncio.to_thread(...)`。ABC 此时不变,全测试绿。
-  - **逐批转 executor**:无 worker 的(structured / review / select / validate /
-    export / mock)一批、worker-backed(image / image_edit / mesh / audio / video)
-    一批。每批转完,bridge 让已转的走 await、未转的走 to_thread,可跑局部 + 全量
-    测试,每批一 commit。
-  - **硬切**:全部转完后,`StepExecutor.execute` ABC 改 `async def`,删 orchestrator
-    bridge 的 `iscoroutinefunction` 分支(直接 `await`)。bridge 是 throwaway,
-    终态仍是 D4 硬切。
-  - cascade-cancel 真停 + drain 显式失败(§2.2)。
-- **Phase B — ComfyAgentWorker async-subprocess**(§2.3):`create_subprocess_exec`
-  + `agenerate*` + sync shim + cancel terminate + `_abort_comfy_prompt` server-side
-  `/interrupt`。
-- **Phase C — ComfyUI lifecycle**(§2.4 / §2.5):`lifecycle.py` +
-  `ComfyLifecycleManager` 三模式(`asyncio.Lock` 并发安全)+ orchestrator 所有权 +
-  `aclose()` disposal 钩子 + provider-routing spec lifecycle gate 解锁 + 文档同步 +
-  L2 live evidence。
+- **Phase A — executor + comfy worker async(增量,Task 1-7)**:
+  1. **临时 bridge**:orchestrator `_aexec_one_body` 加 `iscoroutinefunction(
+     executor.execute)` 探测 —— async executor 走 `await`,sync 仍走 `to_thread`。
+     ABC 不变,全测试绿。
+  2. **转无 worker 的 executor**:structured / review / select / validate / export
+     / mock 一批转 async。
+  3. **ComfyAgentWorker async-subprocess**(§2.3):`create_subprocess_exec` +
+     `agenerate*` + sync shim + comfy-submission 串行锁。
+  4. **ComfyAgentWorker cancel**:`finally` terminate + `_abort_comfy_prompt`
+     server-side `/interrupt`(锁内,中断的必是本 prompt)。
+  5. **转 worker-backed executor**:image / image_edit / mesh / audio / video 转
+     async —— 此时 `ComfyAgentWorker.agenerate*` 已就位,executor 直接 `await
+     worker.agenerate*`,**无 `to_thread(worker.generate)` 占位窗口**。
+  6. **硬切 ABC**:全 executor 转完,`StepExecutor.execute` 改 `async def`,删
+     orchestrator bridge。此刻所有 worker-backed 路径都已是真原生 async,无遗留
+     不可取消的线程活。
+  7. **cascade-cancel 真停 + drain 显式失败**(§2.2)。
+- **Phase B — ComfyUI lifecycle(Task 8-10)**:`lifecycle.py` +
+  `ComfyLifecycleManager` 三模式(`asyncio.Lock` 并发安全 + 冷启动 ownership 提前)
+  + orchestrator 所有权 + `aclose()` disposal 钩子 + provider-routing lifecycle gate
+  解锁。
+- **Phase C — 文档同步 + L2 live evidence(Task 11)**。
 
 ## 6. 测试策略
 
@@ -296,10 +334,15 @@ codex 指出牺牲 RED/GREEN 可 bisect 性。改为增量:
   `run.metrics["cancel_drain_timeout"]` 被写、run 失败终态、不静默吞。
 - `test_cascade_cancel.py` 扩:取消的 sibling 工作真停探针(自增计数器反证)。
 - `_abort_comfy_prompt`:fake comfyui_api,断言 cancel 时 `cancel` 子命令被调。
+- comfy-submission 串行锁:两个并发 `agenerate` → 断言同一时刻只 1 个 subprocess
+  在飞;cancel 其一时 `/interrupt` 只命中被取消那个。
 - `ComfyLifecycleManager`:三模式 + `_framework_started` 标志 + release 守卫 +
-  **并发 `ensure` 单飞测试**(两个并发 `ensure` → `_spawn_serve` 只一次)。
-- `Orchestrator.aclose()`:`self_managed_session` 在 aclose 才 release,run-end 不
-  release;`ensure_release` run-end release。
+  **并发 `ensure` 单飞测试**(两个并发 `ensure` → `_spawn_serve` 只一次)+
+  **冷启动 cancel 不泄漏**(cancel 落在 `_wait_ready` 期间 → `release` 仍能 stop)。
+- `release(mode, reason)` 决策表:逐 (mode, reason) 组合断言 stop / no-op。
+- `Orchestrator.aclose()`:`self_managed_session` 仅 `orchestrator_close` reason
+  才 release,`run_end` / `cascade` / `arun_cancel` 不;`ensure_release` 前三 reason
+  任一 release。
 - 11 个 executor 现有单测转 `pytest.mark.asyncio`。
 - L2 live evidence:`comfy_lifecycle: "ensure_running"` 跑 `comfy_local_smoke.json`,
   验证框架自动拉起 ComfyUI;evidence note 落 `notes/`。
