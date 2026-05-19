@@ -1,6 +1,8 @@
 # Archived Follow-on Backlog (Tombstones)
 
-> Append-only registry。每条 entry 记录 follow-on 从 active 状态迁出时刻;**自 retire-forgeue-protocol-layer-fully 起 fence 守门已 retire**(原 `_check_followon_continuity` + `_check_archived_md_append_only` 等 fence 随 `tools/forgeue_finish_gate.py` 整删消失);**append-only 沿 convention by git history audit trail**(无 fence 强制守门,git diff 是唯一 audit 来源)。Schema 见 [README.md](README.md)。
+> **冻结历史文件(2026-05-19)** —— ForgeUE 项目自有 follow-on registry(`docs/followon_backlog/`)已 retired,active 待办并入 `forge/backlog/`,同目录 `active.md` / `README.md` 已删除。本文件保留作历史 tombstone 记录,不再更新。
+>
+> Append-only registry。每条 entry 记录 follow-on 从 active 状态迁出时刻。Schema:每条 tombstone = H3 标题 + 4 字段(`archived_at_commit` / `archived_in_change` / `cancellation_reason` / `registry_entry_snapshot`)。
 
 17 tombstones(3 first-batch 自 `centralize-followon-backlog-registry` 2026-05-07 + 2 自 `fix-export-d12-and-skipped-evidence-filter` 2026-05-08 + **12 自 `retire-forgeue-protocol-layer-fully` 2026-05-10**:11 cancelled-not-applicable: scope-changed(ForgeUE 协议层整 retire,fence / workflow target 不存在)+ 1 cancelled-completed: 174e0cb(`fix-pretest-pre-existing-fence-baseline-drift` — P2 retire 删 fence test files 2 pre-existing fail 自动消失))。
 

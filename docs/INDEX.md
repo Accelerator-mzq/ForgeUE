@@ -36,7 +36,7 @@ acceptance_report   对应 SRS + test_spec 状态
 | --- | --- |
 | 首次接触项目 | `requirements/SRS.md` §1-§2,再跳 `acceptance/acceptance_report.md` §3 看主线进度 |
 | 需要对接某模块 | `design/HLD.md` §3 子系统表 → 对应 `design/LLD.md` 章节 |
-| 评估做某个新功能 | `requirements/SRS.md` §7 未决 + `acceptance/acceptance_report.md` §6-§7 + `followon_backlog/active.md` |
+| 评估做某个新功能 | `requirements/SRS.md` §7 未决 + `acceptance/acceptance_report.md` §6-§7 + `../forge/backlog/active.md` |
 | 审查测试覆盖 | `testing/test_spec.md` §3-§6 |
 | 了解某条修复来龙去脉 | `testing/test_spec.md` §5 fence 清单 + `archive/claude_unified_architecture_plan_v1.md` §M |
 
@@ -45,7 +45,7 @@ acceptance_report   对应 SRS + test_spec 状态
 | 位置 | 用途 |
 | --- | --- |
 | [`ai_workflow/validation_matrix.md`](ai_workflow/validation_matrix.md) | Level 0/1/2 验证命令矩阵 |
-| [`followon_backlog/`](followon_backlog/) | Follow-on backlog registry(项目自有 follow-on 待办,手工维护;与 forge 原生 `forge/backlog/` 独立) |
+| [`../forge/backlog/`](../forge/backlog/) | Backlog —— 项目唯一待办集合(forge 原生生成,勿手编) |
 | [`api_des/`](api_des/) | 五家 provider 的 API 契约参考(GLM / Qwen / Qwen-Image(-Edit) / HunYuan) |
 | [`archive/`](archive/) | 历史文档归档(plan_v1 + 评审报告 + 早期方案),仅作史料 |
 

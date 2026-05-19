@@ -2184,7 +2184,7 @@ requirements:
     description: codex 命令 allowed-tools(只读 `Get-Content`)vs Polling Convention 写文件能力(写 counter / job_id / active_jobs.txt)mismatch 的 architectural 选择。当前用 controller 主 session 写状态 workaround,留 follow-on 决策"allowed-tools 加 Write/Edit vs controller 主 session 写状态" arch 路径。
     status: unimplemented
     source:
-      document: docs/followon_backlog/active.md
+      document: ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)
       section: enhance-workflow-automation-handoff-persistence
       kind: backlog-file
     evidence: []
@@ -2197,7 +2197,7 @@ requirements:
     description: AudioCandidate `duration_seconds` / `sample_rate` parser(ComfyUI agent CLI 不暴露,留 follow-on 加 mutagen / pydub 解析填充)
     status: implemented
     source:
-      document: docs/followon_backlog/active.md
+      document: ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)
       section: audio-metadata-parser
       kind: backlog-file
     evidence:
@@ -2214,7 +2214,7 @@ requirements:
     description: VideoCandidate 5-tuple `duration_seconds` / `frame_count` / `width` / `height` / `fps` ffprobe 解析填充
     status: unimplemented
     source:
-      document: docs/followon_backlog/active.md
+      document: ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)
       section: video-metadata-parser
       kind: backlog-file
     evidence: []
@@ -2227,7 +2227,7 @@ requirements:
     description: video webm format 支持(post mp4-only sweep 留 follow-on;Wan / 其他 video model 输出 webm 时启用)
     status: unimplemented
     source:
-      document: docs/followon_backlog/active.md
+      document: ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)
       section: comfy-video-webm-adoption
       kind: backlog-file
     evidence: []
@@ -2240,7 +2240,7 @@ requirements:
     description: video-to-video 路径(beyond text-to-video baseline)
     status: unimplemented
     source:
-      document: docs/followon_backlog/active.md
+      document: ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)
       section: comfy-video-v2v-adoption
       kind: backlog-file
     evidence: []
@@ -2253,7 +2253,7 @@ requirements:
     description: image_sequence cinematic 高品质路径(电影级 sequence 而非 mp4 single-file)
     status: unimplemented
     source:
-      document: docs/followon_backlog/active.md
+      document: ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)
       section: comfy-video-image-sequence-adoption
       kind: backlog-file
     evidence: []
@@ -2266,7 +2266,7 @@ requirements:
     description: BMFF `box_size == 1` largesize box 支持(当前 strict 5-tuple 校验 reject;实证 large mp4 文件 ≥4GB 触发后启用)
     status: unimplemented
     source:
-      document: docs/followon_backlog/active.md
+      document: ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)
       section: video-bmff-largesize-support
       kind: backlog-file
     evidence: []

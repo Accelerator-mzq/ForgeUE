@@ -364,7 +364,7 @@ ForgeUE 采用 forge 作为 AI 主工作流。非平凡需求走 change 流程(`
 | [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
 | [`forge/specs/`](forge/specs/) | 当前行为契约层:8 个 capability spec(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
 | [`forge/changes/`](forge/changes/) | 未来变更入口 |
-| [`docs/followon_backlog/active.md`](docs/followon_backlog/active.md) | Follow-on backlog registry(项目自有,手工维护) |
+| [`forge/backlog/active.md`](forge/backlog/active.md) | Backlog —— 项目唯一待办集合(forge 原生生成) |
 
 `docs/` 五件套仍是长期权威;forge 通过"契约抽取"与之互补,不替代。
 
