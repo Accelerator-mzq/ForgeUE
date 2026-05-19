@@ -58,7 +58,7 @@ def _make_edit_step_and_ctx(
     return None, None, repo   # caller builds after seeding
 
 
-def test_image_edit_happy_path(tmp_path: Path):
+async def test_image_edit_happy_path(tmp_path: Path):
     run_id = "run_edit_happy"
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
@@ -94,7 +94,8 @@ def test_image_edit_happy_path(tmp_path: Path):
               started_at=datetime.now(timezone.utc), workflow_id="w", trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=[src_id])
-    result = GenerateImageEditExecutor(router=router).execute(ctx)
+    # Task 5 RED: executor.execute 已转为 async def,需 await
+    result = await GenerateImageEditExecutor(router=router).execute(ctx)
 
     assert result.metrics["edit_count"] == 2
     assert result.metrics["source_artifact_id"] == src_id
@@ -111,7 +112,7 @@ def test_image_edit_happy_path(tmp_path: Path):
         assert a.payload_ref.size_bytes > 0
 
 
-def test_image_edit_no_upstream_image_raises(tmp_path: Path):
+async def test_image_edit_no_upstream_image_raises(tmp_path: Path):
     run_id = "run_edit_no_img"
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
@@ -138,10 +139,10 @@ def test_image_edit_no_upstream_image_raises(tmp_path: Path):
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=[])
     with pytest.raises(RuntimeError, match="no upstream image artifact"):
-        GenerateImageEditExecutor(router=router).execute(ctx)
+        await GenerateImageEditExecutor(router=router).execute(ctx)
 
 
-def test_image_edit_requires_provider_policy(tmp_path: Path):
+async def test_image_edit_requires_provider_policy(tmp_path: Path):
     """Executor must fail fast when bundle forgot to configure models_ref."""
     run_id = "run_edit_no_policy"
     reg = get_backend_registry(artifact_root=str(tmp_path))
@@ -162,7 +163,7 @@ def test_image_edit_requires_provider_policy(tmp_path: Path):
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=[src_id])
     with pytest.raises(RuntimeError, match="provider_policy"):
-        GenerateImageEditExecutor(router=router).execute(ctx)
+        await GenerateImageEditExecutor(router=router).execute(ctx)
 
 
 def test_image_edit_falls_back_to_image_generation_for_text_only_adapter():

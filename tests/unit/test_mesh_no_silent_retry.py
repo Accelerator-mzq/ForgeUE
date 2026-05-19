@@ -154,7 +154,7 @@ def _make_mesh_ctx(tmp_path, *, retry_max_attempts: int):
     )
 
 
-def test_executor_no_internal_retry_for_mesh_capability(tmp_path):
+async def test_executor_no_internal_retry_for_mesh_capability(tmp_path):
     """L2 fence: even with `retry_policy.max_attempts=5`, executor must call
     worker.generate() exactly ONCE for capability_ref='mesh.generation'.
 
@@ -170,7 +170,8 @@ def test_executor_no_internal_retry_for_mesh_capability(tmp_path):
         raises=MeshWorkerTimeout("synthetic timeout"),
     )
     with pytest.raises(MeshWorkerTimeout):
-        GenerateMeshExecutor(worker=worker).execute(ctx)
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+        await GenerateMeshExecutor(worker=worker).execute(ctx)
 
     assert worker.calls == 1, (
         f"TBD-007 fence: executor.execute() must call worker.generate() "

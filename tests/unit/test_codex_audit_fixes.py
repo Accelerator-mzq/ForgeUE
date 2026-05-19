@@ -299,7 +299,7 @@ class _OneShotEditAdapter(ProviderAdapter):
         )
 
 
-def test_image_edit_emits_cost_usd(tmp_path: Path):
+async def test_image_edit_emits_cost_usd(tmp_path: Path):
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
     src_id = "src_img"
@@ -335,7 +335,8 @@ def test_image_edit_emits_cost_usd(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=[src_id])
-    result = GenerateImageEditExecutor(router=router).execute(ctx)
+    # Task 5 RED: executor.execute 已转为 async def,需 await
+    result = await GenerateImageEditExecutor(router=router).execute(ctx)
     assert "cost_usd" in result.metrics
     # 2 images × $0.05 each
     assert result.metrics["cost_usd"] == pytest.approx(0.10)

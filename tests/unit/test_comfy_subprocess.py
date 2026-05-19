@@ -1228,7 +1228,7 @@ def test_generate_mesh_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
 # (NOT self._worker.name 注入的 fallback worker 名)。
 
 
-def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
+async def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
     """G6-F2 follow-on:comfy/local 路径活跃时,Artifact.producer.provider
     == "comfy_agent_cli",NOT injected worker name(framework.run 注入的
     FakeComfyWorker name 会污染 audit / comparison report)。"""
@@ -1295,7 +1295,8 @@ def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp
     executor = GenerateImageExecutor(worker=injected_worker)
 
     with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(fake_png)]))) as run_mock:
-        result = executor.execute(ctx)
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+        result = await executor.execute(ctx)
 
     # 应有 1 image artifact + 1 bundle artifact
     image_arts = [a for a in result.artifacts if a.artifact_type.modality == "image"]

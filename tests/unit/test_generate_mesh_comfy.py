@@ -430,7 +430,7 @@ def test_failure_mode_map_routes_wrapped_mesh_worker_unsupported_to_abort_or_fal
 # ---- End-to-end execute() with comfy/local-mesh route -----------------------
 
 
-def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch(tmp_path, monkeypatch):
+async def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch(tmp_path, monkeypatch):
     """End-to-end:execute() 检测 comfy/local-mesh route → _generate_via_comfy_worker
     (NOT 现有 self._worker.generate)→ 持久化为 in-tree GLB Artifact。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
@@ -445,7 +445,8 @@ def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch(
     fake_cand = _fake_mesh_candidate()
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
         W.return_value.generate_mesh.return_value = [fake_cand]
-        result = executor.execute(ctx)
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+        result = await executor.execute(ctx)
 
     # injected worker 未被调用(comfy dispatch)
     injected_worker.generate.assert_not_called()
@@ -455,7 +456,7 @@ def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch(
     assert result.metrics["cost_usd"] == 0.0
 
 
-def test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch(tmp_path):
+async def test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch(tmp_path):
     """regression:no comfy/local-mesh route → 走原 self._worker.generate 路径
     (远端 mesh attempts=1 enforcement 不受本 change 影响)。"""
     extra = [PreparedRoute(model="hunyuan/hy-3d-3.1", api_key_env="HUNYUAN_3D_KEY",
@@ -466,7 +467,7 @@ def test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch
                                       num_candidates=1)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        result = executor.execute(ctx)
+        result = await executor.execute(ctx)
         # comfy worker 完全没被构造
         W.assert_not_called()
     assert result.metrics["mesh_count"] == 1
@@ -479,7 +480,7 @@ def test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch
 # (NOT self._worker.name 注入的 fallback worker 名);metrics["worker"] 同样走 comfy_agent_cli。
 
 
-def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
+async def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
     """G6-F3 follow-on:comfy/local-mesh 路径活跃时,Artifact.producer.provider
     == "comfy_agent_cli",NOT injected worker name(框架 self._worker.name 注入的
     HunyuanMeshWorker / FakeMeshWorker 名会污染 audit / comparison report)。"""
@@ -496,7 +497,7 @@ def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cl
     fake_cand = _fake_mesh_candidate()
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
         W.return_value.generate_mesh.return_value = [fake_cand]
-        result = executor.execute(ctx)
+        result = await executor.execute(ctx)
 
     assert len(result.artifacts) == 1
     art = result.artifacts[0]
@@ -513,7 +514,7 @@ def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cl
     )
 
 
-def test_executor_remote_hunyuan_path_records_provider_as_worker_name(tmp_path):
+async def test_executor_remote_hunyuan_path_records_provider_as_worker_name(tmp_path):
     """regression:non-comfy 路径(远端 Hunyuan / Tripo)producer.provider == self._worker.name,
     保留原行为(本 change 只改 comfy 分支 attribution,不改远端 mesh 分支)。"""
     extra = [PreparedRoute(model="hunyuan/hy-3d-3.1", api_key_env="HUNYUAN_3D_KEY",
@@ -524,7 +525,7 @@ def test_executor_remote_hunyuan_path_records_provider_as_worker_name(tmp_path):
                                       num_candidates=1)
     fake_worker = FakeMeshWorker()
     executor = GenerateMeshExecutor(worker=fake_worker)
-    result = executor.execute(ctx)
+    result = await executor.execute(ctx)
     assert len(result.artifacts) == 1
     art = result.artifacts[0]
     # FakeMeshWorker.name == "fake_mesh"

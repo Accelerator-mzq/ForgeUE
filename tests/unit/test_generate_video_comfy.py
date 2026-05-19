@@ -149,7 +149,7 @@ def test_should_use_comfy_worker_path_returns_false_when_no_comfy_local_video(tm
     assert executor._should_use_comfy_worker_path(ctx) is False
 
 
-def test_executor_dispatches_comfy_local_video_to_comfy_worker_branch(tmp_path, monkeypatch):
+async def test_executor_dispatches_comfy_local_video_to_comfy_worker_branch(tmp_path, monkeypatch):
     """End-to-end:executor.execute → ComfyAgentWorker.generate_video called。
     Mock at `subprocess.run` boundary(沿 audio test 同款模式)。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -184,7 +184,8 @@ def test_executor_dispatches_comfy_local_video_to_comfy_worker_branch(tmp_path, 
         return _FakeProc()
     asyncio.create_subprocess_exec = _fake_create  # type: ignore[assignment]
     try:
-        result = executor.execute(ctx)
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+        result = await executor.execute(ctx)
     finally:
         asyncio.create_subprocess_exec = _orig  # type: ignore[assignment]
     assert result.metrics["video_count"] == 1
@@ -192,18 +193,18 @@ def test_executor_dispatches_comfy_local_video_to_comfy_worker_branch(tmp_path, 
     assert len(call_count) == 1
 
 
-def test_executor_no_video_worker_path_resolved_raises(tmp_path):
+async def test_executor_no_video_worker_path_resolved_raises(tmp_path):
     """无 comfy/local-video 路由 + 无 injected worker → raise VideoWorkerUnsupportedResponse。"""
     ctx, _ = _make_video_ctx(tmp_path, use_comfy_local_video_route=False)
     executor = GenerateVideoExecutor()  # no worker
     with pytest.raises(VideoWorkerUnsupportedResponse, match=r"no video worker path"):
-        executor.execute(ctx)
+        await executor.execute(ctx)
 
 
 # ---- F2 round-1 三 except 块 + F-Plan-R7-B round-7 _should_retry honor retry_on
 
 
-def test_generate_via_comfy_worker_wraps_worker_timeout_to_video_worker_timeout_on_exhaustion(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_wraps_worker_timeout_to_video_worker_timeout_on_exhaustion(tmp_path, monkeypatch):
     """沿 audio F2 round-1:ComfyWorkerTimeout → VideoWorkerTimeout (with `from exc`)
     on exhausted attempts。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -214,17 +215,18 @@ def test_generate_via_comfy_worker_wraps_worker_timeout_to_video_worker_timeout_
     executor = GenerateVideoExecutor()
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
+        # Task 5 RED: executor 转 async 后调 agenerate_video,mock 需同步更新
         worker_inst.generate_video.side_effect = _ComfyWorkerTimeout("subprocess hit 600s")
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerTimeout) as exc_info:
-            executor.execute(ctx)
+            await executor.execute(ctx)
     # __cause__ chain should preserve original ComfyWorkerTimeout
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerTimeout)
     # max_attempts=2 → 2 calls
     assert worker_inst.generate_video.call_count == 2
 
 
-def test_generate_via_comfy_worker_wraps_worker_unsupported_to_video_worker_unsupported_immediately(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_wraps_worker_unsupported_to_video_worker_unsupported_immediately(tmp_path, monkeypatch):
     """沿 audio F2 round-1:ComfyWorkerUnsupportedResponse → VideoWorkerUnsupportedResponse
     立即 raise(deterministic 不 retry)。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -237,13 +239,13 @@ def test_generate_via_comfy_worker_wraps_worker_unsupported_to_video_worker_unsu
         worker_inst.generate_video.side_effect = _ComfyWorkerUnsupportedResponse("outputs.video missing")
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerUnsupportedResponse) as exc_info:
-            executor.execute(ctx)
+            await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerUnsupportedResponse)
     # Deterministic 不 retry — 1 call only
     assert worker_inst.generate_video.call_count == 1
 
 
-def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_path, monkeypatch):
     """沿 audio F2 round-1:ComfyWorkerError(generic)→ VideoWorkerError 立即 raise。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
     (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
@@ -255,12 +257,12 @@ def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_pa
         worker_inst.generate_video.side_effect = _ComfyWorkerError("subprocess crashed")
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerError) as exc_info:
-            executor.execute(ctx)
+            await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerError)
     assert worker_inst.generate_video.call_count == 1
 
 
-def test_local_comfy_video_executor_retry_on_excludes_timeout_short_circuits_first_attempt(tmp_path, monkeypatch):
+async def test_local_comfy_video_executor_retry_on_excludes_timeout_short_circuits_first_attempt(tmp_path, monkeypatch):
     """沿 audio F-Plan-R7-B round-7:RetryPolicy.retry_on 不含 "timeout" → 即使 timeout
     exhaust 也 1 call。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -274,7 +276,7 @@ def test_local_comfy_video_executor_retry_on_excludes_timeout_short_circuits_fir
         worker_inst.generate_video.side_effect = _ComfyWorkerTimeout("first call timeout")
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerTimeout):
-            executor.execute(ctx)
+            await executor.execute(ctx)
     # retry_on 不含 timeout → 1 call only(F-Plan-R7-B short-circuit)
     assert worker_inst.generate_video.call_count == 1
 
@@ -282,7 +284,7 @@ def test_local_comfy_video_executor_retry_on_excludes_timeout_short_circuits_fir
 # ---- Persistence(D1 + D8 shape="mp4" UE bridge + 5 metadata None)----------
 
 
-def test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_suffix(tmp_path, monkeypatch):
+async def test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_suffix(tmp_path, monkeypatch):
     """D1 + D8 critical:Artifact.artifact_type.shape == "mp4"(与 UE bridge
     `_KIND_MAP[("video", "mp4")] = "file_media_source"` 唯一映射对齐);
     file_suffix=`.{cand.format}` 反映真实 payload 编码(post-F2 sweep mp4-only =`.mp4`)。"""
@@ -295,7 +297,7 @@ def test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_s
         worker_inst = MagicMock()
         worker_inst.generate_video.return_value = [cand]
         cls_mock.return_value = worker_inst
-        result = executor.execute(ctx)
+        result = await executor.execute(ctx)
     assert len([a.artifact_id for a in result.artifacts]) == 1
     art = repo.get([a.artifact_id for a in result.artifacts][0])
     assert isinstance(art, Artifact)
@@ -307,7 +309,7 @@ def test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_s
     assert art.payload_ref.file_path.endswith(".mp4")
 
 
-def test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields(tmp_path, monkeypatch):
+async def test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields(tmp_path, monkeypatch):
     """D8 single-source + FR-STORE-004 video metadata 6 件套(format + 5 video fields):
     Artifact.metadata.format=cand.format("mp4");5 video metadata 顶层全 None always
     (本 change scope ComfyUI agent CLI 不暴露 video metadata,follow-on `video-metadata-parser` 加 ffprobe / mutagen 解析)。"""
@@ -320,7 +322,7 @@ def test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_f
         worker_inst = MagicMock()
         worker_inst.generate_video.return_value = [cand]
         cls_mock.return_value = worker_inst
-        result = executor.execute(ctx)
+        result = await executor.execute(ctx)
     art = repo.get([a.artifact_id for a in result.artifacts][0])
     # FR-STORE-004 video metadata 6 件套 on Artifact.metadata
     assert art.metadata["format"] == "mp4"
@@ -342,7 +344,7 @@ def test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_f
 # ---- ADR-007 边界(本地 video non-premium → 内部 retry allowed)
 
 
-def test_local_comfy_video_pricing_none_treated_as_non_premium(tmp_path, monkeypatch):
+async def test_local_comfy_video_pricing_none_treated_as_non_premium(tmp_path, monkeypatch):
     """ADR-007 边界:`pricing=None` → `(None or {}).get("per_task_usd", 0) == 0` → non-premium
     → 内部 retry loop 用 `policy.max_attempts` 不受 ADR-007 strict-single-attempt 约束。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -360,7 +362,7 @@ def test_local_comfy_video_pricing_none_treated_as_non_premium(tmp_path, monkeyp
             [_fake_video_candidate()],
         ]
         cls_mock.return_value = worker_inst
-        result = executor.execute(ctx)
+        result = await executor.execute(ctx)
     assert worker_inst.generate_video.call_count == 2  # retry happened
     assert len([a.artifact_id for a in result.artifacts]) == 1
 
