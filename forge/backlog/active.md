@@ -2,7 +2,7 @@
 
 > 生成产物 —— 由 `/forge:archive` 自动重生成,**勿手编**。Schema 见 README.md。
 > 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 18 项 legacy requirements 待办(不计入上面 0)。
+> 另有 24 项 legacy requirements 待办(不计入上面 0)。
 
 ## Warnings (0)
 
@@ -21,7 +21,16 @@
 (无)
 
 
-## Legacy Requirements (18)
+## Legacy Requirements (24)
+
+### `docs/followon_backlog/active.md`
+
+- `LR-0136` **enhance-workflow-automation-handoff-persistence codex allowed-tools vs polling write 能力 mismatch 架构决策待定** — codex 命令 allowed-tools(只读 `Get-Content`)vs Polling Convention 写文件能力(写 counter / job_id / active_jobs.txt)mismatch 的 architectural 选择。当前用 controller 主 session 写状态 workaround,留 follow-on 决策"allowed-tools 加 Write/Edit vs controller 主 session 写状态" arch 路径。 (priority: low)
+- `LR-0138` **video-metadata-parser VideoCandidate 5-tuple ffprobe 解析填充** — VideoCandidate 5-tuple `duration_seconds` / `frame_count` / `width` / `height` / `fps` ffprobe 解析填充 (priority: low)
+- `LR-0139` **comfy-video-webm-adoption video webm 格式支持** — video webm format 支持(post mp4-only sweep 留 follow-on;Wan / 其他 video model 输出 webm 时启用) (priority: low)
+- `LR-0140` **comfy-video-v2v-adoption video-to-video 路径** — video-to-video 路径(beyond text-to-video baseline) (priority: low)
+- `LR-0141` **comfy-video-image-sequence-adoption image_sequence cinematic 高品质路径** — image_sequence cinematic 高品质路径(电影级 sequence 而非 mp4 single-file) (priority: low)
+- `LR-0142` **video-bmff-largesize-support BMFF box_size==1 largesize box 支持** — BMFF `box_size == 1` largesize box 支持(当前 strict 5-tuple 校验 reject;实证 large mp4 文件 ≥4GB 触发后启用) (priority: low)
 
 ### `docs/requirements/SRS.md`
 

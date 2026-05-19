@@ -2,21 +2,18 @@ schema: forge-legacy-requirements/v1
 requirements:
   - id: LR-0001
     title: FR-WF-001 三种 RunMode 支持
-    description: 系统应支持三种 RunMode:basic_llm(1-3 步)、production(5-15 步,含嵌入
-      review)、standalone_review(3-5 步评审链)
+    description: 系统应支持三种 RunMode:basic_llm(1-3 步)、production(5-15 步,含嵌入 review)、standalone_review(3-5 步评审链)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WF-001
       kind: srs
     evidence:
-      - src/framework/core/enums.py:7-10 — RunMode(str, Enum) 定义 basic_llm /
-        production / standalone_review 三个成员
+      - src/framework/core/enums.py:7-10 — RunMode(str, Enum) 定义 basic_llm / production / standalone_review 三个成员
       - "src/framework/core/task.py:69 — Task.run_mode: RunMode 字段声明"
-      - src/framework/runtime/orchestrator.py:180 — arun() 在 run span 中记录
-        run_mode.value
+      - src/framework/runtime/orchestrator.py:180 — arun() 在 run span 中记录 run_mode.value
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0002
@@ -29,38 +26,32 @@ requirements:
       kind: srs
     evidence:
       - src/framework/runtime/orchestrator.py:86 — 单一 Scheduler() 实例,无 RunMode 分支
-      - src/framework/runtime/scheduler.py:24-71 — Scheduler 类
-        prepare/default_next/runnable_after 无 RunMode 条件分叉
-      - src/framework/runtime/orchestrator.py:141-365 — arun() 主循环对三种 RunMode
-        无差别执行路径
+      - src/framework/runtime/scheduler.py:24-71 — Scheduler 类 prepare/default_next/runnable_after 无 RunMode 条件分叉
+      - src/framework/runtime/orchestrator.py:141-365 — arun() 主循环对三种 RunMode 无差别执行路径
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0003
     title: FR-WF-003 线性+分支+DAG opt-in 并发
-    description: Workflow 应支持有向线性 + 分支;DAG 并发由 task.constraints["parallel_dag"]=True
-      或 workflow.metadata["parallel_dag"]=True opt-in
+    description: Workflow 应支持有向线性 + 分支;DAG 并发由 task.constraints["parallel_dag"]=True 或 workflow.metadata["parallel_dag"]=True opt-in
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WF-003
       kind: srs
     evidence:
-      - src/framework/runtime/orchestrator.py:195-198 — dag_mode 读取
-        task.constraints['parallel_dag'] 或 workflow.metadata.get('parallel_dag')
+      - src/framework/runtime/orchestrator.py:195-198 — dag_mode 读取 task.constraints['parallel_dag'] 或 workflow.metadata.get('parallel_dag')
       - src/framework/runtime/orchestrator.py:215-229 — 非 DAG 线性路径(default)
-      - src/framework/runtime/orchestrator.py:277-291 — DAG fan-out
-        asyncio.create_task 并发启动多 ready steps
+      - src/framework/runtime/orchestrator.py:277-291 — DAG fan-out asyncio.create_task 并发启动多 ready steps
       - src/framework/runtime/scheduler.py:39-47 — default_next 提供线性顺序路径
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0004
     title: FR-WF-004 Step 支持 11 种 type
-    description: Step 应支持 11 种 type:generate / transform / validate / review /
-      select / export / import / inspect / plan / execute / custom
+    description: Step 应支持 11 种 type:generate / transform / validate / review / select / export / import / inspect / plan / execute / custom
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
@@ -68,7 +59,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0005
@@ -80,17 +71,13 @@ requirements:
       section: FR-WF-005
       kind: srs
     evidence:
-      - src/framework/core/enums.py:35-38 — RiskLevel(str, Enum) 定义
-        low/medium/high
-      - "src/framework/core/task.py:34 — Step.risk_level: RiskLevel =
-        RiskLevel.low"
-      - "src/framework/runtime/scheduler.py:15 — _RISK_ORDER = {RiskLevel.low:
-        0, RiskLevel.medium: 1, RiskLevel.high: 2}"
+      - src/framework/core/enums.py:35-38 — RiskLevel(str, Enum) 定义 low/medium/high
+      - "src/framework/core/task.py:34 — Step.risk_level: RiskLevel = RiskLevel.low"
+      - "src/framework/runtime/scheduler.py:15 — _RISK_ORDER = {RiskLevel.low: 0, RiskLevel.medium: 1, RiskLevel.high: 2}"
       - src/framework/runtime/scheduler.py:50-51 — risk_sort() 按 _RISK_ORDER 升序排序
-      - src/framework/runtime/scheduler.py:66-71 — runnable_after() 调用 risk_sort
-        返回风险升序结果
+      - src/framework/runtime/scheduler.py:66-71 — runnable_after() 调用 risk_sort 返回风险升序结果
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0006
@@ -102,15 +89,11 @@ requirements:
       section: FR-WF-006
       kind: srs
     evidence:
-      - src/framework/runtime/transition_engine.py:76-81 — Decision.revise 分支
-        inc_revise 计数,超 policy.max_revise 时 TransitionResult(terminated=True,
-        reason='max_revise exceeded')
-      - src/framework/runtime/orchestrator.py:619-630 — exec_result.verdict 非
-        None 时调用 transitions.on_verdict 驱动回环
-      - src/framework/runtime/orchestrator.py:634-640 — trans.terminated 触发 run
-        终止
+      - src/framework/runtime/transition_engine.py:76-81 — Decision.revise 分支 inc_revise 计数,超 policy.max_revise 时 TransitionResult(terminated=True, reason='max_revise exceeded')
+      - src/framework/runtime/orchestrator.py:619-630 — exec_result.verdict 非 None 时调用 transitions.on_verdict 驱动回环
+      - src/framework/runtime/orchestrator.py:634-640 — trans.terminated 触发 run 终止
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0007
@@ -123,20 +106,16 @@ requirements:
       kind: srs
     evidence:
       - "src/framework/core/task.py:41 — Step.depends_on: list[str]"
-      - src/framework/runtime/scheduler.py:63-71 — runnable_after() 过滤
-        depends_on 全满足的 step 并 risk_sort
+      - src/framework/runtime/scheduler.py:63-71 — runnable_after() 过滤 depends_on 全满足的 step 并 risk_sort
       - src/framework/runtime/orchestrator.py:251-256 — DAG 模式下收集 ready_ids
-      - src/framework/runtime/orchestrator.py:278-291 — 多 ready step 用
-        asyncio.create_task 并发启动
+      - src/framework/runtime/orchestrator.py:278-291 — 多 ready step 用 asyncio.create_task 并发启动
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0008
     title: FR-LC-001 Run 严格按 9 阶段执行
-    description: Run 应严格按 9 阶段执行:Task ingestion → Workflow resolution → Dry-run Pass
-      → Scheduling plan → Step execution → Verdict dispatching → Validation
-      gates → Export → Run finalize
+    description: Run 应严格按 9 阶段执行:Task ingestion → Workflow resolution → Dry-run Pass → Scheduling plan → Step execution → Verdict dispatching → Validation gates → Export → Run finalize
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -144,41 +123,32 @@ requirements:
       kind: srs
     evidence:
       - src/framework/runtime/orchestrator.py:158-162 — Dry-run Pass 阶段
-      - src/framework/runtime/orchestrator.py:164-165 — scheduler.prepare
-        Scheduling plan 阶段
+      - src/framework/runtime/orchestrator.py:164-165 — scheduler.prepare Scheduling plan 阶段
       - src/framework/runtime/orchestrator.py:203-354 — Step execution 主循环
-      - src/framework/runtime/orchestrator.py:619-632 — Verdict
-        dispatching(transitions.on_verdict)
-      - src/framework/runtime/orchestrator.py:356-364 — Run finalize(status 赋值 +
-        budget_summary)
+      - src/framework/runtime/orchestrator.py:619-632 — Verdict dispatching(transitions.on_verdict)
+      - src/framework/runtime/orchestrator.py:356-364 — Run finalize(status 赋值 + budget_summary)
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0009
     title: FR-LC-002 Dry-run Pass 零副作用预检
-    description: Dry-run Pass 应做零副作用预检,包括 manifest 解析、schema 合法性、provider
-      可达性、input_bindings 解析、UEOutputTarget 可访问、budget 估算、secrets 齐全、resume 时
-      hash 一致性
+    description: Dry-run Pass 应做零副作用预检,包括 manifest 解析、schema 合法性、provider 可达性、input_bindings 解析、UEOutputTarget 可访问、budget 估算、secrets 齐全、resume 时 hash 一致性
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-LC-002
       kind: srs
     evidence:
-      - src/framework/runtime/dry_run_pass.py:54-56 —
-        workflow.entry_exists(manifest 解析)
-      - src/framework/runtime/dry_run_pass.py:63-65 —
-        step.output_schema.shape(schema 合法性)
+      - src/framework/runtime/dry_run_pass.py:54-56 — workflow.entry_exists(manifest 解析)
+      - src/framework/runtime/dry_run_pass.py:63-65 — step.output_schema.shape(schema 合法性)
       - src/framework/runtime/dry_run_pass.py:69-76 — input_bindings 解析
-      - src/framework/runtime/dry_run_pass.py:79-90 —
-        UEOutputTarget.project_root 可访问
+      - src/framework/runtime/dry_run_pass.py:79-90 — UEOutputTarget.project_root 可访问
       - src/framework/runtime/dry_run_pass.py:92-95 — budget 估算(warning-only)
       - src/framework/runtime/dry_run_pass.py:97-102 — ComfyUI provider 可达性探活
-      - src/framework/runtime/dry_run_pass.py:10-11 — 注释:provider 可达性/secrets 为
-        stubbed extension hooks(通过 register_check 扩展)
+      - src/framework/runtime/dry_run_pass.py:10-11 — 注释:provider 可达性/secrets 为 stubbed extension hooks(通过 register_check 扩展)
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0010
@@ -190,12 +160,10 @@ requirements:
       section: FR-LC-003
       kind: srs
     evidence:
-      - src/framework/runtime/orchestrator.py:161-162 — dr_report.passed 为 False
-        时 raise DryRunFailed,后续执行阶段不进入
-      - src/framework/runtime/orchestrator.py:54-57 — DryRunFailed(RuntimeError)
-        携带 report
+      - src/framework/runtime/orchestrator.py:161-162 — dr_report.passed 为 False 时 raise DryRunFailed,后续执行阶段不进入
+      - src/framework/runtime/orchestrator.py:54-57 — DryRunFailed(RuntimeError) 携带 report
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0011
@@ -207,15 +175,11 @@ requirements:
       section: FR-LC-004
       kind: srs
     evidence:
-      - src/framework/runtime/orchestrator.py:547-548 — new_hashes = [a.hash for
-        a in exec_result.artifacts]
-      - src/framework/runtime/orchestrator.py:581-585 —
-        checkpoints.record(artifact_ids=new_ids, artifact_hashes=new_hashes,
-        metrics=exec_result.metrics)
-      - src/framework/artifact_store/repository.py:86 — hash=hash_payload(value)
-        在 put() 中计算并存入 Artifact.hash
+      - src/framework/runtime/orchestrator.py:547-548 — new_hashes = [a.hash for a in exec_result.artifacts]
+      - src/framework/runtime/orchestrator.py:581-585 — checkpoints.record(artifact_ids=new_ids, artifact_hashes=new_hashes, metrics=exec_result.metrics)
+      - src/framework/artifact_store/repository.py:86 — hash=hash_payload(value) 在 put() 中计算并存入 Artifact.hash
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0012
@@ -227,74 +191,59 @@ requirements:
       section: FR-LC-005
       kind: srs
     evidence:
-      - src/framework/runtime/checkpoint_store.py:88-89 — len 长度不等直接 return
-        None(miss)
-      - src/framework/runtime/checkpoint_store.py:90-94 — zip 逐对校验
-        repository.exists(aid) + repository.get(aid).hash != h,不符则 return None
+      - src/framework/runtime/checkpoint_store.py:88-89 — len 长度不等直接 return None(miss)
+      - src/framework/runtime/checkpoint_store.py:90-94 — zip 逐对校验 repository.exists(aid) + repository.get(aid).hash != h,不符则 return None
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0013
     title: FR-LC-006 Step 完成后 dump _artifacts.json 支持 resume
-    description: Step 完成后应把 Artifact 元数据 dump 到 <run_dir>/_artifacts.json(file/blob
-      不重写字节);跨进程 --resume 时调 ArtifactRepository.load_run_metadata 重建索引,否则
-      find_hit 永远 miss 并静默重跑
+    description: Step 完成后应把 Artifact 元数据 dump 到 <run_dir>/_artifacts.json(file/blob 不重写字节);跨进程 --resume 时调 ArtifactRepository.load_run_metadata 重建索引,否则 find_hit 永远 miss 并静默重跑
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-LC-006
       kind: srs
     evidence:
-      - src/framework/runtime/orchestrator.py:591 —
-        _dump_run_artifacts_if_possible 在每个 step 完成后调用
-      - src/framework/runtime/orchestrator.py:664-669 —
-        repository.dump_run_metadata(run_id, run_dir) 实际写盘
-      - src/framework/artifact_store/repository.py:170-184 — dump_run_metadata 写
-        _artifacts.json,不重复字节
-      - src/framework/artifact_store/repository.py:186-229 — load_run_metadata
-        重建索引
+      - src/framework/runtime/orchestrator.py:591 — _dump_run_artifacts_if_possible 在每个 step 完成后调用
+      - src/framework/runtime/orchestrator.py:664-669 — repository.dump_run_metadata(run_id, run_dir) 实际写盘
+      - src/framework/artifact_store/repository.py:170-184 — dump_run_metadata 写 _artifacts.json,不重复字节
+      - src/framework/artifact_store/repository.py:186-229 — load_run_metadata 重建索引
       - src/framework/run.py:185 — --resume 路径调用 repo.load_run_metadata
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0014
     title: FR-LC-007 load_run_metadata 三道过滤
-    description: load_run_metadata 必须三道过滤:已存在 id skip / 后端 exists() False skip /
-      file/blob 实际字节 hash 与元数据 hash 不符 skip(防外部 tampering 当成 cache 命中)
+    description: load_run_metadata 必须三道过滤:已存在 id skip / 后端 exists() False skip / file/blob 实际字节 hash 与元数据 hash 不符 skip(防外部 tampering 当成 cache 命中)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-LC-007
       kind: srs
     evidence:
-      - "src/framework/artifact_store/repository.py:208 — 已存在 id skip: if
-        art.artifact_id in self._artifacts: continue"
-      - "src/framework/artifact_store/repository.py:210-215 — 后端 exists() False
-        skip: if not payload_present: continue"
-      - "src/framework/artifact_store/repository.py:220-226 — file/blob hash 校验
-        skip: if hash_payload(current) != art.hash: continue"
+      - "src/framework/artifact_store/repository.py:208 — 已存在 id skip: if art.artifact_id in self._artifacts: continue"
+      - "src/framework/artifact_store/repository.py:210-215 — 后端 exists() False skip: if not payload_present: continue"
+      - "src/framework/artifact_store/repository.py:220-226 — file/blob hash 校验 skip: if hash_payload(current) != art.hash: continue"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0015
     title: FR-LC-008 find_hit 长度不等时强制 miss
-    description: CheckpointStore.find_hit 在 len(artifact_ids) !=
-      len(artifact_hashes) 时必须 miss(zip() 静默截断会让未校验 artifact 被当成 cache hit)
+    description: CheckpointStore.find_hit 在 len(artifact_ids) != len(artifact_hashes) 时必须 miss(zip() 静默截断会让未校验 artifact 被当成 cache hit)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-LC-008
       kind: srs
     evidence:
-      - src/framework/runtime/checkpoint_store.py:84-89 — 注释明确说明 zip() 截断风险及
-        guard 意图
-      - "src/framework/runtime/checkpoint_store.py:88-89 — if
-        len(cp.artifact_ids) != len(cp.artifact_hashes): return None"
+      - src/framework/runtime/checkpoint_store.py:84-89 — 注释明确说明 zip() 截断风险及 guard 意图
+      - "src/framework/runtime/checkpoint_store.py:88-89 — if len(cp.artifact_ids) != len(cp.artifact_hashes): return None"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0016
@@ -307,41 +256,33 @@ requirements:
       kind: srs
     evidence:
       - config/models.yaml:1-10 三段式注释 + providers/models/aliases 三节结构
-      - src/framework/providers/model_registry.py:218-228
-        ModelRegistry.from_yaml 解析三节
+      - src/framework/providers/model_registry.py:218-228 ModelRegistry.from_yaml 解析三节
       - src/framework/providers/model_registry.py:262-278 _parse_providers
       - src/framework/providers/model_registry.py:281-314 _parse_models
       - src/framework/providers/model_registry.py:399-417 _parse_aliases
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0017
     title: FR-MODEL-002 models_ref alias 展开为 prepared_routes
-    description: 'TaskBundle 应通过 `provider_policy.models_ref: "<alias>"` 引用
-      alias,`loader` 展开为 `prepared_routes`'
+    description: 'TaskBundle 应通过 `provider_policy.models_ref: "<alias>"` 引用 alias,`loader` 展开为 `prepared_routes`'
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-MODEL-002
       kind: srs
     evidence:
-      - src/framework/providers/model_registry.py:481-498 expand_model_refs 函数展开
-        models_ref → prepared_routes
-      - src/framework/workflows/loader.py:33 expand_model_refs(raw,
-        get_model_registry()) 在 load 时调用
-      - src/framework/providers/model_registry.py:177-190 as_policy_fields 写入
-        prepared_routes
+      - src/framework/providers/model_registry.py:481-498 expand_model_refs 函数展开 models_ref → prepared_routes
+      - src/framework/workflows/loader.py:33 expand_model_refs(raw, get_model_registry()) 在 load 时调用
+      - src/framework/providers/model_registry.py:177-190 as_policy_fields 写入 prepared_routes
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0018
     title: FR-MODEL-003 多 provider 接入支持
-    description: 系统应支持至少以下 provider 接入:OpenAI 兼容(GLM / DeepSeek /
-      PackyCode)、Anthropic(via PackyCode)、DashScope(Qwen 系列)、Hunyuan(Image +
-      3D)、MiniMax、ComfyUI(agent CLI subprocess,自 v1.6 起;v1.5 及之前为
-      HTTP)、Tripo3D(预留)
+    description: 系统应支持至少以下 provider 接入:OpenAI 兼容(GLM / DeepSeek / PackyCode)、Anthropic(via PackyCode)、DashScope(Qwen 系列)、Hunyuan(Image + 3D)、MiniMax、ComfyUI(agent CLI subprocess,自 v1.6 起;v1.5 及之前为 HTTP)、Tripo3D(预留)
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -351,88 +292,68 @@ requirements:
       - config/models.yaml:49-51 packycode provider(Anthropic via PackyCode)
       - config/models.yaml:70-72 zhipu_openai_compat(GLM)
       - config/models.yaml:74-78 dashscope_openai_compat(Qwen/DashScope)
-      - config/models.yaml:80-96 tencent_hunyuan_openai_compat +
-        tencent_hunyuan_tokenhub + tencent_hunyuan_3d_tokenhub
+      - config/models.yaml:80-96 tencent_hunyuan_openai_compat + tencent_hunyuan_tokenhub + tencent_hunyuan_3d_tokenhub
       - config/models.yaml:45-47 minimaxi provider
       - config/models.yaml:98-105 comfy_api provider + ComfyAgentWorker
       - config/models.yaml:172-175 tripo3d_v2 model entry(预留)
-      - src/framework/run.py:72-76 QwenMultimodalAdapter + HunyuanImageAdapter +
-        LiteLLMAdapter 注册顺序
-      - src/framework/providers/workers/comfy_worker.py:1-30 ComfyAgentWorker
-        agent CLI subprocess 实现
+      - src/framework/run.py:72-76 QwenMultimodalAdapter + HunyuanImageAdapter + LiteLLMAdapter 注册顺序
+      - src/framework/providers/workers/comfy_worker.py:1-30 ComfyAgentWorker agent CLI subprocess 实现
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0019
     title: FR-MODEL-004 OpenAI 兼容 provider 零新代码接入
-    description: 新增 OpenAI 兼容端口 provider 应仅需在 registry 填 `api_base` +
-      `api_key_env`,bundle 写 `openai/<id>`,**零新代码**
+    description: 新增 OpenAI 兼容端口 provider 应仅需在 registry 填 `api_base` + `api_key_env`,bundle 写 `openai/<id>`,**零新代码**
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-MODEL-004
       kind: srs
     evidence:
-      - src/framework/providers/litellm_adapter.py:75-76 LiteLLMAdapter.supports
-        返回 True(wildcard)
-      - src/framework/providers/litellm_adapter.py:91-93 api_key/api_base 直接透传给
-        litellm.acompletion
+      - src/framework/providers/litellm_adapter.py:75-76 LiteLLMAdapter.supports 返回 True(wildcard)
+      - src/framework/providers/litellm_adapter.py:91-93 api_key/api_base 直接透传给 litellm.acompletion
       - config/models.yaml:70-72 zhipu_openai_compat 示例:api_key_env + api_base 即可
-      - src/framework/providers/model_registry.py:136-143 ResolvedRoute 携带
-        api_key_env + api_base
+      - src/framework/providers/model_registry.py:136-143 ResolvedRoute 携带 api_key_env + api_base
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0020
     title: FR-MODEL-005 非 OpenAI 协议 provider 用 adapter 接入
-    description: 非 OpenAI 协议 provider 应通过在 `src/framework/providers/` 加 adapter
-      接入,路由按 `model.startswith(...)` 前缀匹配
+    description: 非 OpenAI 协议 provider 应通过在 `src/framework/providers/` 加 adapter 接入,路由按 `model.startswith(...)` 前缀匹配
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-MODEL-005
       kind: srs
     evidence:
-      - "src/framework/providers/qwen_multimodal_adapter.py:80-81 supports:
-        model.startswith('qwen/')"
-      - "src/framework/providers/hunyuan_tokenhub_adapter.py:308-309 supports:
-        model.startswith('hunyuan/')"
-      - src/framework/providers/capability_router.py:45-49 _resolve 按注册顺序
-        supports(model) 匹配
+      - "src/framework/providers/qwen_multimodal_adapter.py:80-81 supports: model.startswith('qwen/')"
+      - "src/framework/providers/hunyuan_tokenhub_adapter.py:308-309 supports: model.startswith('hunyuan/')"
+      - src/framework/providers/capability_router.py:45-49 _resolve 按注册顺序 supports(model) 匹配
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0021
     title: FR-MODEL-006 CapabilityRouter 注册顺序 + LiteLLMAdapter 最后
-    description: "`CapabilityRouter` 应按注册顺序调用
-      `ProviderAdapter.supports(model)`,`LiteLLMAdapter`(wildcard)**必须最后**注册"
+    description: "`CapabilityRouter` 应按注册顺序调用 `ProviderAdapter.supports(model)`,`LiteLLMAdapter`(wildcard)**必须最后**注册"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-MODEL-006
       kind: srs
     evidence:
-      - src/framework/providers/capability_router.py:45-49 _resolve 线性遍历
-        self._adapters
-      - src/framework/run.py:74-76 QwenMultimodalAdapter → HunyuanImageAdapter →
-        LiteLLMAdapter 顺序注册
-      - src/framework/providers/litellm_adapter.py:75-76 supports 永远返回
-        True(wildcard)
+      - src/framework/providers/capability_router.py:45-49 _resolve 线性遍历 self._adapters
+      - src/framework/run.py:74-76 QwenMultimodalAdapter → HunyuanImageAdapter → LiteLLMAdapter 顺序注册
+      - src/framework/providers/litellm_adapter.py:75-76 supports 永远返回 True(wildcard)
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0022
     title: FR-MODEL-007 能力别名列表
-    description: 系统应支持能力别名:`text_cheap / text_strong / review_judge /
-      review_judge_visual / ue5_api_assist / image_fast / image_strong /
-      image_edit / mesh_from_image / image_local / audio_local`(`image_local` 自
-      v1.6 起,本地 ComfyUI agent CLI image manifest;`audio_local` 自 v1.7 起,本地
-      ComfyUI agent CLI audio manifest,OpenSpec change
-      `comfy-agent-cli-audio-adoption`)
+    description: 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image / image_local / audio_local`(`image_local` 自 v1.6 起,本地 ComfyUI agent CLI image manifest;`audio_local` 自 v1.7 起,本地 ComfyUI agent CLI audio manifest,OpenSpec change `comfy-agent-cli-audio-adoption`)
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -451,7 +372,7 @@ requirements:
       - config/models.yaml:420-422 image_local alias
       - config/models.yaml:439-441 audio_local alias
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0023
@@ -463,14 +384,11 @@ requirements:
       section: FR-MODEL-008
       kind: srs
     evidence:
-      - "src/framework/core/policies.py:59 fallback_models: list[str] =
-        Field(default_factory=list)"
-      - src/framework/providers/capability_router.py:54-82 _routes 按
-        preferred→fallback 顺序构造路由列表
-      - src/framework/providers/capability_router.py:86-107 acompletion 循环遍历
-        routes 失败继续下一
+      - "src/framework/core/policies.py:59 fallback_models: list[str] = Field(default_factory=list)"
+      - src/framework/providers/capability_router.py:54-82 _routes 按 preferred→fallback 顺序构造路由列表
+      - src/framework/providers/capability_router.py:86-107 acompletion 循环遍历 routes 失败继续下一
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0024
@@ -482,56 +400,45 @@ requirements:
       section: FR-STRUCT-001
       kind: srs
     evidence:
-      - "src/framework/providers/litellm_adapter.py:121-174
-        astructured_with_usage: instructor.from_litellm + response_model=schema"
-      - src/framework/providers/litellm_adapter.py:124
-        instructor.from_litellm(litellm.acompletion)
-      - src/framework/providers/litellm_adapter.py:170-173 isinstance(obj,
-        schema) 校验,失败 raise SchemaValidationError
+      - "src/framework/providers/litellm_adapter.py:121-174 astructured_with_usage: instructor.from_litellm + response_model=schema"
+      - src/framework/providers/litellm_adapter.py:124 instructor.from_litellm(litellm.acompletion)
+      - src/framework/providers/litellm_adapter.py:170-173 isinstance(obj, schema) 校验,失败 raise SchemaValidationError
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0025
     title: FR-STRUCT-002 Schema 注册到 registry(四类)
-    description: Schema 应注册到 `src/framework/schemas/registry.py`,至少包括:`UECharacter`
-      / `ImageSpec` / `MeshSpec` / `UEApiAnswer`
+    description: Schema 应注册到 `src/framework/schemas/registry.py`,至少包括:`UECharacter` / `ImageSpec` / `MeshSpec` / `UEApiAnswer`
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-STRUCT-002
       kind: srs
     evidence:
-      - src/framework/schemas/ue_character.py:78-81 register_builtin_schemas →
-        reg.register('ue.character', UECharacter)
-      - src/framework/schemas/image_spec.py:37-40 register_builtin_schemas →
-        reg.register('ue.image_spec', ImageSpec)
-      - src/framework/schemas/mesh_spec.py:36-39 register_builtin_schemas →
-        reg.register('ue.mesh_spec', MeshSpec)
-      - src/framework/schemas/ue_api_answer.py:41-44 register_builtin_schemas →
-        reg.register('ue.api_answer', UEAPIAnswer)
+      - src/framework/schemas/ue_character.py:78-81 register_builtin_schemas → reg.register('ue.character', UECharacter)
+      - src/framework/schemas/image_spec.py:37-40 register_builtin_schemas → reg.register('ue.image_spec', ImageSpec)
+      - src/framework/schemas/mesh_spec.py:36-39 register_builtin_schemas → reg.register('ue.mesh_spec', MeshSpec)
+      - src/framework/schemas/ue_api_answer.py:41-44 register_builtin_schemas → reg.register('ue.api_answer', UEAPIAnswer)
       - src/framework/run.py:59-62 四者均在 _build_orchestrator 中调用
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0026
     title: FR-STRUCT-003 schema 验证失败映射 retry_same_step
-    description: Schema 验证失败应映射到 `FailureMode.schema_validation_fail`,触发
-      `Decision.retry_same_step`(默认 ≤ 2 次)
+    description: Schema 验证失败应映射到 `FailureMode.schema_validation_fail`,触发 `Decision.retry_same_step`(默认 ≤ 2 次)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-STRUCT-003
       kind: srs
     evidence:
-      - src/framework/runtime/failure_mode_map.py:81-83 schema_validation_fail →
-        Decision.retry_same_step
-      - src/framework/providers/litellm_adapter.py:166-167 instructor 异常分类为
-        SchemaValidationError
+      - src/framework/runtime/failure_mode_map.py:81-83 schema_validation_fail → Decision.retry_same_step
+      - src/framework/providers/litellm_adapter.py:166-167 instructor 异常分类为 SchemaValidationError
       - src/framework/core/policies.py:26 RetryPolicy.max_attempts 默认值 2
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0027
@@ -543,16 +450,14 @@ requirements:
       section: FR-STRUCT-004
       kind: srs
     evidence:
-      - src/framework/providers/litellm_adapter.py:43-44 litellm.drop_params =
-        True(env LITELLM_DROP_PARAMS 可 override)
+      - src/framework/providers/litellm_adapter.py:43-44 litellm.drop_params = True(env LITELLM_DROP_PARAMS 可 override)
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0028
     title: FR-COST-001 pricing block 四字段支持
-    description: "`config/models.yaml` 应支持 `pricing:` block(`input_per_1k_usd` /
-      `output_per_1k_usd` / `per_image_usd` / `per_task_usd`),全部 USD 单位"
+    description: "`config/models.yaml` 应支持 `pricing:` block(`input_per_1k_usd` / `output_per_1k_usd` / `per_image_usd` / `per_task_usd`),全部 USD 单位"
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -560,14 +465,12 @@ requirements:
       kind: srs
     evidence:
       - src/framework/providers/model_registry.py:47-52 _PRICING_FIELDS 四元组定义
-      - src/framework/providers/model_registry.py:88-109 ModelPricing dataclass
-        四字段
-      - config/models.yaml:185-187 glm_4_6v_flashX pricing 示例含 input_per_1k_usd
-        + output_per_1k_usd
+      - src/framework/providers/model_registry.py:88-109 ModelPricing dataclass 四字段
+      - config/models.yaml:185-187 glm_4_6v_flashX pricing 示例含 input_per_1k_usd + output_per_1k_usd
       - config/models.yaml:209-210 glm_image pricing 含 per_image_usd
       - config/models.yaml:309-310 hunyuan_3d pricing 含 per_task_usd
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0029
@@ -579,18 +482,15 @@ requirements:
       section: FR-COST-002
       kind: srs
     evidence:
-      - "src/framework/providers/model_registry.py:368-373 _parse_pricing:
-        unknown fields raise RegistryReferenceError"
-      - "src/framework/providers/model_registry.py:332-337
-        _parse_pricing_autogen: 同模式"
+      - "src/framework/providers/model_registry.py:368-373 _parse_pricing: unknown fields raise RegistryReferenceError"
+      - "src/framework/providers/model_registry.py:332-337 _parse_pricing_autogen: 同模式"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0030
     title: FR-COST-003 BudgetTracker 三个 estimator
-    description: BudgetTracker 应提供三 estimator:`estimate_call_cost_usd` /
-      `estimate_image_call_cost_usd` / `estimate_mesh_call_cost_usd`
+    description: BudgetTracker 应提供三 estimator:`estimate_call_cost_usd` / `estimate_image_call_cost_usd` / `estimate_mesh_call_cost_usd`
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -598,42 +498,33 @@ requirements:
       kind: srs
     evidence:
       - src/framework/runtime/budget_tracker.py:98-141 estimate_call_cost_usd
-      - src/framework/runtime/budget_tracker.py:174-208
-        estimate_image_call_cost_usd
-      - src/framework/runtime/budget_tracker.py:211-233
-        estimate_mesh_call_cost_usd
+      - src/framework/runtime/budget_tracker.py:174-208 estimate_image_call_cost_usd
+      - src/framework/runtime/budget_tracker.py:211-233 estimate_mesh_call_cost_usd
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0031
     title: FR-COST-004 route pricing 注入 ProviderResult.raw["_route_pricing"]
-    description: Router 应把选中 route 的 pricing 塞进
-      `ProviderResult.raw["_route_pricing"]`(不破 tuple 签名),Executor 读取后喂给
-      BudgetTracker
+    description: Router 应把选中 route 的 pricing 塞进 `ProviderResult.raw["_route_pricing"]`(不破 tuple 签名),Executor 读取后喂给 BudgetTracker
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-COST-004
       kind: srs
     evidence:
-      - src/framework/providers/capability_router.py:299-317
-        _stash_route_pricing_on_result 写入 raw['_route_pricing']
-      - src/framework/providers/capability_router.py:320-330
-        _stash_route_pricing_on_usage 用于 structured 调用
+      - src/framework/providers/capability_router.py:299-317 _stash_route_pricing_on_result 写入 raw['_route_pricing']
+      - src/framework/providers/capability_router.py:320-330 _stash_route_pricing_on_usage 用于 structured 调用
       - src/framework/providers/capability_router.py:95 acompletion 路径调用
-      - src/framework/runtime/orchestrator.py:570-572 orchestrator 读取
-        usage['_route_pricing']
-      - src/framework/runtime/executors/generate_image_edit.py:104-107 executor
-        读取 _route_pricing
+      - src/framework/runtime/orchestrator.py:570-572 orchestrator 读取 usage['_route_pricing']
+      - src/framework/runtime/executors/generate_image_edit.py:104-107 executor 读取 _route_pricing
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0032
     title: FR-COST-005 pricing_probe dry-run + --apply + manual 保护
-    description: 系统应提供 `src/framework/pricing_probe/` 工具,dry-run 默认 + `--apply` 才改
-      YAML;`pricing_autogen.status=manual` 永不被覆盖
+    description: 系统应提供 `src/framework/pricing_probe/` 工具,dry-run 默认 + `--apply` 才改 YAML;`pricing_autogen.status=manual` 永不被覆盖
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -642,10 +533,9 @@ requirements:
     evidence:
       - src/framework/pricing_probe/cli.py:1-15 CLI 入口,无 --apply 不改文件
       - src/framework/pricing_probe/yaml_writer.py:14-17 manual status 永不覆盖注释
-      - src/framework/providers/model_registry.py:54-60 _AUTOGEN_STATUSES 含
-        'manual'
+      - src/framework/providers/model_registry.py:54-60 _AUTOGEN_STATUSES 含 'manual'
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0033
@@ -658,76 +548,62 @@ requirements:
       kind: srs
     evidence:
       - src/framework/pricing_probe/fetcher.py:38-90 httpx 路径 fetch_html
-      - src/framework/pricing_probe/fetcher.py:111-140 playwright 路径
-        fetch_html_rendered
+      - src/framework/pricing_probe/fetcher.py:111-140 playwright 路径 fetch_html_rendered
       - src/framework/pricing_probe/cli.py:48 if parser_cls.requires_js 分发
       - src/framework/pricing_probe/parsers/zhipu.py:62 requires_js = True
-      - "src/framework/pricing_probe/parsers/base.py:81 requires_js: bool =
-        False 默认 httpx"
+      - "src/framework/pricing_probe/parsers/base.py:81 requires_js: bool = False 默认 httpx"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0034
     title: FR-COST-007 外部定价必须有来源(sourced_on + source_url 或 null)
-    description: 外部定价数字**必须**有 verifiable 来源(`sourced_on` + `source_url`),否则保持
-      `null` + TODO 注释
+    description: 外部定价数字**必须**有 verifiable 来源(`sourced_on` + `source_url`),否则保持 `null` + TODO 注释
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-COST-007
       kind: srs
     evidence:
-      - src/framework/providers/model_registry.py:54-59 _AUTOGEN_FIELDS 含
-        sourced_on + source_url
+      - src/framework/providers/model_registry.py:54-59 _AUTOGEN_FIELDS 含 sourced_on + source_url
       - config/models.yaml:190-191 glm_4_6v_flashX sourced_on + source_url
       - config/models.yaml:226-227 qwen3_6_plus sourced_on + source_url
       - config/models.yaml:313-314 hunyuan_3d sourced_on + source_url
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0035
     title: FR-COST-008 所有付费 executor 写入 metrics["cost_usd"]
-    description: 所有付费 executor(`generate_image_edit` / `generate_image` /
-      `generate_mesh` / `generate_structured` / review)必须在 `metrics["cost_usd"]`
-      字段写入估算成本;早期 `generate_image_edit` 漏写导致 image edit 调用按 $0 计费
+    description: 所有付费 executor(`generate_image_edit` / `generate_image` / `generate_mesh` / `generate_structured` / review)必须在 `metrics["cost_usd"]` 字段写入估算成本;早期 `generate_image_edit` 漏写导致 image edit 调用按 $0 计费
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-COST-008
       kind: srs
     evidence:
-      - src/framework/runtime/executors/generate_image_edit.py:149-160 cost_usd
-        写入 metrics
-      - src/framework/runtime/executors/generate_image.py:236-258 cost_usd 写入
-        metrics
-      - src/framework/runtime/executors/generate_mesh.py:319-330 cost_usd 写入
-        metrics
+      - src/framework/runtime/executors/generate_image_edit.py:149-160 cost_usd 写入 metrics
+      - src/framework/runtime/executors/generate_image.py:236-258 cost_usd 写入 metrics
+      - src/framework/runtime/executors/generate_mesh.py:319-330 cost_usd 写入 metrics
       - src/framework/runtime/executors/review.py:141-160 cost_usd 累加写入 metrics
-      - src/framework/runtime/orchestrator.py:558-579 generate_structured 的
-        cost_usd 由 orchestrator 填入 metrics(executor 本身不写)
+      - src/framework/runtime/orchestrator.py:558-579 generate_structured 的 cost_usd 由 orchestrator 填入 metrics(executor 本身不写)
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0036
     title: FR-COST-009 parallel_candidates 异质 route raise
-    description: '`parallel_candidates=True` 的并发候选必须落在同一 route(同 `chosen_model` + 同
-      `_route_pricing`),异质 → executor 显式 raise;否则 `metrics["chosen_model"]`
-      单值表达失效,producer/cost 记账失真'
+    description: '`parallel_candidates=True` 的并发候选必须落在同一 route(同 `chosen_model` + 同 `_route_pricing`),异质 → executor 显式 raise;否则 `metrics["chosen_model"]` 单值表达失效,producer/cost 记账失真'
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-COST-009
       kind: srs
     evidence:
-      - src/framework/runtime/executors/generate_image.py:387-393 unique_models
-        > 1 → raise RuntimeError heterogeneous routes
-      - src/framework/runtime/executors/generate_image.py:361-395
-        parallel_candidates fan-out 完整逻辑
+      - src/framework/runtime/executors/generate_image.py:387-393 unique_models > 1 → raise RuntimeError heterogeneous routes
+      - src/framework/runtime/executors/generate_image.py:361-395 parallel_candidates fan-out 完整逻辑
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0037
@@ -740,7 +616,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0038
@@ -752,21 +628,16 @@ requirements:
       section: FR-REVIEW-002
       kind: srs
     evidence:
-      - src/framework/core/review.py:66-90 ReviewReport 与 Verdict 定义为独立 Pydantic
-        BaseModel
-      - src/framework/runtime/executors/review.py:123-128 _persist_report 与
-        _persist_verdict 各自调用 ctx.repository.put 落库
-      - src/framework/review_engine/report_verdict_emitter.py:25-85 Emission
-        dataclass 持有独立 report + verdict 字段
+      - src/framework/core/review.py:66-90 ReviewReport 与 Verdict 定义为独立 Pydantic BaseModel
+      - src/framework/runtime/executors/review.py:123-128 _persist_report 与 _persist_verdict 各自调用 ctx.repository.put 落库
+      - src/framework/review_engine/report_verdict_emitter.py:25-85 Emission dataclass 持有独立 report + verdict 字段
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0039
     title: FR-REVIEW-003 Verdict 支持 9 种 decision
-    description: Verdict 应支持 9 种 `decision`:`accept` / `revise` / `reject` /
-      `retry_same_step` / `fallback_model` / `abort_or_fallback` /
-      `escalate_human` / `human_review_required` / `stop`
+    description: Verdict 应支持 9 种 `decision`:`accept` / `revise` / `reject` / `retry_same_step` / `fallback_model` / `abort_or_fallback` / `escalate_human` / `human_review_required` / `stop`
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
@@ -774,7 +645,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0040
@@ -787,17 +658,14 @@ requirements:
       kind: srs
     evidence:
       - "src/framework/core/review.py:85 Verdict.confidence: float = 0.0"
-      - src/framework/review_engine/report_verdict_emitter.py:127-159 _decide 返回
-        float(best_score) 作 confidence;single_best policy 在 margin<=0.1 时返回
-        Decision.revise;multi_keep policy 在无 passing 候选时返回 Decision.revise
+      - src/framework/review_engine/report_verdict_emitter.py:127-159 _decide 返回 float(best_score) 作 confidence;single_best policy 在 margin<=0.1 时返回 Decision.revise;multi_keep policy 在无 passing 候选时返回 Decision.revise
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0041
     title: FR-REVIEW-005 5 维评分写入 scores_by_dimension
-    description: Review 应支持 5 维评分:`quality` / `consistency` / `ue_compliance` /
-      `aesthetics` / `technical_correctness`,写入 `scores_by_dimension`
+    description: Review 应支持 5 维评分:`quality` / `consistency` / `ue_compliance` / `aesthetics` / `technical_correctness`,写入 `scores_by_dimension`
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
@@ -805,30 +673,24 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0042
     title: FR-REVIEW-006 Rubric 从 YAML 模板加载支持内置模板
-    description: Rubric 应从 YAML
-      模板加载(`src/framework/review_engine/rubric_templates/*.yaml`),支持
-      `ue_asset_quality` / `ue_character_quality` / `ue_visual_quality` 等
+    description: Rubric 应从 YAML 模板加载(`src/framework/review_engine/rubric_templates/*.yaml`),支持 `ue_asset_quality` / `ue_character_quality` / `ue_visual_quality` 等
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-REVIEW-006
       kind: srs
     evidence:
-      - src/framework/review_engine/rubric_loader.py:14-45 load_rubric_yaml +
-        built_in_rubric 从 YAML 文件加载 Rubric
-      - src/framework/review_engine/rubric_templates/ue_asset_quality.yaml
-        内置模板文件存在
-      - src/framework/review_engine/rubric_templates/ue_character_quality.yaml
-        内置模板文件存在
-      - src/framework/review_engine/rubric_templates/ue_visual_quality.yaml
-        内置模板文件存在
+      - src/framework/review_engine/rubric_loader.py:14-45 load_rubric_yaml + built_in_rubric 从 YAML 文件加载 Rubric
+      - src/framework/review_engine/rubric_templates/ue_asset_quality.yaml 内置模板文件存在
+      - src/framework/review_engine/rubric_templates/ue_character_quality.yaml 内置模板文件存在
+      - src/framework/review_engine/rubric_templates/ue_visual_quality.yaml 内置模板文件存在
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0043
@@ -840,52 +702,39 @@ requirements:
       section: FR-REVIEW-007
       kind: srs
     evidence:
-      - src/framework/review_engine/chief_judge.py:57-64
-        asyncio.gather(*[self._judge.ajudge(...) for policy in panel_policies])
-        并发调用所有 judge
+      - src/framework/review_engine/chief_judge.py:57-64 asyncio.gather(*[self._judge.ajudge(...) for policy in panel_policies]) 并发调用所有 judge
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0044
     title: FR-REVIEW-008 Review step 透传 judge usage 到 BudgetTracker
-    description: Review step 应透传 judge 调用的 `usage`(prompt_tokens / completion_tokens
-      / total_tokens)到 BudgetTracker,不得遗漏成本
+    description: Review step 应透传 judge 调用的 `usage`(prompt_tokens / completion_tokens / total_tokens)到 BudgetTracker,不得遗漏成本
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-REVIEW-008
       kind: srs
     evidence:
-      - src/framework/runtime/executors/review.py:141-151 对每个 judge run 调用
-        estimate_call_cost_usd 累加 cost_usd 写入 metrics
-      - src/framework/runtime/orchestrator.py:593-601 orchestrator 读
-        exec_result.metrics[cost_usd] 调用 budget_tracker.record
+      - src/framework/runtime/executors/review.py:141-151 对每个 judge run 调用 estimate_call_cost_usd 累加 cost_usd 写入 metrics
+      - src/framework/runtime/orchestrator.py:593-601 orchestrator 读 exec_result.metrics[cost_usd] 调用 budget_tracker.record
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0045
     title: FR-REVIEW-009 SelectExecutor bare-approve 语义
-    description: '`SelectExecutor` 在 `verdict.decision in {approve, approve_one,
-      approve_many}` 且 `selected_candidate_ids == []` 时,应按 "bare-approve =
-      accept all upstream minus rejected" 处理:`kept = candidate_pool -
-      rejected_candidate_ids`(与 `ExportExecutor._approve_filter`
-      语义一致);`rejected_candidate_ids` 必须从 `kept` 排除,不得同时进 `selected_ids` 和
-      `rejected_ids`'
+    description: '`SelectExecutor` 在 `verdict.decision in {approve, approve_one, approve_many}` 且 `selected_candidate_ids == []` 时,应按 "bare-approve = accept all upstream minus rejected" 处理:`kept = candidate_pool - rejected_candidate_ids`(与 `ExportExecutor._approve_filter` 语义一致);`rejected_candidate_ids` 必须从 `kept` 排除,不得同时进 `selected_ids` 和 `rejected_ids`'
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-REVIEW-009
       kind: srs
     evidence:
-      - src/framework/runtime/executors/select.py:24-28 _BARE_APPROVE_DECISIONS
-        = {approve.value, approve_one.value, approve_many.value}
-      - src/framework/runtime/executors/select.py:72-76 not selected and
-        decision_str in _BARE_APPROVE_DECISIONS 时 kept = [cid for cid in
-        candidate_pool if cid not in rejected_set]
+      - src/framework/runtime/executors/select.py:24-28 _BARE_APPROVE_DECISIONS = {approve.value, approve_one.value, approve_many.value}
+      - src/framework/runtime/executors/select.py:72-76 not selected and decision_str in _BARE_APPROVE_DECISIONS 时 kept = [cid for cid in candidate_pool if cid not in rejected_set]
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0046
@@ -897,32 +746,26 @@ requirements:
       section: FR-STORE-001
       kind: srs
     evidence:
-      - src/framework/core/artifact.py:32-41 ArtifactType 含 modality/shape(两段式)+
-        display_name(扁平名)+ .internal property 返回 modality.shape 字符串
+      - src/framework/core/artifact.py:32-41 ArtifactType 含 modality/shape(两段式)+ display_name(扁平名)+ .internal property 返回 modality.shape 字符串
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0047
     title: FR-STORE-002 PayloadRef 三态 inline+file 实装 blob 预留
-    description: "`PayloadRef` 应支持 `inline` / `file` / `blob` 三态,MVP 实装 `inline` +
-      `file`,`blob` 预留接口"
+    description: "`PayloadRef` 应支持 `inline` / `file` / `blob` 三态,MVP 实装 `inline` + `file`,`blob` 预留接口"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-STORE-002
       kind: srs
     evidence:
-      - src/framework/core/artifact.py:12-29 PayloadRef 含
-        kind/inline_value/file_path/blob_key 三态字段 + model_validator 互斥校验
-      - src/framework/artifact_store/payload_backends/inline_backend.py:25-40
-        InlineBackend 已实装
-      - src/framework/artifact_store/payload_backends/file_backend.py:29-67
-        FileBackend 已实装
-      - src/framework/artifact_store/payload_backends/blob_backend.py:11-23
-        BlobBackend stub 抛 NotImplementedError 预留接口
+      - src/framework/core/artifact.py:12-29 PayloadRef 含 kind/inline_value/file_path/blob_key 三态字段 + model_validator 互斥校验
+      - src/framework/artifact_store/payload_backends/inline_backend.py:25-40 InlineBackend 已实装
+      - src/framework/artifact_store/payload_backends/file_backend.py:29-67 FileBackend 已实装
+      - src/framework/artifact_store/payload_backends/blob_backend.py:11-23 BlobBackend stub 抛 NotImplementedError 预留接口
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0048
@@ -934,79 +777,60 @@ requirements:
       section: FR-STORE-003
       kind: srs
     evidence:
-      - src/framework/artifact_store/payload_backends/inline_backend.py:14
-        INLINE_MAX_BYTES = 64 * 1024
-      - src/framework/artifact_store/payload_backends/file_backend.py:17
-        FILE_MAX_BYTES = 500 * 1024 * 1024
+      - src/framework/artifact_store/payload_backends/inline_backend.py:14 INLINE_MAX_BYTES = 64 * 1024
+      - src/framework/artifact_store/payload_backends/file_backend.py:17 FILE_MAX_BYTES = 500 * 1024 * 1024
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0049
     title: FR-STORE-004 各 modality 专属 metadata 字段
-    description: 各 modality 应有专属
-      metadata:image(width/height/color_space/...)、audio(`format` ∈
-      {`flac`,`mp3`,`wav`} + `duration_seconds` + `sample_rate`,自
-      v1.7)、mesh(format/poly_count/scale_unit/...)、text.structured(schema_name/version/language)、video(`format`
-      ∈ {`mp4`} + duration_seconds/frame_count/width/height/fps,自 v1.8)
+    description: 各 modality 应有专属 metadata:image(width/height/color_space/...)、audio(`format` ∈ {`flac`,`mp3`,`wav`} + `duration_seconds` + `sample_rate`,自 v1.7)、mesh(format/poly_count/scale_unit/...)、text.structured(schema_name/version/language)、video(`format` ∈ {`mp4`} + duration_seconds/frame_count/width/height/fps,自 v1.8)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-STORE-004
       kind: srs
     evidence:
-      - src/framework/runtime/executors/generate_image.py:172-178 metadata 含
-        width/height/color_space/seed/style_tags
-      - src/framework/runtime/executors/generate_audio.py:152-156 metadata 含
-        format/duration_seconds/sample_rate
-      - src/framework/runtime/executors/generate_mesh.py:287-295 metadata 含
-        format/poly_count/scale_unit/has_uv/has_rig
-      - src/framework/runtime/executors/generate_video.py:159-166 metadata 含
-        format/duration_seconds/frame_count/width/height/fps
+      - src/framework/runtime/executors/generate_image.py:172-178 metadata 含 width/height/color_space/seed/style_tags
+      - src/framework/runtime/executors/generate_audio.py:152-156 metadata 含 format/duration_seconds/sample_rate
+      - src/framework/runtime/executors/generate_mesh.py:287-295 metadata 含 format/poly_count/scale_unit/has_uv/has_rig
+      - src/framework/runtime/executors/generate_video.py:159-166 metadata 含 format/duration_seconds/frame_count/width/height/fps
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0050
     title: FR-STORE-005 Lineage 血缘 5 字段完整
-    description: 系统应维护 Lineage 血缘:`source_artifact_ids` / `source_step_ids` /
-      `transformation_kind` / `selected_by_verdict_id` / `variant_group_id`
+    description: 系统应维护 Lineage 血缘:`source_artifact_ids` / `source_step_ids` / `transformation_kind` / `selected_by_verdict_id` / `variant_group_id`
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-STORE-005
       kind: srs
     evidence:
-      - src/framework/core/artifact.py:51-57 Lineage 模型含全部 5
-        字段:source_artifact_ids/source_step_ids/transformation_kind/selected_by_verdict_id/variant_group_id
-      - src/framework/artifact_store/lineage.py:18-24 LineageIndex.register 构建
-        parents/children 邻接表
+      - src/framework/core/artifact.py:51-57 Lineage 模型含全部 5 字段:source_artifact_ids/source_step_ids/transformation_kind/selected_by_verdict_id/variant_group_id
+      - src/framework/artifact_store/lineage.py:18-24 LineageIndex.register 构建 parents/children 邻接表
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0051
     title: FR-STORE-006 Artifact 入 Store 前四层校验
-    description: Artifact 入 Store 前应通过四层校验:文件层(路径/格式签名/大小)、元数据层(必填齐全)、业务层(Step
-      约束)、UE 层(命名/路径/格式,在 export step 做)
+    description: Artifact 入 Store 前应通过四层校验:文件层(路径/格式签名/大小)、元数据层(必填齐全)、业务层(Step 约束)、UE 层(命名/路径/格式,在 export step 做)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-STORE-006
       kind: srs
     evidence:
-      - src/framework/artifact_store/payload_backends/file_backend.py:47-57
-        文件层大小检查(FILE_MAX_BYTES)+ path traversal 防护
-      - src/framework/providers/workers/comfy_worker.py:619-631 格式签名 magic bytes
-        校验(PNG/GLB/FLAC/MP3/WAV/MP4)
-      - src/framework/core/artifact.py:21-29 PayloadRef model_validator
-        元数据层必填字段校验
-      - src/framework/runtime/executors/validate.py:24-78 业务层
-        SchemaValidateExecutor Pydantic 校验 Step 约束
-      - src/framework/runtime/executors/export.py:177-188 UE 层 validate_manifest
-        在 export step 校验 manifest 结构
+      - src/framework/artifact_store/payload_backends/file_backend.py:47-57 文件层大小检查(FILE_MAX_BYTES)+ path traversal 防护
+      - src/framework/providers/workers/comfy_worker.py:619-631 格式签名 magic bytes 校验(PNG/GLB/FLAC/MP3/WAV/MP4)
+      - src/framework/core/artifact.py:21-29 PayloadRef model_validator 元数据层必填字段校验
+      - src/framework/runtime/executors/validate.py:24-78 业务层 SchemaValidateExecutor Pydantic 校验 Step 约束
+      - src/framework/runtime/executors/export.py:177-188 UE 层 validate_manifest 在 export step 校验 manifest 结构
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0052
@@ -1018,77 +842,61 @@ requirements:
       section: FR-UE-001
       kind: srs
     evidence:
-      - src/framework/core/enums.py:91-93 ImportMode 枚举定义了 manifest_only 和
-        bridge_execute 两个值
-      - src/framework/core/ue.py:24 UEOutputTarget.import_mode 默认值为
-        ImportMode.manifest_only
-      - src/framework/runtime/executors/export.py:337 ExportExecutor 实际只使用
-        manifest_only 路径,bridge_execute 枚举存在但未启用(SRS §7.3 TBD-001)
+      - src/framework/core/enums.py:91-93 ImportMode 枚举定义了 manifest_only 和 bridge_execute 两个值
+      - src/framework/core/ue.py:24 UEOutputTarget.import_mode 默认值为 ImportMode.manifest_only
+      - src/framework/runtime/executors/export.py:337 ExportExecutor 实际只使用 manifest_only 路径,bridge_execute 枚举存在但未启用(SRS §7.3 TBD-001)
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0053
     title: FR-UE-002 manifest_only 模式产出 UEAssetManifest + UEImportPlan + Evidence
-    description: "`manifest_only` 模式下,框架应产出 `UEAssetManifest` + `UEImportPlan` +
-      `Evidence` 到 `<UE项目>/Content/Generated/<run_id>/`;框架不直接调 UE API"
+    description: "`manifest_only` 模式下,框架应产出 `UEAssetManifest` + `UEImportPlan` + `Evidence` 到 `<UE项目>/Content/Generated/<run_id>/`;框架不直接调 UE API"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-UE-002
       kind: srs
     evidence:
-      - src/framework/ue_bridge/manifest_builder.py:139-234 build_manifest() 产出
-        UEAssetManifest
-      - src/framework/ue_bridge/import_plan_builder.py:43-84 build_import_plan()
-        产出 UEImportPlan
+      - src/framework/ue_bridge/manifest_builder.py:139-234 build_manifest() 产出 UEAssetManifest
+      - src/framework/ue_bridge/import_plan_builder.py:43-84 build_import_plan() 产出 UEImportPlan
       - src/framework/ue_bridge/evidence.py:22-57 EvidenceWriter 写入 evidence.json
-      - src/framework/ue_bridge/manifest_builder.py:1-9 文档头明确框架只 DECLARES 不直接调
-        UE API
+      - src/framework/ue_bridge/manifest_builder.py:1-9 文档头明确框架只 DECLARES 不直接调 UE API
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0054
     title: FR-UE-003 UE 侧 run_import.py 支持贴图/静态网格/音频导入
-    description: UE 侧应通过 `ue_scripts/run_import.py` 在 UE Python Console
-      执行导入,支持贴图(`import_texture`)、静态网格(`import_static_mesh`)、音频(`import_audio`)
+    description: UE 侧应通过 `ue_scripts/run_import.py` 在 UE Python Console 执行导入,支持贴图(`import_texture`)、静态网格(`import_static_mesh`)、音频(`import_audio`)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-UE-003
       kind: srs
     evidence:
-      - ue_scripts/run_import.py:36-44 _OP_HANDLERS 字典注册了 import_texture /
-        import_audio / import_static_mesh 三个 handler
+      - ue_scripts/run_import.py:36-44 _OP_HANDLERS 字典注册了 import_texture / import_audio / import_static_mesh 三个 handler
       - ue_scripts/domain_texture.py:30-54 import_texture_entry() 实现
       - ue_scripts/domain_audio.py:12-38 import_audio_entry() 实现
-      - ue_scripts/domain_mesh.py:1-39 import_static_mesh 域模块(支持
-        FBX/GLB/GLTF/OBJ 自动 dispatch)
+      - ue_scripts/domain_mesh.py:1-39 import_static_mesh 域模块(支持 FBX/GLB/GLTF/OBJ 自动 dispatch)
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0055
-    title: FR-UE-004 Manifest 声明 target_object_path/target_package_path 并遵循
-      asset_naming_policy
-    description: Manifest 应通过 `target_object_path` / `target_package_path` 声明 UE
-      资产位置,遵循 `asset_naming_policy`(gdd_mandated / house_rules /
-      gdd_preferred_then_house_rules)
+    title: FR-UE-004 Manifest 声明 target_object_path/target_package_path 并遵循 asset_naming_policy
+    description: Manifest 应通过 `target_object_path` / `target_package_path` 声明 UE 资产位置,遵循 `asset_naming_policy`(gdd_mandated / house_rules / gdd_preferred_then_house_rules)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-UE-004
       kind: srs
     evidence:
-      - src/framework/ue_bridge/manifest_builder.py:171-186 build_manifest() 为每个
-        entry 设置 target_object_path 与 target_package_path
-      - src/framework/ue_bridge/manifest_builder.py:239-246 _derive_ue_name() 按
-        policy 推导 UE 资产名
-      - src/framework/core/ue.py:20-22 UEOutputTarget.asset_naming_policy 支持三种
-        Literal 值
+      - src/framework/ue_bridge/manifest_builder.py:171-186 build_manifest() 为每个 entry 设置 target_object_path 与 target_package_path
+      - src/framework/ue_bridge/manifest_builder.py:239-246 _derive_ue_name() 按 policy 推导 UE 资产名
+      - src/framework/core/ue.py:20-22 UEOutputTarget.asset_naming_policy 支持三种 Literal 值
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0056
@@ -1100,12 +908,11 @@ requirements:
       section: FR-UE-005
       kind: srs
     evidence:
-      - src/framework/ue_bridge/import_plan_builder.py:61-66 每个 import op 设置
-        depends_on=[folder_op_id]
+      - src/framework/ue_bridge/import_plan_builder.py:61-66 每个 import op 设置 depends_on=[folder_op_id]
       - ue_scripts/manifest_reader.py:46-65 topological_ops() Kahn 算法按依赖拓扑序返回 ops
       - src/framework/core/ue.py:75 UEImportOperation.depends_on 字段定义
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0057
@@ -1117,13 +924,11 @@ requirements:
       section: FR-UE-006
       kind: srs
     evidence:
-      - ue_scripts/evidence_writer.py:30-58 make_record() 构造含
-        op_id/kind/status/error 的 Evidence dict
+      - ue_scripts/evidence_writer.py:30-58 make_record() 构造含 op_id/kind/status/error 的 Evidence dict
       - ue_scripts/evidence_writer.py:19-27 append() 追加写入 evidence.json
-      - ue_scripts/run_import.py:92-132 每个 op 处理后调用 evidence_writer.append()
-        写一条记录
+      - ue_scripts/run_import.py:92-132 每个 op 处理后调用 evidence_writer.append() 写一条记录
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0058
@@ -1135,15 +940,11 @@ requirements:
       section: FR-UE-007
       kind: srs
     evidence:
-      - src/framework/core/policies.py:104-108 allow_modify_existing_assets /
-        allow_modify_blueprints / allow_modify_maps /
-        allow_modify_project_config / allow_delete 全部默认 False
-      - src/framework/ue_bridge/permission_policy.py:30-39 is_op_allowed() 未知
-        kind 默认 deny
-      - src/framework/ue_bridge/manifest_builder.py:8-9 注释明确 framework 只
-        DECLARES,UE-side script 才 EXECUTES
+      - src/framework/core/policies.py:104-108 allow_modify_existing_assets / allow_modify_blueprints / allow_modify_maps / allow_modify_project_config / allow_delete 全部默认 False
+      - src/framework/ue_bridge/permission_policy.py:30-39 is_op_allowed() 未知 kind 默认 deny
+      - src/framework/ue_bridge/manifest_builder.py:8-9 注释明确 framework 只 DECLARES,UE-side script 才 EXECUTES
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0059
@@ -1155,36 +956,27 @@ requirements:
       section: FR-UE-008
       kind: srs
     evidence:
-      - src/framework/core/policies.py:102-103 allow_create_material=False 与
-        allow_create_sound_cue=False 默认值(Phase C; default off)
-      - src/framework/ue_bridge/permission_policy.py:25-26 _OP_ALLOW_ATTR 映射
-        create_material_from_template→allow_create_material,create_sound_cue_from_template→allow_create_sound_cue
-      - src/framework/ue_bridge/permission_policy.py:30-39 is_op_allowed() 读取
-        allow-flag,False 时 deny
+      - src/framework/core/policies.py:102-103 allow_create_material=False 与 allow_create_sound_cue=False 默认值(Phase C; default off)
+      - src/framework/ue_bridge/permission_policy.py:25-26 _OP_ALLOW_ATTR 映射 create_material_from_template→allow_create_material,create_sound_cue_from_template→allow_create_sound_cue
+      - src/framework/ue_bridge/permission_policy.py:30-39 is_op_allowed() 读取 allow-flag,False 时 deny
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0060
     title: FR-WORKER-001 ComfyUI worker agent CLI subprocess 支持
-    description: 系统应支持 ComfyUI worker,生成贴图类 Artifact(自 v1.6 起改为 agent CLI subprocess
-      `python -m comfyui_api`,lifecycle=none only,worker 配置走 `FORGEUE_COMFY_*`
-      env vars;v1.5 及之前为 HTTP `/prompt` + `/history` + `/view`,见 OpenSpec change
-      `comfy-agent-cli-adoption`)
+    description: 系统应支持 ComfyUI worker,生成贴图类 Artifact(自 v1.6 起改为 agent CLI subprocess `python -m comfyui_api`,lifecycle=none only,worker 配置走 `FORGEUE_COMFY_*` env vars;v1.5 及之前为 HTTP `/prompt` + `/history` + `/view`,见 OpenSpec change `comfy-agent-cli-adoption`)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-001
       kind: srs
     evidence:
-      - src/framework/providers/workers/comfy_worker.py:260-304 ComfyAgentWorker
-        类实现 agent CLI subprocess 路径
-      - src/framework/providers/workers/comfy_worker.py:345-355 __init__
-        default_lifecycle='none',仅支持 none
-      - src/framework/providers/workers/comfy_worker.py:1-38 模块注释说明 worker
-        config 走 FORGEUE_COMFY_* env vars,lifecycle=none only
+      - src/framework/providers/workers/comfy_worker.py:260-304 ComfyAgentWorker 类实现 agent CLI subprocess 路径
+      - src/framework/providers/workers/comfy_worker.py:345-355 __init__ default_lifecycle='none',仅支持 none
+      - src/framework/providers/workers/comfy_worker.py:1-38 模块注释说明 worker config 走 FORGEUE_COMFY_* env vars,lifecycle=none only
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0061
@@ -1196,93 +988,72 @@ requirements:
       section: FR-WORKER-002
       kind: srs
     evidence:
-      - src/framework/providers/workers/mesh_worker.py:332-522 HunyuanMeshWorker
-        类实现 tokenhub submit/poll/download 协议
-      - src/framework/providers/workers/mesh_worker.py:903-966
-        _detect_mesh_format() 支持 glb/gltf/fbx/obj 格式识别
-      - src/framework/providers/workers/mesh_worker.py:362-508 agenerate()
-        异步并发多候选生成
+      - src/framework/providers/workers/mesh_worker.py:332-522 HunyuanMeshWorker 类实现 tokenhub submit/poll/download 协议
+      - src/framework/providers/workers/mesh_worker.py:903-966 _detect_mesh_format() 支持 glb/gltf/fbx/obj 格式识别
+      - src/framework/providers/workers/mesh_worker.py:362-508 agenerate() 异步并发多候选生成
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0062
     title: FR-WORKER-003 Tripo3D worker scaffold 保留,per-task 价格 NotImplementedError 守门
-    description: Tripo3D worker 应保留接口实现(scaffold),per-task 价格未公开时 parser 以
-      `NotImplementedError` 守门
+    description: Tripo3D worker 应保留接口实现(scaffold),per-task 价格未公开时 parser 以 `NotImplementedError` 守门
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-003
       kind: srs
     evidence:
-      - src/framework/providers/workers/mesh_worker.py:191-314 Tripo3DWorker 完整
-        scaffold 实现含 generate() 方法
-      - src/framework/pricing_probe/parsers/tripo3d.py:55-67
-        Tripo3DPricingParser.parse() raise NotImplementedError,注明 per-task API
-        价格未公开
+      - src/framework/providers/workers/mesh_worker.py:191-314 Tripo3DWorker 完整 scaffold 实现含 generate() 方法
+      - src/framework/pricing_probe/parsers/tripo3d.py:55-67 Tripo3DPricingParser.parse() raise NotImplementedError,注明 per-task API 价格未公开
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0063
-    title: FR-WORKER-004 Mesh worker URL rank 按 strong/ok/key/other/zip
-      桶序,fallthrough 循环
-    description: Mesh worker 应对返回的 URL 做 rank,按 `strong / ok / key / other / zip`
-      桶序排列;fallthrough 循环遍历候选 URL,`MeshWorkerUnsupportedResponse`
-      继续,`MeshWorkerError` 终止
+    title: FR-WORKER-004 Mesh worker URL rank 按 strong/ok/key/other/zip 桶序,fallthrough 循环
+    description: Mesh worker 应对返回的 URL 做 rank,按 `strong / ok / key / other / zip` 桶序排列;fallthrough 循环遍历候选 URL,`MeshWorkerUnsupportedResponse` 继续,`MeshWorkerError` 终止
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-004
       kind: srs
     evidence:
-      - src/framework/providers/workers/mesh_worker.py:1013-1115
-        _rank_hunyuan_3d_urls() 实现 strong/ok/key/other/zip 五桶排序
-      - src/framework/providers/workers/mesh_worker.py:1047-1051
-        strong_hits/ok_hits/key_hits/zip_hits/other_hits 桶定义
-      - src/framework/providers/workers/mesh_worker.py:445-506 _one()
-        fallthrough 循环:MeshWorkerUnsupportedResponse 与下载错误均 continue 至下一
-        URL,全耗尽后 raise
+      - src/framework/providers/workers/mesh_worker.py:1013-1115 _rank_hunyuan_3d_urls() 实现 strong/ok/key/other/zip 五桶排序
+      - src/framework/providers/workers/mesh_worker.py:1047-1051 strong_hits/ok_hits/key_hits/zip_hits/other_hits 桶定义
+      - src/framework/providers/workers/mesh_worker.py:445-506 _one() fallthrough 循环:MeshWorkerUnsupportedResponse 与下载错误均 continue 至下一 URL,全耗尽后 raise
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0064
     title: FR-WORKER-005 chunked_download_async() Range 续传,206+Content-Range 对齐校验
-    description: 下载应走 `chunked_download_async()` 带 Range 续传,续传响应必须 `206` +
-      `Content-Range` 起始偏移对齐
+    description: 下载应走 `chunked_download_async()` 带 Range 续传,续传响应必须 `206` + `Content-Range` 起始偏移对齐
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-005
       kind: srs
     evidence:
-      - src/framework/providers/_download_async.py:34-119
-        chunked_download_async() 实现 Range 续传
-      - src/framework/providers/_download_async.py:76-87 续传校验:必须 206 且
-        Content-Range 起始偏移等于 len(buf),否则丢弃 partial 重下
-      - src/framework/providers/workers/mesh_worker.py:633-642
-        _atokenhub_download() 调用 chunked_download_async
+      - src/framework/providers/_download_async.py:34-119 chunked_download_async() 实现 Range 续传
+      - src/framework/providers/_download_async.py:76-87 续传校验:必须 206 且 Content-Range 起始偏移等于 len(buf),否则丢弃 partial 重下
+      - src/framework/providers/workers/mesh_worker.py:633-642 _atokenhub_download() 调用 chunked_download_async
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0065
     title: FR-WORKER-006 Mesh worker magic bytes 二次校验 glb 分支
-    description: Mesh worker 应做 magic bytes 二次校验:`fmt == "glb"` 分支必须 `data[:4] ==
-      b"glTF"`;不符时 raise `MeshWorkerUnsupportedResponse`
+    description: Mesh worker 应做 magic bytes 二次校验:`fmt == "glb"` 分支必须 `data[:4] == b"glTF"`;不符时 raise `MeshWorkerUnsupportedResponse`
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-006
       kind: srs
     evidence:
-      - src/framework/providers/workers/mesh_worker.py:820-836
-        _build_candidate() 中 detected_fmt=='glb' 且 mesh_bytes[:4]!=b'glTF' 时
-        raise MeshWorkerUnsupportedResponse
+      - src/framework/providers/workers/mesh_worker.py:820-836 _build_candidate() 中 detected_fmt=='glb' 且 mesh_bytes[:4]!=b'glTF' 时 raise MeshWorkerUnsupportedResponse
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0066
@@ -1294,13 +1065,10 @@ requirements:
       section: FR-WORKER-007
       kind: srs
     evidence:
-      - src/framework/providers/workers/mesh_worker.py:846-862
-        _build_candidate() gltf 外部 buffer 时 _gltf_has_external_geometry()==True
-        直接 raise MeshWorkerUnsupportedResponse,不受 geometry_only 豁免
-      - "src/framework/providers/workers/mesh_worker.py:759-804
-        _gltf_has_external_geometry() 检查 buffers[].uri 是否非 data: URI"
+      - src/framework/providers/workers/mesh_worker.py:846-862 _build_candidate() gltf 外部 buffer 时 _gltf_has_external_geometry()==True 直接 raise MeshWorkerUnsupportedResponse,不受 geometry_only 豁免
+      - "src/framework/providers/workers/mesh_worker.py:759-804 _gltf_has_external_geometry() 检查 buffers[].uri 是否非 data: URI"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0067
@@ -1312,184 +1080,120 @@ requirements:
       section: FR-WORKER-008
       kind: srs
     evidence:
-      - src/framework/providers/workers/mesh_worker.py:669-681 _is_data_uri() 使用
-        value.lstrip().lower().startswith('data:') 实现大小写不敏感
-      - src/framework/providers/workers/mesh_worker.py:672-678 注释明确引用 RFC 2397
-        case-insensitive 要求
+      - src/framework/providers/workers/mesh_worker.py:669-681 _is_data_uri() 使用 value.lstrip().lower().startswith('data:') 实现大小写不敏感
+      - src/framework/providers/workers/mesh_worker.py:672-678 注释明确引用 RFC 2397 case-insensitive 要求
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0068
     title: FR-WORKER-009 tokenhub poll 单次 /query timeout clamp
-    description: 所有 tokenhub poll 循环(`hunyuan_tokenhub_adapter._th_poll` /
-      `mesh_worker._atokenhub_poll`)的单次 `/query` HTTP timeout 必须 clamp 到
-      `min(<per_poll_cap>, max(1.0, budget_s - elapsed))`,避免剩余 1s 时单次 poll 仍阻塞
-      20-30s 突破 step timeout
+    description: 所有 tokenhub poll 循环(`hunyuan_tokenhub_adapter._th_poll` / `mesh_worker._atokenhub_poll`)的单次 `/query` HTTP timeout 必须 clamp 到 `min(<per_poll_cap>, max(1.0, budget_s - elapsed))`,避免剩余 1s 时单次 poll 仍阻塞 20-30s 突破 step timeout
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-009
       kind: srs
     evidence:
-      - src/framework/providers/hunyuan_tokenhub_adapter.py:188-189 _th_poll()
-        poll_timeout = min(20.0, max(1.0, remaining))
-      - src/framework/providers/workers/mesh_worker.py:562-563 _atokenhub_poll()
-        poll_timeout = min(30.0, max(1.0, remaining))
+      - src/framework/providers/hunyuan_tokenhub_adapter.py:188-189 _th_poll() poll_timeout = min(20.0, max(1.0, remaining))
+      - src/framework/providers/workers/mesh_worker.py:562-563 _atokenhub_poll() poll_timeout = min(30.0, max(1.0, remaining))
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0069
     title: FR-WORKER-010 adapter 200+非JSON body 显式捕获并 wrap
-    description: adapter 的 200 + 非 JSON body(代理/WAF 返回 HTML)必须显式捕
-      `ValueError`/`JSONDecodeError`,wrap 为 `ProviderUnsupportedResponse` /
-      `MeshWorkerUnsupportedResponse`;原始 `JSONDecodeError` 不得逃出 try block 让 run
-      直接崩
+    description: adapter 的 200 + 非 JSON body(代理/WAF 返回 HTML)必须显式捕 `ValueError`/`JSONDecodeError`,wrap 为 `ProviderUnsupportedResponse` / `MeshWorkerUnsupportedResponse`;原始 `JSONDecodeError` 不得逃出 try block 让 run 直接崩
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-010
       kind: srs
     evidence:
-      - src/framework/providers/hunyuan_tokenhub_adapter.py:98-108 _th_post()
-        except ValueError 捕获并 wrap 为 ProviderUnsupportedResponse
-      - src/framework/providers/workers/mesh_worker.py:621-631 _apost() except
-        ValueError 捕获并 wrap 为 MeshWorkerUnsupportedResponse
+      - src/framework/providers/hunyuan_tokenhub_adapter.py:98-108 _th_post() except ValueError 捕获并 wrap 为 ProviderUnsupportedResponse
+      - src/framework/providers/workers/mesh_worker.py:621-631 _apost() except ValueError 捕获并 wrap 为 MeshWorkerUnsupportedResponse
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0070
-    title: FR-WORKER-011 audio worker baseline:ABC + AudioCandidate + 异常树 +
-      GenerateAudioExecutor 注册
-    description: 系统应支持 audio worker baseline:`AudioWorker` ABC +
-      `AudioCandidate(data, format, duration_seconds, sample_rate, metadata)` +
-      异常树(`AudioWorkerError` / `AudioWorkerTimeout` /
-      `AudioWorkerUnsupportedResponse`);`GenerateAudioExecutor` via
-      `(StepType.generate, capability_ref="audio.t2a")` 注册到 `ExecutorRegistry`(自
-      v1.7 起,OpenSpec change `comfy-agent-cli-audio-adoption`;ComfyUI 第一客户走
-      `comfy/local-audio` model id + `audio_local` alias;远端 AudioCraft worker
-      协议落地待独立 follow-on change)
+    title: FR-WORKER-011 audio worker baseline:ABC + AudioCandidate + 异常树 + GenerateAudioExecutor 注册
+    description: 系统应支持 audio worker baseline:`AudioWorker` ABC + `AudioCandidate(data, format, duration_seconds, sample_rate, metadata)` + 异常树(`AudioWorkerError` / `AudioWorkerTimeout` / `AudioWorkerUnsupportedResponse`);`GenerateAudioExecutor` via `(StepType.generate, capability_ref="audio.t2a")` 注册到 `ExecutorRegistry`(自 v1.7 起,OpenSpec change `comfy-agent-cli-audio-adoption`;ComfyUI 第一客户走 `comfy/local-audio` model id + `audio_local` alias;远端 AudioCraft worker 协议落地待独立 follow-on change)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-011
       kind: srs
     evidence:
-      - src/framework/providers/workers/audio_worker.py:39-71 AudioWorkerError /
-        AudioWorkerTimeout / AudioWorkerUnsupportedResponse 异常树
-      - src/framework/providers/workers/audio_worker.py:86-107 AudioCandidate
-        dataclass 含 data/format/metadata/duration_seconds/sample_rate
-      - src/framework/providers/workers/audio_worker.py:115-141 AudioWorker ABC
-        含 generate_audio abstractmethod
-      - src/framework/run.py:123 execs.register(GenerateAudioExecutor()) 注册到
-        ExecutorRegistry
-      - src/framework/providers/workers/comfy_worker.py:302
-        _CAPABILITY_BY_MODEL_ID['comfy/local-audio']='audio' ComfyUI 第一客户
+      - src/framework/providers/workers/audio_worker.py:39-71 AudioWorkerError / AudioWorkerTimeout / AudioWorkerUnsupportedResponse 异常树
+      - src/framework/providers/workers/audio_worker.py:86-107 AudioCandidate dataclass 含 data/format/metadata/duration_seconds/sample_rate
+      - src/framework/providers/workers/audio_worker.py:115-141 AudioWorker ABC 含 generate_audio abstractmethod
+      - src/framework/run.py:123 execs.register(GenerateAudioExecutor()) 注册到 ExecutorRegistry
+      - src/framework/providers/workers/comfy_worker.py:302 _CAPABILITY_BY_MODEL_ID['comfy/local-audio']='audio' ComfyUI 第一客户
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0071
-    title: FR-WORKER-012 video worker baseline:ABC + VideoCandidate + 异常树 +
-      GenerateVideoExecutor + BMFF 校验 + UE bridge 映射
-    description: 系统应支持 video worker baseline:`VideoWorker` ABC +
-      `VideoCandidate(data, format, metadata, duration_seconds, frame_count,
-      width, height, fps)` + 异常树(`VideoWorkerError` / `VideoWorkerTimeout` /
-      `VideoWorkerUnsupportedResponse`);`GenerateVideoExecutor` via
-      `(StepType.generate, capability_ref="video.t2v")` 注册到
-      `ExecutorRegistry`;ComfyUI 第一客户走 `comfy/local-video` model id +
-      `video_local` alias + `Vedio/Wan2.1-T2V-1.3B_native_5sec` 默认 manifest(D5
-      上游 `Vedio/` 拼写照实跟随);format mp4-only(round-2 F2 + round-3 PF3 sweep;webm
-      follow-on `comfy-video-webm-adoption`)+ BMFF strict 5-tuple header
-      validation(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len]
-      reject==1 + major_brand non-empty);UE bridge `_KIND_MAP[("video","mp4")] =
-      "file_media_source"` + `MS_` prefix + `Content/Movies/<run_id>/` packaging
-      path 分流(D12);自 v1.8 起,OpenSpec change `comfy-agent-cli-video-adoption`;远端
-      video worker(Runway / Pika / Sora)协议落地待独立 follow-on
-      `video-worker-remote-adoption`
+    title: FR-WORKER-012 video worker baseline:ABC + VideoCandidate + 异常树 + GenerateVideoExecutor + BMFF 校验 + UE bridge 映射
+    description: 系统应支持 video worker baseline:`VideoWorker` ABC + `VideoCandidate(data, format, metadata, duration_seconds, frame_count, width, height, fps)` + 异常树(`VideoWorkerError` / `VideoWorkerTimeout` / `VideoWorkerUnsupportedResponse`);`GenerateVideoExecutor` via `(StepType.generate, capability_ref="video.t2v")` 注册到 `ExecutorRegistry`;ComfyUI 第一客户走 `comfy/local-video` model id + `video_local` alias + `Vedio/Wan2.1-T2V-1.3B_native_5sec` 默认 manifest(D5 上游 `Vedio/` 拼写照实跟随);format mp4-only(round-2 F2 + round-3 PF3 sweep;webm follow-on `comfy-video-webm-adoption`)+ BMFF strict 5-tuple header validation(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject==1 + major_brand non-empty);UE bridge `_KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + `Content/Movies/<run_id>/` packaging path 分流(D12);自 v1.8 起,OpenSpec change `comfy-agent-cli-video-adoption`;远端 video worker(Runway / Pika / Sora)协议落地待独立 follow-on `video-worker-remote-adoption`
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WORKER-012
       kind: srs
     evidence:
-      - src/framework/providers/workers/video_worker.py:45-78 VideoWorkerError /
-        VideoWorkerTimeout / VideoWorkerUnsupportedResponse 异常树
-      - src/framework/providers/workers/video_worker.py:93-123 VideoCandidate
-        dataclass 含
-        data/format/metadata/duration_seconds/frame_count/width/height/fps
-      - src/framework/providers/workers/video_worker.py:131-159 VideoWorker ABC
-        含 generate_video abstractmethod
-      - src/framework/run.py:128 execs.register(GenerateVideoExecutor()) 注册到
-        ExecutorRegistry
-      - src/framework/providers/workers/comfy_worker.py:303
-        _CAPABILITY_BY_MODEL_ID['comfy/local-video']='video'
-      - src/framework/providers/workers/comfy_worker.py:1382-1411
-        _run_once_video 内 BMFF strict 5-tuple header 校验(len>=16 + ftyp +
-        box_size + major_brand)
-      - src/framework/ue_bridge/manifest_builder.py:57
-        _KIND_MAP[('video','mp4')]='file_media_source'
-      - src/framework/ue_bridge/manifest_builder.py:85
-        _PREFIX_BY_KIND['file_media_source']='MS_'
-      - src/framework/ue_bridge/manifest_builder.py:111-118 derive_drop_target()
-        video 路径分流到 Content/Movies/<run_id>/
+      - src/framework/providers/workers/video_worker.py:45-78 VideoWorkerError / VideoWorkerTimeout / VideoWorkerUnsupportedResponse 异常树
+      - src/framework/providers/workers/video_worker.py:93-123 VideoCandidate dataclass 含 data/format/metadata/duration_seconds/frame_count/width/height/fps
+      - src/framework/providers/workers/video_worker.py:131-159 VideoWorker ABC 含 generate_video abstractmethod
+      - src/framework/run.py:128 execs.register(GenerateVideoExecutor()) 注册到 ExecutorRegistry
+      - src/framework/providers/workers/comfy_worker.py:303 _CAPABILITY_BY_MODEL_ID['comfy/local-video']='video'
+      - src/framework/providers/workers/comfy_worker.py:1382-1411 _run_once_video 内 BMFF strict 5-tuple header 校验(len>=16 + ftyp + box_size + major_brand)
+      - src/framework/ue_bridge/manifest_builder.py:57 _KIND_MAP[('video','mp4')]='file_media_source'
+      - src/framework/ue_bridge/manifest_builder.py:85 _PREFIX_BY_KIND['file_media_source']='MS_'
+      - src/framework/ue_bridge/manifest_builder.py:111-118 derive_drop_target() video 路径分流到 Content/Movies/<run_id>/
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0072
     title: FR-RUNTIME-001 BudgetTracker Run级成本累计与超额终止
-    description: 系统应提供 `BudgetTracker`,Run 级累计 `cost_usd` / `prompt_tokens` /
-      `completion_tokens` / `total_tokens`,超 `total_cost_cap_usd` 合成
-      `budget_exceeded` Verdict 终止
+    description: 系统应提供 `BudgetTracker`,Run 级累计 `cost_usd` / `prompt_tokens` / `completion_tokens` / `total_tokens`,超 `total_cost_cap_usd` 合成 `budget_exceeded` Verdict 终止
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-RUNTIME-001
       kind: srs
     evidence:
-      - src/framework/runtime/budget_tracker.py:42 BudgetTracker 类定义,BudgetSpend
-        累计 total_usd + by_step + by_model + call_count
-      - src/framework/runtime/budget_tracker.py:61 record() 方法累计 cost_usd 到
-        total_usd
-      - src/framework/runtime/budget_tracker.py:80 assert_within() 超额 raise
-        BudgetExceeded
-      - src/framework/runtime/orchestrator.py:603 budget_tracker.check() 超额后
-        run.status=failed + terminate
-      - src/framework/runtime/failure_mode_map.py:140 budget_exceeded →
-        Decision.human_review_required
+      - src/framework/runtime/budget_tracker.py:42 BudgetTracker 类定义,BudgetSpend 累计 total_usd + by_step + by_model + call_count
+      - src/framework/runtime/budget_tracker.py:61 record() 方法累计 cost_usd 到 total_usd
+      - src/framework/runtime/budget_tracker.py:80 assert_within() 超额 raise BudgetExceeded
+      - src/framework/runtime/orchestrator.py:603 budget_tracker.check() 超额后 run.status=failed + terminate
+      - src/framework/runtime/failure_mode_map.py:140 budget_exceeded → Decision.human_review_required
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0073
     title: FR-RUNTIME-002 Anthropic Prompt Cache 支持
-    description: 系统应提供 Anthropic Prompt Cache 支持:`_forge_prompt_cache=True` 且
-      Anthropic 家族模型时,给首条 system + 首条大 user block 注入 `cache_control`
+    description: 系统应提供 Anthropic Prompt Cache 支持:`_forge_prompt_cache=True` 且 Anthropic 家族模型时,给首条 system + 首条大 user block 注入 `cache_control`
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-RUNTIME-002
       kind: srs
     evidence:
-      - src/framework/providers/litellm_adapter.py:347
-        _maybe_apply_prompt_cache() 函数检查 _forge_prompt_cache 标志
-      - src/framework/providers/litellm_adapter.py:358 检查
-        _is_anthropic_family(call.model)
-      - "src/framework/providers/litellm_adapter.py:369 注入 cache_control: {type:
-        ephemeral} 到 system/user block"
-      - src/framework/providers/litellm_adapter.py:420 _is_anthropic_family() 匹配
-        anthropic/ + claude- 前缀
+      - src/framework/providers/litellm_adapter.py:347 _maybe_apply_prompt_cache() 函数检查 _forge_prompt_cache 标志
+      - src/framework/providers/litellm_adapter.py:358 检查 _is_anthropic_family(call.model)
+      - "src/framework/providers/litellm_adapter.py:369 注入 cache_control: {type: ephemeral} 到 system/user block"
+      - src/framework/providers/litellm_adapter.py:420 _is_anthropic_family() 匹配 anthropic/ + claude- 前缀
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0074
     title: FR-RUNTIME-003 compact_messages 自动压缩
-    description: 系统应提供 `compact_messages()` 自动压缩:`_forge_auto_compact_tokens=N`
-      触发,保留首条 system + 末 `keep_tail_turns` 轮,中段剔除最旧
+    description: 系统应提供 `compact_messages()` 自动压缩:`_forge_auto_compact_tokens=N` 触发,保留首条 system + 末 `keep_tail_turns` 轮,中段剔除最旧
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -1498,12 +1202,10 @@ requirements:
     evidence:
       - src/framework/observability/compactor.py:78 compact_messages() 函数实现
       - src/framework/observability/compactor.py:104 保留首条 system message + tail
-      - src/framework/observability/compactor.py:116 从 middle 最旧端 pop 直至满足
-        max_tokens
-      - src/framework/providers/litellm_adapter.py:399 _maybe_auto_compact() 读取
-        _forge_auto_compact_tokens 并调用 compact_messages()
+      - src/framework/observability/compactor.py:116 从 middle 最旧端 pop 直至满足 max_tokens
+      - src/framework/providers/litellm_adapter.py:399 _maybe_auto_compact() 读取 _forge_auto_compact_tokens 并调用 compact_messages()
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0075
@@ -1515,15 +1217,12 @@ requirements:
       section: FR-RUNTIME-004
       kind: srs
     evidence:
-      - "src/framework/providers/_retry_async.py:33 with_transient_retry_async 中
-        except asyncio.CancelledError: raise 直接传播"
+      - "src/framework/providers/_retry_async.py:33 with_transient_retry_async 中 except asyncio.CancelledError: raise 直接传播"
       - src/framework/providers/_download_async.py:109 下载循环中 CancelledError 传播
-      - "src/framework/runtime/orchestrator.py:512 _aexec_one_body 的 except
-        asyncio.CancelledError: raise"
-      - src/framework/runtime/orchestrator.py:333 DAG fan-out 中 except
-        asyncio.CancelledError 取消所有任务并 raise
+      - "src/framework/runtime/orchestrator.py:512 _aexec_one_body 的 except asyncio.CancelledError: raise"
+      - src/framework/runtime/orchestrator.py:333 DAG fan-out 中 except asyncio.CancelledError 取消所有任务并 raise
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0076
@@ -1535,18 +1234,13 @@ requirements:
       section: FR-RUNTIME-005
       kind: srs
     evidence:
-      - src/framework/providers/_retry.py:33 _TRANSIENT_MARKERS 含 ssl/timed
-        out/timeout/connection reset 等
-      - src/framework/providers/_retry.py:51 _TRANSIENT_HTTP_STATUS_MARKERS 含
-        500/502/503/504
-      - src/framework/providers/_retry_async.py:19 with_transient_retry_async
-        max_attempts=2, backoff_s=2.0
-      - src/framework/providers/hunyuan_tokenhub_adapter.py:110 调用
-        with_transient_retry_async max_attempts=2, backoff_s=2.0
-      - src/framework/providers/qwen_multimodal_adapter.py:188 同样调用
-        with_transient_retry_async max_attempts=2, backoff_s=2.0
+      - src/framework/providers/_retry.py:33 _TRANSIENT_MARKERS 含 ssl/timed out/timeout/connection reset 等
+      - src/framework/providers/_retry.py:51 _TRANSIENT_HTTP_STATUS_MARKERS 含 500/502/503/504
+      - src/framework/providers/_retry_async.py:19 with_transient_retry_async max_attempts=2, backoff_s=2.0
+      - src/framework/providers/hunyuan_tokenhub_adapter.py:110 调用 with_transient_retry_async max_attempts=2, backoff_s=2.0
+      - src/framework/providers/qwen_multimodal_adapter.py:188 同样调用 with_transient_retry_async max_attempts=2, backoff_s=2.0
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0077
@@ -1558,24 +1252,17 @@ requirements:
       section: FR-RUNTIME-006
       kind: srs
     evidence:
-      - src/framework/runtime/checkpoint_store.py:66 find_hit() 检查 input_hash 匹配
-        AND artifact_hashes 一一校验
-      - src/framework/runtime/checkpoint_store.py:88 遍历
-        artifact_ids/artifact_hashes 对检查 repository.exists + hash 匹配
-      - src/framework/runtime/orchestrator.py:437 hit =
-        self.checkpoints.find_hit() cache hit 路径复用已产出 artifact_ids
-      - src/framework/run.py:178 --resume 参数加载 load_from_disk +
-        load_run_metadata 重建仓库索引
+      - src/framework/runtime/checkpoint_store.py:66 find_hit() 检查 input_hash 匹配 AND artifact_hashes 一一校验
+      - src/framework/runtime/checkpoint_store.py:88 遍历 artifact_ids/artifact_hashes 对检查 repository.exists + hash 匹配
+      - src/framework/runtime/orchestrator.py:437 hit = self.checkpoints.find_hit() cache hit 路径复用已产出 artifact_ids
+      - src/framework/run.py:178 --resume 参数加载 load_from_disk + load_run_metadata 重建仓库索引
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0078
     title: FR-RUNTIME-007 失败模式映射覆盖8类FailureMode
-    description: 失败模式映射应实装于 `src/framework/runtime/failure_mode_map.py`,覆盖 8 类
-      `FailureMode`:provider_timeout / schema_validation_fail /
-      review_below_threshold / ue_path_conflict / budget_exceeded /
-      worker_timeout / worker_error / disk_full / unsupported_response
+    description: 失败模式映射应实装于 `src/framework/runtime/failure_mode_map.py`,覆盖 8 类 `FailureMode`:provider_timeout / schema_validation_fail / review_below_threshold / ue_path_conflict / budget_exceeded / worker_timeout / worker_error / disk_full / unsupported_response
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -1588,142 +1275,103 @@ requirements:
       - src/framework/runtime/failure_mode_map.py:61 budget_exceeded 已实现
       - src/framework/runtime/failure_mode_map.py:62 disk_full 已实现
       - src/framework/runtime/failure_mode_map.py:37 unsupported_response 已实现
-      - src/framework/runtime/failure_mode_map.py:26 worker_timeout 和
-        worker_error 已实现
-      - "注意: review_below_threshold 和 ue_path_conflict 在 SRS 列出但未在 enum 中实现(Grep
-        无命中);实现超出 SRS 的 mesh/audio/video 专属 mode"
+      - src/framework/runtime/failure_mode_map.py:26 worker_timeout 和 worker_error 已实现
+      - "注意: review_below_threshold 和 ue_path_conflict 在 SRS 列出但未在 enum 中实现(Grep 无命中);实现超出 SRS 的 mesh/audio/video 专属 mode"
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0079
     title: FR-RUNTIME-008 TransitionPolicy.on_retry 被 retry_same_step 实际读取
-    description: "`TransitionPolicy.on_retry` 字段应被 `Decision.retry_same_step`
-      实际读取:有配置时跳到该 step,未配则同 step。`on_retry` 不得是死字段"
+    description: "`TransitionPolicy.on_retry` 字段应被 `Decision.retry_same_step` 实际读取:有配置时跳到该 step,未配则同 step。`on_retry` 不得是死字段"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-RUNTIME-008
       kind: srs
     evidence:
-      - "src/framework/runtime/transition_engine.py:82 if d ==
-        Decision.retry_same_step: 分支"
-      - src/framework/runtime/transition_engine.py:90 return
-        TransitionResult(next_step_id=policy.on_retry or step.step_id) 读取
-        on_retry
+      - "src/framework/runtime/transition_engine.py:82 if d == Decision.retry_same_step: 分支"
+      - src/framework/runtime/transition_engine.py:90 return TransitionResult(next_step_id=policy.on_retry or step.step_id) 读取 on_retry
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0080
     title: FR-RUNTIME-009 TransitionEngine.counters per-arun 隔离
-    description: "`TransitionEngine.counters` 应**per-arun 隔离**:`Orchestrator.arun()`
-      入口必须调 `cloned_for_run()`,确保顺序与并发的两次 `arun()` 各自拥有独立计数。`cloned_for_run()`
-      必须保留子类身份与实例属性"
+    description: "`TransitionEngine.counters` 应**per-arun 隔离**:`Orchestrator.arun()` 入口必须调 `cloned_for_run()`,确保顺序与并发的两次 `arun()` 各自拥有独立计数。`cloned_for_run()` 必须保留子类身份与实例属性"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-RUNTIME-009
       kind: srs
     evidence:
-      - src/framework/runtime/transition_engine.py:42 cloned_for_run()
-        方法:copy.copy(self) 保留子类身份+实例属性,再重置 counters=TransitionCounters()
-      - src/framework/runtime/transition_engine.py:53 clone.counters =
-        TransitionCounters() 新鲜计数器
-      - src/framework/runtime/orchestrator.py:156 transitions =
-        self.transitions.cloned_for_run() 每次 arun() 入口调用
+      - src/framework/runtime/transition_engine.py:42 cloned_for_run() 方法:copy.copy(self) 保留子类身份+实例属性,再重置 counters=TransitionCounters()
+      - src/framework/runtime/transition_engine.py:53 clone.counters = TransitionCounters() 新鲜计数器
+      - src/framework/runtime/orchestrator.py:156 transitions = self.transitions.cloned_for_run() 每次 arun() 入口调用
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0081
     title: FR-RUNTIME-010 先写 cost_usd 到 exec_result.metrics 再 checkpoints.record
-    description: Step 完成后,Orchestrator 必须**先**估算并把 `cost_usd` 写入
-      `exec_result.metrics`,**再** `checkpoints.record(metrics=...)` 落盘,以便跨进程
-      resume 能从 `cp.metrics["cost_usd"]` 回放预算
+    description: Step 完成后,Orchestrator 必须**先**估算并把 `cost_usd` 写入 `exec_result.metrics`,**再** `checkpoints.record(metrics=...)` 落盘,以便跨进程 resume 能从 `cp.metrics["cost_usd"]` 回放预算
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-RUNTIME-010
       kind: srs
     evidence:
-      - src/framework/runtime/orchestrator.py:557 先估算 cost_usd 并写入
-        exec_result.metrics["cost_usd"]
-      - src/framework/runtime/orchestrator.py:579
-        exec_result.metrics["cost_usd"] = cost_usd 写入 metrics
-      - src/framework/runtime/orchestrator.py:581 cp =
-        self.checkpoints.record(..., metrics=exec_result.metrics) 之后才落盘
-      - 注释 src/framework/runtime/orchestrator.py:552 明确说明 Estimate cost BEFORE
-        recording the checkpoint
+      - src/framework/runtime/orchestrator.py:557 先估算 cost_usd 并写入 exec_result.metrics["cost_usd"]
+      - src/framework/runtime/orchestrator.py:579 exec_result.metrics["cost_usd"] = cost_usd 写入 metrics
+      - src/framework/runtime/orchestrator.py:581 cp = self.checkpoints.record(..., metrics=exec_result.metrics) 之后才落盘
+      - 注释 src/framework/runtime/orchestrator.py:552 明确说明 Estimate cost BEFORE recording the checkpoint
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0082
     title: FR-RUNTIME-011 Cache-hit 路径 cost_usd 回放到 BudgetTracker 并去重
-    description: Cache-hit 路径(`find_hit` 命中)在 `task.budget_policy` 非 None 时,应把
-      `cp.metrics["cost_usd"]` 重新 `record` 到 BudgetTracker,按 `spend.by_step`
-      去重(同进程重入不双计,跨进程 fresh tracker 自动回放)
+    description: Cache-hit 路径(`find_hit` 命中)在 `task.budget_policy` 非 None 时,应把 `cp.metrics["cost_usd"]` 重新 `record` 到 BudgetTracker,按 `spend.by_step` 去重(同进程重入不双计,跨进程 fresh tracker 自动回放)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-RUNTIME-011
       kind: srs
     evidence:
-      - "src/framework/runtime/orchestrator.py:451 if task_obj.budget_policy is
-        not None: cache hit 路径检查 budget_policy"
-      - src/framework/runtime/orchestrator.py:452 cached_cost = (hit.metrics or
-        {}).get("cost_usd") 读取缓存成本
-      - src/framework/runtime/orchestrator.py:453 already_recorded =
-        budget_tracker.spend.by_step.get(step.step_id, 0.0) 去重检查
-      - "src/framework/runtime/orchestrator.py:456 if cached_cost > 0 and
-        already_recorded == 0: budget_tracker.record(...) 仅未记录时才录入"
+      - "src/framework/runtime/orchestrator.py:451 if task_obj.budget_policy is not None: cache hit 路径检查 budget_policy"
+      - src/framework/runtime/orchestrator.py:452 cached_cost = (hit.metrics or {}).get("cost_usd") 读取缓存成本
+      - src/framework/runtime/orchestrator.py:453 already_recorded = budget_tracker.spend.by_step.get(step.step_id, 0.0) 去重检查
+      - "src/framework/runtime/orchestrator.py:456 if cached_cost > 0 and already_recorded == 0: budget_tracker.record(...) 仅未记录时才录入"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0083
     title: FR-RUNTIME-012 UnsupportedResponse 三层 short-circuit
-    description: "`*UnsupportedResponse` 异常必须在三层显式
-      short-circuit:(1)`with_transient_retry_async` 的 `transient_check`
-      排除;(2)`CapabilityRouter` 4 方法在 `except ProviderError` **之前**单独 `except
-      ProviderUnsupportedResponse: raise`;(3)4 个 executor 的 `_should_retry` 首行返回
-      False"
+    description: "`*UnsupportedResponse` 异常必须在三层显式 short-circuit:(1)`with_transient_retry_async` 的 `transient_check` 排除;(2)`CapabilityRouter` 4 方法在 `except ProviderError` **之前**单独 `except ProviderUnsupportedResponse: raise`;(3)4 个 executor 的 `_should_retry` 首行返回 False"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-RUNTIME-012
       kind: srs
     evidence:
-      - src/framework/providers/hunyuan_tokenhub_adapter.py:118 transient_check
-        lambda 中 not isinstance(e, ProviderUnsupportedResponse) 排除
-      - src/framework/providers/qwen_multimodal_adapter.py:194 同款
-        transient_check 排除 ProviderUnsupportedResponse
-      - "src/framework/providers/capability_router.py:97 acompletion: except
-        ProviderUnsupportedResponse: raise 在 except ProviderError 之前"
-      - "src/framework/providers/capability_router.py:139 astructured: 同款 except
-        ProviderUnsupportedResponse: raise"
+      - src/framework/providers/hunyuan_tokenhub_adapter.py:118 transient_check lambda 中 not isinstance(e, ProviderUnsupportedResponse) 排除
+      - src/framework/providers/qwen_multimodal_adapter.py:194 同款 transient_check 排除 ProviderUnsupportedResponse
+      - "src/framework/providers/capability_router.py:97 acompletion: except ProviderUnsupportedResponse: raise 在 except ProviderError 之前"
+      - "src/framework/providers/capability_router.py:139 astructured: 同款 except ProviderUnsupportedResponse: raise"
       - "src/framework/providers/capability_router.py:175 aimage_edit: 同款 raise"
-      - "src/framework/providers/capability_router.py:208 aimage_generation: 同款
-        raise"
-      - "src/framework/runtime/executors/generate_mesh.py:464 _should_retry:
-        isinstance(exc, MeshWorkerUnsupportedResponse) return False"
-      - "src/framework/runtime/executors/generate_image.py:503 _should_retry:
-        isinstance ProviderUnsupportedResponse/WorkerUnsupportedResponse return
-        False"
-      - "src/framework/runtime/executors/generate_structured.py:163
-        _should_retry: isinstance ProviderUnsupportedResponse return False"
-      - "src/framework/runtime/executors/generate_image_edit.py:220
-        _should_retry: isinstance ProviderUnsupportedResponse return False"
+      - "src/framework/providers/capability_router.py:208 aimage_generation: 同款 raise"
+      - "src/framework/runtime/executors/generate_mesh.py:464 _should_retry: isinstance(exc, MeshWorkerUnsupportedResponse) return False"
+      - "src/framework/runtime/executors/generate_image.py:503 _should_retry: isinstance ProviderUnsupportedResponse/WorkerUnsupportedResponse return False"
+      - "src/framework/runtime/executors/generate_structured.py:163 _should_retry: isinstance ProviderUnsupportedResponse return False"
+      - "src/framework/runtime/executors/generate_image_edit.py:220 _should_retry: isinstance ProviderUnsupportedResponse return False"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0084
     title: FR-OBS-001 EventBus loop-aware 线程安全
-    description: 系统应提供 `EventBus`,loop-aware(`Subscription` 捕获 owning
-      loop),线程安全(`_subs` 用 `threading.Lock`),跨线程发事件通过
-      `loop.call_soon_threadsafe`
+    description: 系统应提供 `EventBus`,loop-aware(`Subscription` 捕获 owning loop),线程安全(`_subs` 用 `threading.Lock`),跨线程发事件通过 `loop.call_soon_threadsafe`
     status: implemented
     source:
       document: docs/requirements/SRS.md
@@ -1731,83 +1379,64 @@ requirements:
       kind: srs
     evidence:
       - src/framework/observability/event_bus.py:49 EventBus 类定义
-      - src/framework/observability/event_bus.py:59 self._lock =
-        threading.Lock() 保护 _subs
-      - src/framework/observability/event_bus.py:122 Subscription.__init__ 中
-        self._loop = asyncio.get_running_loop() 捕获 owning loop
-      - src/framework/observability/event_bus.py:90
-        loop.call_soon_threadsafe(self._put_on_queue, queue, event) 跨线程发事件
+      - src/framework/observability/event_bus.py:59 self._lock = threading.Lock() 保护 _subs
+      - src/framework/observability/event_bus.py:122 Subscription.__init__ 中 self._loop = asyncio.get_running_loop() 捕获 owning loop
+      - src/framework/observability/event_bus.py:90 loop.call_soon_threadsafe(self._put_on_queue, queue, event) 跨线程发事件
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0085
     title: FR-OBS-002 ProgressEvent schema 覆盖多种事件类型
-    description: 系统应提供 `ProgressEvent` schema,覆盖 `step_start` / `step_progress` /
-      `step_done` / `adapter_poll` / `worker_poll` / `run_start` / `run_done`
-      等事件类型
+    description: 系统应提供 `ProgressEvent` schema,覆盖 `step_start` / `step_progress` / `step_done` / `adapter_poll` / `worker_poll` / `run_start` / `run_done` 等事件类型
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-OBS-002
       kind: srs
     evidence:
-      - "src/framework/observability/event_bus.py:36 ProgressEvent Pydantic
-        model 定义,phase: str 开放字段"
+      - "src/framework/observability/event_bus.py:36 ProgressEvent Pydantic model 定义,phase: str 开放字段"
       - src/framework/runtime/orchestrator.py:419 phase="step_start" 发出
       - src/framework/runtime/orchestrator.py:637 phase="step_done" 发出
-      - src/framework/providers/workers/mesh_worker.py:582 phase="mesh_poll"
-        发出(worker_poll 语义)
-      - src/framework/providers/hunyuan_tokenhub_adapter.py:201
-        phase="tokenhub_poll" 发出(adapter_poll 语义)
-      - "注意: run_start/run_done/step_progress/adapter_poll/worker_poll 名称未精确匹配
-        SRS 枚举,phase 字段为开放 str 类型"
+      - src/framework/providers/workers/mesh_worker.py:582 phase="mesh_poll" 发出(worker_poll 语义)
+      - src/framework/providers/hunyuan_tokenhub_adapter.py:201 phase="tokenhub_poll" 发出(adapter_poll 语义)
+      - "注意: run_start/run_done/step_progress/adapter_poll/worker_poll 名称未精确匹配 SRS 枚举,phase 字段为开放 str 类型"
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0086
     title: FR-OBS-003 WebSocket 进度推送 server 两个端点
-    description: 系统应提供 WebSocket 进度推送 server(`src/framework/server/ws_server.py`),支持
-      `/ws/run/{run_id}` 与 `/ws/step/{run_id}/{step_id}` 端点
+    description: 系统应提供 WebSocket 进度推送 server(`src/framework/server/ws_server.py`),支持 `/ws/run/{run_id}` 与 `/ws/step/{run_id}/{step_id}` 端点
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-OBS-003
       kind: srs
     evidence:
-      - src/framework/server/ws_server.py:121 Starlette routes 注册两个
-        WebSocketRoute
-      - src/framework/server/ws_server.py:125
-        WebSocketRoute("/ws/runs/{run_id}", ws_run)
-      - src/framework/server/ws_server.py:126
-        WebSocketRoute("/ws/runs/{run_id}/steps/{step_id}", ws_step)
-      - "注意: 实际路径为 /ws/runs/{run_id} 和 /ws/runs/{run_id}/steps/{step_id},SRS 写的是
-        /ws/run/{run_id} 和 /ws/step/{run_id}/{step_id},有命名偏差但功能已实现"
+      - src/framework/server/ws_server.py:121 Starlette routes 注册两个 WebSocketRoute
+      - src/framework/server/ws_server.py:125 WebSocketRoute("/ws/runs/{run_id}", ws_run)
+      - src/framework/server/ws_server.py:126 WebSocketRoute("/ws/runs/{run_id}/steps/{step_id}", ws_step)
+      - "注意: 实际路径为 /ws/runs/{run_id} 和 /ws/runs/{run_id}/steps/{step_id},SRS 写的是 /ws/run/{run_id} 和 /ws/step/{run_id}/{step_id},有命名偏差但功能已实现"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0087
     title: FR-OBS-004 WS handler asyncio.wait FIRST_COMPLETED 防泄露 Subscription
-    description: WS handler 应通过 `asyncio.wait(FIRST_COMPLETED)` 同时等事件和
-      `receive_disconnect`,空闲期客户端断连不得留泄露 `Subscription`
+    description: WS handler 应通过 `asyncio.wait(FIRST_COMPLETED)` 同时等事件和 `receive_disconnect`,空闲期客户端断连不得留泄露 `Subscription`
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-OBS-004
       kind: srs
     evidence:
-      - src/framework/server/ws_server.py:57 receive_task =
-        asyncio.create_task(_await_disconnect(ws)) 并发等断连
-      - src/framework/server/ws_server.py:61 await asyncio.wait({evt_task,
-        receive_task}, return_when=asyncio.FIRST_COMPLETED)
-      - src/framework/server/ws_server.py:65 receive_task in done_set 检测到断连时取消
-        evt_task 并 return
-      - "src/framework/server/ws_server.py:107 finally: await sub.aclose() 保证
-        Subscription 清理"
+      - src/framework/server/ws_server.py:57 receive_task = asyncio.create_task(_await_disconnect(ws)) 并发等断连
+      - src/framework/server/ws_server.py:61 await asyncio.wait({evt_task, receive_task}, return_when=asyncio.FIRST_COMPLETED)
+      - src/framework/server/ws_server.py:65 receive_task in done_set 检测到断连时取消 evt_task 并 return
+      - "src/framework/server/ws_server.py:107 finally: await sub.aclose() 保证 Subscription 清理"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0088
@@ -1819,15 +1448,12 @@ requirements:
       section: FR-OBS-005
       kind: srs
     evidence:
-      - src/framework/observability/tracing.py:17 configure_tracing() 函数,可选初始化
-        OTel SDK
+      - src/framework/observability/tracing.py:17 configure_tracing() 函数,可选初始化 OTel SDK
       - src/framework/observability/tracing.py:38 ImportError 时静默跳过 (tracing 可选)
-      - src/framework/observability/tracing.py:58 span() context
-        manager,tracer=None 时 no-op
-      - src/framework/run.py:166 configure_tracing(console=args.trace_console)
-        CLI 入口调用
+      - src/framework/observability/tracing.py:58 span() context manager,tracer=None 时 no-op
+      - src/framework/run.py:166 configure_tracing(console=args.trace_console) CLI 入口调用
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0089
@@ -1839,13 +1465,11 @@ requirements:
       section: FR-OBS-006
       kind: srs
     evidence:
-      - src/framework/run.py:157 p.add_argument("--serve", action="store_true",
-        help="expose a WebSocket server...")
+      - src/framework/run.py:157 p.add_argument("--serve", action="store_true", help="expose a WebSocket server...")
       - "src/framework/run.py:194 if args.serve: return _serve_run(...)"
-      - src/framework/run.py:297 _serve_run() 函数启动 uvicorn + EventBus +
-        orchestrator 并发运行
+      - src/framework/run.py:297 _serve_run() 函数启动 uvicorn + EventBus + orchestrator 并发运行
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0090
@@ -1857,12 +1481,10 @@ requirements:
       section: NFR-PERF-001
       kind: srs
     evidence:
-      - src/framework/runtime/orchestrator.py:278-331 DAG
-        fan-out用asyncio.create_task+asyncio.wait(FIRST_COMPLETED)并发执行ready_ids中的多个step
-      - tests/integration/test_dag_concurrency.py:110-121
-        test_dag_fans_out_leaves_concurrently — 3 leaf各0.2s并发,断言elapsed<0.6s
+      - src/framework/runtime/orchestrator.py:278-331 DAG fan-out用asyncio.create_task+asyncio.wait(FIRST_COMPLETED)并发执行ready_ids中的多个step
+      - tests/integration/test_dag_concurrency.py:110-121 test_dag_fans_out_leaves_concurrently — 3 leaf各0.2s并发,断言elapsed<0.6s
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0091
@@ -1874,29 +1496,24 @@ requirements:
       section: NFR-PERF-002
       kind: srs
     evidence:
-      - src/framework/review_engine/chief_judge.py:57-64
-        ajudge_with_panel用asyncio.gather(*[self._judge.ajudge(...)for policy in
-        panel_policies])
-      - tests/unit/test_chief_judge_parallel.py:69-102
-        test_panel_runs_concurrently — 3 judge各0.2s,断言elapsed<0.4s
+      - src/framework/review_engine/chief_judge.py:57-64 ajudge_with_panel用asyncio.gather(*[self._judge.ajudge(...)for policy in panel_policies])
+      - tests/unit/test_chief_judge_parallel.py:69-102 test_panel_runs_concurrently — 3 judge各0.2s,断言elapsed<0.4s
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0092
     title: NFR-PERF-003 多候选并行通过asyncio.gather真并发
-    description: 多候选并行(`parallel_candidates=True`)应通过 `asyncio.gather` 真并发 | N 候选,每条
-      T → 总延迟 ≤ T × 1.2
+    description: 多候选并行(`parallel_candidates=True`)应通过 `asyncio.gather` 真并发 | N 候选,每条 T → 总延迟 ≤ T × 1.2
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: NFR-PERF-003
       kind: srs
     evidence:
-      - src/framework/runtime/executors/generate_image.py:361-372
-        parallel=True且num>1时asyncio.gather(*tasks)并发N个aimage_generation调用
+      - src/framework/runtime/executors/generate_image.py:361-372 parallel=True且num>1时asyncio.gather(*tasks)并发N个aimage_generation调用
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0093
@@ -1909,10 +1526,9 @@ requirements:
       kind: srs
     evidence:
       - src/framework/providers/_download_async.py:21 _CHUNK_SIZE = 1024 * 1024
-      - src/framework/providers/_download_async.py:99 async for chunk in
-        resp.aiter_bytes(_CHUNK_SIZE)
+      - src/framework/providers/_download_async.py:99 async for chunk in resp.aiter_bytes(_CHUNK_SIZE)
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0094
@@ -1924,10 +1540,9 @@ requirements:
       section: NFR-PERF-005
       kind: srs
     evidence:
-      - pyproject.toml:52-56 pytest配置无全局timeout gate;无自动化18s守门测试;当前1139用例collect
-        0.39s;时间目标为CI运营约定而非代码强制机制,机制侧实现存在(全部为纯unittest/asyncio无网络调用)
+      - pyproject.toml:52-56 pytest配置无全局timeout gate;无自动化18s守门测试;当前1139用例collect 0.39s;时间目标为CI运营约定而非代码强制机制,机制侧实现存在(全部为纯unittest/asyncio无网络调用)
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0095
@@ -1939,14 +1554,11 @@ requirements:
       section: NFR-REL-001
       kind: srs
     evidence:
-      - src/framework/runtime/failure_mode_map.py:151-239
-        classify()覆盖Provider*/Worker*/SchemaValidation/OSError(errno=28)全部可分类异常类型
-      - src/framework/runtime/orchestrator.py:514-518
-        classify返回None的异常原样re-raise(未分类直接暴露给调用者,符合不隐藏语义)
-      - src/framework/runtime/failure_mode_map.py:72-148
-        DEFAULT_MAP覆盖所有FailureMode枚举值,每个mode有明确Decision
+      - src/framework/runtime/failure_mode_map.py:151-239 classify()覆盖Provider*/Worker*/SchemaValidation/OSError(errno=28)全部可分类异常类型
+      - src/framework/runtime/orchestrator.py:514-518 classify返回None的异常原样re-raise(未分类直接暴露给调用者,符合不隐藏语义)
+      - src/framework/runtime/failure_mode_map.py:72-148 DEFAULT_MAP覆盖所有FailureMode枚举值,每个mode有明确Decision
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0096
@@ -1958,13 +1570,11 @@ requirements:
       section: NFR-REL-002
       kind: srs
     evidence:
-      - src/framework/runtime/failure_mode_map.py:73-76
-        FailureMode.provider_timeout→Decision.retry_same_step
-      - src/framework/runtime/failure_mode_map.py:77-80
-        FailureMode.provider_error→Decision.fallback_model
+      - src/framework/runtime/failure_mode_map.py:73-76 FailureMode.provider_timeout→Decision.retry_same_step
+      - src/framework/runtime/failure_mode_map.py:77-80 FailureMode.provider_error→Decision.fallback_model
       - src/framework/core/policies.py:20 TransitionPolicy.max_retries=2默认值
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0097
@@ -1976,13 +1586,11 @@ requirements:
       section: NFR-REL-003
       kind: srs
     evidence:
-      - src/framework/runtime/failure_mode_map.py:81-88
-        schema_validation_fail和worker_timeout→Decision.retry_same_step
+      - src/framework/runtime/failure_mode_map.py:81-88 schema_validation_fail和worker_timeout→Decision.retry_same_step
       - src/framework/core/policies.py:20 TransitionPolicy.max_retries默认=2
-      - src/framework/runtime/transition_engine.py:82-90
-        inc_retry后count>max_retries时terminated=True
+      - src/framework/runtime/transition_engine.py:82-90 inc_retry后count>max_retries时terminated=True
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0098
@@ -1994,35 +1602,27 @@ requirements:
       section: NFR-REL-004
       kind: srs
     evidence:
-      - src/framework/runtime/failure_mode_map.py:140-143
-        DEFAULT_MAP[budget_exceeded]→Decision.human_review_required
-      - src/framework/runtime/orchestrator.py:603-617
-        budget超限后记录failure_event(decision=human_review_required)并return
-        _StepOutcome(terminate=True);此路径shortcut直接终止而未显式调用transitions.on_verdict,但FailureModeMap映射存在且功能语义等价
-      - tests/unit/test_codex_audit_fixes.py:1120-1123
-        验证budget_exceeded路径run.status=failed+last_failure_mode=budget_exceeded
+      - src/framework/runtime/failure_mode_map.py:140-143 DEFAULT_MAP[budget_exceeded]→Decision.human_review_required
+      - src/framework/runtime/orchestrator.py:603-617 budget超限后记录failure_event(decision=human_review_required)并return _StepOutcome(terminate=True);此路径shortcut直接终止而未显式调用transitions.on_verdict,但FailureModeMap映射存在且功能语义等价
+      - tests/unit/test_codex_audit_fixes.py:1120-1123 验证budget_exceeded路径run.status=failed+last_failure_mode=budget_exceeded
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0099
     title: NFR-REL-005 unsupported_response走abort_or_fallback不回same step重计费
-    description: "`unsupported_response` 应走 `abort_or_fallback`(honour
-      `on_fallback`,未配则终止),绝不回 same step 重提重计费"
+    description: "`unsupported_response` 应走 `abort_or_fallback`(honour `on_fallback`,未配则终止),绝不回 same step 重提重计费"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: NFR-REL-005
       kind: srs
     evidence:
-      - src/framework/runtime/failure_mode_map.py:93-98
-        unsupported_response→Decision.abort_or_fallback
-      - src/framework/runtime/transition_engine.py:101-116
-        abort_or_fallback:有on_fallback→转目标,无→terminated=True,绝不返回step.step_id
-      - tests/unit/test_failure_mode_map.py:96-207 test验证result.next_step_id is
-        None且result.terminated is True
+      - src/framework/runtime/failure_mode_map.py:93-98 unsupported_response→Decision.abort_or_fallback
+      - src/framework/runtime/transition_engine.py:101-116 abort_or_fallback:有on_fallback→转目标,无→terminated=True,绝不返回step.step_id
+      - tests/unit/test_failure_mode_map.py:96-207 test验证result.next_step_id is None且result.terminated is True
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0100
@@ -2034,13 +1634,10 @@ requirements:
       section: NFR-REL-006
       kind: srs
     evidence:
-      - src/framework/runtime/orchestrator.py:304-337
-        asyncio.wait(FIRST_COMPLETED)循环检测first_exc,对pending_tasks中每个p.cancel()后break,line
-        344-348 raise first_exc
-      - tests/unit/test_cascade_cancel.py:256-304
-        test_dag_terminate_true_cancels_sibling验证slow sibling artifact未提交
+      - src/framework/runtime/orchestrator.py:304-337 asyncio.wait(FIRST_COMPLETED)循环检测first_exc,对pending_tasks中每个p.cancel()后break,line 344-348 raise first_exc
+      - tests/unit/test_cascade_cancel.py:256-304 test_dag_terminate_true_cancels_sibling验证slow sibling artifact未提交
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0101
@@ -2052,12 +1649,10 @@ requirements:
       section: NFR-REL-007
       kind: srs
     evidence:
-      - src/framework/runtime/checkpoint_store.py:66-95
-        find_hit()验证input_hash+每个artifact的content hash,任一不符返回None
-      - tests/unit/test_checkpoint_store.py:50-60
-        test_miss_when_artifact_hash_drifts — 篡改hash后find_hit返回None
+      - src/framework/runtime/checkpoint_store.py:66-95 find_hit()验证input_hash+每个artifact的content hash,任一不符返回None
+      - tests/unit/test_checkpoint_store.py:50-60 test_miss_when_artifact_hash_drifts — 篡改hash后find_hit返回None
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0102
@@ -2069,39 +1664,29 @@ requirements:
       section: NFR-REL-008
       kind: srs
     evidence:
-      - src/framework/runtime/failure_mode_map.py:237-238
-        classify:OSError(errno==28)→FailureMode.disk_full
-      - src/framework/runtime/failure_mode_map.py:144-147
-        DEFAULT_MAP[disk_full]→Decision.rollback
-      - src/framework/runtime/transition_engine.py:117-119
-        Decision.rollback→on_rollback或terminated=True
-      - tests/unit/test_failure_mode_map.py:214-217
-        test_classify_disk_full_via_oserror
+      - src/framework/runtime/failure_mode_map.py:237-238 classify:OSError(errno==28)→FailureMode.disk_full
+      - src/framework/runtime/failure_mode_map.py:144-147 DEFAULT_MAP[disk_full]→Decision.rollback
+      - src/framework/runtime/transition_engine.py:117-119 Decision.rollback→on_rollback或terminated=True
+      - tests/unit/test_failure_mode_map.py:214-217 test_classify_disk_full_via_oserror
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0103
     title: NFR-REL-009 DAG fan-out期间find_by_producer用list()快照,dump不吞异常
-    description: DAG fan-out 期间,`ArtifactRepository.find_by_producer` 必须用 `list()`
-      snapshot 迭代,避免 worker 线程 `put()` 与 main loop dump 竞态触发 `dictionary changed
-      size during iteration`;dump 调用不得吞写盘异常(否则 resume cache miss 静默)
+    description: DAG fan-out 期间,`ArtifactRepository.find_by_producer` 必须用 `list()` snapshot 迭代,避免 worker 线程 `put()` 与 main loop dump 竞态触发 `dictionary changed size during iteration`;dump 调用不得吞写盘异常(否则 resume cache miss 静默)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: NFR-REL-009
       kind: srs
     evidence:
-      - src/framework/artifact_store/repository.py:145-156
-        find_by_producer()中for a in list(self._artifacts.values())使用list()快照
-      - src/framework/artifact_store/repository.py:170-184
-        dump_run_metadata()无try/except,write_text的OSError正常传播
-      - src/framework/runtime/orchestrator.py:649-669
-        _dump_run_artifacts_if_possible注释明确write errors propagate
-      - tests/unit/test_codex_audit_fixes.py:1126-1175
-        test_find_by_producer_safe_under_concurrent_put并发写入压测
+      - src/framework/artifact_store/repository.py:145-156 find_by_producer()中for a in list(self._artifacts.values())使用list()快照
+      - src/framework/artifact_store/repository.py:170-184 dump_run_metadata()无try/except,write_text的OSError正常传播
+      - src/framework/runtime/orchestrator.py:649-669 _dump_run_artifacts_if_possible注释明确write errors propagate
+      - tests/unit/test_codex_audit_fixes.py:1126-1175 test_find_by_producer_safe_under_concurrent_put并发写入压测
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0104
@@ -2113,12 +1698,10 @@ requirements:
       section: NFR-REPRO-001
       kind: srs
     evidence:
-      - src/framework/runtime/executors/generate_image.py:74-76
-        seed为None且determinism_policy.seed_propagation=True时取cfg.base_seed(默认0)向下传递
-      - src/framework/core/policies.py:111-114
-        DeterminismPolicy定义,seed_propagation默认True
+      - src/framework/runtime/executors/generate_image.py:74-76 seed为None且determinism_policy.seed_propagation=True时取cfg.base_seed(默认0)向下传递
+      - src/framework/core/policies.py:111-114 DeterminismPolicy定义,seed_propagation默认True
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0105
@@ -2130,13 +1713,10 @@ requirements:
       section: NFR-REPRO-002
       kind: srs
     evidence:
-      - src/framework/core/policies.py:113
-        DeterminismPolicy.model_version_lock=True字段存在
-      - docs/acceptance/acceptance_report.md:271 验收方式为bundle
-        schema校验(bundle里显式写死model_id);运行时无动态版本漂移拦截代码,enforcement是约定而非runtime
-        gate
+      - src/framework/core/policies.py:113 DeterminismPolicy.model_version_lock=True字段存在
+      - docs/acceptance/acceptance_report.md:271 验收方式为bundle schema校验(bundle里显式写死model_id);运行时无动态版本漂移拦截代码,enforcement是约定而非runtime gate
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0106
@@ -2148,35 +1728,27 @@ requirements:
       section: NFR-REPRO-003
       kind: srs
     evidence:
-      - src/framework/runtime/checkpoint_store.py:82-94 find_hit()无条件校验artifact
-        hash(always-on,不读hash_verify_on_resume字段值)
-      - src/framework/core/policies.py:114
-        DeterminismPolicy.hash_verify_on_resume=True字段定义
-      - tests/unit/test_checkpoint_store.py:50-60
-        test_miss_when_artifact_hash_drifts验证hash不匹配→cache miss→步骤重执行
+      - src/framework/runtime/checkpoint_store.py:82-94 find_hit()无条件校验artifact hash(always-on,不读hash_verify_on_resume字段值)
+      - src/framework/core/policies.py:114 DeterminismPolicy.hash_verify_on_resume=True字段定义
+      - tests/unit/test_checkpoint_store.py:50-60 test_miss_when_artifact_hash_drifts验证hash不匹配→cache miss→步骤重执行
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0107
     title: NFR-REPRO-004 同一Task+seed+model_version两次Run产出相同结构化Artifact
-    description: 同一 Task + seed + model_version,两次独立 Run 应产出相同结构化 Artifact(图像 / 音频因
-      provider 侧随机性允许差异,但 hash 可追溯)
+    description: 同一 Task + seed + model_version,两次独立 Run 应产出相同结构化 Artifact(图像 / 音频因 provider 侧随机性允许差异,但 hash 可追溯)
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: NFR-REPRO-004
       kind: srs
     evidence:
-      - src/framework/artifact_store/hashing.py
-        hash_inputs()对step_id+capability_ref+config+inputs计算确定性hash确保相同输入→相同key
-      - src/framework/runtime/checkpoint_store.py:40-53
-        record()持久化artifact_hash,resume时hash可追溯
-      - tests/integration/test_p0_mock_linear.py:53-54
-        test_second_run_hits_checkpoint_cache —
-        FakeAdapter确定性输出+相同输入两次run完全命中cache证明结构等价
+      - src/framework/artifact_store/hashing.py hash_inputs()对step_id+capability_ref+config+inputs计算确定性hash确保相同输入→相同key
+      - src/framework/runtime/checkpoint_store.py:40-53 record()持久化artifact_hash,resume时hash可追溯
+      - tests/integration/test_p0_mock_linear.py:53-54 test_second_run_hits_checkpoint_cache — FakeAdapter确定性输出+相同输入两次run完全命中cache证明结构等价
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0108
@@ -2188,12 +1760,11 @@ requirements:
       section: NFR-SEC-001
       kind: srs
     evidence:
-      - src/framework/observability/secrets.py:41-49 hydrate_env() 从 .env 文件合并到
-        os.environ
+      - src/framework/observability/secrets.py:41-49 hydrate_env() 从 .env 文件合并到 os.environ
       - src/framework/run.py:165 main() 调用 hydrate_env(path=args.env_file)
       - config/models.yaml:46,50,55,58 所有 provider 只写 api_key_env 字段名,无任何 key 明文
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0109
@@ -2205,16 +1776,12 @@ requirements:
       section: NFR-SEC-002
       kind: srs
     evidence:
-      - src/framework/observability/secrets.py:1-6 模块文档声明暴露 redact() 保证 keys
-        不出现在 logs/trace/errors
-      - src/framework/observability/secrets.py:61-67 redact() 函数返回 keep 位前缀 +
-        星号掩码
-      - src/framework/observability/secrets.py:70-78 redact_mapping() 对 dict 中敏感
-        key 批量脱敏
-      - src/framework/observability/secrets.py:15-17 SENSITIVE_NAME_PATTERN 覆盖
-        API_KEY/TOKEN/SECRET/PASSWORD/PASSWD/BEARER
+      - src/framework/observability/secrets.py:1-6 模块文档声明暴露 redact() 保证 keys 不出现在 logs/trace/errors
+      - src/framework/observability/secrets.py:61-67 redact() 函数返回 keep 位前缀 + 星号掩码
+      - src/framework/observability/secrets.py:70-78 redact_mapping() 对 dict 中敏感 key 批量脱敏
+      - src/framework/observability/secrets.py:15-17 SENSITIVE_NAME_PATTERN 覆盖 API_KEY/TOKEN/SECRET/PASSWORD/PASSWD/BEARER
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0110
@@ -2226,15 +1793,11 @@ requirements:
       section: NFR-SEC-003
       kind: srs
     evidence:
-      - src/framework/observability/event_bus.py:36-43 ProgressEvent schema
-        字段全集:run_id/step_id/phase/elapsed_s/progress_pct/raw/timestamp — 无任何
-        api_key/token 字段
-      - src/framework/observability/tracing.py:59-72 span() 只设置调用方传入的
-        attrs,运行时仅传入 run_id/step_id/step_type 等上下文,不传密钥
-      - src/framework/runtime/orchestrator.py:418-421 step_start 事件 raw 仅含
-        capability_ref + risk_level
+      - src/framework/observability/event_bus.py:36-43 ProgressEvent schema 字段全集:run_id/step_id/phase/elapsed_s/progress_pct/raw/timestamp — 无任何 api_key/token 字段
+      - src/framework/observability/tracing.py:59-72 span() 只设置调用方传入的 attrs,运行时仅传入 run_id/step_id/step_type 等上下文,不传密钥
+      - src/framework/runtime/orchestrator.py:418-421 step_start 事件 raw 仅含 capability_ref + risk_level
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0111
@@ -2247,7 +1810,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0112
@@ -2259,11 +1822,10 @@ requirements:
       section: NFR-SEC-005
       kind: srs
     evidence:
-      - "src/framework/server/ws_server.py:131 run_server() 签名默认参数 host: str =
-        '127.0.0.1'"
+      - "src/framework/server/ws_server.py:131 run_server() 签名默认参数 host: str = '127.0.0.1'"
       - src/framework/run.py:162 argparse --serve-host default='127.0.0.1'
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0113
@@ -2276,14 +1838,11 @@ requirements:
       kind: srs
     evidence:
       - src/framework/core/task.py:84 Run.run_id 字段声明
-      - src/framework/observability/event_bus.py:37 ProgressEvent.run_id
-        字段,每个事件携带 run_id
-      - src/framework/runtime/orchestrator.py:418-421 step_start 事件以
-        run_id=run_id 发布
-      - src/framework/runtime/orchestrator.py:360 result.budget_summary 与
-        run.metrics 均以 run 对象归档
+      - src/framework/observability/event_bus.py:37 ProgressEvent.run_id 字段,每个事件携带 run_id
+      - src/framework/runtime/orchestrator.py:418-421 step_start 事件以 run_id=run_id 发布
+      - src/framework/runtime/orchestrator.py:360 result.budget_summary 与 run.metrics 均以 run 对象归档
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0114
@@ -2296,14 +1855,12 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0115
     title: NFR-OBS-003 BudgetTracker 在 RunResult.budget_summary 汇总指定字段
-    description: BudgetTracker 应在 `RunResult.budget_summary` 中汇总:`total_cost_usd` /
-      `prompt_tokens` / `completion_tokens` / `total_tokens` / per-step
-      breakdown
+    description: BudgetTracker 应在 `RunResult.budget_summary` 中汇总:`total_cost_usd` / `prompt_tokens` / `completion_tokens` / `total_tokens` / per-step breakdown
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
@@ -2311,7 +1868,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0116
@@ -2324,7 +1881,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0117
@@ -2336,14 +1893,12 @@ requirements:
       section: NFR-MAINT-001
       kind: srs
     evidence:
-      - tests/unit/test_codex_audit_fixes.py:1-5 模块注释:'One test per audit
-        finding so a future regression trips a fence here'
+      - tests/unit/test_codex_audit_fixes.py:1-5 模块注释:'One test per audit finding so a future regression trips a fence here'
       - tests/unit/test_cascade_cancel.py 专为 DAG retry/terminate 级联语义 Codex 修复守门
-      - tests/unit/test_review_budget.py 专为 usage 3-tuple 透传到 BudgetTracker
-        Codex 修复守门
+      - tests/unit/test_review_budget.py 专为 usage 3-tuple 透传到 BudgetTracker Codex 修复守门
       - tests/unit/test_download_async.py 专为 Range 续传强校验 Codex 修复守门
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0118
@@ -2356,11 +1911,10 @@ requirements:
       kind: srs
     evidence:
       - tests/unit/ 目录含 69 个 .py 文件(不含 __init__.py/__pycache__)
-      - src/framework/ 下含 106 个 .py 源文件;69 unit test files:106 source files 比值约
-        0.65:1
+      - src/framework/ 下含 106 个 .py 源文件;69 unit test files:106 source files 比值约 0.65:1
       - pyproject.toml:52-53 testpaths=['tests'] 配置测试目录并列结构
     confidence: medium
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0119
@@ -2375,7 +1929,7 @@ requirements:
       - python -m pytest --collect-only -q 实测:1139 tests collected — 远超 491 基线
       - tests/unit/ 含 69 个测试文件,tests/integration/ 含 11 个测试文件
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0120
@@ -2387,14 +1941,12 @@ requirements:
       section: NFR-MAINT-004
       kind: srs
     evidence:
-      - tests/unit/test_download_async.py:9,16-27 使用 httpx.MockTransport(非
-        unittest.mock)测试真实 chunked_download_async 代码路径
+      - tests/unit/test_download_async.py:9,16-27 使用 httpx.MockTransport(非 unittest.mock)测试真实 chunked_download_async 代码路径
       - tests/unit/test_event_bus.py 无 MagicMock/patch 导入,使用真实 EventBus 实例
       - tests/unit/test_budget_tracker.py 无 MagicMock/patch 导入,使用真实 BudgetTracker
-      - tests/unit/test_cascade_cancel.py 无 MagicMock/patch 导入,使用真实 Orchestrator
-        DAG 流程
+      - tests/unit/test_cascade_cancel.py 无 MagicMock/patch 导入,使用真实 Orchestrator DAG 流程
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0121
@@ -2406,13 +1958,11 @@ requirements:
       section: NFR-MAINT-005
       kind: srs
     evidence:
-      - tests/integration/test_p3_production_pipeline.py 无 MagicMock/patch
-        导入,使用真实 ArtifactRepository + Orchestrator
-      - tests/unit/test_codex_audit_fixes.py:18-29 直接导入并使用
-        ArtifactRepository、Artifact、ProviderResult 等真实对象
+      - tests/integration/test_p3_production_pipeline.py 无 MagicMock/patch 导入,使用真实 ArtifactRepository + Orchestrator
+      - tests/unit/test_codex_audit_fixes.py:18-29 直接导入并使用 ArtifactRepository、Artifact、ProviderResult 等真实对象
       - CLAUDE.md 工程规范明确:'bundle 里 Artifact 流是端到端的真实对象'
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0122
@@ -2428,7 +1978,7 @@ requirements:
       - src/framework/__init__.py:1-2 仅声明 __version__,无 UE 依赖
       - pyproject.toml:12-21 项目依赖仅 pydantic/opentelemetry/httpx,无 UE 相关包
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0123
@@ -2441,7 +1991,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0124
@@ -2453,35 +2003,28 @@ requirements:
       section: NFR-PORT-003
       kind: srs
     evidence:
-      - ue_scripts/domain_texture.py:9 仅 from pathlib import Path + lazy import
-        unreal(第13行)
-      - ue_scripts/domain_audio.py:4 仅 from pathlib import Path + lazy import
-        unreal(第8行)
-      - "ue_scripts/domain_video.py:29 注释明确:'NFR-PORT-003: ue_scripts/ MUST NOT
-        import framework.*;只 import unreal + stdlib'"
-      - ue_scripts/run_import.py:19-33 仅 import os/sys/traceback/pathlib +
-        同目录模块,无 framework 导入
+      - ue_scripts/domain_texture.py:9 仅 from pathlib import Path + lazy import unreal(第13行)
+      - ue_scripts/domain_audio.py:4 仅 from pathlib import Path + lazy import unreal(第8行)
+      - "ue_scripts/domain_video.py:29 注释明确:'NFR-PORT-003: ue_scripts/ MUST NOT import framework.*;只 import unreal + stdlib'"
+      - ue_scripts/run_import.py:19-33 仅 import os/sys/traceback/pathlib + 同目录模块,无 framework 导入
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0125
     title: NFR-PORT-004 文件路径避免 /tmp/
-    description: "文件路径应避免 `/tmp/...`(Git-Bash 下翻译到 C: 系统目录),使用项目树内 `./artifacts/` 或
-      `./demo_artifacts/`"
+    description: "文件路径应避免 `/tmp/...`(Git-Bash 下翻译到 C: 系统目录),使用项目树内 `./artifacts/` 或 `./demo_artifacts/`"
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: NFR-PORT-004
       kind: srs
     evidence:
-      - src/framework/run.py:144-145 --artifact-root 默认值为
-        f'artifacts/{date.today().isoformat()}' — 项目树内路径
-      - src/framework/runtime/orchestrator.py:111 注释说明测试用 pytest tmp_path
-        fixture,运行时路径由调用方传入而非硬编码 /tmp/
+      - src/framework/run.py:144-145 --artifact-root 默认值为 f'artifacts/{date.today().isoformat()}' — 项目树内路径
+      - src/framework/runtime/orchestrator.py:111 注释说明测试用 pytest tmp_path fixture,运行时路径由调用方传入而非硬编码 /tmp/
       - grep '/tmp/' src/framework/ — 无硬编码 /tmp/ 路径命中
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0126
@@ -2494,7 +2037,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0127
@@ -2507,7 +2050,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0128
@@ -2520,7 +2063,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0129
@@ -2533,7 +2076,7 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0130
@@ -2545,42 +2088,32 @@ requirements:
       section: TBD-005
       kind: srs
     evidence:
-      - src/framework/pricing_probe/parsers/dashscope.py:71
-        DashScopePricingParser.parse() 已完整实装
-      - "src/framework/pricing_probe/parsers/tripo3d.py:8 注释明确 'Status: scaffold
-        — no parser possible from public pages',Tripo3D parser 未实装"
+      - src/framework/pricing_probe/parsers/dashscope.py:71 DashScopePricingParser.parse() 已完整实装
+      - "src/framework/pricing_probe/parsers/tripo3d.py:8 注释明确 'Status: scaffold — no parser possible from public pages',Tripo3D parser 未实装"
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0131
     title: TBD-009 ComfyUI agent CLI mesh / audio / video 接入
-    description: ComfyUI agent CLI mesh / audio / video workflow 接入。Phase 1 mesh
-      已落地。Phase 2 audio 已落地。Phase 3 video 已落地。TBD-009 全 3 phase closed
+    description: ComfyUI agent CLI mesh / audio / video workflow 接入。Phase 1 mesh 已落地。Phase 2 audio 已落地。Phase 3 video 已落地。TBD-009 全 3 phase closed
     status: implemented
     source:
       document: docs/requirements/SRS.md
       section: TBD-009
       kind: srs
     evidence:
-      - src/framework/providers/workers/comfy_worker.py:299-303
-        _CAPABILITY_BY_MODEL_ID 含 comfy/local-mesh / comfy/local-audio /
-        comfy/local-video 三个 capability
-      - src/framework/providers/workers/comfy_worker.py:721 def generate_mesh()
-        mesh capability 实装
-      - src/framework/providers/workers/comfy_worker.py:940 def generate_audio()
-        audio capability 实装
-      - src/framework/providers/workers/comfy_worker.py:1185 def
-        generate_video() video capability 实装
+      - src/framework/providers/workers/comfy_worker.py:299-303 _CAPABILITY_BY_MODEL_ID 含 comfy/local-mesh / comfy/local-audio / comfy/local-video 三个 capability
+      - src/framework/providers/workers/comfy_worker.py:721 def generate_mesh() mesh capability 实装
+      - src/framework/providers/workers/comfy_worker.py:940 def generate_audio() audio capability 实装
+      - src/framework/providers/workers/comfy_worker.py:1185 def generate_video() video capability 实装
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0132
     title: TBD-010 executor 原生 async 重写
-    description: GenerateImageExecutor / GenerateMeshExecutor / generate_structured
-      等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主
-      spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED
+    description: GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主 spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
@@ -2588,34 +2121,27 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0133
     title: TBD-011 ModelRegistry ProviderDef.kind schema 扩展
-    description: ModelRegistry schema 扩 `ProviderDef.kind` + extra fields +
-      `ResolvedRoute.provider_name /
-      provider_kind`(`model-registry-provider-kind-schema` 后续 change),让
-      subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env
+    description: ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
       section: TBD-011
       kind: srs
     evidence:
-      - src/framework/providers/model_registry.py:118-122 ProviderDef 仅有
-        name/api_key_env/api_base,无 kind 字段
-      - src/framework/providers/model_registry.py:134-142 ResolvedRoute 无
-        provider_name / provider_kind 字段
+      - src/framework/providers/model_registry.py:118-122 ProviderDef 仅有 name/api_key_env/api_base,无 kind 字段
+      - src/framework/providers/model_registry.py:134-142 ResolvedRoute 无 provider_name / provider_kind 字段
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0134
     title: TBD-012 repo.put streaming payload zero-copy
-    description: "`repo-put-streaming-payload`(D4 副作用 follow-on,大文件 stream copy):扩
-      `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copy2` 不全读入内存;影响
-      PayloadRef API + 所有 worker 路径(image / mesh / audio / video)同步迁移"
+    description: "`repo-put-streaming-payload`(D4 副作用 follow-on,大文件 stream copy):扩 `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copy2` 不全读入内存;影响 PayloadRef API + 所有 worker 路径(image / mesh / audio / video)同步迁移"
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
@@ -2623,14 +2149,12 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
   - id: LR-0135
     title: TBD-013 RemoteControl HTTP bridge
-    description: RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带
-      `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT
-      :30010/remote/object/call` 控制运行中 editor
+    description: RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor
     status: unimplemented
     source:
       document: docs/requirements/SRS.md
@@ -2638,6 +2162,101 @@ requirements:
       kind: srs
     evidence: []
     confidence: high
-    priority: null
+    priority:
     review: confirmed
     notes: ""
+  - id: LR-0136
+    title: enhance-workflow-automation-handoff-persistence codex allowed-tools vs polling write 能力 mismatch 架构决策待定
+    description: codex 命令 allowed-tools(只读 `Get-Content`)vs Polling Convention 写文件能力(写 counter / job_id / active_jobs.txt)mismatch 的 architectural 选择。当前用 controller 主 session 写状态 workaround,留 follow-on 决策"allowed-tools 加 Write/Edit vs controller 主 session 写状态" arch 路径。
+    status: unimplemented
+    source:
+      document: docs/followon_backlog/active.md
+      section: enhance-workflow-automation-handoff-persistence
+      kind: backlog-file
+    evidence: []
+    confidence: medium
+    priority: low
+    review: confirmed
+    notes: 源自 docs/followon_backlog/(项目自有 follow-on registry,迁入统一进 forge backlog)
+  - id: LR-0137
+    title: audio-metadata-parser AudioCandidate duration_seconds/sample_rate stdlib 解析器
+    description: AudioCandidate `duration_seconds` / `sample_rate` parser(ComfyUI agent CLI 不暴露,留 follow-on 加 mutagen / pydub 解析填充)
+    status: implemented
+    source:
+      document: docs/followon_backlog/active.md
+      section: audio-metadata-parser
+      kind: backlog-file
+    evidence:
+      - src/framework/providers/workers/audio_metadata.py:33 parse_audio_metadata 函数实现 FLAC/WAV/MP3 三格式解析,返回 (duration_seconds, sample_rate)
+      - src/framework/providers/workers/comfy_worker.py:1159 from framework.providers.workers.audio_metadata import parse_audio_metadata
+      - src/framework/providers/workers/comfy_worker.py:1160 duration_seconds, sample_rate = parse_audio_metadata(audio_bytes, ext)
+      - src/framework/providers/workers/comfy_worker.py:1176-1177 duration_seconds=duration_seconds, sample_rate=sample_rate 填入 AudioCandidate
+    confidence: high
+    priority: low
+    review: confirmed
+    notes: 源自 docs/followon_backlog/(项目自有 follow-on registry,迁入统一进 forge backlog)
+  - id: LR-0138
+    title: video-metadata-parser VideoCandidate 5-tuple ffprobe 解析填充
+    description: VideoCandidate 5-tuple `duration_seconds` / `frame_count` / `width` / `height` / `fps` ffprobe 解析填充
+    status: unimplemented
+    source:
+      document: docs/followon_backlog/active.md
+      section: video-metadata-parser
+      kind: backlog-file
+    evidence: []
+    confidence: high
+    priority: low
+    review: confirmed
+    notes: 源自 docs/followon_backlog/(项目自有 follow-on registry,迁入统一进 forge backlog)
+  - id: LR-0139
+    title: comfy-video-webm-adoption video webm 格式支持
+    description: video webm format 支持(post mp4-only sweep 留 follow-on;Wan / 其他 video model 输出 webm 时启用)
+    status: unimplemented
+    source:
+      document: docs/followon_backlog/active.md
+      section: comfy-video-webm-adoption
+      kind: backlog-file
+    evidence: []
+    confidence: high
+    priority: low
+    review: confirmed
+    notes: 源自 docs/followon_backlog/(项目自有 follow-on registry,迁入统一进 forge backlog)
+  - id: LR-0140
+    title: comfy-video-v2v-adoption video-to-video 路径
+    description: video-to-video 路径(beyond text-to-video baseline)
+    status: unimplemented
+    source:
+      document: docs/followon_backlog/active.md
+      section: comfy-video-v2v-adoption
+      kind: backlog-file
+    evidence: []
+    confidence: high
+    priority: low
+    review: confirmed
+    notes: 源自 docs/followon_backlog/(项目自有 follow-on registry,迁入统一进 forge backlog)
+  - id: LR-0141
+    title: comfy-video-image-sequence-adoption image_sequence cinematic 高品质路径
+    description: image_sequence cinematic 高品质路径(电影级 sequence 而非 mp4 single-file)
+    status: unimplemented
+    source:
+      document: docs/followon_backlog/active.md
+      section: comfy-video-image-sequence-adoption
+      kind: backlog-file
+    evidence: []
+    confidence: high
+    priority: low
+    review: confirmed
+    notes: 源自 docs/followon_backlog/(项目自有 follow-on registry,迁入统一进 forge backlog)
+  - id: LR-0142
+    title: video-bmff-largesize-support BMFF box_size==1 largesize box 支持
+    description: BMFF `box_size == 1` largesize box 支持(当前 strict 5-tuple 校验 reject;实证 large mp4 文件 ≥4GB 触发后启用)
+    status: unimplemented
+    source:
+      document: docs/followon_backlog/active.md
+      section: video-bmff-largesize-support
+      kind: backlog-file
+    evidence: []
+    confidence: high
+    priority: low
+    review: confirmed
+    notes: 源自 docs/followon_backlog/(项目自有 follow-on registry,迁入统一进 forge backlog)
