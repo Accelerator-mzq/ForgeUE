@@ -388,7 +388,8 @@ def test_orchestrator_uses_fresh_transition_engine_per_arun(tmp_path: Path):
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
+        async def execute(self, ctx):
+            # 空操作 executor,仅返回空 ExecutorResult
             return ExecutorResult(metrics={})
 
     reg = ExecutorRegistry()
@@ -439,12 +440,9 @@ def test_orchestrator_concurrent_arun_does_not_share_counters(tmp_path: Path):
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
-            # We can't peek at the per-run TransitionEngine directly from
-            # an executor; instead, mark the run by mutating a per-run
-            # placeholder counter on the engine that's currently in scope.
-            # Cleaner proxy: assert self.transitions.counters stays empty
-            # for both runs because each arun() got a fresh instance.
+        async def execute(self, ctx):
+            # 并发 arun() 各自持有独立 TransitionEngine 副本;
+            # 此处无需访问 engine,仅验证计数器不泄漏
             return ExecutorResult(metrics={})
 
     reg = ExecutorRegistry()
@@ -1011,12 +1009,13 @@ def test_structured_step_persists_cost_for_resume(tmp_path: Path):
     from framework.core.policies import BudgetPolicy
 
     class _UsageOnlyExec(StepExecutor):
-        """Mimics generate_structured: emits model + usage but no
-        cost_usd. Orchestrator must estimate + persist the cost."""
+        """模拟 generate_structured:只上报 model + usage 不含 cost_usd,
+        orchestrator 必须自行估算并持久化 cost_usd。"""
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
+        async def execute(self, ctx):
+            # 原生 async executor — orchestrator 直接 await
             art = ctx.repository.put(
                 artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_a",
                 value={"x": 1},
@@ -1081,7 +1080,8 @@ def test_orchestrator_replays_cached_cost_into_budget_tracker(tmp_path: Path):
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
+        async def execute(self, ctx):
+            # 每次调用固定花费 $0.5,用于测试 budget_tracker 跨进程 resume 语义
             art = ctx.repository.put(
                 artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_a",
                 value={"x": 1},

@@ -1,19 +1,12 @@
 """Plan C Phase 7 — DAG fan-out failure semantics.
 
-When one leaf raises an un-classifiable exception, the orchestrator's
-`asyncio.wait(FIRST_EXCEPTION)` returns immediately, pending siblings
-are cancelled, and the original exception re-raises through `run`.
+当某一叶节点抛出非可分类异常时,orchestrator 的 asyncio.wait(FIRST_COMPLETED)
+立即检测到,取消其余兄弟任务,并将原始异常透传到 run()。
 
-Caveat: sync executors that run via `asyncio.to_thread` can't actually
-be interrupted mid-sleep (Python has no way to cancel a running thread's
-`time.sleep`). For true cancellation responsiveness we'd need the
-executor to be async-native and await `asyncio.sleep`. Here we use a
-very short-running OK executor so test completes quickly even though
-cancellation isn't strictly observable.
+executor-async-rewrite Task 6 后,所有 executor 均为原生 async def execute;
+CancelledError 可直接打入 awaiting executor coroutine,取消立即生效。
 """
 from __future__ import annotations
-
-import time
 
 import pytest
 
@@ -34,10 +27,12 @@ class _OkExecutor(StepExecutor):
     step_type = StepType.generate
     capability_ref = "mock.ok"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        import asyncio
         from framework.core.artifact import ArtifactType, Lineage, ProducerRef
         from framework.core.enums import ArtifactRole, PayloadKind
-        time.sleep(0.05)        # short — sync threads can't be interrupted
+        # 原生 async 等待,短延迟确保并发可见
+        await asyncio.sleep(0.05)
         art = ctx.repository.put(
             artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_out",
             value={"done": ctx.step.step_id},
@@ -62,9 +57,8 @@ class _FailExecutor(StepExecutor):
     step_type = StepType.generate
     capability_ref = "mock.fail"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
-        # Non-classifiable exception (not a provider/worker/schema error) so
-        # orchestrator re-raises rather than synthesising a failure Verdict.
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 非可分类异常 — orchestrator 将直接 re-raise 而非合成 Verdict
         raise KeyError(f"boom from {ctx.step.step_id}")
 
 
@@ -111,10 +105,12 @@ class _CostlyExecutor(StepExecutor):
     step_type = StepType.generate
     capability_ref = "mock.costly"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        import asyncio
         from framework.core.artifact import ArtifactType, Lineage, ProducerRef
         from framework.core.enums import ArtifactRole, PayloadKind
-        time.sleep(0.02)
+        # 短延迟以确保并发调度可见
+        await asyncio.sleep(0.02)
         art = ctx.repository.put(
             artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_out",
             value={"x": 1},
@@ -147,10 +143,12 @@ class _SlowSiblingExecutor(StepExecutor):
     step_type = StepType.generate
     capability_ref = "mock.slow_sibling"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        import asyncio
         from framework.core.artifact import ArtifactType, Lineage, ProducerRef
         from framework.core.enums import ArtifactRole, PayloadKind
-        time.sleep(0.5)
+        # 长延迟模拟慢速兄弟步骤;原生 async 允许 CancelledError 打入
+        await asyncio.sleep(0.5)
         art = ctx.repository.put(
             artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_out",
             value={"y": 1},
@@ -181,7 +179,7 @@ class _FlakyThenOkExecutor(StepExecutor):
     def __init__(self) -> None:
         self.call_count = 0
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
         from framework.core.artifact import ArtifactType, Lineage, ProducerRef
         from framework.core.enums import ArtifactRole, PayloadKind
         from framework.providers.base import ProviderTimeout

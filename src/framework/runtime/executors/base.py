@@ -36,6 +36,9 @@ class StepContext:
     run_dir: Path = field(default_factory=lambda: Path("."))
     inputs: dict[str, Any] = field(default_factory=dict)
     upstream_artifact_ids: list[str] = field(default_factory=list)
+    # Task 8 中将在 lifecycle.py 定义 ExternalProcessLifecycle;
+    # 此处用字符串前向引用避免循环导入,默认 None(lifecycle 可选)
+    lifecycle: "ExternalProcessLifecycle | None" = None
 
 
 @dataclass
@@ -57,7 +60,7 @@ class StepExecutor(ABC):
     capability_ref: str | None = None        # None = wildcard
 
     @abstractmethod
-    def execute(self, ctx: StepContext) -> ExecutorResult: ...
+    async def execute(self, ctx: StepContext) -> ExecutorResult: ...
 
 
 class ExecutorRegistry:

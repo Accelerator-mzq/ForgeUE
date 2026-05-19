@@ -18,7 +18,6 @@ multiple steps at once (DAG fan-out), they're launched concurrently via
 from __future__ import annotations
 
 import asyncio
-import inspect
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -322,12 +321,10 @@ class Orchestrator:
                         if value.terminate:
                             cascade_terminate = True
                     if first_exc is not None or cascade_terminate:
-                        # Cancel siblings still running. We do NOT await the
-                        # cancelled tasks — sync executors in
-                        # `asyncio.to_thread` can't be interrupted, and
-                        # awaiting would block until the thread finishes
-                        # naturally (defeats fail-fast). The cancelled
-                        # futures finish in the background.
+                        # 取消仍在运行的兄弟任务。所有 executor 已为原生 async,
+                        # CancelledError 可直接打入 executor coroutine;
+                        # 但不 await cancelled tasks 以保证 fail-fast 语义——
+                        # 被取消的 coroutine 在后台完成清理,不阻塞主流程。
                         for p in pending_tasks:
                             p.cancel()
                         pending_tasks = set()
@@ -508,12 +505,8 @@ class Orchestrator:
                 {"run_id": run_id, "step_id": step.step_id, "step_type": step.type.value,
                  "capability_ref": step.capability_ref, "risk_level": step.risk_level.value},
             ):
-                # 迁移期 bridge(executor-async-rewrite Task 1-6):executor 逐批转 async,
-                # 转完的走原生 await,未转的仍走 to_thread。后续 Task 全转完后删除本分支。
-                if inspect.iscoroutinefunction(executor.execute):
-                    exec_result = await executor.execute(ctx)
-                else:
-                    exec_result = await asyncio.to_thread(executor.execute, ctx)
+                # 全部 executor 已转 async def execute,直接 await
+                exec_result = await executor.execute(ctx)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:
