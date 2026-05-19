@@ -169,7 +169,7 @@ async def test_p1_validate_flags_bad_upstream(tmp_path: Path):
               started_at=datetime.now(timezone.utc), workflow_id="w", trace_id="tr")
 
     ex = SchemaValidateExecutor(schema_registry=get_schema_registry())
-    # SchemaValidateExecutor.execute は async 化済み
+    # SchemaValidateExecutor.execute 已 async 化
     res = await ex.execute(StepContext(run=run, task=task, step=step, repository=repo,
                                        upstream_artifact_ids=[src.artifact_id]))
     assert res.metrics["all_passed"] is False

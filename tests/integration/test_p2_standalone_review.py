@@ -308,7 +308,7 @@ async def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Pat
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=image_ids,
     )
-    # ReviewExecutor.execute は async 化済み
+    # ReviewExecutor.execute 已 async 化
     result = await ex.execute(ctx)
     assert result.metrics["visual_mode"] is True
     assert result.metrics["candidate_count"] == 3

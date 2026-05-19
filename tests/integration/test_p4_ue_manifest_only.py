@@ -311,7 +311,7 @@ async def test_p4_permission_policy_skips_denied_ops(tmp_path: Path):
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[tex.artifact_id, mat.artifact_id],
     )
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     result = await exporter.execute(ctx)
     assert result.metrics["dropped_files"] == 2
     assert result.metrics["skipped_ops"] >= 1
@@ -384,7 +384,7 @@ async def test_p4_verdict_reject_skips_file_drop(tmp_path: Path):
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[tex.artifact_id, verd.artifact_id],
     )
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     result = await ExportExecutor().execute(ctx)
     assert result.metrics.get("rejected") is True
     run_folder = ue_project / "Content" / "Generated" / run_id
@@ -440,7 +440,7 @@ async def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeyp
         run_id=run_id, task_id=run_id, project_id="proj_stub", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_stub", trace_id="tr",
     )
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[tex.artifact_id],
@@ -656,7 +656,7 @@ async def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_s
         run_id=run_id, task_id=run_id, project_id="proj_video_stub", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_video_stub", trace_id="tr",
     )
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],
@@ -792,7 +792,7 @@ async def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_pa
     )
     # PermissionPolicy 关键:allow_import_file_media_source=False → ExportExecutor
     # 把 import_file_media_source op 写 status="skipped" seed evidence
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     await ExportExecutor(
         permission_policy=PermissionPolicy(allow_import_file_media_source=False),
     ).execute(StepContext(
@@ -1054,7 +1054,7 @@ async def test_p4_export_executor_passes_video_artifact_through_is_importable_to
         run_id=run_id, task_id=run_id, project_id="proj_f1", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_f1", trace_id="tr",
     )
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],
@@ -1115,7 +1115,7 @@ async def test_p4_video_artifact_end_to_end_emits_import_file_media_source_in_ma
         run_id=run_id, task_id=run_id, project_id="proj_e2e", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id="wf_e2e", trace_id="tr",
     )
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],
@@ -1201,7 +1201,7 @@ async def _build_video_bundle_via_export(
         run_id=run_id, task_id=run_id, project_id=f"proj_{run_id}", status=RunStatus.running,
         started_at=datetime.now(timezone.utc), workflow_id=f"wf_{run_id}", trace_id="tr",
     )
-    # ExportExecutor.execute は async 化済み
+    # ExportExecutor.execute 已 async 化
     await ExportExecutor().execute(StepContext(
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[vid.artifact_id],

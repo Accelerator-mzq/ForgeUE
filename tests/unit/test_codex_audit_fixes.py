@@ -59,7 +59,7 @@ class _AlwaysTimeoutRouter:
         raise ProviderTimeout("simulated provider timeout")
 
     async def astructured(self, *, policy, call_template, schema):
-        # async 版も同様に ProviderTimeout を raise(executor async 化対応)
+        # async 版同样 raise ProviderTimeout(适配 executor async 化)
         raise ProviderTimeout("simulated provider timeout")
 
 
