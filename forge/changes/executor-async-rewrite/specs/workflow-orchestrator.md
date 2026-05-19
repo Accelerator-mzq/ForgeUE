@@ -2,8 +2,8 @@
 
 > 本文件是 `workflow-orchestrator` capability 在 `executor-async-rewrite`(TBD-010)
 > change 引入的行为增量:orchestrator 原生 `await` executor 取代 `to_thread`、
-> cascade-cancel 真停、orchestrator 持有 ComfyUI lifecycle 所有权。每条 Requirement
-> 首行标注 ADDED。
+> cascade-cancel 真停(含 drain 超时显式失败)、orchestrator 持有 ComfyUI lifecycle
+> 所有权 + `aclose()` disposal 钩子。每条 Requirement 首行标注 ADDED。
 
 ## Requirement: Orchestrator awaits executors as native coroutines
 
@@ -22,42 +22,75 @@ short-circuit in-flight work.
 **Then** it evaluates `await executor.execute(ctx)` directly with no `asyncio.to_thread` call
 **And** the `set_current_run_step` ContextVar is naturally task-local with no cross-thread propagation needed
 
-## Requirement: Cascade-cancel propagates real cancellation into running siblings
+## Requirement: Cascade-cancel propagates real cancellation and fails explicitly on drain timeout
 
 **ADDED.** When a DAG fan-out cascade is triggered (a sibling raises an exception OR a
 sibling returns `_StepOutcome(terminate=True)`), the orchestrator SHALL `cancel()` the
-still-pending sibling tasks AND SHALL `await` them under a bounded timeout so that
-cancellation actually unwinds the running executors / workers — terminating
-subprocesses and closing HTTP connections — before the run proceeds to its terminal
-state. This replaces the prior fire-and-forget behavior where cancelled tasks were
-left to "finish in the background" because `asyncio.to_thread` threads could not be
-interrupted.
+still-pending sibling tasks AND SHALL `await asyncio.wait(pending, timeout=
+_CASCADE_DRAIN_TIMEOUT_S)` so that cancellation actually unwinds the running executors
+/ workers — terminating subprocesses and closing HTTP connections — before the run
+proceeds to its terminal state. The orchestrator SHALL inspect the `(done,
+still_pending)` result: if `still_pending` is non-empty (a cleanup hung past the
+drain timeout) the orchestrator SHALL NOT silently discard those tasks — it SHALL
+record the stuck step ids in `run.metrics["cancel_drain_timeout"]`, re-`cancel()`
+them, and end the run with a failed status. This replaces the prior fire-and-forget
+behavior where cancelled tasks were left to "finish in the background" because
+`asyncio.to_thread` threads could not be interrupted.
 
 ## Scenario: A cascade-cancelled sibling's work actually stops
 
 **Given** a DAG fan-out with two concurrent steps where step A raises a classified failure (or terminates) while step B is still awaiting a provider / worker call
 **When** the orchestrator's cascade path runs
-**Then** it cancels step B's task and awaits it within a bounded timeout, and `CancelledError` propagates into step B's executor and into the provider / worker call, which aborts its in-flight work
-**And** step B does not continue consuming external API calls or subprocess time after the run has been marked for termination
+**Then** it cancels step B's task and awaits it within `_CASCADE_DRAIN_TIMEOUT_S`, and `CancelledError` propagates into step B's executor and into the provider / worker call, which aborts its in-flight work (HTTP connection closed; ComfyUI subprocess terminated AND its server-side prompt aborted via `comfyui_api cancel`)
+**And** step B does not continue consuming external API calls or subprocess/GPU time after the run has been marked for termination
 **And** `tests/unit/test_cascade_cancel.py` is extended with a probe (a counter that would keep incrementing if the cancelled work continued) asserting the cancelled sibling's work observably stopped
 
-## Requirement: Orchestrator owns the ComfyUI lifecycle for the run session
+## Scenario: A cascade drain timeout is an explicit run failure, not a silent drop
+
+**Given** a cascade-cancelled sibling whose cleanup hangs longer than `_CASCADE_DRAIN_TIMEOUT_S`
+**When** `asyncio.wait` returns with that task still in `still_pending`
+**Then** the orchestrator records the stuck step id(s) in `run.metrics["cancel_drain_timeout"]`, issues a second `cancel()`, and the run ends with `RunStatus.failed`
+**And** the orchestrator does NOT execute `pending_tasks = set()` as the sole handling — an un-drained task is surfaced as a failure, never silently abandoned
+
+## Requirement: Orchestrator owns the ComfyUI lifecycle and exposes a disposal hook
 
 **ADDED.** When a bundle's `prepared_routes` reference a `comfy/local*` model AND the
 resolved `comfy_lifecycle` (from `step.config.spec.comfy_lifecycle` or the
-`FORGEUE_COMFY_LIFECYCLE` env default) is not `"none"`, the orchestrator SHALL
-construct a single `ComfyLifecycleManager` at `arun` start, inject it into every
-step's `StepContext.lifecycle`, and SHALL invoke `release(mode)` on it along all
-three run-exit paths: normal run-end, cascade-terminate, and the
-`except asyncio.CancelledError` handler. When no comfy-managed-lifecycle route is
-present, no manager is constructed and `StepContext.lifecycle` stays `None`.
+`FORGEUE_COMFY_LIFECYCLE` env default) is not `"none"`, the orchestrator SHALL obtain
+a `ComfyLifecycleManager` and inject it into every step's `StepContext.lifecycle`.
+For `self_managed_session` the manager SHALL be held at the orchestrator-instance
+level (`self._lifecycle`) and reused across multiple `arun` calls; for
+`ensure_running` / `ensure_release` it MAY be per-`arun`.
 
-## Scenario: Lifecycle manager is released on every run-exit path
+The orchestrator SHALL release the manager in a **mode-aware** way:
 
-**Given** a run that constructed a `ComfyLifecycleManager` (a `comfy/local*` route with `comfy_lifecycle != "none"`)
-**When** the run ends normally, OR a cascade-terminate fires, OR the `arun` task itself is cancelled
-**Then** the orchestrator calls `await manager.release(mode)` on that exit path exactly once
-**And** an `ensure_release` / `self_managed_session` ComfyUI process started by the framework is torn down rather than orphaned
+- `ensure_running` — never released by the framework (warm reuse).
+- `ensure_release` — released at normal run-end, cascade-terminate, and the
+  `except asyncio.CancelledError` handler.
+- `self_managed_session` — NOT released at normal run-end; released at
+  cascade-terminate, the `except asyncio.CancelledError` handler, and at
+  `Orchestrator.aclose()`.
+
+The system SHALL add `Orchestrator.aclose()` (`async def`) which releases the
+orchestrator-instance-level `self_managed_session` manager, and the orchestrator
+SHALL implement async context manager protocol (`__aenter__` / `__aexit__`, the
+latter calling `aclose()`). The CLI (`framework.run`) SHALL call `await
+orch.aclose()` before process exit. A `_released` flag SHALL ensure each manager is
+released at most once per exit path.
+
+## Scenario: ensure_release is released at run-end, self_managed_session is not
+
+**Given** two runs — one with `comfy_lifecycle: "ensure_release"`, one with `comfy_lifecycle: "self_managed_session"` — each having constructed a `ComfyLifecycleManager` that the framework started
+**When** each run ends normally
+**Then** the `ensure_release` run calls `release("ensure_release")` and stops the ComfyUI process at run-end
+**And** the `self_managed_session` run does NOT stop the ComfyUI process at run-end — it remains up for reuse by a subsequent `arun` on the same orchestrator instance
+
+## Scenario: self_managed_session is released at Orchestrator.aclose
+
+**Given** an orchestrator instance that ran one or more `self_managed_session` runs and started a ComfyUI process
+**When** `await orchestrator.aclose()` is called (directly or via `async with`)
+**Then** the orchestrator releases the orchestrator-instance-level manager and the framework-started ComfyUI process is stopped
+**And** when `aclose()` is called on an orchestrator that never started a managed process, it is a no-op
 
 ## Scenario: No lifecycle manager for a lifecycle=none run
 
@@ -75,8 +108,8 @@ present, no manager is constructed and `StepContext.lifecycle` stays `None`.
 
 ## Validation
 
-- Unit: `tests/unit/test_cascade_cancel.py`(扩 — 取消的 sibling 工作真停探针)、
-  `tests/unit/test_orchestrator.py`(扩 — lifecycle manager 构造条件 + 三路径
-  release)。
+- Unit: `tests/unit/test_cascade_cancel.py`(扩 — 取消的 sibling 工作真停探针 +
+  drain 超时显式失败)、`tests/unit/test_orchestrator.py`(扩 — lifecycle manager
+  构造条件 + mode-aware release + `aclose()` disposal)。
 - Integration: `tests/integration/test_dag_concurrency.py` 仍全绿。
 - 测试总数不硬编码 —— 以 `python -m pytest -q` 实测为准。

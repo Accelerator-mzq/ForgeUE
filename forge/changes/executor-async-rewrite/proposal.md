@@ -28,7 +28,9 @@ SRS §7.3 TBD-010 记录了这个 follow-on。本 change 关闭 TBD-010。
   兼容档(代码无外部消费者)。
 - Orchestrator `_aexec_one_body` 把 `await asyncio.to_thread(executor.execute, ctx)`
   改为 `await executor.execute(ctx)`;cascade-cancel 路径(`orchestrator.py:322-332`)
-  改为可 `await` 已取消的 sibling task —— cancel 真正打穿到正在跑的工作。
+  改为 `cancel()` 后 `await` 已取消的 sibling task —— cancel 真正打穿到正在跑的
+  工作;drain 超时(清理卡死)显式失败(`run.metrics["cancel_drain_timeout"]`),
+  不静默丢弃未停的 task。
 - executor 改调 async 侧 router/worker 方法(`await router.aimage_generation` /
   `astructured_with_usage` / `worker.agenerate*`);删除 `generate_image.py` 内部
   `asyncio.run(_fan_out())` shim,fan-out 变 loop 上的裸 `await asyncio.gather`。
@@ -36,11 +38,14 @@ SRS §7.3 TBD-010 记录了这个 follow-on。本 change 关闭 TBD-010。
   `asyncio.create_subprocess_exec` + `await asyncio.wait_for(proc.communicate(), ...)`;
   4 个 capability 方法转 async 主面 `agenerate*`,保留 sync `asyncio.run` shim 给
   probe 兼容(沿 `mesh_worker.py` 既有模式)。`FakeComfyWorker` 同步改 async。
+  cancel 时先 `comfyui_api cancel`(`POST /interrupt`)停 ComfyUI 服务端正在跑的
+  prompt,再 terminate CLI 子进程 —— ComfyUI 路径的 cancel 真正停 GPU job。
 - **NEW** `ExternalProcessLifecycle` 抽象基类(`ensure` / `release` / `status`)+
-  唯一具体实现 `ComfyLifecycleManager`,支持 `comfy_lifecycle` 三模式
-  `ensure_running` / `ensure_release` / `self_managed_session`。Orchestrator 在
-  `arun` 启动时按需构造,经 `StepContext` 新字段下传,teardown 挂 run-end +
-  cascade-cancel + `except CancelledError` 三路径。
+  唯一具体实现 `ComfyLifecycleManager`(`ensure`/`release` 用 `asyncio.Lock` 并发
+  单飞),支持 `comfy_lifecycle` 三模式 `ensure_running` / `ensure_release` /
+  `self_managed_session`。Orchestrator 持有 manager、经 `StepContext` 新字段下传,
+  mode-aware release(`ensure_release` run-end 拆;`self_managed_session` 经新增
+  `Orchestrator.aclose()` disposal 钩子拆);cancel 路径所有非 none mode 都拆。
 - `comfy_lifecycle` 不再锁死 `"none"`;`FORGEUE_COMFY_LIFECYCLE` env var 开始
   接受全 4 值。
 - 主 spec `provider-routing` 的 lifecycle 相关 Invariant 与 Non-Goal 一并 MODIFIED/
