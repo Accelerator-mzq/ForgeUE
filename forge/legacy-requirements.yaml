@@ -2484,3 +2484,160 @@ requirements:
     priority: null
     review: confirmed
     notes: ""
+  - id: LR-0126
+    title: TBD-001 bridge_execute 模式启用
+    description: "`bridge_execute` 模式启用条件"
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-001
+      kind: srs
+    evidence: []
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0127
+    title: TBD-002 远端 Audio worker 接入
+    description: Audio worker(远端 AudioCraft / ElevenLabs 接入)
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-002
+      kind: srs
+    evidence: []
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0128
+    title: TBD-003 WS 鉴权 / 多租户 session
+    description: WS 鉴权 / 多租户 session
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-003
+      kind: srs
+    evidence: []
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0129
+    title: TBD-004 FBX self-containment 校验
+    description: FBX self-containment 校验
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-004
+      kind: srs
+    evidence: []
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0130
+    title: TBD-005 DashScope / Tripo3D 下辖 parser 实装
+    description: DashScope / Tripo3D 下辖 parser 实装
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-005
+      kind: srs
+    evidence:
+      - src/framework/pricing_probe/parsers/dashscope.py:71
+        DashScopePricingParser.parse() 已完整实装
+      - "src/framework/pricing_probe/parsers/tripo3d.py:8 注释明确 'Status: scaffold
+        — no parser possible from public pages',Tripo3D parser 未实装"
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0131
+    title: TBD-009 ComfyUI agent CLI mesh / audio / video 接入
+    description: ComfyUI agent CLI mesh / audio / video workflow 接入。Phase 1 mesh
+      已落地。Phase 2 audio 已落地。Phase 3 video 已落地。TBD-009 全 3 phase closed
+    status: implemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-009
+      kind: srs
+    evidence:
+      - src/framework/providers/workers/comfy_worker.py:299-303
+        _CAPABILITY_BY_MODEL_ID 含 comfy/local-mesh / comfy/local-audio /
+        comfy/local-video 三个 capability
+      - src/framework/providers/workers/comfy_worker.py:721 def generate_mesh()
+        mesh capability 实装
+      - src/framework/providers/workers/comfy_worker.py:940 def generate_audio()
+        audio capability 实装
+      - src/framework/providers/workers/comfy_worker.py:1185 def
+        generate_video() video capability 实装
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0132
+    title: TBD-010 executor 原生 async 重写
+    description: GenerateImageExecutor / GenerateMeshExecutor / generate_structured
+      等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主
+      spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-010
+      kind: srs
+    evidence: []
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0133
+    title: TBD-011 ModelRegistry ProviderDef.kind schema 扩展
+    description: ModelRegistry schema 扩 `ProviderDef.kind` + extra fields +
+      `ResolvedRoute.provider_name /
+      provider_kind`(`model-registry-provider-kind-schema` 后续 change),让
+      subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-011
+      kind: srs
+    evidence:
+      - src/framework/providers/model_registry.py:118-122 ProviderDef 仅有
+        name/api_key_env/api_base,无 kind 字段
+      - src/framework/providers/model_registry.py:134-142 ResolvedRoute 无
+        provider_name / provider_kind 字段
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0134
+    title: TBD-012 repo.put streaming payload zero-copy
+    description: "`repo-put-streaming-payload`(D4 副作用 follow-on,大文件 stream copy):扩
+      `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copy2` 不全读入内存;影响
+      PayloadRef API + 所有 worker 路径(image / mesh / audio / video)同步迁移"
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-012
+      kind: srs
+    evidence: []
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
+  - id: LR-0135
+    title: TBD-013 RemoteControl HTTP bridge
+    description: RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带
+      `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT
+      :30010/remote/object/call` 控制运行中 editor
+    status: unimplemented
+    source:
+      document: docs/requirements/SRS.md
+      section: TBD-013
+      kind: srs
+    evidence: []
+    confidence: high
+    priority: null
+    review: confirmed
+    notes: ""
