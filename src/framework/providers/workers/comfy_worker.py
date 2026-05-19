@@ -88,6 +88,9 @@ def _comfy_submit_lock() -> asyncio.Lock:
 _SUBPROC_BUFFER_S: float = 30.0
 # terminate 后等待进程退出的宽余量(秒)
 _PROC_GRACE_S: float = 5.0
+# cancel 路径 best-effort:POST /interrupt 子进程的最大等待时间(秒)
+# 10 秒足够 comfyui_api cancel 发送 HTTP 请求并退出;超时只 warning 不阻塞 cancel
+_ABORT_TIMEOUT_S: float = 10.0
 
 # Mesh capability(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1):
 # generate_mesh 返回 MeshCandidate(从 mesh_worker module 复用 dataclass,
@@ -615,6 +618,8 @@ class ComfyAgentWorker(ComfyWorker):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
+                self._last_proc = proc
             except FileNotFoundError as exc:
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker: failed to spawn subprocess "
@@ -632,9 +637,9 @@ class ComfyAgentWorker(ComfyWorker):
                     f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
                 ) from exc
             finally:
-                # Task 4 会在此前插入 _abort_comfy_prompt;
-                # Task 3 仅做 terminate → kill。
+                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
                 if proc.returncode is None:
+                    await self._abort_comfy_prompt()
                     proc.terminate()
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
@@ -826,6 +831,25 @@ class ComfyAgentWorker(ComfyWorker):
                 f"writes outputs to a non-default directory."
             )
 
+    async def _abort_comfy_prompt(self) -> None:
+        """cancel 路径 best-effort:POST /interrupt 停服务端正在跑的 prompt。
+
+        comfyui_api cancel(无 --prompt-id)即 POST http://127.0.0.1:8188/interrupt。
+        在 Task 3 的 comfy-submission 锁内调用 → 中断的必是本 worker 的 prompt。
+        失败只 warning,不抛(主路径已在 cancel 流程中,abort 仅 best-effort)。
+        等待超时 _ABORT_TIMEOUT_S 秒后放弃,不阻塞后续 terminate。
+        """
+        try:
+            ap = await asyncio.create_subprocess_exec(
+                str(self.python_exe), "-m", "comfyui_api", "cancel",
+                cwd=str(self.scripts_dir),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(ap.wait(), timeout=_ABORT_TIMEOUT_S)
+        except Exception as exc:  # noqa: BLE001 — best-effort,失败只 warning
+            _COMFY_LOGGER.warning("comfy prompt abort failed: %s", exc)
+
     async def agenerate_mesh(
         self,
         *,
@@ -948,6 +972,8 @@ class ComfyAgentWorker(ComfyWorker):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
+                self._last_proc = proc
             except FileNotFoundError as exc:
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.agenerate_mesh: failed to spawn subprocess "
@@ -965,7 +991,9 @@ class ComfyAgentWorker(ComfyWorker):
                     f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
                 ) from exc
             finally:
+                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
                 if proc.returncode is None:
+                    await self._abort_comfy_prompt()
                     proc.terminate()
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
@@ -1182,6 +1210,8 @@ class ComfyAgentWorker(ComfyWorker):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
+                self._last_proc = proc
             except FileNotFoundError as exc:
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.agenerate_audio: failed to spawn subprocess "
@@ -1199,7 +1229,9 @@ class ComfyAgentWorker(ComfyWorker):
                     f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
                 ) from exc
             finally:
+                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
                 if proc.returncode is None:
+                    await self._abort_comfy_prompt()
                     proc.terminate()
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
@@ -1437,6 +1469,8 @@ class ComfyAgentWorker(ComfyWorker):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
+                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
+                self._last_proc = proc
             except FileNotFoundError as exc:
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.agenerate_video: failed to spawn subprocess "
@@ -1454,7 +1488,9 @@ class ComfyAgentWorker(ComfyWorker):
                     f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
                 ) from exc
             finally:
+                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
                 if proc.returncode is None:
+                    await self._abort_comfy_prompt()
                     proc.terminate()
                     try:
                         await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
