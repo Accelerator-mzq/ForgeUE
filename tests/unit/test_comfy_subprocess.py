@@ -1252,3 +1252,340 @@ def test_mesh_outputs_path_outside_comfy_output_root_raises_unsupported_response
                 source_image_filename="forgeue_test.png",
                 num_candidates=1,
             )
+
+
+# ===========================================================================
+# Task 3: ComfyAgentWorker async-subprocess + comfy-submission 串行锁
+# (executor-async-rewrite change, TBD-010)
+#
+# 这四个 fence 守门:
+#   1. agenerate* 主面使用 asyncio.create_subprocess_exec(非 subprocess.run)
+#   2. 同一 event loop 内并发 agenerate 被串行化(最多 1 个 subprocess 同时运行)
+#   3. 跨 asyncio.run 边界不产生 cross-loop RuntimeError
+#   4. sync generate* shim 仍可用(probe 脚本 / 旧调用路径兼容)
+# ===========================================================================
+import asyncio as _asyncio
+
+
+def _make_fake_agent_worker(tmp_path: Path) -> "ComfyAgentWorker":
+    """构造 image-mode ComfyAgentWorker,用于 async subprocess 测试。
+    与 _make_worker 相同,单独命名以便 async 测试组引用清晰。"""
+    return _make_worker(tmp_path)
+
+
+async def test_comfy_agenerate_uses_create_subprocess_exec(monkeypatch, tmp_path):
+    """agenerate 主面必须使用 asyncio.create_subprocess_exec(非 subprocess.run)。
+    spy 注入到 asyncio.create_subprocess_exec,验证调用路径经过 async 接口。"""
+    import asyncio
+    import sys
+    import json as _json
+
+    # --- 准备 fake output PNG 文件 ---
+    fake_png = tmp_path / "scripts" / "out.png"
+    fake_png.parent.mkdir(parents=True, exist_ok=True)
+    _make_png_file(fake_png)
+
+    # --- 构造 spy:记录是否经过 create_subprocess_exec ---
+    spawned = {"via": None}
+    real_create = asyncio.create_subprocess_exec
+
+    async def _spy(*a, **kw):
+        spawned["via"] = "create_subprocess_exec"
+        return await real_create(*a, **kw)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy)
+
+    # --- 同时 monkeypatch sys.executable,使真实 subprocess 快速退出并输出合法 JSON ---
+    # 写一个临时 Python 脚本:向 stdout 输出模拟 comfyui_api run 的 JSON 响应
+    fake_script = tmp_path / "fake_comfyui_api.py"
+    fake_script.write_text(
+        "import sys, json\n"
+        f"print(json.dumps({{'ok': True, 'outputs': {{'images': ['{str(fake_png).replace(chr(92), '/')}'], 'glb': [], 'audio': [], 'video': []}}}}),end='')\n"
+        "sys.exit(0)\n",
+        encoding="utf-8",
+    )
+    # monkeypatch python_exe 和 scripts_dir 使 comfyui_api 指向 fake_script
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+
+    # 创建 worker,python_exe 指向真实 interpreter,但 module 路径 monkeypatch
+    # 方案:monkeypatch asyncio.create_subprocess_exec,但 subprocess 本身需返回合法输出。
+    # 由于真实 comfyui_api 不存在,我们需要另一个策略:
+    # monkeypatch _run_once_async(如果存在)或直接 monkeypatch create_subprocess_exec
+    # 返回 fake Process。
+    worker = _make_fake_agent_worker(tmp_path)
+
+    # 创建 fake asyncio.Process:communicate() 返回合法 JSON bytes
+    fake_stdout = _json.dumps({
+        "ok": True,
+        "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
+    }).encode("utf-8")
+
+    class FakeProcess:
+        """模拟 asyncio.subprocess.Process。"""
+        def __init__(self):
+            self.returncode = 0
+
+        async def communicate(self):
+            return (fake_stdout, b"")
+
+        async def wait(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    async def _fake_create(*a, **kw):
+        spawned["via"] = "create_subprocess_exec"
+        return FakeProcess()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+
+    # --- 调用 agenerate ---
+    result = await worker.agenerate(
+        spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+        num_candidates=1,
+        seed=1,
+        timeout_s=30,
+    )
+    assert spawned["via"] == "create_subprocess_exec", (
+        "agenerate 应通过 asyncio.create_subprocess_exec 启动子进程,"
+        f"但实际 via={spawned['via']!r}"
+    )
+    assert isinstance(result, list)
+
+
+async def test_comfy_submit_lock_serializes_concurrent_agenerate(tmp_path):
+    """同一 event loop 内两个并发 agenerate 应被串行化:最大并发数为 1。
+    通过 monkeypatch asyncio.create_subprocess_exec 注入计数器来验证。"""
+    import asyncio
+    import json as _json
+
+    inflight = {"now": 0, "max": 0}
+
+    fake_png = tmp_path / "out_lock.png"
+    _make_png_file(fake_png)
+    fake_stdout = _json.dumps({
+        "ok": True,
+        "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
+    }).encode("utf-8")
+
+    class SlowFakeProcess:
+        """模拟耗时 0.15s 的 subprocess,用于放大并发窗口。"""
+        def __init__(self):
+            self.returncode = 0
+
+        async def communicate(self):
+            # 模拟 subprocess 运行耗时,让并发窗口可观测
+            await asyncio.sleep(0.15)
+            return (fake_stdout, b"")
+
+        async def wait(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    original_create = asyncio.create_subprocess_exec
+
+    async def _counting_create(*a, **kw):
+        inflight["now"] += 1
+        inflight["max"] = max(inflight["max"], inflight["now"])
+        proc = SlowFakeProcess()
+        # 等 communicate 完成后才减计数(模拟 submit→poll 段的持有期)
+        original_proc = proc
+
+        class WrappedProc:
+            def __init__(self):
+                self.returncode = 0
+
+            async def communicate(self):
+                try:
+                    return await original_proc.communicate()
+                finally:
+                    inflight["now"] -= 1
+
+            async def wait(self):
+                return 0
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+        return WrappedProc()
+
+    # 两个使用同一 scripts_dir / artifacts_dir 的 worker
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+
+    w1 = ComfyAgentWorker(
+        scripts_dir=scripts_dir, model_id="comfy/local",
+        run_id="run_lock_1", project_id="proj_lock",
+        artifacts_dir=artifacts_dir,
+    )
+    w2 = ComfyAgentWorker(
+        scripts_dir=scripts_dir, model_id="comfy/local",
+        run_id="run_lock_2", project_id="proj_lock",
+        artifacts_dir=artifacts_dir,
+    )
+
+    # monkeypatch asyncio.create_subprocess_exec(模块级替换)
+    import framework.providers.workers.comfy_worker as _cw_mod
+    original = _asyncio.create_subprocess_exec
+    _asyncio.create_subprocess_exec = _counting_create  # type: ignore[assignment]
+    try:
+        await _asyncio.gather(
+            w1.agenerate(
+                spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                num_candidates=1, seed=1, timeout_s=30,
+            ),
+            w2.agenerate(
+                spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                num_candidates=1, seed=2, timeout_s=30,
+            ),
+        )
+    finally:
+        _asyncio.create_subprocess_exec = original  # type: ignore[assignment]
+
+    assert inflight["max"] == 1, (
+        f"串行锁应保证同一 loop 内最多 1 个 comfy subprocess 同时运行,"
+        f"但观察到最大并发数 max={inflight['max']}"
+    )
+
+
+def test_comfy_submit_lock_safe_across_asyncio_run_loops(tmp_path):
+    """跨 loop 安全:连续两个 asyncio.run 各自内部并发两个 agenerate,
+    不产生 cross-loop RuntimeError(模块级单一 asyncio.Lock 会炸,per-loop 则 OK)。"""
+    import asyncio
+    import json as _json
+
+    fake_png = tmp_path / "out_xloop.png"
+    _make_png_file(fake_png)
+    fake_stdout = _json.dumps({
+        "ok": True,
+        "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
+    }).encode("utf-8")
+
+    inflight_results: list[int] = []
+
+    async def _two_concurrent() -> int:
+        """在一个新 event loop 内并发两个 agenerate,返回观察到的最大并发数。"""
+        inflight = {"now": 0, "max": 0}
+
+        class SlowFakeProcess:
+            def __init__(self):
+                self.returncode = 0
+
+            async def communicate(self):
+                await asyncio.sleep(0.1)
+                return (fake_stdout, b"")
+
+            async def wait(self):
+                return 0
+
+            def terminate(self):
+                pass
+
+            def kill(self):
+                pass
+
+        original_create = asyncio.create_subprocess_exec
+
+        async def _counting_create(*a, **kw):
+            inflight["now"] += 1
+            inflight["max"] = max(inflight["max"], inflight["now"])
+            proc = SlowFakeProcess()
+
+            class WrappedProc:
+                def __init__(self):
+                    self.returncode = 0
+
+                async def communicate(self):
+                    try:
+                        return await proc.communicate()
+                    finally:
+                        inflight["now"] -= 1
+
+                async def wait(self):
+                    return 0
+
+                def terminate(self):
+                    pass
+
+                def kill(self):
+                    pass
+
+            return WrappedProc()
+
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir(exist_ok=True)
+        (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+        artifacts_dir = tmp_path / "artifacts"
+        artifacts_dir.mkdir(exist_ok=True)
+
+        w1 = ComfyAgentWorker(
+            scripts_dir=scripts_dir, model_id="comfy/local",
+            run_id="run_xloop_1", project_id="proj_xloop",
+            artifacts_dir=artifacts_dir,
+        )
+        w2 = ComfyAgentWorker(
+            scripts_dir=scripts_dir, model_id="comfy/local",
+            run_id="run_xloop_2", project_id="proj_xloop",
+            artifacts_dir=artifacts_dir,
+        )
+
+        _asyncio.create_subprocess_exec = _counting_create  # type: ignore[assignment]
+        try:
+            await _asyncio.gather(
+                w1.agenerate(
+                    spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                    num_candidates=1, seed=10, timeout_s=30,
+                ),
+                w2.agenerate(
+                    spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                    num_candidates=1, seed=20, timeout_s=30,
+                ),
+            )
+        finally:
+            _asyncio.create_subprocess_exec = _asyncio.create_subprocess_exec  # type: ignore[assignment]
+        return inflight["max"]
+
+    # loop A
+    result_a = asyncio.run(_two_concurrent())
+    assert result_a == 1, f"loop A: 最大并发应为 1,实际 {result_a}"
+    # loop B — 跨 loop 边界:per-loop 锁不产生 cross-loop RuntimeError
+    result_b = asyncio.run(_two_concurrent())
+    assert result_b == 1, f"loop B: 最大并发应为 1,实际 {result_b}"
+
+
+def test_comfy_generate_sync_shim_still_works(tmp_path):
+    """sync generate() shim 在 agenerate 主面引入后仍可正常使用
+    (probe 脚本 / 旧调用路径兼容)。"""
+    worker = _make_fake_agent_worker(tmp_path)
+    png = tmp_path / "out_shim.png"
+    _make_png_file(png)
+    with patch("subprocess.run") as run_mock:
+        run_mock.return_value = _make_completed(_ok_stdout([str(png)]))
+        result = worker.generate(
+            spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+            num_candidates=1,
+            seed=1,
+            timeout_s=30,
+        )
+    assert isinstance(result, list), (
+        f"generate() sync shim は list[ImageCandidate] を返すべきだが {type(result)} が返された"
+    )
