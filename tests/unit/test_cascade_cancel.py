@@ -473,16 +473,9 @@ async def test_cascade_drain_timeout_is_explicit_failure(tmp_path):
                 task=task, workflow=workflow, steps=steps, run_id="r_t7_drain",
             )
 
-    # drain 超时必须被显式记录在 run.metrics 中
-    assert "cancel_drain_timeout" in orch.repository._artifacts or True  # run 对象由 arun 内部持有
-    # 通过 RunResult 获取 run 需要捕获返回值;但上方 pytest.raises 已捕获异常路径。
-    # 在 first_exc 路径下,run 对象通过 run_span_ctx.__exit__ 后直接 raise,
-    # 不返回 RunResult。改为验证 metrics 写入发生:patch 记录调用次数即可。
-    # 实际验证:重新跑一次 non-raising 路径来获取 run 对象。
-    # 注:leaf_fail 抛出的是非可分类 KeyError → orchestrator re-raise,run 不返回。
-    # Task 7 spec 要求 run.metrics["cancel_drain_timeout"] + run.status = failed。
-    # 在 re-raise 路径下,run 对象已被修改但不通过 RunResult 暴露。
-    # 测试策略:spy run.metrics 通过 monkeypatching _aexec_one 捕获 run 引用。
+    # first_exc re-raise 路径下 run 对象不通过 RunResult 暴露,无法直接断言;
+    # 改用 spy:下方 _CapturingOrch 在 raise 前捕获 run 引用,
+    # 再断言 run.metrics["cancel_drain_timeout"] + run.status == failed。
     captured_run = {}
 
     class _CapturingOrch(Orchestrator):
