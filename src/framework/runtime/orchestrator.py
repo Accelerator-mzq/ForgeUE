@@ -267,7 +267,7 @@ class Orchestrator:
         dr_report: DryRunReport | None = None
         if not skip_dry_run:
             with span("dry_run", {"run_id": run_id, "workflow_id": workflow.workflow_id}):
-                # Step 6: DryRunPass.run は async def に変更されたため await 必須
+                # Step 6: DryRunPass.run 已改为 async def,必须 await
                 dr_report = await self.dry_run.run(task=task, workflow=workflow, steps=steps)
             if not dr_report.passed:
                 raise DryRunFailed(dr_report)
@@ -308,8 +308,9 @@ class Orchestrator:
                     scripts_dir=scripts_dir or ".",
                 )
                 active_manager = per_arun_manager
-            # 调用 ensure 确保进程就绪(mode="none" 时 ensure 是空操作,此处已排除)
-            await active_manager.ensure(lc_mode)
+            # 注意:ensure() 调用移至 try 块内部(see Important-1 fix)
+            # manager 构建(轻量,不失败)在 try 外;ensure() 可能抛出异常
+            # 须由 finally 兜底 release,否则 _spawn_serve() 后泄漏进程
         else:
             active_manager = None
         # ──────────────────────────────────────────────────────────────────
@@ -342,6 +343,10 @@ class Orchestrator:
         # 可能取值:"run_end" / "cascade" / "arun_cancel" / "arun_error"
         release_reason: str = "run_end"
         try:
+            # ensure() 在 try 内:失败时 except BaseException 设置 arun_error,
+            # finally 统一调用 release(保证进程不泄漏)
+            if active_manager is not None:
+                await active_manager.ensure(lc_mode)
             while current is not None and not terminated:
                 hops += 1
                 if hops > self._max_loop:
@@ -522,7 +527,7 @@ class Orchestrator:
         finally:
             # ── 全路径 release:无论正常/cascade/cancel/异常都执行 ──────────
             if per_arun_manager is not None:
-                # per-arun manager:本路径负责 release(ちょうど 1 回)
+                # per-arun manager:本路径负责 release(恰好调用 1 次)
                 await self._release_lifecycle_bounded(
                     per_arun_manager,
                     lc_mode or "ensure_release",

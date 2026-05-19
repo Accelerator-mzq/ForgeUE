@@ -368,25 +368,47 @@ async def test_release_failure_does_not_mask_original_exception(
 @pytest.mark.asyncio
 async def test_release_hang_is_bounded(monkeypatch, tmp_path):
     """_spawn_stop 超过 _RELEASE_TIMEOUT_S 挂起 → arun 不会无限阻塞,
-    失败留痕写入 run.metrics["lifecycle_release_failed"]。"""
-    monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
-    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
+    失败留痕写入 run.metrics["lifecycle_release_failed"]。
+
+    非 vacuous 断言:
+    1. ensure 用 _fake_ensure(_framework_started=True),确保 release 决策表
+       真正命中 _spawn_stop(而非 _framework_started=False 静默跳过)。
+    2. 捕获 run 对象,断言 run.metrics["lifecycle_release_failed"] 实际被写入。
+    """
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     # 将超时阈值设为 0.2s,避免测试挂起
     monkeypatch.setattr(orchestrator_mod, "_RELEASE_TIMEOUT_S", 0.2)
 
+    async def _fake_ensure(self, mode: str) -> None:
+        # 模拟 ensure:将 _framework_started 置 True,使 release 决策表命中后执行 stop
+        self._framework_started = True
+        self._ensured = True
+
     async def _hang_stop(self) -> None:
         await asyncio.sleep(1000)
 
+    monkeypatch.setattr(ComfyLifecycleManager, "ensure", _fake_ensure)
+    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
     monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _hang_stop)
 
-    # executor 正常抛出 RuntimeError(触发 ensure_release 决策表路径 → stop)
-    exc = RuntimeError("trigger-release")
-    executor = _ErrorExecutor(exc)
+    # executor 捕获 run 对象后抛出 RuntimeError(触发 ensure_release 决策表路径 → stop)
+    captured_runs: list = []
+
+    class _CapturingErrorExecutor(StepExecutor):
+        """捕获 ctx.run 后抛出异常,用于测试 finally release 路径的 metrics 写入。"""
+        step_type = StepType.generate
+        capability_ref = "mock.comfy"
+
+        async def execute(self, ctx: StepContext) -> ExecutorResult:
+            # 先捕获 run 对象,再抛出异常触发 finally release
+            captured_runs.append(ctx.run)
+            raise RuntimeError("trigger-release")
+
+    executor = _CapturingErrorExecutor()
     orch, _, _ = _build_orch_with_executor(executor, tmp_path)
 
     task, workflow, steps = _make_comfy_task_workflow_steps(mode="ensure_release")
-    # wait_for 超时后 arun 应以 RuntimeError 退出(原始异常),5s 内完成
+    # _spawn_stop 挂起超时后 arun 应以 RuntimeError 退出(原始异常),5s 内完成
     with pytest.raises(RuntimeError, match="trigger-release"):
         await asyncio.wait_for(
             orch.arun(
@@ -395,8 +417,14 @@ async def test_release_hang_is_bounded(monkeypatch, tmp_path):
             ),
             timeout=5,
         )
-    # 通过 orch 内部状态:arun 内的 run 对象无法在此直接访问
-    # 超时未挂起即为主要断言;lifecycle_release_failed 由实现写入 run.metrics
+    # 断言 1:run 被捕获到(executor 实际被调用)
+    assert captured_runs, "executor 未被调用,run 对象未捕获"
+    run_obj = captured_runs[0]
+    # 断言 2:lifecycle_release_failed 写入 run.metrics(bounded timeout 保护生效)
+    assert "lifecycle_release_failed" in run_obj.metrics, (
+        "run.metrics 未包含 lifecycle_release_failed — "
+        "_spawn_stop 挂起时 bounded release 未记录失败留痕"
+    )
 
 
 @pytest.mark.asyncio
