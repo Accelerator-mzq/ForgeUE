@@ -52,16 +52,18 @@ requirements:
   - id: LR-0004
     title: FR-WF-004 Step 支持 11 种 type
     description: Step 应支持 11 种 type:generate / transform / validate / review / select / export / import / inspect / plan / execute / custom
-    status: unimplemented
+    status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-WF-004
       kind: srs
-    evidence: []
+    evidence:
+      - src/framework/core/enums.py:21-32 — StepType 枚举实装 11 个成员(generate/transform/review/select/merge/validate/export/import_/retry/branch/human_gate)
+      - docs/acceptance/acceptance_report.md §4.1 — FR-WF-004 标 ✅(验收手段 test_core_schemas 枚举)
     confidence: high
     priority:
     review: confirmed
-    notes: ""
+    notes: "重核 2026-05-19:代码 StepType 枚举有 11 个成员,但集合与 SRS §3.1 列举的 11 名(含 inspect/plan/execute/custom)不一致 —— SRS 文本漂移,非未实现待办;能力已验收 ✅。建议修订 SRS §3.1 对齐代码。"
   - id: LR-0005
     title: FR-WF-005 Step risk_level 调度按风险升序
     description: Step 应携带 risk_level(low / medium / high),调度按风险升序
@@ -609,16 +611,18 @@ requirements:
   - id: LR-0037
     title: FR-REVIEW-001 三种评审形态支持
     description: 系统应支持三种评审形态:`single_judge`、`panel_judge`(多 judge 并发)、`human_review`(留出接口)
-    status: unimplemented
+    status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-REVIEW-001
       kind: srs
-    evidence: []
+    evidence:
+      - src/framework/core/enums.py:41 — ReviewMode 枚举(single_judge / multi_judge / council / chief_judge)
+      - src/framework/core/enums.py — StepType.human_gate + Decision.human_review_required 作 human_review 预留接口
     confidence: high
     priority:
     review: confirmed
-    notes: ""
+    notes: "重核 2026-05-19:SRS §3.5 要求 human_review「留出接口」—— 代码以 human_gate StepType + human_review_required Decision 预留;acceptance_report §4.5 标 ⚠️(接口预留、未端到端)。SRS 要求的「留出接口」已满足,端到端 human_review 本在 SRS scope 外;非未实现待办。"
   - id: LR-0038
     title: FR-REVIEW-002 ReviewReport + Verdict 双独立对象同时落库
     description: Review 应产出 `ReviewReport`(分析)+ `Verdict`(决策)两独立对象,同时落库
@@ -638,16 +642,18 @@ requirements:
   - id: LR-0039
     title: FR-REVIEW-003 Verdict 支持 9 种 decision
     description: Verdict 应支持 9 种 `decision`:`accept` / `revise` / `reject` / `retry_same_step` / `fallback_model` / `abort_or_fallback` / `escalate_human` / `human_review_required` / `stop`
-    status: unimplemented
+    status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-REVIEW-003
       kind: srs
-    evidence: []
+    evidence:
+      - src/framework/core/enums.py:48 — Decision 枚举实装(代码决策集 approve/approve_one/approve_many 等与 SRS §3.5 列举的 9 名不完全一致)
+      - docs/acceptance/acceptance_report.md §4.5 — FR-REVIEW-003 标 ✅(验收手段 test_transition_engine)
     confidence: high
     priority:
     review: confirmed
-    notes: ""
+    notes: "重核 2026-05-19:Decision 枚举已实装并驱动流程控制,具体决策名与 SRS §3.5 列举不一致(代码 approve vs SRS accept;escalate_human/stop 无同名)—— SRS 文本漂移,非未实现待办;已验收 ✅。建议修订 SRS §3.5。"
   - id: LR-0040
     title: FR-REVIEW-004 Verdict 携带 confidence 低于 pass_threshold 触发 revise
     description: Verdict 应携带 `confidence`(0-1 浮点),低于 `pass_threshold` 触发 `revise`
@@ -666,16 +672,18 @@ requirements:
   - id: LR-0041
     title: FR-REVIEW-005 5 维评分写入 scores_by_dimension
     description: Review 应支持 5 维评分:`quality` / `consistency` / `ue_compliance` / `aesthetics` / `technical_correctness`,写入 `scores_by_dimension`
-    status: unimplemented
+    status: implemented
     source:
       document: docs/requirements/SRS.md
       section: FR-REVIEW-005
       kind: srs
-    evidence: []
+    evidence:
+      - src/framework/core/review.py:56 — DimensionScores 实装 5 维评分(维度名与 SRS §3.5 列举不同)
+      - docs/acceptance/acceptance_report.md §4.5 — FR-REVIEW-005 标 ✅(验收手段 test_core_schemas DimensionScores)
     confidence: high
     priority:
     review: confirmed
-    notes: ""
+    notes: "重核 2026-05-19:5 维评分已实装(DimensionScores),维度名与 SRS §3.5 列举(quality/consistency/...)不一致 —— SRS 文本漂移,非未实现待办;已验收 ✅。建议修订 SRS §3.5。"
   - id: LR-0042
     title: FR-REVIEW-006 Rubric 从 YAML 模板加载支持内置模板
     description: Rubric 应从 YAML 模板加载(`src/framework/review_engine/rubric_templates/*.yaml`),支持 `ue_asset_quality` / `ue_character_quality` / `ue_visual_quality` 等
@@ -1861,29 +1869,35 @@ requirements:
   - id: LR-0115
     title: NFR-OBS-003 BudgetTracker 在 RunResult.budget_summary 汇总指定字段
     description: BudgetTracker 应在 `RunResult.budget_summary` 中汇总:`total_cost_usd` / `prompt_tokens` / `completion_tokens` / `total_tokens` / per-step breakdown
-    status: unimplemented
+    status: implemented
     source:
       document: docs/requirements/SRS.md
       section: NFR-OBS-003
       kind: srs
-    evidence: []
+    evidence:
+      - src/framework/runtime/orchestrator.py:68 — RunResult.budget_summary 字段
+      - src/framework/runtime/orchestrator.py:360 — budget_tracker.summary() 填充 budget_summary
+      - docs/acceptance/acceptance_report.md §5.5 — NFR-OBS-003 标 ✅
     confidence: high
     priority:
     review: confirmed
-    notes: ""
+    notes: "重核 2026-05-19:RunResult.budget_summary 已实装并由 budget_tracker.summary() 填充,字段名(代码 total_usd 等)与 SRS §4.5 列举的 total_cost_usd 等不一致 —— SRS 文本漂移,非未实现待办;已验收 ✅。"
   - id: LR-0116
     title: NFR-OBS-004 长任务 poll emit worker_poll 事件
     description: 长任务 poll(mesh / comfy)应 emit `worker_poll` 事件,带 `elapsed_s` + 可选 `progress`
-    status: unimplemented
+    status: implemented
     source:
       document: docs/requirements/SRS.md
       section: NFR-OBS-004
       kind: srs
-    evidence: []
+    evidence:
+      - src/framework/providers/hunyuan_tokenhub_adapter.py:201 — phase="tokenhub_poll" 事件
+      - src/framework/providers/workers/mesh_worker.py:582 — phase="mesh_poll" 事件
+      - docs/acceptance/acceptance_report.md §5.5 — NFR-OBS-004 标 ✅
     confidence: high
     priority:
     review: confirmed
-    notes: ""
+    notes: "重核 2026-05-19:长任务 poll 事件已实装(tokenhub_poll / mesh_poll),SRS §4.5 称 worker_poll —— 事件名漂移、语义一致;非未实现待办;已验收 ✅。"
   - id: LR-0117
     title: NFR-MAINT-001 Codex review 修复配回归测试
     description: 每轮代码 review(Codex / adversarial)修复,应配一个新回归测试 fence 守门
