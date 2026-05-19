@@ -65,7 +65,7 @@ class GenerateImageExecutor(StepExecutor):
         self._worker = worker
         self._router = router
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # 已转 async,worker 调用全用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 3))
         if num < 1:
@@ -101,15 +101,16 @@ class GenerateImageExecutor(StepExecutor):
             attempt_count = attempt + 1
             try:
                 if use_worker_path:
-                    candidates, chosen_model, route_pricing = self._generate_via_worker(
+                    candidates, chosen_model, route_pricing = await self._generate_via_worker(
                         ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
                     )
                 elif use_api_path:
-                    candidates, chosen_model, route_pricing = self._generate_via_router(
+                    candidates, chosen_model, route_pricing = await self._generate_via_router(
                         ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
                     )
                 else:
-                    candidates = self._worker.generate(
+                    # 无 worker path / api path:直接调 agenerate(remote worker async 接口)
+                    candidates = await self._worker.agenerate(
                         spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
                     )
                     chosen_model = cfg.get("model_hint", self._worker.name if self._worker else "comfy")
@@ -274,16 +275,16 @@ class GenerateImageExecutor(StepExecutor):
             return False
         return any(getattr(r, "model", None) == "comfy/local" for r in pp.prepared_routes)
 
-    def _generate_via_worker(
+    async def _generate_via_worker(
         self, *, ctx: StepContext, spec: dict, num: int,
         seed: int | None, timeout_s: float | None,
     ) -> tuple[list[ImageCandidate], str, dict[str, float] | None]:
-        """OpenSpec change comfy-agent-cli-adoption (round 2 OQ-6 = F-B):
-        construct ComfyAgentWorker inline from env config + StepContext
-        and call sync `generate()`. Bypasses CapabilityRouter — analogous
-        to mesh worker injection pattern but with executor-side model-id
-        branch (NEW pattern). G4 commit 3 drift writeback documented:
-        ABC `generate` is sync, no asyncio.run bridge needed."""
+        """Task 5:转 async — 构造 ComfyAgentWorker 并调 async agenerate。
+
+        OpenSpec change comfy-agent-cli-adoption (round 2 OQ-6 = F-B):
+        construct ComfyAgentWorker inline from env config + StepContext,
+        bypassing CapabilityRouter。Task 5 改用 `await worker.agenerate()`
+        而非原 sync `generate()`,消除 asyncio.run bridge。"""
         scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
         if not scripts_dir:
             raise WorkerUnsupportedResponse(
@@ -302,7 +303,8 @@ class GenerateImageExecutor(StepExecutor):
             python_exe=Path(python_exe) if python_exe else None,
             default_lifecycle=lifecycle,
         )
-        candidates = worker.generate(
+        # Task 5: 直接 await async 主面 agenerate,不走 sync generate
+        candidates = await worker.agenerate(
             spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
         )
         return candidates, "comfy/local", None
@@ -322,16 +324,15 @@ class GenerateImageExecutor(StepExecutor):
                 return True
         return False
 
-    def _generate_via_router(
+    async def _generate_via_router(
         self, *, ctx: StepContext, spec: dict, num: int,
         seed: int | None, timeout_s: float | None,
     ) -> tuple[list[ImageCandidate], str, dict[str, float] | None]:
-        """Call CapabilityRouter.image_generation; wrap results as ImageCandidate.
+        """Task 5:转 async — 调 CapabilityRouter.aimage_generation;删除 asyncio.run shim。
 
         Plan C Phase 6 — when *num > 1* we fan out N parallel `n=1` calls via
-        `asyncio.gather` under a single `asyncio.run`. Many image providers
-        (Hunyuan tokenhub, Qwen async jobs) submit one job at a time, so the
-        old `n=3` sync path secretly serialized candidates; parallel now.
+        `asyncio.gather`。Task 5 将 `asyncio.run(_fan_out())` shim 删除,
+        `_fan_out` 在 async 上下文中直接 await;单路径改用 await aimage_generation。
 
         2026-04 pricing wiring: returns a 3-tuple where the last element is
         the selected route's yaml pricing dict (or None when the route
@@ -360,6 +361,8 @@ class GenerateImageExecutor(StepExecutor):
         # Default keeps legacy behaviour (one `n=N` call).
         parallel = bool((ctx.step.config or {}).get("parallel_candidates"))
         if num > 1 and parallel:
+            # Task 5: _fan_out 已是 async def,直接 await asyncio.gather;
+            # 删除原 asyncio.run(_fan_out()) shim — 现在在 async 上下文中运行
             async def _fan_out():
                 tasks = [
                     self._router.aimage_generation(        # type: ignore[union-attr]
@@ -370,7 +373,7 @@ class GenerateImageExecutor(StepExecutor):
                     for _ in range(num)
                 ]
                 return await asyncio.gather(*tasks)
-            per_call = asyncio.run(_fan_out())
+            per_call = await _fan_out()
             results = []
             models_seen: list[str] = []
             for per_call_results, per_call_model in per_call:
@@ -394,7 +397,8 @@ class GenerateImageExecutor(StepExecutor):
                 )
             chosen_model = models_seen[0] if models_seen else ""
         else:
-            results, chosen_model = self._router.image_generation(
+            # Task 5: 单路径改用 await aimage_generation(async),删除 sync image_generation 调用
+            results, chosen_model = await self._router.aimage_generation(
                 policy=ctx.step.provider_policy,    # type: ignore[arg-type]
                 prompt=prompt, n=num, size=size_arg,
                 timeout_s=timeout_s, extra=extra,

@@ -79,7 +79,7 @@ class GenerateAudioExecutor(StepExecutor):
         # model-id exact-match per pattern c per spec/provider-routing 说明)
         self._worker = worker
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # Task 5: 转 async,worker 调用全用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 1))
         if num < 1:
@@ -99,7 +99,8 @@ class GenerateAudioExecutor(StepExecutor):
         policy = ctx.step.retry_policy or RetryPolicy()
 
         if self._should_use_comfy_worker_path(ctx):
-            candidates = self._generate_via_comfy_worker(
+            # Task 5: await async helper
+            candidates = await self._generate_via_comfy_worker(
                 ctx=ctx, spec=spec, num=num, seed=seed,
                 timeout_s=timeout_s, policy=policy,
             )
@@ -107,7 +108,8 @@ class GenerateAudioExecutor(StepExecutor):
         elif self._worker is not None:
             # Future remote AudioCraft path — out of scope this change(本 commit
             # 不实装具体行为;留下入口便于 follow-on `audio-worker-audiocraft-adoption`)
-            candidates = self._worker.generate_audio(
+            # Task 5: 改用 await agenerate_audio(async remote worker 接口)
+            candidates = await self._worker.agenerate_audio(
                 spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
             )
             chosen_model = self._worker.name
@@ -185,7 +187,7 @@ class GenerateAudioExecutor(StepExecutor):
             return False
         return any(getattr(r, "model", None) == "comfy/local-audio" for r in pp.prepared_routes)
 
-    def _generate_via_comfy_worker(
+    async def _generate_via_comfy_worker(
         self,
         *,
         ctx: StepContext,
@@ -195,7 +197,9 @@ class GenerateAudioExecutor(StepExecutor):
         timeout_s: float | None,
         policy: RetryPolicy,
     ) -> list[AudioCandidate]:
-        """Inline ComfyAgentWorker.generate_audio dispatch with retry/wrap。
+        """Inline ComfyAgentWorker.agenerate_audio dispatch with retry/wrap。
+
+        Task 5: 转 async — 用 await worker.agenerate_audio(...)。
 
         F2 round-1 三 except 块拆分(对照 generate_mesh.py:160-172;不裸 raise):
         - `ComfyWorkerTimeout` → wrap as `AudioWorkerTimeout` + 条件 retry
@@ -203,7 +207,7 @@ class GenerateAudioExecutor(StepExecutor):
         - `ComfyWorkerUnsupportedResponse` → wrap + immediate raise(deterministic)
         - `ComfyWorkerError` → wrap + immediate raise(generic worker error)
 
-        本 helper 不含 outer per-candidate loop — `ComfyAgentWorker.generate_audio`
+        本 helper 不含 outer per-candidate loop — `ComfyAgentWorker.agenerate_audio`
         内部已实现 `for i in range(max(1, num_candidates))`(F-Plan-3 + F-Plan-R5-A
         round-5 修订)。
         """
@@ -230,7 +234,8 @@ class GenerateAudioExecutor(StepExecutor):
         last_exc: AudioWorkerError | None = None
         for attempt in range(attempts):
             try:
-                return worker.generate_audio(
+                # Task 5: await async agenerate_audio,消除 sync generate_audio 调用
+                return await worker.agenerate_audio(
                     spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
                 )
             except WorkerTimeout as exc:

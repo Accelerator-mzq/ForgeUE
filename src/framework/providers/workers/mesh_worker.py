@@ -90,6 +90,26 @@ class MeshWorker(ABC):
     ) -> list[MeshCandidate]:
         """Produce *num_candidates* meshes from *source_image_bytes*."""
 
+    async def agenerate(
+        self,
+        *,
+        source_image_bytes: bytes,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """Task 5 async 接口:默认实现用 asyncio.to_thread 包 sync generate。
+        HunyuanMeshWorker 有专属 async agenerate 覆盖此默认;
+        FakeMeshWorker 继承此默认以支持测试中 await worker.agenerate(...)。"""
+        import asyncio
+        return await asyncio.to_thread(
+            self.generate,
+            source_image_bytes=source_image_bytes,
+            spec=spec,
+            num_candidates=num_candidates,
+            timeout_s=timeout_s,
+        )
+
 
 # ----------------------------------------------------------------------------
 # Fake —— deterministic, offline

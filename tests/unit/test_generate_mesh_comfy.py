@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -202,11 +202,12 @@ def test_should_use_comfy_worker_path_returns_false_when_no_provider_policy(tmp_
 # ---- _generate_via_comfy_worker (B2 + D7) -----------------------------------
 
 
-def test_generate_via_comfy_worker_writes_source_bytes_to_comfyui_input_dir_with_forgeue_prefix(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_writes_source_bytes_to_comfyui_input_dir_with_forgeue_prefix(tmp_path, monkeypatch):
     """Round 5 D10 修订:executor 写 source bytes 到 ComfyUI 自家 input/ 目录
     (via FORGEUE_COMFY_INPUT_DIR env),filename `forgeue_<sha1>.png`(prefix 防与
     ComfyUI 自家 input 文件冲突);round 1-4 写到 <run_dir>/comfy/input 是错的
-    (LoadImage 节点不接绝对路径)。"""
+    (LoadImage 节点不接绝对路径)。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     comfy_input_dir = tmp_path / "comfy_input"
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(comfy_input_dir))
@@ -215,8 +216,9 @@ def test_generate_via_comfy_worker_writes_source_bytes_to_comfyui_input_dir_with
     expected_path = comfy_input_dir / f"forgeue_{expected_sha1}.png"
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.return_value = [_fake_mesh_candidate()]
-        executor._generate_via_comfy_worker(
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
+        await executor._generate_via_comfy_worker(
             ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_bytes=src_bytes, num=1, seed=42, timeout_s=600,
         )
@@ -224,47 +226,52 @@ def test_generate_via_comfy_worker_writes_source_bytes_to_comfyui_input_dir_with
     assert expected_path.read_bytes() == src_bytes
 
 
-def test_generate_via_comfy_worker_passes_source_image_filename_to_worker_generate_mesh(tmp_path, monkeypatch):
-    """Round 5 D10:filename only(不是 absolute path)传给 worker.generate_mesh。"""
+async def test_generate_via_comfy_worker_passes_source_image_filename_to_worker_generate_mesh(tmp_path, monkeypatch):
+    """Round 5 D10:filename only(不是 absolute path)传给 worker.agenerate_mesh。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.return_value = [_fake_mesh_candidate()]
-        executor._generate_via_comfy_worker(
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
+        await executor._generate_via_comfy_worker(
             ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_bytes=src_bytes, num=1, seed=42, timeout_s=600,
         )
-        call_kwargs = W.return_value.generate_mesh.call_args.kwargs
+        call_kwargs = W.return_value.agenerate_mesh.call_args.kwargs
         sha1_hex = hashlib.sha1(src_bytes).hexdigest()[:16]
         # round 5 D10:source_image_filename(filename only)而非 source_image_path(绝对路径)
         assert call_kwargs["source_image_filename"] == f"forgeue_{sha1_hex}.png"
 
 
-def test_generate_via_comfy_worker_raises_when_FORGEUE_COMFY_INPUT_DIR_unset(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_raises_when_FORGEUE_COMFY_INPUT_DIR_unset(tmp_path, monkeypatch):
     """Round 5 D10:FORGEUE_COMFY_INPUT_DIR env unset 时立即 raise
-    MeshWorkerUnsupportedResponse(fail-fast,不静默落 source bytes 到错位置)。"""
+    MeshWorkerUnsupportedResponse(fail-fast,不静默落 source bytes 到错位置)。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.delenv("FORGEUE_COMFY_INPUT_DIR", raising=False)
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with pytest.raises(MeshWorkerUnsupportedResponse, match="FORGEUE_COMFY_INPUT_DIR"):
-        executor._generate_via_comfy_worker(
+        await executor._generate_via_comfy_worker(
             ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
         )
 
 
-def test_generate_via_comfy_worker_constructs_worker_with_model_id_comfy_local_mesh(tmp_path, monkeypatch):
-    """D1:executor 构造 ComfyAgentWorker 时传 model_id='comfy/local-mesh'。"""
+async def test_generate_via_comfy_worker_constructs_worker_with_model_id_comfy_local_mesh(tmp_path, monkeypatch):
+    """D1:executor 构造 ComfyAgentWorker 时传 model_id='comfy/local-mesh'。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.return_value = [_fake_mesh_candidate()]
-        executor._generate_via_comfy_worker(
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
+        await executor._generate_via_comfy_worker(
             ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_bytes=src_bytes, num=1, seed=None, timeout_s=600,
         )
@@ -274,14 +281,15 @@ def test_generate_via_comfy_worker_constructs_worker_with_model_id_comfy_local_m
     assert init_kwargs["project_id"] == "p"
 
 
-def test_generate_via_comfy_worker_raises_when_env_unset(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_raises_when_env_unset(tmp_path, monkeypatch):
     """env unset → MeshWorkerUnsupportedResponse(不是 raw ComfyWorker exception;
-    早 wrap 让 caller 看到 mesh-worker exception family)。"""
+    早 wrap 让 caller 看到 mesh-worker exception family)。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.delenv("FORGEUE_COMFY_SCRIPTS_DIR", raising=False)
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with pytest.raises(MeshWorkerUnsupportedResponse, match="FORGEUE_COMFY_SCRIPTS_DIR"):
-        executor._generate_via_comfy_worker(
+        await executor._generate_via_comfy_worker(
             ctx=ctx, spec={}, source_image_bytes=src_bytes,
             num=1, seed=None, timeout_s=60,
         )
@@ -290,16 +298,18 @@ def test_generate_via_comfy_worker_raises_when_env_unset(tmp_path, monkeypatch):
 # ---- ComfyWorker → MeshWorker 异常 wrap (D9 + R2-F2) ------------------------
 
 
-def test_generate_via_comfy_worker_wraps_worker_timeout_to_mesh_worker_timeout(tmp_path, monkeypatch):
-    """D9:WorkerTimeout → MeshWorkerTimeout(让 retry loop catch + FailureModeMap 路由)。"""
+async def test_generate_via_comfy_worker_wraps_worker_timeout_to_mesh_worker_timeout(tmp_path, monkeypatch):
+    """D9:WorkerTimeout → MeshWorkerTimeout(让 retry loop catch + FailureModeMap 路由)。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.side_effect = _ComfyWorkerTimeout("subprocess exceeded")
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(side_effect=_ComfyWorkerTimeout("subprocess exceeded"))
         with pytest.raises(MeshWorkerTimeout, match="subprocess exceeded") as ei:
-            executor._generate_via_comfy_worker(
+            await executor._generate_via_comfy_worker(
                 ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
                 source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
             )
@@ -307,34 +317,38 @@ def test_generate_via_comfy_worker_wraps_worker_timeout_to_mesh_worker_timeout(t
         assert isinstance(ei.value.__cause__, _ComfyWorkerTimeout)
 
 
-def test_generate_via_comfy_worker_wraps_worker_unsupported_response_to_mesh_worker_unsupported(tmp_path, monkeypatch):
-    """D9:WorkerUnsupportedResponse → MeshWorkerUnsupportedResponse(不 retry)。"""
+async def test_generate_via_comfy_worker_wraps_worker_unsupported_response_to_mesh_worker_unsupported(tmp_path, monkeypatch):
+    """D9:WorkerUnsupportedResponse → MeshWorkerUnsupportedResponse(不 retry)。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.side_effect = _ComfyWorkerUnsupportedResponse("invalid param")
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(side_effect=_ComfyWorkerUnsupportedResponse("invalid param"))
         with pytest.raises(MeshWorkerUnsupportedResponse, match="invalid param") as ei:
-            executor._generate_via_comfy_worker(
+            await executor._generate_via_comfy_worker(
                 ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
                 source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
             )
         assert isinstance(ei.value.__cause__, _ComfyWorkerUnsupportedResponse)
         # 不 retry → call_count == 1
-        assert W.return_value.generate_mesh.call_count == 1
+        assert W.return_value.agenerate_mesh.call_count == 1
 
 
-def test_generate_via_comfy_worker_wraps_generic_worker_error_to_mesh_worker_error(tmp_path, monkeypatch):
-    """D9:WorkerError → MeshWorkerError(不 retry)。"""
+async def test_generate_via_comfy_worker_wraps_generic_worker_error_to_mesh_worker_error(tmp_path, monkeypatch):
+    """D9:WorkerError → MeshWorkerError(不 retry)。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.side_effect = _ComfyWorkerError("comfyui_api ok=false")
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(side_effect=_ComfyWorkerError("comfyui_api ok=false"))
         with pytest.raises(MeshWorkerError, match="comfyui_api ok=false") as ei:
-            executor._generate_via_comfy_worker(
+            await executor._generate_via_comfy_worker(
                 ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
                 source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
             )
@@ -344,9 +358,10 @@ def test_generate_via_comfy_worker_wraps_generic_worker_error_to_mesh_worker_err
 # ---- 本地 retry budget (R2-F2 + R4-F1) --------------------------------------
 
 
-def test_local_comfy_mesh_executor_calls_worker_max_attempts_times_on_timeout(tmp_path, monkeypatch):
+async def test_local_comfy_mesh_executor_calls_worker_max_attempts_times_on_timeout(tmp_path, monkeypatch):
     """R2-F2 critical:本地 mesh 走 standard retry,RetryPolicy 默认 max_attempts=2。
-    第一次 timeout 后 retry,第二次成功 → call_count == 2。"""
+    第一次 timeout 后 retry,第二次成功 → call_count == 2。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
@@ -354,54 +369,58 @@ def test_local_comfy_mesh_executor_calls_worker_max_attempts_times_on_timeout(tm
     successful_cands = [_fake_mesh_candidate()]
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
         # 第一次 raise WorkerTimeout,第二次返候选
-        W.return_value.generate_mesh.side_effect = [
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock + side_effect list
+        W.return_value.agenerate_mesh = AsyncMock(side_effect=[
             _ComfyWorkerTimeout("first attempt timeout"),
             successful_cands,
-        ]
+        ])
         # 跳过 _backoff sleep 加快测试
         with patch("framework.runtime.executors.generate_mesh._backoff"):
-            cands = executor._generate_via_comfy_worker(
+            cands = await executor._generate_via_comfy_worker(
                 ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
                 source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
             )
     assert cands == successful_cands
     # max_attempts default 2 → 第一次 fail + 第二次 success = 2 次调用
-    assert W.return_value.generate_mesh.call_count == 2
+    assert W.return_value.agenerate_mesh.call_count == 2
 
 
-def test_local_comfy_mesh_executor_does_not_retry_on_worker_unsupported_response(tmp_path, monkeypatch):
-    """R2-F2:UnsupportedResponse 是 deterministic,不 retry。"""
+async def test_local_comfy_mesh_executor_does_not_retry_on_worker_unsupported_response(tmp_path, monkeypatch):
+    """R2-F2:UnsupportedResponse 是 deterministic,不 retry。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.side_effect = _ComfyWorkerUnsupportedResponse("bad param")
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(side_effect=_ComfyWorkerUnsupportedResponse("bad param"))
         with pytest.raises(MeshWorkerUnsupportedResponse):
-            executor._generate_via_comfy_worker(
+            await executor._generate_via_comfy_worker(
                 ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
                 source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
             )
-        assert W.return_value.generate_mesh.call_count == 1
+        assert W.return_value.agenerate_mesh.call_count == 1
 
 
-def test_local_comfy_mesh_executor_raises_after_all_retries_exhausted(tmp_path, monkeypatch):
+async def test_local_comfy_mesh_executor_raises_after_all_retries_exhausted(tmp_path, monkeypatch):
     """R2-F2 + R4-F1:max_attempts 全部 timeout → raise wrapped MeshWorkerTimeout
-    (传给 FailureModeMap → mesh_worker_timeout → abort_or_fallback)。"""
+    (传给 FailureModeMap → mesh_worker_timeout → abort_or_fallback)。
+    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        # 两次都 timeout
-        W.return_value.generate_mesh.side_effect = _ComfyWorkerTimeout("persistent")
+        # 两次都 timeout;Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(side_effect=_ComfyWorkerTimeout("persistent"))
         with patch("framework.runtime.executors.generate_mesh._backoff"):
             with pytest.raises(MeshWorkerTimeout, match="persistent"):
-                executor._generate_via_comfy_worker(
+                await executor._generate_via_comfy_worker(
                     ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
                     source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
                 )
-        assert W.return_value.generate_mesh.call_count == 2  # max_attempts
+        assert W.return_value.agenerate_mesh.call_count == 2  # max_attempts
 
 
 # ---- FailureModeMap 路由 (R4-F1) --------------------------------------------
@@ -444,8 +463,8 @@ async def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_b
 
     fake_cand = _fake_mesh_candidate()
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.return_value = [fake_cand]
-        # Task 5 RED: executor.execute 已转为 async def,需 await
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[fake_cand])
         result = await executor.execute(ctx)
 
     # injected worker 未被调用(comfy dispatch)
@@ -496,7 +515,8 @@ async def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_ag
 
     fake_cand = _fake_mesh_candidate()
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        W.return_value.generate_mesh.return_value = [fake_cand]
+        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[fake_cand])
         result = await executor.execute(ctx)
 
     assert len(result.artifacts) == 1

@@ -582,9 +582,10 @@ def test_executor_dispatches_comfy_local_to_worker_not_router(tmp_path, monkeypa
     assert executor._should_use_worker_path(ctx2) is False
 
 
-def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
+async def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     """_generate_via_worker reads FORGEUE_COMFY_SCRIPTS_DIR / _PYTHON_EXE /
-    _LIFECYCLE from env and constructs ComfyAgentWorker."""
+    _LIFECYCLE from env and constructs ComfyAgentWorker。
+    Task 5 GREEN: _generate_via_worker 已转 async,测试改为 async def + await。"""
     from framework.runtime.executors.generate_image import GenerateImageExecutor
 
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "comfy_scripts"))
@@ -603,7 +604,8 @@ def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     ctx.run_dir = tmp_path / "run_dir"
 
     with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(png)]))) as run_mock:
-        candidates, chosen_model, pricing = executor._generate_via_worker(
+        # Task 5 GREEN: _generate_via_worker 已转 async def,需 await
+        candidates, chosen_model, pricing = await executor._generate_via_worker(
             ctx=ctx, spec={"comfy_workflow": "X"}, num=1, seed=0, timeout_s=60.0,
         )
     assert chosen_model == "comfy/local"
@@ -614,9 +616,10 @@ def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     assert "comfyui_api" in " ".join(cmd)
 
 
-def test_env_unset_raises_unsupported_response(tmp_path, monkeypatch):
+async def test_env_unset_raises_unsupported_response(tmp_path, monkeypatch):
     """_generate_via_worker without FORGEUE_COMFY_SCRIPTS_DIR raises
-    WorkerUnsupportedResponse — env config required for comfy/local route."""
+    WorkerUnsupportedResponse — env config required for comfy/local route。
+    Task 5 GREEN: _generate_via_worker 已转 async,测试改为 async def + await。"""
     from framework.runtime.executors.generate_image import GenerateImageExecutor
 
     monkeypatch.delenv("FORGEUE_COMFY_SCRIPTS_DIR", raising=False)
@@ -627,7 +630,8 @@ def test_env_unset_raises_unsupported_response(tmp_path, monkeypatch):
     ctx.task.project_id = "proj_x"
 
     with pytest.raises(WorkerUnsupportedResponse, match="FORGEUE_COMFY_SCRIPTS_DIR"):
-        executor._generate_via_worker(
+        # Task 5 GREEN: _generate_via_worker 已转 async def,需 await
+        await executor._generate_via_worker(
             ctx=ctx, spec={"comfy_workflow": "X"}, num=1, seed=0, timeout_s=60.0,
         )
 

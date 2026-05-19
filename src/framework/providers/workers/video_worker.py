@@ -158,6 +158,26 @@ class VideoWorker(ABC):
         Retry policy 由 caller (executor) 处理 — ABC 不实现 retry loop。
         """
 
+    async def agenerate_video(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[VideoCandidate]:
+        """Task 5 async 接口:默认实现用 asyncio.to_thread 包 sync generate_video。
+        未来远端 video worker(Runway / Pika / Sora 等)应覆盖此方法实现真正 async I/O;
+        本 change scope FakeVideoWorker 继承此默认。"""
+        import asyncio
+        return await asyncio.to_thread(
+            self.generate_video,
+            spec=spec,
+            num_candidates=num_candidates,
+            seed=seed,
+            timeout_s=timeout_s,
+        )
+
 
 # ----------------------------------------------------------------------------
 # FakeVideoWorker —— deterministic, offline (test fixture)

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -215,15 +215,15 @@ async def test_generate_via_comfy_worker_wraps_worker_timeout_to_video_worker_ti
     executor = GenerateVideoExecutor()
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        # Task 5 RED: executor 转 async 后调 agenerate_video,mock 需同步更新
-        worker_inst.generate_video.side_effect = _ComfyWorkerTimeout("subprocess hit 600s")
+        # Task 5 GREEN: executor 转 async 后调 agenerate_video,改用 AsyncMock
+        worker_inst.agenerate_video = AsyncMock(side_effect=_ComfyWorkerTimeout("subprocess hit 600s"))
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerTimeout) as exc_info:
             await executor.execute(ctx)
     # __cause__ chain should preserve original ComfyWorkerTimeout
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerTimeout)
     # max_attempts=2 → 2 calls
-    assert worker_inst.generate_video.call_count == 2
+    assert worker_inst.agenerate_video.call_count == 2
 
 
 async def test_generate_via_comfy_worker_wraps_worker_unsupported_to_video_worker_unsupported_immediately(tmp_path, monkeypatch):
@@ -236,13 +236,14 @@ async def test_generate_via_comfy_worker_wraps_worker_unsupported_to_video_worke
     executor = GenerateVideoExecutor()
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_video.side_effect = _ComfyWorkerUnsupportedResponse("outputs.video missing")
+        # Task 5 GREEN: agenerate_video 用 AsyncMock
+        worker_inst.agenerate_video = AsyncMock(side_effect=_ComfyWorkerUnsupportedResponse("outputs.video missing"))
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerUnsupportedResponse) as exc_info:
             await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerUnsupportedResponse)
     # Deterministic 不 retry — 1 call only
-    assert worker_inst.generate_video.call_count == 1
+    assert worker_inst.agenerate_video.call_count == 1
 
 
 async def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_path, monkeypatch):
@@ -254,12 +255,13 @@ async def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(
     executor = GenerateVideoExecutor()
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_video.side_effect = _ComfyWorkerError("subprocess crashed")
+        # Task 5 GREEN: agenerate_video 用 AsyncMock
+        worker_inst.agenerate_video = AsyncMock(side_effect=_ComfyWorkerError("subprocess crashed"))
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerError) as exc_info:
             await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerError)
-    assert worker_inst.generate_video.call_count == 1
+    assert worker_inst.agenerate_video.call_count == 1
 
 
 async def test_local_comfy_video_executor_retry_on_excludes_timeout_short_circuits_first_attempt(tmp_path, monkeypatch):
@@ -273,12 +275,13 @@ async def test_local_comfy_video_executor_retry_on_excludes_timeout_short_circui
     executor = GenerateVideoExecutor()
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_video.side_effect = _ComfyWorkerTimeout("first call timeout")
+        # Task 5 GREEN: agenerate_video 用 AsyncMock
+        worker_inst.agenerate_video = AsyncMock(side_effect=_ComfyWorkerTimeout("first call timeout"))
         cls_mock.return_value = worker_inst
         with pytest.raises(VideoWorkerTimeout):
             await executor.execute(ctx)
     # retry_on 不含 timeout → 1 call only(F-Plan-R7-B short-circuit)
-    assert worker_inst.generate_video.call_count == 1
+    assert worker_inst.agenerate_video.call_count == 1
 
 
 # ---- Persistence(D1 + D8 shape="mp4" UE bridge + 5 metadata None)----------
@@ -295,7 +298,8 @@ async def test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_
     cand = _fake_video_candidate()
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_video.return_value = [cand]
+        # Task 5 GREEN: agenerate_video 用 AsyncMock
+        worker_inst.agenerate_video = AsyncMock(return_value=[cand])
         cls_mock.return_value = worker_inst
         result = await executor.execute(ctx)
     assert len([a.artifact_id for a in result.artifacts]) == 1
@@ -320,7 +324,8 @@ async def test_executor_artifact_top_level_metadata_includes_format_5_video_meta
     cand = _fake_video_candidate()
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_video.return_value = [cand]
+        # Task 5 GREEN: agenerate_video 用 AsyncMock
+        worker_inst.agenerate_video = AsyncMock(return_value=[cand])
         cls_mock.return_value = worker_inst
         result = await executor.execute(ctx)
     art = repo.get([a.artifact_id for a in result.artifacts][0])
@@ -357,13 +362,14 @@ async def test_local_comfy_video_pricing_none_treated_as_non_premium(tmp_path, m
     with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
         # 第一次 timeout,第二次成功(retry budget 起作用)
-        worker_inst.generate_video.side_effect = [
+        # Task 5 GREEN: agenerate_video 用 AsyncMock + side_effect list
+        worker_inst.agenerate_video = AsyncMock(side_effect=[
             _ComfyWorkerTimeout("first call timeout"),
             [_fake_video_candidate()],
-        ]
+        ])
         cls_mock.return_value = worker_inst
         result = await executor.execute(ctx)
-    assert worker_inst.generate_video.call_count == 2  # retry happened
+    assert worker_inst.agenerate_video.call_count == 2  # retry happened
     assert len([a.artifact_id for a in result.artifacts]) == 1
 
 

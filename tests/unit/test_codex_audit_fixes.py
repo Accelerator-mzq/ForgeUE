@@ -485,7 +485,7 @@ def test_orchestrator_concurrent_arun_does_not_share_counters(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):
+async def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):  # Task 5 GREEN: execute 已转 async
     from framework.runtime.executors.generate_image import GenerateImageExecutor
     from framework.providers.workers.comfy_worker import FakeComfyWorker
 
@@ -529,7 +529,8 @@ def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo)
     with pytest.raises(RuntimeError, match="heterogeneous routes"):
-        exec_.execute(ctx)
+        # Task 5 GREEN: execute 已转 async def,需 await
+        await exec_.execute(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -821,7 +822,7 @@ def test_qwen_unsupported_response_skips_transient_retry(monkeypatch):
     assert attempts["n"] == 1
 
 
-def test_image_executor_does_not_retry_on_unsupported_response():
+async def test_image_executor_does_not_retry_on_unsupported_response():  # Task 5 GREEN: execute 已转 async
     """Round 4: GenerateImageEditExecutor must NOT consume a second paid
     API call when the provider returns a deterministic unsupported
     response. Drive via a router whose first/only call always raises
@@ -832,8 +833,9 @@ def test_image_executor_does_not_retry_on_unsupported_response():
     attempts = {"n": 0}
 
     class _UnsupportedRouter:
-        def image_generation(self, *, policy, prompt, n, size,
-                              timeout_s, extra):
+        async def aimage_generation(self, *, policy, prompt, n, size,
+                                    timeout_s, extra):
+            # Task 5 GREEN: router 已改用 aimage_generation
             attempts["n"] += 1
             raise ProviderUnsupportedResponse("HTML body")
 
@@ -868,7 +870,8 @@ def test_image_executor_does_not_retry_on_unsupported_response():
     exec_ = GenerateImageExecutor(worker=FakeComfyWorker(),
                                    router=_UnsupportedRouter())  # type: ignore[arg-type]
     with pytest.raises(ProviderUnsupportedResponse):
-        exec_.execute(ctx)
+        # Task 5 GREEN: execute 已转 async def,需 await
+        await exec_.execute(ctx)
     assert attempts["n"] == 1, (
         f"unsupported response triggered {attempts['n']} provider call(s); "
         f"executor should fail fast and let FailureModeMap route"

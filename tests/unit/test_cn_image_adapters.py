@@ -1899,12 +1899,14 @@ class TestHunyuanMeshFormatDetection:
         from datetime import datetime, timezone
         import asyncio
 
-        # Worker that records how many times `.generate()` was invoked
+        # Worker that records how many times `.agenerate()` was invoked
         # and always raises the non-retryable subclass.
+        # Task 5 GREEN: executor 改调 await worker.agenerate(...),
+        # 需覆盖 agenerate(HunyuanMeshWorker 自身有 agenerate 不走 generate)
         call_count = {"n": 0}
 
         class _TrackingWorker(HunyuanMeshWorker):
-            def generate(self, **kwargs):
+            async def agenerate(self, **kwargs):
                 call_count["n"] += 1
                 raise MeshWorkerUnsupportedResponse(
                     "simulated ZIP-only response"

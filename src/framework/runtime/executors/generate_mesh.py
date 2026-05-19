@@ -79,7 +79,7 @@ class GenerateMeshExecutor(StepExecutor):
             return False
         return any(r.model == "comfy/local-mesh" for r in pp.prepared_routes)
 
-    def _generate_via_comfy_worker(
+    async def _generate_via_comfy_worker(
         self,
         *,
         ctx: StepContext,
@@ -93,12 +93,13 @@ class GenerateMeshExecutor(StepExecutor):
         本地 ComfyUI mesh dispatch(D7 + D9):
 
         1. 写 source_image_bytes 到 in-tree input 文件(idempotent via sha1;B2)
-        2. 构造 ComfyAgentWorker(model_id='comfy/local-mesh') + 调 generate_mesh
+        2. 构造 ComfyAgentWorker(model_id='comfy/local-mesh') + 调 agenerate_mesh
         3. 内部 retry loop 用 policy.max_attempts(本地非 premium,绕开 attempts=1
            强制;D4 + R2-F2)
         4. ComfyWorker 异常族 wrap 为 MeshWorker 异常族(D9 + R2-F2),让
            FailureModeMap 路由正确(R4-F1:wrapped MeshWorkerTimeout →
            mesh_worker_timeout → abort_or_fallback,与远端 mesh 终态一致)
+        Task 5: 转 async — 用 await worker.agenerate_mesh(...)
         """
         scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
         if not scripts_dir:
@@ -150,7 +151,8 @@ class GenerateMeshExecutor(StepExecutor):
             try:
                 # round 5 D10:filename only(LoadImage 节点 prefix 自动 ComfyUI input/);
                 # source_image_filename 由 executor 算好,worker 只看 filename
-                return worker.generate_mesh(
+                # Task 5: 改用 await agenerate_mesh(async),消除 sync generate_mesh 调用
+                return await worker.agenerate_mesh(
                     spec=spec,
                     source_image_filename=input_filename,
                     num_candidates=num,
@@ -173,7 +175,7 @@ class GenerateMeshExecutor(StepExecutor):
         assert last_exc is not None
         raise last_exc
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # Task 5: 转 async,worker 调用全用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 1))
         if num < 1:
@@ -212,7 +214,8 @@ class GenerateMeshExecutor(StepExecutor):
         if use_comfy_worker_path:
             attempt_count = 1
             try:
-                candidates = self._generate_via_comfy_worker(
+                # Task 5: await async helper
+                candidates = await self._generate_via_comfy_worker(
                     ctx=ctx,
                     spec=spec,
                     source_image_bytes=source_bytes,
@@ -228,7 +231,8 @@ class GenerateMeshExecutor(StepExecutor):
             for attempt in range(attempts):
                 attempt_count = attempt + 1
                 try:
-                    candidates = self._worker.generate(
+                    # Task 5: 远端 MeshWorker 异步接口 agenerate
+                    candidates = await self._worker.agenerate(
                         source_image_bytes=source_bytes, spec=spec,
                         num_candidates=num, timeout_s=timeout_s,
                     )

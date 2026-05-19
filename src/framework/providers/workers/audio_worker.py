@@ -140,6 +140,26 @@ class AudioWorker(ABC):
         executor 调一次即可,**不**需要外层 loop)。
         """
 
+    async def agenerate_audio(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[AudioCandidate]:
+        """Task 5 async 接口:默认实现用 asyncio.to_thread 包 sync generate_audio。
+        未来远端 AudioCraft worker 应覆盖此方法实现真正 async I/O;
+        本 change scope FakeAudioWorker 继承此默认。"""
+        import asyncio
+        return await asyncio.to_thread(
+            self.generate_audio,
+            spec=spec,
+            num_candidates=num_candidates,
+            seed=seed,
+            timeout_s=timeout_s,
+        )
+
 
 # ----------------------------------------------------------------------------
 # FakeAudioWorker —— deterministic, offline (test fixture)

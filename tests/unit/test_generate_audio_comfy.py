@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -206,15 +206,15 @@ async def test_generate_via_comfy_worker_wraps_worker_timeout_to_audio_worker_ti
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        # Task 5 RED: executor 转 async 后调 agenerate_audio,mock 需同步更新
-        worker_inst.generate_audio.side_effect = _ComfyWorkerTimeout("subprocess hit 300s")
+        # Task 5 GREEN: executor 转 async 后调 agenerate_audio,改用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerTimeout("subprocess hit 300s"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerTimeout) as exc_info:
             await executor.execute(ctx)
     # __cause__ chain should preserve original ComfyWorkerTimeout
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerTimeout)
     # max_attempts=2 → 2 calls
-    assert worker_inst.generate_audio.call_count == 2
+    assert worker_inst.agenerate_audio.call_count == 2
 
 
 async def test_generate_via_comfy_worker_wraps_worker_unsupported_to_audio_worker_unsupported_immediately(tmp_path, monkeypatch):
@@ -226,13 +226,14 @@ async def test_generate_via_comfy_worker_wraps_worker_unsupported_to_audio_worke
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.side_effect = _ComfyWorkerUnsupportedResponse("outputs.audio missing")
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerUnsupportedResponse("outputs.audio missing"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerUnsupportedResponse) as exc_info:
             await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerUnsupportedResponse)
     # Deterministic 不 retry — 1 call only
-    assert worker_inst.generate_audio.call_count == 1
+    assert worker_inst.agenerate_audio.call_count == 1
 
 
 async def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_path, monkeypatch):
@@ -244,12 +245,13 @@ async def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.side_effect = _ComfyWorkerError("subprocess crashed")
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerError("subprocess crashed"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerError) as exc_info:
             await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerError)
-    assert worker_inst.generate_audio.call_count == 1
+    assert worker_inst.agenerate_audio.call_count == 1
 
 
 async def test_local_comfy_audio_executor_retry_on_excludes_timeout_short_circuits_first_attempt(tmp_path, monkeypatch):
@@ -262,12 +264,13 @@ async def test_local_comfy_audio_executor_retry_on_excludes_timeout_short_circui
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.side_effect = _ComfyWorkerTimeout("first call timeout")
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerTimeout("first call timeout"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerTimeout):
             await executor.execute(ctx)
     # retry_on 不含 timeout → 1 call only(F-Plan-R7-B short-circuit)
-    assert worker_inst.generate_audio.call_count == 1
+    assert worker_inst.agenerate_audio.call_count == 1
 
 
 # ---- Persistence(F-Plan-R6-A round-6 shape="waveform" + F-Plan-R7-A metadata)
@@ -284,7 +287,8 @@ async def test_executor_persists_audio_artifact_with_shape_waveform_and_format_a
     cand = _fake_audio_candidate(format_="flac")
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.return_value = [cand]
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(return_value=[cand])
         cls_mock.return_value = worker_inst
         result = await executor.execute(ctx)
     assert len([a.artifact_id for a in result.artifacts]) == 1
@@ -308,7 +312,8 @@ async def test_executor_artifact_top_level_metadata_includes_format_duration_sam
     cand = _fake_audio_candidate(format_="mp3")
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.return_value = [cand]
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(return_value=[cand])
         cls_mock.return_value = worker_inst
         result = await executor.execute(ctx)
     art = repo.get([a.artifact_id for a in result.artifacts][0])
@@ -342,13 +347,14 @@ async def test_local_comfy_audio_pricing_none_treated_as_non_premium(tmp_path, m
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
         # 第一次 timeout,第二次成功(retry budget 起作用)
-        worker_inst.generate_audio.side_effect = [
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock + side_effect list
+        worker_inst.agenerate_audio = AsyncMock(side_effect=[
             _ComfyWorkerTimeout("first call timeout"),
             [_fake_audio_candidate()],
-        ]
+        ])
         cls_mock.return_value = worker_inst
         result = await executor.execute(ctx)
-    assert worker_inst.generate_audio.call_count == 2  # retry happened
+    assert worker_inst.agenerate_audio.call_count == 2  # retry happened
     assert len([a.artifact_id for a in result.artifacts]) == 1
 
 

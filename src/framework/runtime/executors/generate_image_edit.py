@@ -45,7 +45,7 @@ class GenerateImageEditExecutor(StepExecutor):
     def __init__(self, *, router: CapabilityRouter) -> None:
         self._router = router
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # Task 5: 转 async,router 调用用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 1))
         if num < 1:
@@ -75,7 +75,8 @@ class GenerateImageEditExecutor(StepExecutor):
         for attempt in range(attempts):
             attempt_count = attempt + 1
             try:
-                results, chosen_model = self._router.image_edit(
+                # Task 5: 改用 async aimage_edit,消除 sync router 调用
+                results, chosen_model = await self._router.aimage_edit(
                     policy=ctx.step.provider_policy,
                     prompt=prompt, source_image_bytes=source_bytes,
                     n=num, size=size, timeout_s=timeout_s,

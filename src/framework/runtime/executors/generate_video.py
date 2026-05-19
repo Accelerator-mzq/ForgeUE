@@ -83,7 +83,7 @@ class GenerateVideoExecutor(StepExecutor):
         # (executor-side model-id exact-match per pattern c per spec/provider-routing)
         self._worker = worker
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # Task 5: 转 async,worker 调用全用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 1))
         if num < 1:
@@ -102,7 +102,8 @@ class GenerateVideoExecutor(StepExecutor):
         policy = ctx.step.retry_policy or RetryPolicy()
 
         if self._should_use_comfy_worker_path(ctx):
-            candidates = self._generate_via_comfy_worker(
+            # Task 5: await async helper
+            candidates = await self._generate_via_comfy_worker(
                 ctx=ctx, spec=spec, num=num, seed=seed,
                 timeout_s=timeout_s, policy=policy,
             )
@@ -110,7 +111,8 @@ class GenerateVideoExecutor(StepExecutor):
         elif self._worker is not None:
             # Future remote video worker path — out of scope this change(本 commit
             # 不实装具体行为;留下入口便于 follow-on `video-worker-remote-adoption`)
-            candidates = self._worker.generate_video(
+            # Task 5: 改用 await agenerate_video(async remote worker 接口)
+            candidates = await self._worker.agenerate_video(
                 spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
             )
             chosen_model = self._worker.name
@@ -196,7 +198,7 @@ class GenerateVideoExecutor(StepExecutor):
             return False
         return any(getattr(r, "model", None) == "comfy/local-video" for r in pp.prepared_routes)
 
-    def _generate_via_comfy_worker(
+    async def _generate_via_comfy_worker(
         self,
         *,
         ctx: StepContext,
@@ -206,7 +208,9 @@ class GenerateVideoExecutor(StepExecutor):
         timeout_s: float | None,
         policy: RetryPolicy,
     ) -> list[VideoCandidate]:
-        """Inline ComfyAgentWorker.generate_video dispatch with retry/wrap。
+        """Inline ComfyAgentWorker.agenerate_video dispatch with retry/wrap。
+
+        Task 5: 转 async — 用 await worker.agenerate_video(...)。
 
         沿 audio F2 round-1 + F-Plan-R7-B round-7 三 except 块拆分(对照
         generate_mesh.py:160-172 / generate_audio.py:230-251;不裸 raise):
@@ -215,7 +219,7 @@ class GenerateVideoExecutor(StepExecutor):
         - `ComfyWorkerUnsupportedResponse` → wrap + immediate raise(deterministic 不 retry)
         - `ComfyWorkerError` → wrap + immediate raise(generic worker error 不 retry)
 
-        本 helper 不含 outer per-candidate loop — `ComfyAgentWorker.generate_video`
+        本 helper 不含 outer per-candidate loop — `ComfyAgentWorker.agenerate_video`
         内部已实现 `for i in range(max(1, num_candidates))`(沿 audio F-Plan-3 +
         F-Plan-R5-A round-5 修订)。
         """
@@ -242,7 +246,8 @@ class GenerateVideoExecutor(StepExecutor):
         last_exc: VideoWorkerError | None = None
         for attempt in range(attempts):
             try:
-                return worker.generate_video(
+                # Task 5: await async agenerate_video,消除 sync generate_video 调用
+                return await worker.agenerate_video(
                     spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
                 )
             except WorkerTimeout as exc:
