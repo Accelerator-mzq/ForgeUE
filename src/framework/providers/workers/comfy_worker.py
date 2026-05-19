@@ -337,17 +337,16 @@ class ComfyAgentWorker(ComfyWorker):
     orchestrator's to_thread wrapping; ensure_running / ensure_release /
     self_managed_session deferred to TBD-010 executor-async-rewrite).
 
-    `generate()` is sync (blocks via `subprocess.run` with timeout) —
-    matches `ComfyWorker` ABC. CancelledError does not reach generate
-    because GenerateImageExecutor.execute is wrapped by asyncio.to_thread
-    in orchestrator.py — sync executors in to_thread cannot be
-    interrupted (orchestrator.py:286-296). Lifecycle=none means
-    subprocess naturally exits and no ComfyUI server child is spawned,
-    so cancel best-effort acceptable per design.md D6.
+    `generate()` / `generate_mesh()` / `generate_audio()` / `generate_video()`
+    are thin sync shims that delegate to the async primaries `agenerate*` via
+    `asyncio.run(...)`; the primaries invoke the agent CLI through
+    `asyncio.create_subprocess_exec` (TBD-010 executor-async-rewrite Task 3).
+    Calling a sync shim from inside a running event loop raises RuntimeError
+    (nested `asyncio.run`) — async callers MUST use the `agenerate*` primaries.
 
-    `probe_sync()` classmethod is the dry-run preflight variant (called
-    from DryRunPass.run which is itself sync inside the arun event loop;
-    round 3 plan codex P2 fix — must NOT use asyncio.run).
+    `aprobe()` is the async dry-run preflight used by the now-async
+    `DryRunPass.run`; `probe_sync()` is its `asyncio.run(...)` sync shim,
+    kept for probe scripts / tests that run outside an event loop.
     """
 
     name = "comfy_agent_cli"
@@ -633,8 +632,8 @@ class ComfyAgentWorker(ComfyWorker):
                     f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
                 ) from exc
             finally:
-                # Task 4 がこの前に _abort_comfy_prompt を挿入する予定。
-                # Task 3 では terminate → kill のみ。
+                # Task 4 会在此前插入 _abort_comfy_prompt;
+                # Task 3 仅做 terminate → kill。
                 if proc.returncode is None:
                     proc.terminate()
                     try:
@@ -643,11 +642,11 @@ class ComfyAgentWorker(ComfyWorker):
                         proc.kill()
                     await proc.wait()
 
-        # stdout/stderr を UTF-8 テキストに変換(G11 R1 fix と同じ方針: errors="replace")
+        # stdout/stderr 转 UTF-8 文本(沿 G11 R1 fix:errors="replace")
         stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
         stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
 
-        # returncode を擬似 CompletedProcess として再利用できるよう変数に束縛
+        # 把 returncode 绑定到变量,便于像 CompletedProcess 一样复用
         returncode = proc.returncode
 
         # Parse stdout JSON; map failures per spec D5 table.
@@ -923,7 +922,7 @@ class ComfyAgentWorker(ComfyWorker):
         timeout_s: float,
         source_image_filename: str,
     ) -> list[MeshCandidate]:
-        """mesh capability の一回非同期 subprocess 呼び出し → 1+ MeshCandidate。
+        """mesh capability 的一次异步 subprocess 调用 → 1+ MeshCandidate。
 
         submit→poll 段整体在 async with _comfy_submit_lock(): 内,
         确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
@@ -1158,7 +1157,7 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int,
         timeout_s: float,
     ) -> list[AudioCandidate]:
-        """audio capability の一回非同期 subprocess 呼び出し → 1+ AudioCandidate。
+        """audio capability 的一次异步 subprocess 调用 → 1+ AudioCandidate。
 
         submit→poll 段整体在 async with _comfy_submit_lock(): 内,
         确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
@@ -1413,7 +1412,7 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int,
         timeout_s: float,
     ) -> list[VideoCandidate]:
-        """video capability の一回非同期 subprocess 呼び出し → 1+ VideoCandidate。
+        """video capability 的一次异步 subprocess 调用 → 1+ VideoCandidate。
 
         submit→poll 段整体在 async with _comfy_submit_lock(): 内,
         确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
@@ -1559,7 +1558,7 @@ class ComfyAgentWorker(ComfyWorker):
                     f"ComfyAgentWorker.agenerate_video: mp4 BMFF major_brand is empty / "
                     f"all-zeros / all-spaces: {major_brand!r} (file: {src.name})"
                 )
-            # D8 + D1:VideoCandidate format hardcoded "mp4";5 個の video metadata フィールドは常に None
+            # D8 + D1:VideoCandidate format 硬编码 "mp4";5 个 video metadata 字段恒为 None
             candidates.append(VideoCandidate(
                 data=video_bytes,
                 format="mp4",
@@ -1616,14 +1615,20 @@ class ComfyAgentWorker(ComfyWorker):
                 f"{scripts_dir / 'comfyui_api'!r}; install comfyui_api package "
                 f"under scripts_dir"
             )
+        # asyncio 子进程:与 _run_once_* 保持一致,不用 subprocess.run
         try:
-            # asyncio 子进程:与 _run_once_* 保持一致,不用 subprocess.run
             proc = await asyncio.create_subprocess_exec(
                 str(py), "-m", "comfyui_api", "status",
                 cwd=str(scripts_dir),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+        except FileNotFoundError as exc:
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.aprobe: failed to spawn subprocess "
+                f"(python_exe={py!r}): {exc}"
+            ) from exc
+        try:
             # wait_for 包裹 communicate,确保 timeout_s 内完成
             stdout_b, stderr_b = await asyncio.wait_for(
                 proc.communicate(),
@@ -1634,11 +1639,16 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
                 f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir)"
             ) from exc
-        except FileNotFoundError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.aprobe: failed to spawn subprocess "
-                f"(python_exe={py!r}): {exc}"
-            ) from exc
+        finally:
+            # probe 子进程 cleanup:沿 _run_once_* —— 未退出则 terminate → kill,
+            # 避免 TimeoutError / CancelledError 时残留僵尸进程
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                await proc.wait()
         if proc.returncode != 0:
             stderr_str = (stderr_b or b"").decode("utf-8", errors="replace")
             raise WorkerUnsupportedResponse(
@@ -1654,12 +1664,11 @@ class ComfyAgentWorker(ComfyWorker):
         python_exe: Path | None,
         timeout_s: float = 30.0,
     ) -> None:
-        """sync shim — probe スクリプト等の互換性のため残す(Step 6)。
-        内部は asyncio.run(cls.aprobe(...)) に委譲する。
+        """sync shim —— 为 probe 脚本等的兼容性保留(Step 6)。
+        内部委托给 asyncio.run(cls.aprobe(...))。
 
-        注意:既に走っている event loop 内(arun の中など)から呼ぶと
-        RuntimeError が発生するため,DryRunPass._check_comfy_reachability は
-        aprobe を直接 await すること。probe_sync は event loop 外の
-        プローブスクリプト / tests から呼ぶ用途に残す。
+        注意:从已运行的 event loop 内(如 arun 中)调用会触发 RuntimeError,
+        因此 DryRunPass._check_comfy_reachability 必须直接 await aprobe。
+        probe_sync 仅保留给 event loop 外的 probe 脚本 / tests 使用。
         """
         asyncio.run(cls.aprobe(scripts_dir, python_exe, timeout_s))

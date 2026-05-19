@@ -134,7 +134,7 @@ def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, 
             return fake_proc
 
     class _Ctx:
-        """パッチのコンテキストマネージャ。call_args_list / call_count / call_args をサポート。"""
+        """patch 的上下文管理器。支持 call_args_list / call_count / call_args。"""
         def __init__(self):
             self._orig = None
             self.call_args_list = calls
@@ -286,6 +286,16 @@ async def test_dry_run_30s_timeout(tmp_path):
             # 永远挂起,让 asyncio.wait_for 抛出 TimeoutError
             await _aio.sleep(9999)
             return (b"", b"")
+
+        def terminate(self):
+            # aprobe 的 finally cleanup 会调用 terminate;模拟进程被终止
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
 
     async def _timeout_factory(*a, **kw):
         return _TimeoutFakeProcess()
@@ -1634,7 +1644,7 @@ def test_comfy_submit_lock_safe_across_asyncio_run_loops(tmp_path):
                 ),
             )
         finally:
-            _asyncio.create_subprocess_exec = _asyncio.create_subprocess_exec  # type: ignore[assignment]
+            _asyncio.create_subprocess_exec = original_create  # type: ignore[assignment]
         return inflight["max"]
 
     # loop A
@@ -1682,7 +1692,6 @@ def test_comfy_generate_sync_shim_still_works(tmp_path):
             pass
 
     original_create = asyncio.create_subprocess_exec
-    asyncio.create_subprocess_exec = lambda *a, **kw: _wrap_coro(FakeProcess())  # type: ignore[assignment]
 
     async def _wrap_coro(val):
         return val
@@ -1700,5 +1709,5 @@ def test_comfy_generate_sync_shim_still_works(tmp_path):
         asyncio.create_subprocess_exec = original_create  # type: ignore[assignment]
 
     assert isinstance(result, list), (
-        f"generate() sync shim は list[ImageCandidate] を返すべきだが {type(result)} が返された"
+        f"generate() sync shim 应返回 list[ImageCandidate],实际返回 {type(result)}"
     )
