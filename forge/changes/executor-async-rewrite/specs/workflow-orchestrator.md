@@ -83,6 +83,15 @@ separate `orchestrator_close` reason. Releasing on the `arun_error` path is REQU
 so an `ensure_release` ComfyUI process started by the framework is not leaked when an
 executor bug / artifact-dump IO error / unclassified exception ends the run.
 
+The release call in the `try/finally` (and in `aclose()`) SHALL be **bounded and
+non-masking**: it SHALL run as `await asyncio.wait_for(asyncio.shield(
+manager.release(mode, reason)), timeout=_RELEASE_TIMEOUT_S)` wrapped in a
+`try/except BaseException`. A release that fails, times out, or is itself cancelled
+(e.g. a second `cancel()` arriving during the `finally`, or `factory_v3 stop` raising
+/ hanging) SHALL be recorded in `run.metrics["lifecycle_release_failed"]` and logged,
+and SHALL NOT be re-raised — so the release failure neither hangs `arun` indefinitely
+nor masks the original exception / cancellation that `arun` is propagating.
+
 The system SHALL add `Orchestrator.aclose()` (`async def`) which calls
 `release(mode, "orchestrator_close")` on the orchestrator-instance-level manager, and
 the orchestrator SHALL implement async context manager protocol (`__aenter__` /
@@ -102,6 +111,13 @@ manager is released at most once per exit path.
 **Given** an `ensure_release` run whose `ComfyLifecycleManager` has already started a ComfyUI process
 **When** an executor raises an unclassified exception (`classify_failure` returns `None`) that re-raises out of `arun`
 **Then** the `arun` `try/finally` still calls `release(mode, "arun_error")`, the manager runs `factory_v3 stop`, and the framework-started ComfyUI process is not leaked
+
+## Scenario: A failing or hanging release does not mask the original exception or hang the run
+
+**Given** an `arun` propagating an original exception (or a `CancelledError`) whose `finally`-block release call has `_spawn_stop()` raise an error, hang past `_RELEASE_TIMEOUT_S`, or be hit by a second `cancel()`
+**When** the bounded `await asyncio.wait_for(asyncio.shield(manager.release(...)), timeout=_RELEASE_TIMEOUT_S)` fails / times out / is cancelled
+**Then** the orchestrator records `run.metrics["lifecycle_release_failed"]` (mode / reason / error) and logs a warning, does NOT re-raise the release failure, and the original exception or cancellation that `arun` was propagating is preserved unmasked
+**And** `arun` is not hung indefinitely by a stuck `factory_v3 stop`
 
 ## Scenario: ensure_release stops at run-end, self_managed_session stops only at aclose
 
