@@ -204,4 +204,4 @@ forge 插件自带全套行为塑造 skill(走 `Skill` tool invoke):
 
 ### Follow-on Backlog Registry
 
-`forge/backlog/active.md` 作信息容器(8-field schema 见 `forge/backlog/README.md`);双源 cross-link 至 SRS §7.3 active TBD;无 fence 守门,user 自由维护。`archived.md` 作 audit trail(append-only by convention,git history 替代 fence)。
+`docs/followon_backlog/active.md` 作信息容器(8-field schema 见 `docs/followon_backlog/README.md`);双源 cross-link 至 SRS §7.3 active TBD;无 fence 守门,user 自由维护。`archived.md` 作 audit trail(append-only by convention,git history 替代 fence)。注:`forge/backlog/` 是 forge 原生自动生成 backlog(由 `/forge:archive` 从 scope-entries 生成),与本项目自有 registry 是两套独立机制。

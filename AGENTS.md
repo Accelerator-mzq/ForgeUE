@@ -173,7 +173,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ## forge 工作流
 
-> 本节与 `CLAUDE.md` § 工作流 段保持语义同步。backlog 协议见 [`forge/backlog/README.md`](forge/backlog/README.md)。
+> 本节与 `CLAUDE.md` § 工作流 段保持语义同步。backlog 协议见 [`docs/followon_backlog/README.md`](docs/followon_backlog/README.md)。
 
 ### 什么时候走 change,什么时候直接改代码
 
@@ -203,11 +203,11 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ### Follow-on Backlog Registry(自 `centralize-followon-backlog-registry` 启用,2026-05-07)
 
-集中 follow-on 记录位置:[`forge/backlog/active.md`](forge/backlog/active.md)+ [`forge/backlog/archived.md`](forge/backlog/archived.md)+ [`forge/backlog/README.md`](forge/backlog/README.md)(协议)。
+集中 follow-on 记录位置:[`docs/followon_backlog/active.md`](docs/followon_backlog/active.md)+ [`docs/followon_backlog/archived.md`](docs/followon_backlog/archived.md)+ [`docs/followon_backlog/README.md`](docs/followon_backlog/README.md)(协议)。`forge/backlog/` 另由 forge 原生自动生成 backlog 占用,两套独立。
 
 - 双源:registry(archive-tracking + capability-boundary + SRS pointer)+ SRS §7.3 TBD(需求层);两边 set 等价由 user 自维护(自 `retire-forgeue-protocol-layer-fully` 起,fence 守门已 retire,git history 替代 audit trail)。
 - Cancel 4 类:`inherited` / `cancelled-superseded by <id>` / `cancelled-not-applicable: <enum>`(5 类 enum)/ `cancelled-completed: <commit>`(by convention,无 fence 守门)。
-- 状态查询:检查 `forge/backlog/active.md` 查看当前活跃 follow-on 项。
+- 状态查询:检查 `docs/followon_backlog/active.md` 查看当前活跃 follow-on 项。
 
 ### Codex Convention
 
