@@ -44,7 +44,6 @@ acceptance_report   对应 SRS + test_spec 状态
 
 | 位置 | 用途 |
 | --- | --- |
-| [`ai_workflow/README.md`](ai_workflow/README.md) | OpenSpec 主流程 + Documentation Sync Gate 主规则(契约层) |
 | [`ai_workflow/validation_matrix.md`](ai_workflow/validation_matrix.md) | Level 0/1/2 验证命令矩阵 |
 | [`api_des/`](api_des/) | 五家 provider 的 API 契约参考(GLM / Qwen / Qwen-Image(-Edit) / HunYuan) |
 | [`archive/`](archive/) | 历史文档归档(plan_v1 + 评审报告 + 早期方案),仅作史料 |
