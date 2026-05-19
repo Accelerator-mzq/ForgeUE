@@ -158,7 +158,8 @@ class Orchestrator:
         dr_report: DryRunReport | None = None
         if not skip_dry_run:
             with span("dry_run", {"run_id": run_id, "workflow_id": workflow.workflow_id}):
-                dr_report = self.dry_run.run(task=task, workflow=workflow, steps=steps)
+                # Step 6: DryRunPass.run は async def に変更されたため await 必須
+                dr_report = await self.dry_run.run(task=task, workflow=workflow, steps=steps)
             if not dr_report.passed:
                 raise DryRunFailed(dr_report)
 

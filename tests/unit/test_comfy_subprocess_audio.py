@@ -541,8 +541,8 @@ async def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, mon
         await dry_run._check_comfy_reachability(report, steps=[step])
         # comfy/local-audio 也触发 aprobe(commit 6 audio gate 扩 + Step 6 async 化)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0]
-        assert "comfyui_api" in " ".join(str(x) for x in cmd)
+        call_args = run_mock.call_args
+        assert "comfyui_api" in call_args
 
 
 # ---- G11-F2 follow-on: path containment for outputs.audio --------------------

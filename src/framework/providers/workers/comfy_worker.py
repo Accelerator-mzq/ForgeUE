@@ -1584,29 +1584,32 @@ class ComfyAgentWorker(ComfyWorker):
         return candidates
 
     @classmethod
-    def probe_sync(
+    async def aprobe(
         cls,
         scripts_dir: Path,
         python_exe: Path | None,
         timeout_s: float = 30.0,
     ) -> None:
-        """SYNCHRONOUS dry-run probe (round 3 plan codex P2 fix — uses
-        `subprocess.run` not `asyncio.create_subprocess_exec` because
-        DryRunPass.run is sync called from inside arun's event loop;
-        nesting asyncio.run would raise RuntimeError).
+        """async dry-run probe 主面(Step 6: DryRunPass.run async 化后改用此方法)。
 
-        Validates: scripts_dir exists + comfyui_api submodule exists +
-        `python -m comfyui_api status` exits 0 within timeout_s.
-        Raises `WorkerUnsupportedResponse` with hint to start ComfyUI
-        + check `FORGEUE_COMFY_SCRIPTS_DIR` on any failure.
+        使用 asyncio.create_subprocess_exec 执行 `comfyui_api status`,
+        与 _run_once_* 系列方法保持一致。probe 仅确认 status 可达,
+        不投递 GPU job,无需包裹 _comfy_submit_lock()。
+
+        校验顺序:scripts_dir 存在 → comfyui_api 子模块存在 →
+        `python -m comfyui_api status` 在 timeout_s 内正常退出。
+        任何失败均 raise WorkerUnsupportedResponse,含 hint to start ComfyUI
+        + check FORGEUE_COMFY_SCRIPTS_DIR。
         """
         scripts_dir = Path(scripts_dir)
         py = Path(python_exe) if python_exe else Path(sys.executable)
+        # 文件系统守门:scripts_dir 必须存在
         if not scripts_dir.exists():
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI scripts_dir not found at {scripts_dir!r}; "
                 f"set FORGEUE_COMFY_SCRIPTS_DIR or verify path"
             )
+        # 文件系统守门:comfyui_api 子模块必须存在
         if not (scripts_dir / "comfyui_api").is_dir():
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI module not found at "
@@ -1614,31 +1617,49 @@ class ComfyAgentWorker(ComfyWorker):
                 f"under scripts_dir"
             )
         try:
-            result = subprocess.run(
-                [str(py), "-m", "comfyui_api", "status"],
+            # asyncio 子进程:与 _run_once_* 保持一致,不用 subprocess.run
+            proc = await asyncio.create_subprocess_exec(
+                str(py), "-m", "comfyui_api", "status",
                 cwd=str(scripts_dir),
-                timeout=timeout_s,
-                capture_output=True,
-                text=True,
-                # G11 R1 fix: same UTF-8 + errors="replace" rationale as
-                # ComfyAgentWorker._run_once subprocess.run.
-                encoding="utf-8",
-                errors="replace",
-                check=False,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
-        except subprocess.TimeoutExpired as exc:
+            # wait_for 包裹 communicate,确保 timeout_s 内完成
+            stdout_b, stderr_b = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=timeout_s + 5.0,  # 与 _run_once_* 同款 buffer
+            )
+        except asyncio.TimeoutError as exc:
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
                 f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir)"
             ) from exc
         except FileNotFoundError as exc:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.probe_sync: failed to spawn subprocess "
+                f"ComfyAgentWorker.aprobe: failed to spawn subprocess "
                 f"(python_exe={py!r}): {exc}"
             ) from exc
-        if result.returncode != 0:
+        if proc.returncode != 0:
+            stderr_str = (stderr_b or b"").decode("utf-8", errors="replace")
             raise WorkerUnsupportedResponse(
-                f"ComfyUI agent CLI status returned exit {result.returncode}; "
+                f"ComfyUI agent CLI status returned exit {proc.returncode}; "
                 f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir) "
-                f"(stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+                f"(stderr first 500 chars: {stderr_str[:500]!r})"
             )
+
+    @classmethod
+    def probe_sync(
+        cls,
+        scripts_dir: Path,
+        python_exe: Path | None,
+        timeout_s: float = 30.0,
+    ) -> None:
+        """sync shim — probe スクリプト等の互換性のため残す(Step 6)。
+        内部は asyncio.run(cls.aprobe(...)) に委譲する。
+
+        注意:既に走っている event loop 内(arun の中など)から呼ぶと
+        RuntimeError が発生するため,DryRunPass._check_comfy_reachability は
+        aprobe を直接 await すること。probe_sync は event loop 外の
+        プローブスクリプト / tests から呼ぶ用途に残す。
+        """
+        asyncio.run(cls.aprobe(scripts_dir, python_exe, timeout_s))

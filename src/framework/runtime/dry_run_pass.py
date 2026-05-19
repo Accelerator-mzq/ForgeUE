@@ -46,12 +46,17 @@ class DryRunPass:
         """Each check returns (check_name, passed, message)."""
         self._extra_checks.append(check)
 
-    def run(self, *, task: Task, workflow: Workflow, steps: Iterable[Step]) -> DryRunReport:
+    async def run(self, *, task: Task, workflow: Workflow, steps: Iterable[Step]) -> DryRunReport:
+        """async dry-run pre-flight 主面(Step 6: Fluid Pause #1 扩 scope)。
+
+        除 _check_comfy_reachability(await aprobe)外,其余检查均为同步操作;
+        async def 内的同步代码完全合法,不引入额外开销。
+        """
         report = DryRunReport(passed=True)
         step_list = list(steps)
         step_map = {s.step_id: s for s in step_list}
 
-        # 1. Manifest/workflow structural integrity
+        # 1. Manifest/workflow structural integrity(结构完整性)
         self._record(report, "workflow.entry_exists", workflow.entry_step_id in step_map,
                      error=f"entry step {workflow.entry_step_id} missing" if workflow.entry_step_id not in step_map else None)
 
@@ -59,12 +64,12 @@ class DryRunPass:
         self._record(report, "workflow.steps_resolved", not missing,
                      error=f"missing steps: {missing}" if missing else None)
 
-        # 2. Output schema sanity
+        # 2. Output schema sanity(输出 schema 格式校验)
         bad_schema = [s.step_id for s in step_list if not isinstance(s.output_schema, dict)]
         self._record(report, "step.output_schema.shape", not bad_schema,
                      error=f"bad output_schema on: {bad_schema}" if bad_schema else None)
 
-        # 3. Input bindings resolvable
+        # 3. Input bindings resolvable(输入绑定可解析性)
         unresolved: list[str] = []
         for s in step_list:
             for b in s.input_bindings:
@@ -75,7 +80,7 @@ class DryRunPass:
         self._record(report, "step.input_bindings_resolved", not unresolved,
                      error=f"unresolved bindings: {unresolved}" if unresolved else None)
 
-        # 4. UEOutputTarget path accessibility (production/ue_export)
+        # 4. UEOutputTarget path accessibility(UE 项目根路径可访问性,production/ue_export)
         if task.ue_target:
             root = Path(task.ue_target.project_root)
             exists = root.is_dir()
@@ -89,23 +94,17 @@ class DryRunPass:
                     f"ue.asset_root should start with /Game/: {task.ue_target.asset_root}"
                 )
 
-        # 5. Budget cap sanity (F1): production / ue_export runs that hit paid
-        # providers should declare a cap. Not an error — UI may still accept
-        # an open-ended run — but a warning so nobody burns spend silently.
+        # 5. Budget cap sanity(预算上限健全性检查,F1)
         self._check_budget_cap(report, task=task, steps=step_list)
 
-        # 5.5. ComfyUI agent CLI reachability (OpenSpec change
-        # comfy-agent-cli-adoption round 2 G1 + round 3 P2 fix). Gated by
-        # model id (`comfy/local`) because ResolvedRoute lacks provider info.
-        # SYNC probe — DryRunPass.run is sync inside Orchestrator.arun's
-        # event loop; nesting asyncio.run would raise RuntimeError.
-        self._check_comfy_reachability(report, steps=step_list)
+        # 5.5. ComfyUI agent CLI reachability(Step 6: 已 async 化,await aprobe)
+        await self._check_comfy_reachability(report, steps=step_list)
 
-        # 6. Extra checks (providers / budget / secrets registered by outer code)
+        # 6. Extra checks(外部注册的扩展检查)
         for fn in self._extra_checks:
             try:
                 name, ok, msg = fn(task, workflow, step_list)
-            except Exception as exc:  # isolate extension failures
+            except Exception as exc:  # 隔离扩展检查失败,不影响主流程
                 report.warnings.append(f"dry_run extra check raised: {exc}")
                 continue
             self._record(report, name, ok, error=msg if not ok else None)
@@ -114,25 +113,28 @@ class DryRunPass:
 
     # ---- helpers ----
 
-    def _check_comfy_reachability(
+    async def _check_comfy_reachability(
         self,
         report: DryRunReport,
         *,
         steps: list[Step],
     ) -> None:
-        """OpenSpec change comfy-agent-cli-adoption (round 2 G1 + round 3 P2);
+        """ComfyUI agent CLI 可达性探活(Step 6: async 化,await aprobe 替代 probe_sync)。
+
+        OpenSpec change comfy-agent-cli-adoption (round 2 G1 + round 3 P2);
         extended by comfy-agent-cli-mesh-audio-video-adoption (P-F4 round-2
         plan writeback): gate set 从 {comfy/local} 扩为 {comfy/local, comfy/local-mesh};
         further extended by comfy-agent-cli-audio-adoption Phase 2 (commit 6):
         gate set 再扩 `comfy/local-audio`。
         Phase 3 (comfy-agent-cli-video-adoption commit 9): gate set 再扩
         `comfy/local-video`(TBD-009 全 phase closed)。
-        SYNC probe gated by `model in {"comfy/local", "comfy/local-mesh",
+        Step 6 (executor-async-rewrite): 改为 async def,内部 await aprobe —
+        DryRunPass.run 已 async 化,无需再用 probe_sync sync shim。
+        probe gate: `model in {"comfy/local", "comfy/local-mesh",
         "comfy/local-audio", "comfy/local-video"}` in any step's prepared_routes
         (model id-based gate because ResolvedRoute lacks provider field).
-        Bundles that don't use any skip the probe entirely(qwen / glm image
-        steps + remote hunyuan mesh steps unaffected on hosts without ComfyUI
-        installed)。
+        无 comfy/local* route 的 bundle 完全跳过 probe(qwen / glm image
+        steps + remote hunyuan mesh steps 在无 ComfyUI 主机上不受影响)。
         """
         import os
 
@@ -157,17 +159,14 @@ class DryRunPass:
                 has_comfy_local = True
                 break
         if not has_comfy_local:
-            # No comfy/local* route — skip probe entirely.
+            # 无 comfy/local* route — 完全跳过 probe
             return
 
-        # ComfyUI reachability is reported as WARNING (not ERROR) — bundle
-        # dry-run can pass on hosts without ComfyUI configured; the hard
-        # gate is at step time when GenerateImageExecutor._generate_via_worker
-        # constructs ComfyAgentWorker (env unset / probe failure raise
-        # WorkerUnsupportedResponse → routes through FailureModeMap →
-        # abort_or_fallback). This split lets `test_bundle_dry_run_passes`
-        # generic structural fence pass on CI hosts without ComfyUI while
-        # preserving the "fail fast at step time" invariant for live runs.
+        # ComfyUI reachability 报告为 WARNING(非 ERROR):bundle dry-run 可在
+        # 无 ComfyUI 配置的主机上通过结构检查;硬失败在 step 时 ComfyAgentWorker
+        # 构造阶段(env unset → WorkerUnsupportedResponse → FailureModeMap →
+        # abort_or_fallback)。此分离让 test_bundle_dry_run_passes 在 CI 上通过
+        # 同时保留 live run 的 fail-fast 语义。
         scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
         if not scripts_dir:
             self._record(
@@ -184,7 +183,8 @@ class DryRunPass:
 
         python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
         try:
-            ComfyAgentWorker.probe_sync(
+            # Step 6: await aprobe(async 主面),不再用 probe_sync sync shim
+            await ComfyAgentWorker.aprobe(
                 Path(scripts_dir),
                 Path(python_exe) if python_exe else None,
                 timeout_s=30.0,

@@ -766,7 +766,7 @@ async def test_dry_run_probes_comfy_when_comfy_local_video_in_routes(tmp_path, m
         await dry_run._check_comfy_reachability(report, steps=[step])
         # comfy/local-video 触发 aprobe(commit 9 gate 扩 + Step 6 async 化)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0]
-        assert "comfyui_api" in " ".join(str(x) for x in cmd)
-        assert "status" in cmd
+        call_args = run_mock.call_args
+        assert "comfyui_api" in call_args
+        assert "status" in call_args
     assert report.checks.get("comfy.cli_reachable") is True

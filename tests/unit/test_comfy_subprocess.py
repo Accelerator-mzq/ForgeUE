@@ -276,16 +276,26 @@ async def test_dry_run_30s_timeout(tmp_path):
     scripts_dir.mkdir()
     (scripts_dir / "comfyui_api").mkdir()
 
-    async def _timeout_proc(*a, **kw):
-        # 模拟 asyncio.create_subprocess_exec 返回的进程对象,communicate() 超时
-        raise asyncio.TimeoutError()
-
     import asyncio as _aio
+
+    class _TimeoutFakeProcess:
+        """模拟 communicate() 永久挂起的 fake process,触发 asyncio.wait_for 超时。"""
+        returncode = None
+
+        async def communicate(self):
+            # 永远挂起,让 asyncio.wait_for 抛出 TimeoutError
+            await _aio.sleep(9999)
+            return (b"", b"")
+
+    async def _timeout_factory(*a, **kw):
+        return _TimeoutFakeProcess()
+
     orig = _aio.create_subprocess_exec
-    _aio.create_subprocess_exec = _timeout_proc  # type: ignore[assignment]
+    _aio.create_subprocess_exec = _timeout_factory  # type: ignore[assignment]
     try:
         with pytest.raises(WorkerUnsupportedResponse, match="timed out"):
-            await ComfyAgentWorker.aprobe(scripts_dir, None, timeout_s=30.0)
+            # timeout_s=0.01 让 wait_for 迅速触发 TimeoutError
+            await ComfyAgentWorker.aprobe(scripts_dir, None, timeout_s=0.01)
     finally:
         _aio.create_subprocess_exec = orig  # type: ignore[assignment]
 
@@ -660,9 +670,10 @@ async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypat
         await dry_run._check_comfy_reachability(report, steps=[step])
         # aprobe 恰好触发一次(status 子命令)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0]  # create_subprocess_exec 的 positional args
-        assert "comfyui_api" in " ".join(str(x) for x in cmd)
-        assert "status" in cmd
+        # call_args 是 create_subprocess_exec 的 positional args 元组: (py, "-m", "comfyui_api", "status")
+        call_args = run_mock.call_args
+        assert "comfyui_api" in call_args
+        assert "status" in call_args
     assert report.checks.get("comfy.cli_reachable") is True
 
 
@@ -1107,9 +1118,9 @@ async def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monk
         await dry_run._check_comfy_reachability(report, steps=[step])
         # comfy/local-mesh 也触发 aprobe(P-F4 set 扩展 + Step 6 async 化)
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0]
-        assert "comfyui_api" in " ".join(str(x) for x in cmd)
-        assert "status" in cmd
+        call_args = run_mock.call_args
+        assert "comfyui_api" in call_args
+        assert "status" in call_args
     assert report.checks.get("comfy.cli_reachable") is True
 
 
