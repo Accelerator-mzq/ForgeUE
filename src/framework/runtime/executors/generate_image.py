@@ -303,6 +303,11 @@ class GenerateImageExecutor(StepExecutor):
             python_exe=Path(python_exe) if python_exe else None,
             default_lifecycle=lifecycle,
         )
+        # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
+        # None 表示 lifecycle="none",orchestrator 未注入 manager,无需 ensure。
+        # ComfyLifecycleManager.ensure 幂等,重复调用安全)
+        if ctx.lifecycle is not None:
+            await ctx.lifecycle.ensure(lifecycle)
         # Task 5: 直接 await async 主面 agenerate,不走 sync generate
         candidates = await worker.agenerate(
             spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,

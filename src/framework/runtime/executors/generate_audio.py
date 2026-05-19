@@ -229,6 +229,10 @@ class GenerateAudioExecutor(StepExecutor):
             python_exe=Path(python_exe) if python_exe else None,
             default_lifecycle=lifecycle,
         )
+        # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
+        # ComfyLifecycleManager.ensure 幂等,重复调用安全)
+        if ctx.lifecycle is not None:
+            await ctx.lifecycle.ensure(lifecycle)
 
         attempts = max(1, policy.max_attempts)
         last_exc: AudioWorkerError | None = None

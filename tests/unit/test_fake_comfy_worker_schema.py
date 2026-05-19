@@ -89,16 +89,21 @@ def test_fake_comfy_worker_v2_schema_gate_rejects_non_dict_comfy_params():
 
 
 def test_fake_comfy_worker_v2_schema_gate_rejects_non_none_lifecycle():
-    """Schema gate: if comfy_lifecycle present, must be 'none' (D6
-    decision — only value supported in this change scope; ensure_running
-    / ensure_release / self_managed_session deferred to TBD-010)."""
+    """Task 10 update:FakeComfyWorker schema gate 解锁后只拒绝集合外的值。
+
+    D6 原 gate 仅接受 "none";Task 10 解锁后接受四合法值
+    {none, ensure_running, ensure_release, self_managed_session};
+    集合外的值仍 raise WorkerUnsupportedResponse。
+    测试名称保留以维持已有 fence 标识;断言更新为非法值。
+    """
     worker = FakeComfyWorker()
-    with pytest.raises(WorkerUnsupportedResponse, match="comfy_lifecycle"):
+    # 集合外的不合法值触发 raise
+    with pytest.raises(WorkerUnsupportedResponse):
         worker.generate(
             spec={
                 "comfy_workflow": "GameAssets/01b_singleview_sdxl",
                 "comfy_params": {},
-                "comfy_lifecycle": "ensure_running",
+                "comfy_lifecycle": "totally_invalid_mode",
             },
             num_candidates=1,
         )

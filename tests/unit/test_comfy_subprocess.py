@@ -211,21 +211,27 @@ def test_artifacts_dir_none_raises_unsupported_response_at_init(tmp_path):
 
 
 def test_lifecycle_other_than_none_raises_unsupported_response(tmp_path):
-    """D6: only `default_lifecycle="none"` supported in this change scope.
-    Any other value raises at __init__."""
+    """Task 10 update:集合外的 lifecycle 值 raise WorkerUnsupportedResponse。
+
+    原 D6 gate 仅接受 "none";Task 10 解锁后接受四合法值
+    {none, ensure_running, ensure_release, self_managed_session};
+    集合外的值(如 "invalid_mode")仍 raise WorkerUnsupportedResponse。
+    测试名称保留以维持已有 fence 标识;断言更新为集合外不合法值。
+    """
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
     (scripts_dir / "comfyui_api").mkdir()
     artifacts_dir = tmp_path / "artifacts"
     artifacts_dir.mkdir()
-    with pytest.raises(WorkerUnsupportedResponse, match="default_lifecycle"):
+    # 使用集合外的非法值触发 raise(Task 10 解锁后 ensure_running 已合法,改用 invalid_mode)
+    with pytest.raises(WorkerUnsupportedResponse):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
-            model_id="comfy/local",                  # P-F1 修订
+            model_id="comfy/local",
             run_id="run_x",
             project_id="proj_x",
             artifacts_dir=artifacts_dir,
-            default_lifecycle="ensure_running",
+            default_lifecycle="invalid_mode",
         )
 
 
@@ -602,6 +608,9 @@ async def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     ctx.run.run_id = "run_test"
     ctx.task.project_id = "proj_test"
     ctx.run_dir = tmp_path / "run_dir"
+    # Task 10:lifecycle=None 表示 lifecycle="none",不注入 manager;
+    # 测试验证 _generate_via_worker env 读取逻辑,不测 lifecycle.ensure 路径
+    ctx.lifecycle = None
 
     with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(png)]))) as run_mock:
         # Task 5 GREEN: _generate_via_worker 已转 async def,需 await

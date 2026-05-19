@@ -245,10 +245,14 @@ class FakeComfyWorker(ComfyWorker):
                     "FakeComfyWorker.generate: spec.comfy_params must be a dict"
                 )
             lifecycle = spec.get("comfy_lifecycle", "none")
-            if lifecycle != "none":
+            # Task 10:FakeComfyWorker 同步解锁 — 接受四个合法值,集合外才 raise。
+            _FAKE_VALID_LIFECYCLES = {
+                "none", "ensure_running", "ensure_release", "self_managed_session",
+            }
+            if lifecycle not in _FAKE_VALID_LIFECYCLES:
                 raise WorkerUnsupportedResponse(
-                    f"FakeComfyWorker.generate: spec.comfy_lifecycle must be 'none' "
-                    f"(got {lifecycle!r}); see TBD-010 for executor-async-rewrite."
+                    f"FakeComfyWorker.generate: spec.comfy_lifecycle={lifecycle!r} 不合法; "
+                    f"合法值为 {sorted(_FAKE_VALID_LIFECYCLES)}。"
                 )
         self.calls.append({
             "spec": dict(spec),
@@ -442,12 +446,13 @@ class ComfyAgentWorker(ComfyWorker):
             # the directory may not yet exist. ImageCandidate copy
             # target needs a real directory.
             artifacts_dir.mkdir(parents=True, exist_ok=True)
-        # D6: lifecycle scope is locked to "none" in this change (TBD-010 will lift).
-        if default_lifecycle != "none":
+        # Task 10:解锁 lifecycle gate — 接受四个合法值,集合外才 raise。
+        # D6 原锁 "none"-only 已被 TBD-010 executor-async-rewrite 解锁。
+        _VALID_LIFECYCLES = {"none", "ensure_running", "ensure_release", "self_managed_session"}
+        if default_lifecycle not in _VALID_LIFECYCLES:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker only supports default_lifecycle='none' "
-                f"in this change scope (got {default_lifecycle!r}); "
-                f"see SRS TBD-010 for the future executor-async-rewrite change."
+                f"ComfyAgentWorker.__init__: 不支持的 default_lifecycle={default_lifecycle!r}; "
+                f"合法值为 {sorted(_VALID_LIFECYCLES)}。"
             )
         # D1: capability dispatch via model_id 推断;unknown id raise(不静默 fallback)。
         # F-Plan-R3-A round-3 修订:audio capability 已加(comfy/local-audio);

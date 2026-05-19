@@ -141,6 +141,10 @@ class GenerateMeshExecutor(StepExecutor):
             python_exe=Path(python_exe) if python_exe else None,
             default_lifecycle=lifecycle,
         )
+        # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
+        # ComfyLifecycleManager.ensure 幂等,重复调用安全)
+        if ctx.lifecycle is not None:
+            await ctx.lifecycle.ensure(lifecycle)
 
         # D9 + R2-F2:内部 retry loop(本地 mesh 走 standard retry,绕开
         # executor 主流程 attempts=1 强制);RetryPolicy.max_attempts 默认 2(policies.py:26)
