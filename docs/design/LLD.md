@@ -732,6 +732,29 @@ mesh.generation 单次调用 ~$0.20-1 / 20 积分。framework 的"善意瞬时�
 
 ### 5.8 Executors(`src/framework/runtime/executors/`)
 
+**`StepExecutor` ABC(自 `executor-async-rewrite` TBD-010,2026-05-20)**:
+
+```python
+class StepExecutor(ABC):
+    @abstractmethod
+    async def execute(self, ctx: StepContext) -> StepResult:
+        ...  # 全部 11 个 executor 实现均为原生 async def
+```
+
+`orchestrator.py` 直接 `await executor.execute(ctx)`;`asyncio.to_thread` 包装已删除(`CancelledError` 可直达 executor 内部逻辑)。
+
+**`StepContext` 新增字段(同 change)**:
+
+| 字段 | 类型 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `lifecycle` | `ExternalProcessLifecycle \| None` | `None` | orchestrator 注入;executor 内调 `ctx.lifecycle.ensure_running()` 等;lifecycle=None 时 executor 跳过调用 |
+
+**`DryRunPass.run` async 化 + `aprobe`(Fluid Pause #1 scope 扩大)**:
+
+- `DryRunPass.run` 由 `def` 改 `async def`,orchestrator `await dry_run_pass.run(...)` 直接调用。
+- `ComfyAgentWorker.aprobe(scripts_dir, python_exe, timeout_s=30)` 新增 `async classmethod`:用 `asyncio.create_subprocess_exec` + `asyncio.wait_for` 替代原 `probe_sync` 中 `subprocess.run` 阻塞;DryRunPass async 化后可直接 `await aprobe(...)` 不再嵌套 asyncio.run。
+- `probe_sync` classmethod 保留为 sync shim(向后兼容);内部走 `subprocess.run`。
+
 | Executor | 文件 | 用途 |
 | --- | --- | --- |
 | GenerateStructured | `generate_structured.py` | 结构化 LLM(Instructor) |
@@ -773,6 +796,46 @@ mesh.generation 单次调用 ~$0.20-1 / 20 积分。framework 的"善意瞬时�
 - **bare-approve 语义**:`verdict.decision in {approve, approve_one, approve_many}` 且 `selected_candidate_ids == []` → `kept = candidate_pool - rejected_candidate_ids`,与 `ExportExecutor._approve_filter` 的 "approve all upstream" 语义对齐
   - 关键修正:`rejected_candidate_ids` 必须从 `kept` 排除,而不是同时进 `selected` 和 `dropped`(下游只看 `selected_ids`,后者会让显式拒绝失效)
   - fence:`test_codex_audit_fixes::test_select_bare_approve_keeps_whole_pool` + `test_select_bare_approve_excludes_explicit_rejects`
+
+### 5.9 Lifecycle Manager(`src/framework/runtime/lifecycle.py`,自 `executor-async-rewrite` TBD-010,2026-05-20)
+
+**`ExternalProcessLifecycle` ABC**:
+
+```python
+class ExternalProcessLifecycle(ABC):
+    @abstractmethod
+    async def ensure_running(self) -> None: ...
+    @abstractmethod
+    async def ensure_release(self, reason: str) -> None: ...
+    @abstractmethod
+    async def release(self, mode: str, reason: str) -> None: ...
+```
+
+**`ComfyLifecycleManager(ExternalProcessLifecycle)`**:
+
+- `A+seam` 设计(ADR-runner-lifecycle-A):采用 seam 注入而非全 registry,因 TBD-011 provider #2 形态未定;`ComfyLifecycleManager` 是首个具体实现,第二个 subprocess provider 出现时再 generalize。
+- 内部 `_start_comfy_server()`:spawn `python -m factory_v3 serve`(或配置的启动命令) + `_poll_until_ready(timeout=90s)` 轮询 `/system_stats` 确认就绪
+- `release(mode, reason)`:根据 `mode`(ensure_running → skip stop / ensure_release → stop / self_managed_session → stop + cleanup session state)决策是否关闭进程
+- `_send_interrupt()`:async `POST /interrupt` server-side abort
+
+**Orchestrator 集成**:
+
+```python
+async def arun(self, task, workflow, steps, ...) -> RunResult:
+    lifecycle = self._lifecycle_manager   # 由调用方注入或构造
+    try:
+        await lifecycle.ensure_running()
+        # ... 主流程 ...
+    finally:
+        await self._release_lifecycle_bounded(lifecycle, timeout=30.0)
+
+async def aclose(self) -> None:
+    """disposal 钩子;框架/测试结束时调用确保进程清理。"""
+    if self._lifecycle_manager:
+        await self._lifecycle_manager.release("shutdown", "aclose")
+```
+
+`_release_lifecycle_bounded(lifecycle, timeout)`:套 `asyncio.wait_for(lifecycle.release(...), timeout=timeout)`;超时记 warning 不 raise(防 release 本身挂死导致 orchestrator 无法退出)。
 
 ---
 
@@ -951,24 +1014,34 @@ ComfyAgentWorker(*, scripts_dir: Path, run_id: str, project_id: str,
 - `project_id` is None / empty → `WorkerUnsupportedResponse`(F4 fix)
 - `run_id` is None / empty → `WorkerUnsupportedResponse`
 - `artifacts_dir` is None → `WorkerUnsupportedResponse`(G3 fix);non-existing dir 自动 `mkdir(parents=True, exist_ok=True)`(production 首跑 ok)
-- `default_lifecycle != "none"` → `WorkerUnsupportedResponse`(D6 lock;TBD-010 解锁)
+- `default_lifecycle` **不在** `{"none", "ensure_running", "ensure_release", "self_managed_session"}` 集合内 → `WorkerUnsupportedResponse`(D6 lock 已解锁;原 `!= "none"` 替换为集合外才 raise;TBD-010 executor-async-rewrite 2026-05-20)
 
-**`generate(spec, *, num_candidates, seed, timeout_s)` SYNC method**(适配 `ComfyWorker` ABC):
-- spec 校验:`comfy_workflow` 必须 non-empty string;`comfy_params` 可选 dict;`comfy_lifecycle` 默认 `"none"` 必须等于 `"none"`;旧 `workflow_graph` 字段命中 raise(防漏改 bundle)
-- N 次串行 `subprocess.run([python_exe, "-m", "comfyui_api", "run", "--workflow", X, "--params", json.dumps(P), "--project", project_id, "--lifecycle", "none", "--timeout", T], cwd=scripts_dir, timeout=T+30, capture_output=True, text=True)`
-- 每次调用 seed = base_seed + i;params 自动注入 seed
-- 失败模式映射(7 类):scripts_dir 缺失 + module not found(`FileNotFoundError` 包装)→ `WorkerUnsupportedResponse`;`subprocess.TimeoutExpired` → `WorkerTimeout`;exit 2 + `Missing required param` / `value out of range` / `value_not_in_list` → `WorkerUnsupportedResponse`;stdout 非 JSON / 缺 `outputs` → `WorkerUnsupportedResponse`;exit 2 + `TimeoutError` 字符串 → `WorkerTimeout`;其它 exit 2 → `WorkerError`
-- non-empty `outputs.glb` / `outputs.audio` → `WorkerUnsupportedResponse`(image-generation path scope 守门;mesh / audio workflow 留 SRS TBD-009 follow-on)
-- `outputs.images` → `shutil.copy2` 到 `artifacts_dir / "comfy" / src.name` → `ImageCandidate(data=read copy后 bytes, width, height, seed, metadata={comfy_workflow, filename, in_tree_path, source: "comfy_agent_cli", comfy_project_id, comfy_outputs_orig})`
+**`agenerate_image / agenerate_mesh / agenerate_audio / agenerate_video` ASYNC 主面**(自 `executor-async-rewrite` TBD-010):
+- 四个 capability-specific `async def agenerate_*(spec, *, num_candidates, seed, timeout_s)`;内部调 `asyncio.create_subprocess_exec` + `asyncio.wait_for` 替代原 `subprocess.run` 阻塞
+- **per-loop `_comfy_submit_lock`**(asyncio.Lock 单例 per worker-scope):N 次 serial 候选提交顺序化,防并发多 prompt 同时入 ComfyUI 队列导致输出乱序
+- `_run_once_*(spec, seed, i)` → `await asyncio.create_subprocess_exec(python_exe, "-m", "comfyui_api", "run", "--workflow", X, "--params", ..., "--project", project_id, "--lifecycle", lifecycle_val, "--timeout", T)` + `await proc.communicate(timeout=T+30)`
+- 失败模式映射同 7 类(mapping 不变,subprocess 产 stderr 内容相同)
 
-**`probe_sync(scripts_dir, python_exe, timeout_s=30) classmethod`**(给 `DryRunPass._check_comfy_reachability` 用):
-- SYNC 调 `subprocess.run([python_exe, "-m", "comfyui_api", "status"], cwd=scripts_dir, timeout=timeout_s, capture_output=True, text=True)` —— **NOT** `asyncio.create_subprocess_exec` + `asyncio.run`,因为 `DryRunPass.run` 是 sync 在 `Orchestrator.arun` event loop 内被调用,嵌套 asyncio.run 会 `RuntimeError`(round 3 plan codex P2 fix)
-- scripts_dir 缺失 / module not found / `TimeoutExpired` / 非零 exit → `WorkerUnsupportedResponse` 含 hint 提示用户启 ComfyUI
+**`generate_image / generate_mesh / generate_audio / generate_video` SYNC shim**:
+- 保留 sync 方法名 + signature 适配 `ComfyWorker` ABC;内部 `asyncio.get_event_loop().run_until_complete(self.agenerate_*(...))`(或 `asyncio.run` 当无 running loop)
+- 与 Orchestrator 原生 `await agenerate_*` 路径共存;旧 mock callsite 不需改动
 
-**Cancel 语义(D6 + design.md ## Resolved OQ-4)**:
-- `GenerateImageExecutor.execute` 是 sync def,被 `Orchestrator.arun` 用 `asyncio.to_thread` 包装(`orchestrator.py:474`);`asyncio.to_thread` 内的 sync executor 不可中断(orchestrator.py:286-296 注释明示),所以 `CancelledError` 不可达 worker.generate
-- D6 选 `lifecycle="none"` 后,subprocess 是 `python -m comfyui_api run` 单次调用,不 spawn ComfyUI server child(用户在终端 1 自管 ComfyUI server)— subprocess 自然退出 = worker.generate 退出,无残留;outer Future 已 cancel,result 被丢弃
-- 无孤儿进程风险;cancel best-effort acceptable
+**`_abort_comfy_prompt(prompt_id)` async helper**:
+- cancel 触发时:先 `POST http://127.0.0.1:<port>/interrupt` 发 server-side abort,然后 `proc.terminate()`;双保险防孤儿 prompt 继续在 ComfyUI 队列占用 GPU
+- `prompt_id` 由 `comfyui_api run` stdout JSON 中 `prompt_id` 字段获取(运行中持有)
+
+**`probe_sync(scripts_dir, python_exe, timeout_s=30) classmethod`**(sync shim;DryRunPass async 化后优先用 `aprobe`):
+- SYNC 调 `subprocess.run([python_exe, "-m", "comfyui_api", "status"], ...)` — 保留向后兼容
+
+**`aprobe(scripts_dir, python_exe, timeout_s=30) classmethod`**(async 版,自 Fluid Pause #1):
+- `asyncio.create_subprocess_exec` + `asyncio.wait_for`;DryRunPass.run async 化后 `await ComfyAgentWorker.aprobe(...)` 直接用,无嵌套 asyncio.run 问题
+- scripts_dir 缺失 / module not found / `asyncio.TimeoutError` / 非零 exit → `WorkerUnsupportedResponse` 含 hint
+
+**Cancel 语义(自 executor-async-rewrite TBD-010)**:
+- 全部 executor `execute` 均为 `async def`;orchestrator 原生 `await executor.execute(ctx)`,无 `asyncio.to_thread` 包装
+- `CancelledError` 直达 executor 内部;`_agenerate_image_worker / _generate_via_comfy_worker` 等 coroutine 感知 cancel
+- cancel 触发时 `_abort_comfy_prompt` 发 `/interrupt` + `proc.terminate()`;cascade-cancel drain timeout 30s 后明示失败(不再 best-effort silently discard)
+- lifecycle=none 时 ComfyUI server 用户自管,cancel 仅终止 subprocess;lifecycle=ensure_running/ensure_release 时 orchestrator try/finally `_release_lifecycle_bounded` 确保进程被清理
 
 **`FakeComfyWorker(ComfyWorker)` v2 schema gate**(同模块):conditional 守门 — 只在 spec 含 `comfy_workflow` 时 enforce schema;legacy `prompt_summary` / `width` / `height` 路径 back-compat 不破坏 ~25 现有 mock callsite。
 

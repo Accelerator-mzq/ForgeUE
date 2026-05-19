@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2026-05-20 — executor-async-rewrite(TBD-010 closed)
+
+- BREAKING:`StepExecutor.execute` ABC 全切 `async def`(原 sync def + `asyncio.to_thread` 包装已删除)
+- orchestrator 原生 `await executor.execute(ctx)` — `CancelledError` 直达 executor 内部,真停不需等 sync 线程
+- ComfyAgentWorker:async-subprocess(`asyncio.create_subprocess_exec`)+ per-loop `_comfy_submit_lock` 串行锁 + cancel 时 server-side `/interrupt` + `proc.terminate()` 双保险
+- 新 module `framework.runtime.lifecycle`:`ExternalProcessLifecycle` ABC + `ComfyLifecycleManager`(三模式 `none` / `ensure_running` / `ensure_release` / `self_managed_session`;A+seam 设计)
+- orchestrator 持有 lifecycle manager:`arun` try/finally `_release_lifecycle_bounded(timeout=30s)` + `Orchestrator.aclose()` disposal 钩子
+- cascade-cancel:真停 + `_CASCADE_DRAIN_TIMEOUT_S=30s` drain 超时明示失败(非 best-effort silently discard)
+- `comfy_lifecycle`:四值受理(`none`/`ensure_running`/`ensure_release`/`self_managed_session`);集合外值才 `raise WorkerUnsupportedResponse`(原 `!= "none"` 即 raise 已解锁)
+- `DryRunPass.run` 改 `async def` + 新 `ComfyAgentWorker.aprobe` async classmethod(Fluid Pause #1 scope 扩大)
+- `StepContext.lifecycle: ExternalProcessLifecycle | None = None` 字段加入
+- 全量 1179 passed / 3 skipped / 0 failed(实测 2026-05-20;baseline 1136 → net +43 新 fence)
+- L2 live evidence:`forge/changes/executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`
+
 ## [Unreleased]
 
 ### Removed

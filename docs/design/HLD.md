@@ -492,13 +492,33 @@ call_site → CapabilityRouter.completion(capability, call)
 - Poll 循环 `await asyncio.sleep` 后不吞 `CancelledError`
 - 外层硬超时:`asyncio.wait_for(adapter.acompletion(call), timeout=T)`
 - DAG 级联:任一 step 异常立即 cancel siblings + re-raise
-- 限制:同步 Executor 内的 `time.sleep` 无法强制中断(Python 线程限制)
+- **原生 async executor**(自 `executor-async-rewrite` TBD-010 closed,2026-05-20):`StepExecutor.execute` ABC 全切 `async def`;orchestrator 原生 `await executor.execute(ctx)`,无 `asyncio.to_thread` 包装;`CancelledError` 可直达 executor 内部逻辑,真停不需等 sync 线程完成;cascade-cancel `_CASCADE_DRAIN_TIMEOUT_S=30s` drain 明示失败。
+- **ComfyAgentWorker cancel**(同上):cancel 时先调 server-side `POST /interrupt` abort 正在运行的 prompt,再 `process.terminate()`;subprocess 改 `asyncio.create_subprocess_exec`,per-loop `_comfy_submit_lock` 串行提交防并发。
 
 ### 9.4 下载与 Range 续传
 
 - `chunked_download_async()` 1MB 分块,中断走 HTTP Range 续传(最多 3 次重试)
 - **续传强校验**:buf 非空时必须 `206` + `Content-Range` 起始偏移 = `len(buf)`;其他形态一律清空重下
 - 轮询进度回调:`(status, elapsed_s, raw_resp)` 自适应签名
+
+### 9.5 外部进程 Lifecycle 管理(自 `executor-async-rewrite` TBD-010,2026-05-20)
+
+| 组件 | 位置 | 职责 |
+| --- | --- | --- |
+| `ExternalProcessLifecycle` ABC | `src/framework/runtime/lifecycle.py` | 声明 `async ensure_running()` / `async ensure_release(reason)` / `async release(mode, reason)` 三接口 |
+| `ComfyLifecycleManager` | 同模块 | 实现三接口,内含 `_start_comfy_server()` / `_poll_until_ready()` / `_send_interrupt()`;单例 per-worker-scope,`A+seam` 设计(ADR-runner-lifecycle-A) |
+| `Orchestrator` | `orchestrator.py` | `arun` 入口持有 lifecycle manager;try/finally 调 `release(mode, reason)` + `aclose()` disposal 钩子;`_release_lifecycle_bounded(timeout=30s)` helper 防 release 挂死 |
+
+**三模式(bundle `comfy_lifecycle` 字段)**:
+
+| 值 | 语义 |
+| --- | --- |
+| `none` | 用户自管 ComfyUI(双终端工作流默认;lifecycle manager 跳过 ensure_running) |
+| `ensure_running` | Run 开始时若 ComfyUI 未就绪则自动启动;Run 结束时不关闭(保持常驻) |
+| `ensure_release` | Run 开始时确保启动;Run 结束时关闭进程 |
+| `self_managed_session` | Manager 维护整个 session 生命周期;框架仅 ensure_running 一次,session 结束才 release |
+
+**集合外值** → `__init__` 直接 `raise WorkerUnsupportedResponse`(解锁 D6 lock;原 `!= "none"` 即 raise 已替换)。
 
 ---
 
