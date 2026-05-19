@@ -63,16 +63,25 @@ For `self_managed_session` the manager SHALL be held at the orchestrator-instanc
 level (`self._lifecycle`) and reused across multiple `arun` calls; for
 `ensure_running` / `ensure_release` it MAY be per-`arun`.
 
-The orchestrator SHALL call `await manager.release(mode, reason)` on each of four
-exit paths, passing the matching `reason`, and SHALL NOT itself decide whether the
-process stops — that is the manager's `(mode, reason)` decision:
+The orchestrator SHALL release a per-`arun` manager via a `try ... finally` around
+the `arun` body so that `await manager.release(mode, reason)` runs exactly once on
+EVERY exit path — including the unclassified-exception re-raise path (`classify_failure`
+returning `None`, which in linear mode propagates straight out of `arun` without going
+through the cascade branch). The orchestrator SHALL pass the matching `reason` and
+SHALL NOT itself decide whether the process stops — that is the manager's
+`(mode, reason)` decision:
 
-| 退出路径 | `reason` |
+| `arun` 退出方式 | `reason` |
 |---|---|
-| `arun` normal run-end | `run_end` |
-| cascade-terminate | `cascade` |
-| `except asyncio.CancelledError` handler | `arun_cancel` |
-| `Orchestrator.aclose()` | `orchestrator_close` |
+| normal run-end | `run_end` |
+| cascade-terminate (`run.status=failed`, normal return) | `cascade` |
+| `asyncio.CancelledError` (re-raised) | `arun_cancel` |
+| other unclassified `BaseException` (re-raised) | `arun_error` |
+
+`Orchestrator.aclose()` releases the orchestrator-instance-level manager with the
+separate `orchestrator_close` reason. Releasing on the `arun_error` path is REQUIRED
+so an `ensure_release` ComfyUI process started by the framework is not leaked when an
+executor bug / artifact-dump IO error / unclassified exception ends the run.
 
 The system SHALL add `Orchestrator.aclose()` (`async def`) which calls
 `release(mode, "orchestrator_close")` on the orchestrator-instance-level manager, and
@@ -84,9 +93,15 @@ manager is released at most once per exit path.
 ## Scenario: Orchestrator passes the matching reason on each exit path
 
 **Given** a run with a `comfy_lifecycle != "none"` route that constructed a `ComfyLifecycleManager`
-**When** the run ends normally / a cascade fires / the `arun` task is cancelled / `aclose()` is called
-**Then** the orchestrator calls `release(mode, "run_end")` / `release(mode, "cascade")` / `release(mode, "arun_cancel")` / `release(mode, "orchestrator_close")` respectively
+**When** the run ends normally / a cascade fires / the `arun` task is cancelled / an unclassified exception re-raises out of `arun` / `aclose()` is called
+**Then** the `try/finally` around the `arun` body calls `release(mode, "run_end")` / `release(mode, "cascade")` / `release(mode, "arun_cancel")` / `release(mode, "arun_error")` respectively, and `aclose()` calls `release(mode, "orchestrator_close")`
 **And** whether the ComfyUI process actually stops is decided by the manager's `(mode, reason)` table — the orchestrator only reports the correct reason for the path
+
+## Scenario: ensure_release is released even when an unclassified exception ends the run
+
+**Given** an `ensure_release` run whose `ComfyLifecycleManager` has already started a ComfyUI process
+**When** an executor raises an unclassified exception (`classify_failure` returns `None`) that re-raises out of `arun`
+**Then** the `arun` `try/finally` still calls `release(mode, "arun_error")`, the manager runs `factory_v3 stop`, and the framework-started ComfyUI process is not leaked
 
 ## Scenario: ensure_release stops at run-end, self_managed_session stops only at aclose
 

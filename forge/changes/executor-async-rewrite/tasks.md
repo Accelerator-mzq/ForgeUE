@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+ / stdlib asyncio(`create_subprocess_exec` / `wait_for` / `CancelledError` / `Lock` / `iscoroutinefunction`,不引入 anyio/trio)/ pytest + `pytest.mark.asyncio` / 既有 `framework.providers` async 面。
 
-> **codex round 1+2 writeback**:Phase A 由「单 commit 大爆破」改增量(round-1);ComfyAgentWorker async-subprocess 前置到 worker-backed executor 转换之前以消除 `to_thread(worker.generate)` 不可取消窗口(round-2)。cascade drain 显式失败(Task 7);comfy cancel server-side `/interrupt` + comfy-submission 串行锁解全局 interrupt 歧义(Task 3-4);`ExternalProcessLifecycle.release(mode, reason)` ABC 契约闭合(Task 8-9);`ComfyLifecycleManager` `asyncio.Lock` + 冷启动 ownership 提前(Task 8);`Orchestrator.aclose()`(Task 9)。
+> **codex round 1+2+3 writeback**:Phase A 由「单 commit 大爆破」改增量(round-1);ComfyAgentWorker async-subprocess 前置到 worker-backed executor 转换之前以消除 `to_thread(worker.generate)` 不可取消窗口(round-2)。cascade drain 显式失败(Task 7);comfy cancel server-side `/interrupt` + comfy-submission 串行锁(**按运行 loop 取锁**,避免跨 loop `asyncio.Lock` 错误 — round-3)解全局 interrupt 歧义(Task 3-4);`ExternalProcessLifecycle.release(mode, reason)` ABC 契约闭合 + `reason` 含 `arun_error`(round-3)(Task 8-9);`ComfyLifecycleManager` `asyncio.Lock` + 冷启动 ownership 提前(Task 8);`Orchestrator.aclose()` + `arun` 用 `try/finally` 覆盖未分类异常退出 release(round-3)(Task 9)。
 
 ---
 
@@ -105,12 +105,23 @@ async def test_comfy_agenerate_uses_create_subprocess_exec(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_comfy_submit_lock_serializes_concurrent_agenerate():
-    """两个并发 agenerate 同时刻只 1 个 comfy subprocess 在飞。"""
+    """同一 loop 内两个并发 agenerate 同时刻只 1 个 comfy subprocess 在飞。"""
     inflight = {"now": 0, "max": 0}
     # fake comfyui_api 脚本 sleep 0.3s;包装 create_subprocess_exec 统计并发数
     ...
     await asyncio.gather(w1.agenerate(...), w2.agenerate(...))
     assert inflight["max"] == 1
+
+def test_comfy_submit_lock_safe_across_asyncio_run_loops():
+    """跨 loop 安全:连续两个 asyncio.run 各自内部并发 comfy,不报 cross-loop
+    RuntimeError(模块级单 asyncio.Lock 会炸,按 loop 取锁不会)。"""
+    async def _two_concurrent():
+        inflight = {"now": 0, "max": 0}
+        ...
+        await asyncio.gather(w1.agenerate(...), w2.agenerate(...))
+        return inflight["max"]
+    assert asyncio.run(_two_concurrent()) == 1      # loop A
+    assert asyncio.run(_two_concurrent()) == 1      # loop B — 不报 cross-loop error
 
 def test_comfy_generate_sync_shim_still_works():
     worker = _make_fake_agent_worker(...)
@@ -124,17 +135,24 @@ Expected: FAIL with `AttributeError: agenerate`
 
 - [ ] **Step 3: 实现 async-subprocess + 串行锁**
 
-模块级(`comfy_worker.py` 顶部)加进程内单例锁 helper:
+模块级(`comfy_worker.py` 顶部)加**按运行 loop 取锁**的 helper(不能用模块级单
+`asyncio.Lock` —— 它经 `_LoopBoundMixin` 绑定首个 loop,跨 loop 复用会 raise
+`RuntimeError: bound to a different event loop`;ForgeUE 的 `Orchestrator.run` /
+sync shim 都是 `asyncio.run` 多 loop):
 ```python
-_COMFY_SUBMIT_LOCK: asyncio.Lock | None = None
+import weakref
+_COMFY_SUBMIT_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 def _comfy_submit_lock() -> asyncio.Lock:
-    """进程级 comfy-submission 锁(懒初始化)。保证同一时刻 ForgeUE 只有 1 个
-    comfy prompt 在 ComfyUI server 上 — 使 cancel 时的 POST /interrupt 无歧义
-    (/interrupt 是 ComfyUI 全局操作,不区分 prompt 归属)。"""
-    global _COMFY_SUBMIT_LOCK
-    if _COMFY_SUBMIT_LOCK is None:
-        _COMFY_SUBMIT_LOCK = asyncio.Lock()
-    return _COMFY_SUBMIT_LOCK
+    """按当前运行 event loop 取 comfy-submission 锁(懒建)。同一 loop 内并发
+    comfy(DAG fan-out)共享一把锁 → 串行,使 cancel 时 POST /interrupt 无歧义
+    (/interrupt 是 ComfyUI 全局操作);不同 loop 各自独立锁 — 跨 loop 本无并发
+    (asyncio.run 顺序阻塞),无需跨 loop 互斥,也避免 cross-loop RuntimeError。"""
+    loop = asyncio.get_running_loop()
+    lock = _COMFY_SUBMIT_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _COMFY_SUBMIT_LOCKS[loop] = lock
+    return lock
 ```
 4 个 `_run_once*` helper 与 dry-run probe 的 `subprocess.run` 改为(整段「submit→poll」包在 `async with _comfy_submit_lock():` 内):
 ```python
@@ -453,11 +471,14 @@ async def test_cancel_during_cold_start_still_releasable(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode,reason,should_stop", [
-    ("ensure_running", "run_end", False), ("ensure_running", "orchestrator_close", False),
+    ("ensure_running", "run_end", False), ("ensure_running", "arun_error", False),
+    ("ensure_running", "orchestrator_close", False),
     ("ensure_release", "run_end", True), ("ensure_release", "cascade", True),
-    ("ensure_release", "arun_cancel", True), ("ensure_release", "orchestrator_close", True),
+    ("ensure_release", "arun_cancel", True), ("ensure_release", "arun_error", True),
+    ("ensure_release", "orchestrator_close", True),
     ("self_managed_session", "run_end", False), ("self_managed_session", "cascade", False),
-    ("self_managed_session", "arun_cancel", False), ("self_managed_session", "orchestrator_close", True),
+    ("self_managed_session", "arun_cancel", False), ("self_managed_session", "arun_error", False),
+    ("self_managed_session", "orchestrator_close", True),
 ])
 async def test_release_decision_table(monkeypatch, mode, reason, should_stop):
     async def _down(self): return False
@@ -492,12 +513,14 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 
 _VALID_MODES = {"none", "ensure_running", "ensure_release", "self_managed_session"}
-_VALID_REASONS = {"run_end", "cascade", "arun_cancel", "orchestrator_close"}
+_VALID_REASONS = {"run_end", "cascade", "arun_cancel", "arun_error", "orchestrator_close"}
 _READY_TIMEOUT_S = 120.0          # 冷启 30-90s,留余量
 # (mode, reason) → 是否 stop(仅当 framework 起的进程才真 stop)
+# arun_error = arun 因未分类异常退出;ensure_release 在任何 run 退出都拆。
 _RELEASE_STOPS = {
     ("ensure_release", "run_end"), ("ensure_release", "cascade"),
-    ("ensure_release", "arun_cancel"), ("ensure_release", "orchestrator_close"),
+    ("ensure_release", "arun_cancel"), ("ensure_release", "arun_error"),
+    ("ensure_release", "orchestrator_close"),
     ("self_managed_session", "orchestrator_close"),
 }
 
@@ -573,7 +596,7 @@ git commit -m "feat(runtime): ExternalProcessLifecycle ABC(release(mode,reason))
 
 ### Task 9: Orchestrator 持有 lifecycle + aclose() disposal 钩子
 
-- [ ] task-9: Orchestrator arun 构造/复用 manager + StepContext 注入 + 四路径 release(mode,reason) + aclose() disposal 钩子
+- [ ] task-9: Orchestrator arun 构造/复用 manager + StepContext 注入 + try/finally 全退出路径 release(mode,reason) + aclose() disposal 钩子
 
 **Files:**
 
@@ -608,6 +631,16 @@ async def test_self_managed_session_released_only_at_aclose(monkeypatch):
 async def test_ensure_release_released_at_run_end(monkeypatch):
     ...
     assert stopped["n"] == 1
+
+@pytest.mark.asyncio
+async def test_ensure_release_released_on_unclassified_exception(monkeypatch):
+    """arun 因未分类异常退出 → finally 以 arun_error reason release,ensure_release stop。"""
+    calls = []
+    ...  # patch release 记 (mode, reason);一个 executor 抛未分类 RuntimeError
+    with pytest.raises(RuntimeError):
+        await orch.arun(...)                       # ensure_release run,executor 抛 RuntimeError
+    assert ("ensure_release", "arun_error") in calls
+    assert stopped["n"] == 1                       # 不泄漏
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -620,7 +653,16 @@ Expected: FAIL
 - `base.py`:`lifecycle` 前向引用换真实 `from framework.runtime.lifecycle import ExternalProcessLifecycle`。
 - `arun` 启动:扫各 step `prepared_routes`,若含 `comfy/local*` 且 resolved `comfy_lifecycle != "none"` → 取 mode。`self_managed_session` → manager 挂 `self._lifecycle`(orchestrator 实例级,跨 arun 复用,无则构造);其余非 none → per-arun 构造。scripts_dir 从 `FORGEUE_COMFY_SCRIPTS_DIR`。
 - `_aexec_one_body` 构造 `StepContext` 时(:495-501)传 `lifecycle=<manager>`。
-- **四路径 release**:`arun` 正常结束 → `await manager.release(mode, "run_end")`;cascade-terminate → `release(mode, "cascade")`;`except asyncio.CancelledError` → `release(mode, "arun_cancel")`。每路径 orchestrator 只负责报对 reason,停不停由 manager 决策表定。`_released` 标志保证 per-manager per-path 一次。
+- **release 走 `try/finally` 覆盖所有退出路径**:`arun` 把 per-arun manager 的
+  release 包进 `try ... finally` —— 沿各路径设 `reason` 局部变量(正常结束 →
+  `run_end`;cascade-terminate → `cascade`;`except asyncio.CancelledError` →
+  `arun_cancel` 后 re-raise;`except BaseException` 未分类异常 → `arun_error` 后
+  re-raise),`finally` 读 `reason` 调一次 `await manager.release(mode, reason)`。
+  这样**未分类异常 re-raise 路径也释放**(`classify_failure` 返 None 的直接 raise /
+  linear 模式异常直穿 —— codex round-3 修订:否则 `ensure_release` 泄漏)。
+  orchestrator 只负责报对 reason,停不停由 manager 决策表定。`_released` 标志保证
+  per-manager 一次。`self_managed_session` 的 manager 是实例级,`arun` 的 finally
+  对它调 run-level reason → 决策表判 no-op。
 - **`Orchestrator.aclose()`**:`async def aclose(self)` — 若 `self._lifecycle` 存在,`await self._lifecycle.release(mode, "orchestrator_close")`。加 `__aenter__` / `__aexit__`(`__aexit__` 调 `aclose`)。
 - `run.py`:CLI main 在 run 结束后 `await orch.aclose()`(或 `async with Orchestrator(...) as orch:`)。
 
@@ -633,7 +675,7 @@ Expected: PASS
 
 ```bash
 git add src/framework/runtime/orchestrator.py src/framework/runtime/executors/base.py src/framework/run.py tests/unit/test_orchestrator.py
-git commit -m "feat(runtime): orchestrator 持有 ComfyLifecycleManager + aclose() + 四路径 release(mode,reason)"
+git commit -m "feat(runtime): orchestrator 持有 ComfyLifecycleManager + aclose() + try/finally 全路径 release(mode,reason)"
 ```
 
 ### Task 10: 解锁 comfy_lifecycle gate

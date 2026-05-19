@@ -7,7 +7,7 @@
 > lifecycle 相关 Invariant / Non-Goal 的 MODIFIED / REMOVED。每条 Requirement 首行
 > 标注 ADDED / MODIFIED / REMOVED。
 
-## Requirement: ComfyAgentWorker invokes the agent CLI via an async subprocess under a process-wide submission lock
+## Requirement: ComfyAgentWorker invokes the agent CLI via an async subprocess under a per-loop submission lock
 
 **ADDED.** The system SHALL invoke the `comfyui_api` agent CLI via
 `asyncio.create_subprocess_exec` (NOT the blocking `subprocess.run`), and SHALL await
@@ -19,21 +19,33 @@ capability entry points SHALL expose async primaries `agenerate` / `agenerate_me
 keep working. `FakeComfyWorker` SHALL expose the same async surface.
 
 The submit→poll critical section of each `agenerate*` call SHALL be wrapped in a
-process-wide `asyncio.Lock` (`_comfy_submit_lock`), so that ForgeUE has at most one
-ComfyUI prompt in flight on the ComfyUI server at any time. This is REQUIRED for
-correct cancellation: `comfyui_api cancel` issues a global `POST /interrupt` that the
-ComfyUI server applies to whichever prompt is currently running, irrespective of
-which worker submitted it. Without the lock, a `parallel_dag` fan-out of two comfy
-steps could have a cancel of one step interrupt a healthy sibling's prompt. The lock
-imposes no real throughput cost — a single local ComfyUI GPU already executes prompts
-serially.
+comfy-submission `asyncio.Lock` obtained from a `_comfy_submit_lock()` helper that
+returns a lock **keyed on the currently running event loop** (lazily created, held in
+a `WeakKeyDictionary[loop → asyncio.Lock]`), so that ForgeUE has at most one ComfyUI
+prompt in flight per event loop at any time. This is REQUIRED for correct
+cancellation: `comfyui_api cancel` issues a global `POST /interrupt` that the ComfyUI
+server applies to whichever prompt is currently running, irrespective of which worker
+submitted it; without serialization a `parallel_dag` fan-out of two comfy steps could
+have a cancel of one step interrupt a healthy sibling's prompt. The lock MUST NOT be a
+single module-level `asyncio.Lock` reused across event loops — `asyncio.Lock` binds to
+the loop of its first waiter (`_LoopBoundMixin`) and reuse from another loop (ForgeUE's
+`Orchestrator.run` and the sync shims each call `asyncio.run`) raises `RuntimeError:
+bound to a different event loop`. A per-loop lock is sufficient because separate
+`asyncio.run` invocations never run concurrently. The lock imposes no real throughput
+cost — a single local ComfyUI GPU already executes prompts serially.
 
-## Scenario: Concurrent agenerate calls are serialized so only one comfy prompt is in flight
+## Scenario: Concurrent agenerate calls in one loop are serialized so only one comfy prompt is in flight
 
-**Given** two comfy workers whose `agenerate` calls run concurrently (a `parallel_dag` fan-out of two comfy steps)
+**Given** two comfy workers whose `agenerate` calls run concurrently in the same event loop (a `parallel_dag` fan-out of two comfy steps)
 **When** both call `agenerate` at the same time
-**Then** the `_comfy_submit_lock` serializes them — at most one `comfyui_api` subprocess is in flight at any instant; the second waits for the first to finish
+**Then** the per-loop `_comfy_submit_lock()` serializes them — at most one `comfyui_api` subprocess is in flight at any instant; the second waits for the first to finish
 **And** the sync shim `ComfyAgentWorker.generate(...)` still returns `list[ImageCandidate]` when called from a probe script with no running event loop
+
+## Scenario: The comfy-submission lock is safe across separate asyncio.run loops
+
+**Given** two successive `asyncio.run` invocations, each internally running two concurrent `agenerate` calls
+**When** the second `asyncio.run` runs after the first has completed
+**Then** no `RuntimeError: bound to a different event loop` is raised — each loop got its own lock from the `WeakKeyDictionary` — and serialization still holds within each loop
 
 ## Requirement: ComfyAgentWorker cancel terminates the subprocess and aborts the server-side prompt
 
@@ -67,11 +79,13 @@ leak the CLI subprocess after the awaiting task is cancelled.
 - `"ensure_running"` — start ComfyUI if not already up, then leave it running (warm
   reuse; never released by the framework).
 - `"ensure_release"` — `ensure_running` semantics, plus stop the instance at every
-  run-exit path (run-end / cascade / cancel) if and only if this framework started it.
+  run-exit path (run-end / cascade / `arun` cancel / unclassified-exception exit) if
+  and only if this framework started it.
 - `"self_managed_session"` — the framework owns one ComfyUI process held at the
   orchestrator-instance level, reused across multiple `arun` calls, released only at
   `Orchestrator.aclose()` (the `orchestrator_close` reason) — NOT at run-end, cascade,
-  or `arun` cancel, since those are run-level events that do not end the session.
+  `arun` cancel, or unclassified-exception exit, since those are run-level events that
+  do not end the session.
 
 Any value outside this four-element set SHALL be rejected with
 `WorkerUnsupportedResponse`. The lifecycle for the three non-`none` modes SHALL be
@@ -98,7 +112,8 @@ carried out by an `ExternalProcessLifecycle` handle, NOT by `ComfyAgentWorker` i
 **ADDED.** The system SHALL define an abstract `ExternalProcessLifecycle` base class
 in `src/framework/runtime/lifecycle.py` with three async methods — `ensure(mode)`,
 `release(mode, reason)`, and `status()`. The `release` method SHALL take a `reason`
-argument (`run_end` / `cascade` / `arun_cancel` / `orchestrator_close`) so that the
+argument (`run_end` / `cascade` / `arun_cancel` / `arun_error` / `orchestrator_close`)
+so that the
 ENTIRE teardown contract — including `self_managed_session` teardown at
 `orchestrator_close` — lives in the ABC; there SHALL be no concrete-only teardown
 method that the orchestrator must downcast to reach. `ComfyLifecycleManager` SHALL be
@@ -134,7 +149,7 @@ follow-on) can be added as a second implementation conforming to the same
 
 **Given** a `ComfyLifecycleManager` that the framework itself started
 **When** `release(mode, reason)` is called
-**Then** it stops the process (`factory_v3 stop`) exactly for these `(mode, reason)` pairs: `(ensure_release, run_end)`, `(ensure_release, cascade)`, `(ensure_release, arun_cancel)`, `(ensure_release, orchestrator_close)`, `(self_managed_session, orchestrator_close)` — and for every other pair (`ensure_running` any reason; `self_managed_session` with `run_end` / `cascade` / `arun_cancel`) it is a no-op
+**Then** it stops the process (`factory_v3 stop`) exactly for these `(mode, reason)` pairs: `(ensure_release, run_end)`, `(ensure_release, cascade)`, `(ensure_release, arun_cancel)`, `(ensure_release, arun_error)`, `(ensure_release, orchestrator_close)`, `(self_managed_session, orchestrator_close)` — and for every other pair (`ensure_running` any reason; `self_managed_session` with `run_end` / `cascade` / `arun_cancel` / `arun_error`) it is a no-op
 **And** for a manager whose `ensure` found ComfyUI already running (user-owned), no `(mode, reason)` ever stops it
 
 ## Requirement: ComfyUI bundle spec uses manifest workflow + JSON params
