@@ -161,21 +161,35 @@ def test_executor_dispatches_comfy_local_video_to_comfy_worker_branch(tmp_path, 
     )
     ctx, _ = _make_video_ctx(tmp_path)
     executor = GenerateVideoExecutor()
+    import asyncio
     import json
-    import subprocess
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = subprocess.CompletedProcess(
-            args=["mocked"], returncode=0,
-            stdout=json.dumps({
-                "ok": True,
-                "outputs": {"images": [], "audio": [], "glb": [], "video": [str(fake)]},
-            }),
-            stderr="",
-        )
+
+    # TBD-010 Task 3: generate_video 现在走 asyncio.create_subprocess_exec
+    _stdout = json.dumps({
+        "ok": True,
+        "outputs": {"images": [], "audio": [], "glb": [], "video": [str(fake)]},
+    }).encode("utf-8")
+    call_count = []
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self): return (_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    _orig = asyncio.create_subprocess_exec
+    async def _fake_create(*a, **kw):
+        call_count.append(1)
+        return _FakeProc()
+    asyncio.create_subprocess_exec = _fake_create  # type: ignore[assignment]
+    try:
         result = executor.execute(ctx)
+    finally:
+        asyncio.create_subprocess_exec = _orig  # type: ignore[assignment]
     assert result.metrics["video_count"] == 1
     assert result.metrics["model"] == "comfy/local-video"
-    assert run_mock.call_count == 1
+    assert len(call_count) == 1
 
 
 def test_executor_no_video_worker_path_resolved_raises(tmp_path):

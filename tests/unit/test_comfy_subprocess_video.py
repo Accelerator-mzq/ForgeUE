@@ -68,6 +68,89 @@ def _make_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subpr
     )
 
 
+class _AsyncFakeProcess:
+    """模拟 asyncio.subprocess.Process,供 patch asyncio.create_subprocess_exec 使用。
+    TBD-010 Task 3 async-subprocess 改造后,所有 comfy worker 路径经 asyncio.create_subprocess_exec。
+    """
+
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = "") -> None:
+        self._stdout_bytes = stdout.encode("utf-8") if isinstance(stdout, str) else stdout
+        self._stderr_bytes = stderr.encode("utf-8") if isinstance(stderr, str) else stderr
+        self.returncode = returncode
+
+    async def communicate(self):
+        return (self._stdout_bytes, self._stderr_bytes)
+
+    async def wait(self):
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+def _make_async_completed(stdout: str, returncode: int = 0, stderr: str = "") -> _AsyncFakeProcess:
+    """_make_completed 的 async 版本,返回 _AsyncFakeProcess 实例。"""
+    return _AsyncFakeProcess(stdout=stdout, returncode=returncode, stderr=stderr)
+
+
+def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, *, side_effect=None):
+    """返回 asyncio.create_subprocess_exec 的 patch context manager。
+
+    用法:
+        with _patch_create_subprocess_exec(_make_async_completed(stdout)) as mock:
+            worker.generate_audio(...)
+            cmd = list(mock.call_args)  # create_subprocess_exec 的位置参数 tuple
+
+    side_effect: callable(*a, **kw) → _AsyncFakeProcess 或 iter 返回 _AsyncFakeProcess。
+    """
+    import asyncio as _aio
+
+    calls = []
+
+    if side_effect is not None:
+        _effects = list(side_effect) if not callable(side_effect) else None
+        _effect_fn = side_effect if callable(side_effect) else None
+        _effect_iter = iter(_effects) if _effects else None
+
+        async def _factory(*a, **kw):
+            calls.append(a)
+            if _effect_fn:
+                return _effect_fn(*a, **kw)
+            return next(_effect_iter)
+    else:
+        async def _factory(*a, **kw):
+            calls.append(a)
+            return fake_proc
+
+    class _Ctx:
+        """create_subprocess_exec patch context manager。call_args / call_count / call_args_list 支持。"""
+        def __init__(self):
+            self._orig = None
+            self.call_args_list = calls
+
+        @property
+        def call_args(self):
+            return self.call_args_list[-1] if self.call_args_list else None
+
+        @property
+        def call_count(self):
+            return len(self.call_args_list)
+
+        def __enter__(self):
+            self._orig = _aio.create_subprocess_exec
+            _aio.create_subprocess_exec = _factory  # type: ignore[assignment]
+            return self
+
+        def __exit__(self, *_):
+            _aio.create_subprocess_exec = self._orig  # type: ignore[assignment]
+
+    return _Ctx()
+
+
+
 def _ok_video_stdout(video_paths: list[str], extra_outputs: dict | None = None) -> str:
     """Standard runner.py extract_outputs output dict shape (round-3 PF1
     D-Runner-Extension:user-authored runner.py 加 video collection block 后,
@@ -145,11 +228,12 @@ def test_unknown_model_id_raises_at_init_lists_video_in_supported(tmp_path):
 def test_video_mode_raises_on_missing_outputs_video(tmp_path):
     """video capability REQUIRED `outputs.video` non-empty;missing key → raise。"""
     worker = _make_video_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(
+json.dumps({
             "ok": True,
             "outputs": {"images": [], "audio": [], "glb": []},
-        }))
+        })
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"video"):
             worker.generate_video(
                 spec={"comfy_workflow": "Vedio/test", "comfy_params": {"positive_prompt": "x"}},
@@ -160,8 +244,7 @@ def test_video_mode_raises_on_missing_outputs_video(tmp_path):
 def test_video_mode_raises_on_empty_outputs_video(tmp_path):
     """video capability REQUIRED `outputs.video` non-empty;empty list → raise。"""
     worker = _make_video_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"video"):
             worker.generate_video(
                 spec={"comfy_workflow": "Vedio/test", "comfy_params": {"positive_prompt": "x"}},
@@ -174,10 +257,11 @@ def test_video_mode_rejects_outputs_images(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "video.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(
+_ok_video_stdout(
             [str(fake_video)], extra_outputs={"images": ["thumbnail.png"]},
-        ))
+        )
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"images"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -190,10 +274,11 @@ def test_video_mode_rejects_outputs_glb(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "video.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(
+_ok_video_stdout(
             [str(fake_video)], extra_outputs={"glb": ["unexpected.glb"]},
-        ))
+        )
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"glb"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -206,10 +291,11 @@ def test_video_mode_rejects_outputs_audio(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "video.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(
+_ok_video_stdout(
             [str(fake_video)], extra_outputs={"audio": ["unexpected.flac"]},
-        ))
+        )
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"audio"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -235,11 +321,12 @@ def test_image_mode_still_rejects_outputs_video_after_phase3(tmp_path):
     )
     fake_video = tmp_path / "video.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(
+json.dumps({
             "ok": True,
             "outputs": {"images": ["preview.png"], "audio": [], "glb": [], "video": [str(fake_video)]},
-        }))
+        })
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"video"):
             worker.generate(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -264,11 +351,12 @@ def test_mesh_mode_still_rejects_outputs_video_after_phase3(tmp_path):
     _make_minimal_mp4(fake_video)
     fake_image = tmp_path / "image.png"
     fake_image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(
+json.dumps({
             "ok": True,
             "outputs": {"images": [str(fake_image)], "audio": [], "glb": [str(fake_glb)], "video": [str(fake_video)]},
-        }))
+        })
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"video"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "x", "comfy_params": {}, "comfy_image_param_key": "input_image"},
@@ -292,11 +380,12 @@ def test_audio_mode_still_rejects_outputs_video_after_phase3(tmp_path):
     fake_audio.write_bytes(b"fLaC" + b"\x80\x00\x00\x22" + b"\x00" * 100)
     fake_video = tmp_path / "video.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(
+json.dumps({
             "ok": True,
             "outputs": {"images": [], "audio": [str(fake_audio)], "glb": [], "video": [str(fake_video)]},
-        }))
+        })
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"video"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -314,8 +403,7 @@ def test_generate_video_mp4_extension_detection_reads_bytes(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "wan_test.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         candidates = worker.generate_video(
             spec={"comfy_workflow": "Vedio/test", "comfy_params": {"positive_prompt": "x"}},
             num_candidates=1,
@@ -331,8 +419,7 @@ def test_generate_video_unsupported_extension_mov_raises_unsupported_response(tm
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "clip.mov"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"mov"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -345,8 +432,7 @@ def test_generate_video_webm_extension_rejected_pending_follow_on(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "clip.webm"
     _make_minimal_mp4(fake_video)  # webm 扩展名但用 BMFF bytes — 实际 webm payload 也无所谓,扩展名层先 reject
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"webm.*follow-on") as exc_info:
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -366,8 +452,7 @@ def test_generate_video_bmff_too_short_raises_unsupported_response(tmp_path):
     fake_video = tmp_path / "tiny.mp4"
     fake_video.parent.mkdir(parents=True, exist_ok=True)
     fake_video.write_bytes(b"\x00" * 8 + b"ftyp")  # 12 bytes,过短
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"too short"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -381,8 +466,7 @@ def test_generate_video_bmff_ftyp_mismatch_raises_unsupported_response(tmp_path)
     fake_video = tmp_path / "noftyp.mp4"
     fake_video.parent.mkdir(parents=True, exist_ok=True)
     fake_video.write_bytes(b"\x00" * 32)  # 32 bytes,但 offset 4 不是 ftyp
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"BMFF header mismatch"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -397,8 +481,7 @@ def test_generate_video_bmff_box_size_too_small_raises(tmp_path):
     fake_video.parent.mkdir(parents=True, exist_ok=True)
     # box_size = 0,ftyp at offset 4,major_brand isom
     fake_video.write_bytes(b"\x00\x00\x00\x00" + b"ftyp" + b"isom" + b"\x00" * 20)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"out of range"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -413,8 +496,7 @@ def test_generate_video_bmff_box_size_exceeds_len_raises(tmp_path):
     fake_video.parent.mkdir(parents=True, exist_ok=True)
     # box_size = 999999,文件只有 32 bytes
     fake_video.write_bytes(b"\x00\x0F\x42\x3F" + b"ftyp" + b"isom" + b"\x00" * 20)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"out of range"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -431,8 +513,7 @@ def test_generate_video_bmff_box_size_largesize_1_rejected_pending_follow_on(tmp
     fake_video.parent.mkdir(parents=True, exist_ok=True)
     # box_size = 1,ftyp at offset 4,16+ bytes(满足 len >= 16 但 box_size==1 reject)
     fake_video.write_bytes(b"\x00\x00\x00\x01" + b"ftyp" + b"\x00\x00\x00\x00\x00\x00\x00\x40" + b"isom" + b"\x00" * 12)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"largesize") as exc_info:
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -446,8 +527,7 @@ def test_generate_video_bmff_major_brand_zero_raises(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "zerobrand.mp4"
     _make_minimal_mp4(fake_video, major_brand=b"\x00\x00\x00\x00")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"major_brand is empty"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -460,8 +540,7 @@ def test_generate_video_bmff_major_brand_spaces_raises(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "spacebrand.mp4"
     _make_minimal_mp4(fake_video, major_brand=b"    ")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"major_brand is empty"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -474,8 +553,7 @@ def test_generate_video_bmff_valid_mp4_accepts_with_isom_brand(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "isom.mp4"
     _make_minimal_mp4(fake_video, major_brand=b"isom")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         candidates = worker.generate_video(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -489,8 +567,7 @@ def test_generate_video_bmff_valid_mp4_accepts_with_mp42_brand(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "mp42.mp4"
     _make_minimal_mp4(fake_video, major_brand=b"mp42")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         candidates = worker.generate_video(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -508,8 +585,7 @@ def test_generate_video_missing_path_raises_unsupported_response(tmp_path):
     """outputs.video 路径不存在 → reject(沿 audio G11 R2 fix)。"""
     worker = _make_video_worker(tmp_path)
     nonexistent = tmp_path / "ghost.mp4"  # 不创建文件
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(nonexistent)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(nonexistent)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"path does not exist"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -526,8 +602,7 @@ def test_generate_video_symlink_path_raises_unsupported_response(tmp_path):
     _make_minimal_mp4(target)
     link = tmp_path / "link.mp4"
     link.symlink_to(target)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(link)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(link)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"symlink"):
             worker.generate_video(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -547,8 +622,7 @@ def test_generate_video_runs_subprocess_num_candidates_times_with_per_candidate_
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "video.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         candidates = worker.generate_video(
             spec={
                 "comfy_workflow": "x",
@@ -562,7 +636,8 @@ def test_generate_video_runs_subprocess_num_candidates_times_with_per_candidate_
     # 验证每次调用 seed 是 42 + i(NOT 999 — caller's pre-filled seed 被覆盖)
     seen_seeds = []
     for call in run_mock.call_args_list:
-        cmd = call.args[0]
+        # call 是 tuple-of-args(create_subprocess_exec 的位置参数)
+        cmd = list(call)
         # cmd 含 --params <json>;parse JSON 取 seed
         params_idx = cmd.index("--params")
         params = json.loads(cmd[params_idx + 1])
@@ -583,8 +658,7 @@ def test_generate_video_metadata_records_5_comfy_provenance_keys(tmp_path):
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "wan21_5sec_00001.mp4"
     _make_minimal_mp4(fake_video)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         candidates = worker.generate_video(
             spec={
                 "comfy_workflow": "Vedio/Wan2.1-T2V-1.3B_native_5sec",
@@ -620,8 +694,7 @@ def test_generate_video_metadata_snapshot_is_independent_copy(tmp_path):
     fake_video = tmp_path / "video.mp4"
     _make_minimal_mp4(fake_video)
     caller_params = {"positive_prompt": "original", "seed": 100}
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         candidates = worker.generate_video(
             spec={"comfy_workflow": "x", "comfy_params": caller_params},
             num_candidates=1,
@@ -650,8 +723,7 @@ def test_generate_video_does_not_read_forgeue_comfy_input_dir_env_var(tmp_path, 
     _make_minimal_mp4(fake_video)
     # 显式 unset env var (确保 video path 不读 it)
     monkeypatch.delenv("FORGEUE_COMFY_INPUT_DIR", raising=False)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_video_stdout([str(fake_video)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
         candidates = worker.generate_video(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,

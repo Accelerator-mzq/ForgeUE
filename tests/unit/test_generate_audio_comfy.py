@@ -153,21 +153,35 @@ def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_path, 
     fake.write_bytes(b"fLaC" + b"\x80\x00\x00\x22" + b"\x00" * 50)
     ctx, _ = _make_audio_ctx(tmp_path)
     executor = GenerateAudioExecutor()
+    import asyncio
     import json
-    import subprocess
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = subprocess.CompletedProcess(
-            args=["mocked"], returncode=0,
-            stdout=json.dumps({
-                "ok": True,
-                "outputs": {"audio": [str(fake)], "images": [], "glb": [], "video": []},
-            }),
-            stderr="",
-        )
+
+    # TBD-010 Task 3: generate_audio 现在走 asyncio.create_subprocess_exec
+    _stdout = json.dumps({
+        "ok": True,
+        "outputs": {"audio": [str(fake)], "images": [], "glb": [], "video": []},
+    }).encode("utf-8")
+    call_count = []
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self): return (_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    _orig = asyncio.create_subprocess_exec
+    async def _fake_create(*a, **kw):
+        call_count.append(1)
+        return _FakeProc()
+    asyncio.create_subprocess_exec = _fake_create  # type: ignore[assignment]
+    try:
         result = executor.execute(ctx)
+    finally:
+        asyncio.create_subprocess_exec = _orig  # type: ignore[assignment]
     assert result.metrics["audio_count"] == 1
     assert result.metrics["model"] == "comfy/local-audio"
-    assert run_mock.call_count == 1
+    assert len(call_count) == 1
 
 
 def test_executor_no_audio_worker_path_resolved_raises(tmp_path):

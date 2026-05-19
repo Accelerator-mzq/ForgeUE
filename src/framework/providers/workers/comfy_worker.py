@@ -1,44 +1,44 @@
-"""ComfyUI agent CLI worker (v2 since OpenSpec change comfy-agent-cli-adoption).
+"""ComfyUI agent CLI worker (v3 since executor-async-rewrite TBD-010).
 
-Architecture: ComfyUI runs as an external GPU process owned by the user
-(see provider-routing/spec.md Invariants — `lifecycle="none"` only in
-this change scope per D6). This module invokes the new agent CLI
-(`python -m comfyui_api`) as a synchronous subprocess and parses the
-stdout JSON envelope. Worker config (scripts_dir / python_exe /
-default_lifecycle) reads from environment variables `FORGEUE_COMFY_*`,
-not from `ProviderDef` fields (round 2 OQ-6 = F-B decision; ProviderDef
-schema NOT extended — F-A registered as SRS TBD-011 follow-on).
+架构:ComfyUI 作为用户管理的外部 GPU 进程运行(见 provider-routing/spec.md
+Invariants — `lifecycle="none"` 在本 change scope 仅支持)。本模块通过
+asyncio.create_subprocess_exec 异步启动 agent CLI(`python -m comfyui_api`)
+并解析 stdout JSON。Worker 配置(scripts_dir / python_exe / default_lifecycle)
+从 env vars `FORGEUE_COMFY_*` 读取,不从 `ProviderDef` 字段(round 2 OQ-6 = F-B 决策;
+ProviderDef schema NOT extended — F-A 登记 SRS TBD-011 后续 change)。
 
-v1 HTTPComfyWorker (raw HTTP `/prompt` + `/history` + `/view`) lived
-here until commit 292420a; see git history for the v1 implementation.
+v1 HTTPComfyWorker (raw HTTP /prompt + /history + /view) 在 commit 292420a 前。
+v2 (comfy-agent-cli-adoption): subprocess.run 同步 subprocess。
+v3 (executor-async-rewrite TBD-010): asyncio.create_subprocess_exec 异步 subprocess
+   + comfy-submission 串行锁 + agenerate* async 主面 + generate* sync shim 兼容。
 
-Three exposed classes:
-- ComfyWorker     : ABC adapter surface used by GenerateImageExecutor
-- FakeComfyWorker : deterministic scripted/synth adapter for offline tests
-- ComfyAgentWorker: real adapter invoking python -m comfyui_api as subprocess
+四个暴露的类:
+- ComfyWorker     : ABC adapter surface(GenerateImageExecutor 使用)
+- FakeComfyWorker : 确定性 scripted/synth adapter(离线测试)
+- ComfyAgentWorker: 真实 adapter,通过 asyncio.create_subprocess_exec 启动子进程
 
-Production flow:
-  GenerateImageExecutor._should_use_worker_path detects model=='comfy/local'
-  → constructs ComfyAgentWorker(scripts_dir=env, run_id, project_id,
-    artifacts_dir=ctx.run_dir, ...)
-  → calls worker.generate(spec={comfy_workflow, comfy_params, comfy_lifecycle},
+生产流程:
+  GenerateImageExecutor._should_use_worker_path 检测 model=='comfy/local'
+  → 构建 ComfyAgentWorker(scripts_dir=env, run_id, project_id, artifacts_dir=ctx.run_dir)
+  → 调用 worker.agenerate(spec={comfy_workflow, comfy_params, comfy_lifecycle},
     num_candidates, seed, timeout_s)
-  → subprocess.run([sys.executable, "-m", "comfyui_api", "run",
+  → asyncio.create_subprocess_exec(sys.executable, "-m", "comfyui_api", "run",
     "--workflow", X, "--params", json.dumps(P), "--project", project_id,
-    "--lifecycle", "none", "--timeout", str(timeout_s)], cwd=scripts_dir,
-    timeout=timeout_s + buffer)
-  → parse stdout JSON, copy outputs.images into artifacts_dir/comfy/,
-    construct list[ImageCandidate]
+    "--lifecycle", "none", "--timeout", str(timeout_s), cwd=scripts_dir)
+  → 解析 stdout JSON,复制 outputs.images 到 artifacts_dir/comfy/,
+    构建 list[ImageCandidate]
 
-Cancel semantics: subprocess.run is blocking; CancelledError does not
-reach generate() because GenerateImageExecutor.execute is wrapped by
-asyncio.to_thread in orchestrator.py:474 (round 2 G2 + round 3 H1+H2
-documentation drift acknowledged in design.md D6 — best-effort under
-to_thread; lifecycle=none means subprocess naturally exits and no
-ComfyUI server child is spawned, so no orphan process risk).
+并发安全:comfy-submission 串行锁(_comfy_submit_lock())确保同一 event loop 内
+同时只有 1 个 comfy subprocess 在运行。per-loop WeakKeyDictionary 防止跨 loop
+RuntimeError(asyncio.Lock 绑定到首次 waiter 的 loop,模块级单一 Lock 跨 loop 会炸)。
+
+Cancel 语义:async 主面下 CancelledError 可以在 await 点到达 _run_once_async*,
+finally 块执行 proc.terminate() + proc.kill() 清理。后续 Task 4 会加 /interrupt
+server-side abort。
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -47,12 +47,47 @@ import shutil
 import struct
 import subprocess
 import sys
+import weakref
 import zlib
 from abc import ABC, abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# comfy-submission 串行锁 — per-loop WeakKeyDictionary
+# (TBD-010 executor-async-rewrite Task 3)
+# ---------------------------------------------------------------------------
+
+# 每个 event loop 对应一个独立的 asyncio.Lock。
+# asyncio.Lock 在 Python 3.10+ 绑定到首次 waiter 所在的 loop(_LoopBoundMixin);
+# 模块级单一 Lock 从不同 loop 使用会 RuntimeError("bound to a different event loop")。
+# WeakKeyDictionary 使 loop 被 GC 后对应的 Lock 自动删除,无泄漏。
+_COMFY_SUBMIT_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
+
+
+def _comfy_submit_lock() -> asyncio.Lock:
+    """获取当前 event loop 对应的 comfy-submission 锁(遅延生成)。
+
+    同一 loop 内的并发 comfy(DAG fan-out)共享 1 个锁 → 直列化,
+    取消时的 POST /interrupt 没有歧义(/interrupt 是 ComfyUI 全局操作)。
+    不同 loop 各自独立的锁 — 跨 loop 本来无并发(asyncio.run 顺次阻塞),
+    cross-loop RuntimeError 也避免了。
+    """
+    loop = asyncio.get_running_loop()
+    lock = _COMFY_SUBMIT_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _COMFY_SUBMIT_LOCKS[loop] = lock
+    return lock
+
+
+# subprocess buffer:等待 proc.communicate() 超时时的宽余量(秒)
+_SUBPROC_BUFFER_S: float = 30.0
+# terminate 后等待进程退出的宽余量(秒)
+_PROC_GRACE_S: float = 5.0
 
 # Mesh capability(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1):
 # generate_mesh 返回 MeshCandidate(从 mesh_worker module 复用 dataclass,
@@ -105,6 +140,18 @@ class ComfyWorker(ABC):
     name: str = "comfy"
 
     @abstractmethod
+    async def agenerate(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[ImageCandidate]:
+        """异步产出 num_candidates 张图片。超时时 raise WorkerTimeout。
+        async 主面(TBD-010 executor-async-rewrite Task 3)。"""
+
+    @abstractmethod
     def generate(
         self,
         *,
@@ -113,7 +160,8 @@ class ComfyWorker(ABC):
         seed: int | None = None,
         timeout_s: float | None = None,
     ) -> list[ImageCandidate]:
-        """Produce *num_candidates* images for *spec*. Must raise WorkerTimeout on timeout."""
+        """Produce *num_candidates* images for *spec*. Must raise WorkerTimeout on timeout.
+        sync shim — 内部调用 asyncio.run(self.agenerate(...)),保持旧调用路径兼容。"""
 
 
 # ----------------------------------------------------------------------------
@@ -157,6 +205,20 @@ class FakeComfyWorker(ComfyWorker):
         self._scripts.append(_Script(raise_error=exc))
 
     # -- surface --
+
+    async def agenerate(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[ImageCandidate]:
+        """异步主面(TBD-010 Task 3):FakeComfyWorker 的 async 版本直接委托给 generate 逻辑。
+        Fake worker 不真正启动子进程,无需 asyncio.create_subprocess_exec。"""
+        return self.generate(
+            spec=spec, num_candidates=num_candidates, seed=seed, timeout_s=timeout_s,
+        )
 
     def generate(
         self,
@@ -430,7 +492,7 @@ class ComfyAgentWorker(ComfyWorker):
             # tree including outputs/ + tests' tmp_path layout)
             self.comfy_output_root = self.scripts_dir.parent.resolve()
 
-    def generate(
+    async def agenerate(
         self,
         *,
         spec: dict[str, Any],
@@ -438,41 +500,43 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int | None = None,
         timeout_s: float | None = None,
     ) -> list[ImageCandidate]:
-        """Sync invocation; calls subprocess once per candidate (each with
-        seed += i). Per-call timeout is `timeout_s` (default 300s if not
-        given). Total wall-clock = num_candidates × per-call (no internal
-        parallelism — keeps cancel/timeout semantics simple)."""
-        # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption:capability
-        # 守门 — mesh capability worker 调 generate() 应 raise(use generate_mesh)。
+        """image capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+
+        每个 candidate 通过 asyncio.create_subprocess_exec 异步启动子进程,
+        整个 submit→poll 段在 async with _comfy_submit_lock(): 内运行,
+        确保同一 loop 内最多 1 个 comfy subprocess 同时运行。
+        per-call timeout 是 timeout_s(默认 300s);total wall-clock = num_candidates × per-call。
+        """
+        # capability 守门
         if self._capability != "image":
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate: called on _capability={self._capability!r} "
-                f"worker;只有 model_id='comfy/local' 的 worker 可调 generate(image-mode);"
-                f"mesh-mode worker 应调 generate_mesh"
+                f"ComfyAgentWorker.agenerate: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local' 的 worker 可调 agenerate(image-mode);"
+                f"mesh-mode worker 应调 agenerate_mesh"
             )
-        # Reject legacy v1 spec shape (round 2 spec).
+        # 拒绝 legacy v1 spec shape
         if "workflow_graph" in spec:
             raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate: spec.workflow_graph is deprecated "
+                "ComfyAgentWorker.agenerate: spec.workflow_graph is deprecated "
                 "since OpenSpec change comfy-agent-cli-adoption; use "
                 "spec.comfy_workflow + spec.comfy_params instead"
             )
         comfy_workflow = spec.get("comfy_workflow")
         if not isinstance(comfy_workflow, str) or not comfy_workflow:
             raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate: spec.comfy_workflow REQUIRED, "
+                "ComfyAgentWorker.agenerate: spec.comfy_workflow REQUIRED, "
                 "must be non-empty string (manifest name like "
                 "'GameAssets/01b_singleview_sdxl')"
             )
         comfy_params = spec.get("comfy_params", {})
         if not isinstance(comfy_params, dict):
             raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate: spec.comfy_params must be a dict"
+                "ComfyAgentWorker.agenerate: spec.comfy_params must be a dict"
             )
         lifecycle = spec.get("comfy_lifecycle", "none")
         if lifecycle != "none":
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate: spec.comfy_lifecycle must be "
+                f"ComfyAgentWorker.agenerate: spec.comfy_lifecycle must be "
                 f"'none' in this change scope (got {lifecycle!r}); "
                 f"see SRS TBD-010 for executor-async-rewrite"
             )
@@ -481,13 +545,9 @@ class ComfyAgentWorker(ComfyWorker):
         for i in range(max(1, num_candidates)):
             call_seed = (seed or 0) + i
             params_for_call = dict(comfy_params)
-            # OpenSpec change `comfy-worker-seed-setdefault-bug-fix`(2026-05-04):
-            # per-candidate seed 直接覆盖,不用 `setdefault`。caller 在 comfy_params
-            # 内填了 seed 时,setdefault 会让所有 candidate 拿同 seed → 重复
-            # candidate + 误导 provenance metadata。audio 已先修(comfy_worker.py:912
-            # `comfy-agent-cli-audio-adoption` G11-F3),本 change 同步 image / mesh。
+            # per-candidate seed 直接覆盖,不用 setdefault(comfy-worker-seed-setdefault-bug-fix)
             params_for_call["seed"] = call_seed
-            results.extend(self._run_once(
+            results.extend(await self._run_once_async(
                 comfy_workflow=comfy_workflow,
                 params=params_for_call,
                 seed=call_seed,
@@ -495,7 +555,37 @@ class ComfyAgentWorker(ComfyWorker):
             ))
         return results
 
-    def _run_once(
+    def generate(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[ImageCandidate]:
+        """sync shim — 委托 asyncio.run(self.agenerate(...))。
+        保持 probe 脚本 / 旧调用路径兼容(TBD-010 Task 3)。
+        注意:已有 event loop 运行时调用会 RuntimeError;在 to_thread 内可安全使用。
+        """
+        # capability 守门(与 agenerate 一致,允许在 sync 路径早期 raise)
+        if self._capability != "image":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.generate: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local' 的 worker 可调 generate(image-mode);"
+                f"mesh-mode worker 应调 generate_mesh"
+            )
+        # 拒绝 legacy v1 spec shape(提前 raise 不走 asyncio.run)
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.generate: spec.workflow_graph is deprecated "
+                "since OpenSpec change comfy-agent-cli-adoption; use "
+                "spec.comfy_workflow + spec.comfy_params instead"
+            )
+        return asyncio.run(self.agenerate(
+            spec=spec, num_candidates=num_candidates, seed=seed, timeout_s=timeout_s,
+        ))
+
+    async def _run_once_async(
         self,
         *,
         comfy_workflow: str,
@@ -503,8 +593,13 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int,
         timeout_s: float,
     ) -> list[ImageCandidate]:
-        """One subprocess.run call → 1+ ImageCandidate (depends on
-        comfy_params batch_size)."""
+        """image capability 的一次异步 subprocess 调用 → 1+ ImageCandidate。
+
+        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
+        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
+        超时时 raise WorkerTimeout;cleanup 走 terminate → kill。
+        后续 Task 4 会在 finally 前加 _abort_comfy_prompt(server-side /interrupt)。
+        """
         cmd = [
             str(self.python_exe), "-m", "comfyui_api", "run",
             "--workflow", comfy_workflow,
@@ -513,47 +608,61 @@ class ComfyAgentWorker(ComfyWorker):
             "--lifecycle", "none",
             "--timeout", str(int(timeout_s)),
         ]
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.scripts_dir),
-                timeout=timeout_s + 30.0,        # outer wrap > inner CLI timeout
-                capture_output=True,
-                text=True,
-                # G11 R1 fix: explicit UTF-8 + errors="replace" — Windows
-                # default locale (cp936/cp1252 etc.) can't decode UTF-8
-                # JSON containing non-ASCII filenames / errors / workflows;
-                # raised UnicodeDecodeError would not match WorkerError
-                # branches and would crash the live run unstructured.
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise WorkerTimeout(
-                f"ComfyAgentWorker subprocess wall-clock exceeded "
-                f"{timeout_s + 30.0}s (CLI internal timeout was {timeout_s}s)"
-            ) from exc
-        except FileNotFoundError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: failed to spawn subprocess "
-                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-            ) from exc
+        async with _comfy_submit_lock():
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=str(self.scripts_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker: failed to spawn subprocess "
+                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+                ) from exc
+            try:
+                raw_out, raw_err = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=timeout_s + _SUBPROC_BUFFER_S,
+                )
+            except asyncio.TimeoutError as exc:
+                raise WorkerTimeout(
+                    f"ComfyAgentWorker subprocess wall-clock exceeded "
+                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
+                ) from exc
+            finally:
+                # Task 4 がこの前に _abort_comfy_prompt を挿入する予定。
+                # Task 3 では terminate → kill のみ。
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                    await proc.wait()
+
+        # stdout/stderr を UTF-8 テキストに変換(G11 R1 fix と同じ方針: errors="replace")
+        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
+        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
+
+        # returncode を擬似 CompletedProcess として再利用できるよう変数に束縛
+        returncode = proc.returncode
 
         # Parse stdout JSON; map failures per spec D5 table.
-        stdout = (result.stdout or "").strip()
+        stdout = stdout_text
         if not stdout:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: empty stdout (exit code {result.returncode}; "
-                f"stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+                f"ComfyAgentWorker: empty stdout (exit code {returncode}; "
+                f"stderr first 500 chars: {stderr_text[:500]!r})"
             )
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError as exc:
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker: stdout is not valid JSON "
-                f"(exit code {result.returncode}; first 500 chars: {stdout[:500]!r})"
+                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
             ) from exc
 
         if not isinstance(data, dict):
@@ -573,7 +682,7 @@ class ComfyAgentWorker(ComfyWorker):
                     )
             raise WorkerError(
                 f"ComfyAgentWorker: comfyui_api returned ok=false "
-                f"(exit {result.returncode}, error: {error_msg})"
+                f"(exit {returncode}, error: {error_msg})"
             )
 
         if "outputs" not in data or not isinstance(data["outputs"], dict):
@@ -718,6 +827,69 @@ class ComfyAgentWorker(ComfyWorker):
                 f"writes outputs to a non-default directory."
             )
 
+    async def agenerate_mesh(
+        self,
+        *,
+        spec: dict[str, Any],
+        source_image_filename: str,
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """Mesh capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+
+        与 image-mode agenerate() 平行,但:
+        - 仅在 _capability == "mesh" 时可调(否则 raise)
+        - 接 source_image_filename: filename only(round 5 D10)
+        - 返 MeshCandidate(data=GLB bytes, metadata={comfy provenance})
+        - 通过 _run_once_mesh_async 使用 asyncio.create_subprocess_exec
+        """
+        if self._capability != "mesh":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_mesh: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-mesh' 的 worker 可调 agenerate_mesh"
+            )
+        # bundle spec 校验
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_mesh: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_mesh: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like 'Mesh/02_mini_textured_3d_hunyuan')"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_mesh: spec.comfy_params must be a dict"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_mesh: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+        image_param_key = spec.get("comfy_image_param_key") or "input_image"
+        per_call_timeout = float(timeout_s) if timeout_s else 600.0
+        results: list[MeshCandidate] = []
+        for i in range(max(1, num_candidates)):
+            call_seed = (seed or 0) + i
+            params_for_call = dict(comfy_params)
+            params_for_call["seed"] = call_seed
+            params_for_call[image_param_key] = source_image_filename
+            results.extend(await self._run_once_mesh_async(
+                comfy_workflow=comfy_workflow,
+                params=params_for_call,
+                params_snapshot=dict(params_for_call),
+                seed=call_seed,
+                timeout_s=per_call_timeout,
+                source_image_filename=source_image_filename,
+            ))
+        return results
+
     def generate_mesh(
         self,
         *,
@@ -727,77 +899,21 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int | None = None,
         timeout_s: float | None = None,
     ) -> list[MeshCandidate]:
-        """Mesh capability path(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption
-        design D7 + D8 + round 5 D10 修订)。
-
-        与 image-mode `generate()` 平行,但:
-        - 仅在 `_capability == "mesh"` 时可调(否则 raise)
-        - 接 source_image_filename:**filename only**(round 5 D10 修订:从 round 1-4
-          的 `source_image_path: Path` 改为 `source_image_filename: str`)。
-          executor 已把 source bytes 写入 ComfyUI 自己的 input/ 目录
-          (via FORGEUE_COMFY_INPUT_DIR env);本方法把 filename 注入 spec.comfy_params
-          的 image input key(由 spec.comfy_image_param_key 决定,默认 "input_image";
-          round 5 D8 修订:对齐 LoadImage 节点参数名)
-        - 返 MeshCandidate(data=GLB bytes, metadata={comfy provenance};D5)
-        - 不走 ComfyWorker ABC `generate`(后者返 list[ImageCandidate],类型不兼容)
-
-        Caller(`GenerateMeshExecutor._generate_via_comfy_worker`)负责 retry loop +
-        ComfyWorker → MeshWorker 异常 wrap(D9)— 本方法不带内部 retry。
+        """Mesh capability sync shim — 委托 asyncio.run(self.agenerate_mesh(...))。
+        保持 probe 脚本 / 旧调用路径兼容(TBD-010 Task 3)。
         """
+        # capability 守门(与 agenerate_mesh 一致,允许在 sync 路径早期 raise)
         if self._capability != "mesh":
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.generate_mesh: called on _capability={self._capability!r} "
                 f"worker;只有 model_id='comfy/local-mesh' 的 worker 可调 generate_mesh"
             )
-        # bundle spec 校验(同 generate;但 mesh 还要 spec.comfy_image_param_key 处理)
-        if "workflow_graph" in spec:
-            raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate_mesh: spec.workflow_graph is deprecated; "
-                "use spec.comfy_workflow + spec.comfy_params instead"
-            )
-        comfy_workflow = spec.get("comfy_workflow")
-        if not isinstance(comfy_workflow, str) or not comfy_workflow:
-            raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate_mesh: spec.comfy_workflow REQUIRED, "
-                "must be non-empty string (manifest name like 'Mesh/02_mini_textured_3d_hunyuan')"
-            )
-        comfy_params = spec.get("comfy_params", {})
-        if not isinstance(comfy_params, dict):
-            raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate_mesh: spec.comfy_params must be a dict"
-            )
-        lifecycle = spec.get("comfy_lifecycle", "none")
-        if lifecycle != "none":
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_mesh: spec.comfy_lifecycle must be "
-                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
-            )
-        # D8 round 5 修订:image input param key 由 bundle 显式声明(默认 "input_image",
-        # 对齐 LoadImage 节点参数名);round 1-4 默认 "image_path" 是凭直觉错值。
-        # 不修改 caller 的 spec["comfy_params"](deep copy)。
-        image_param_key = spec.get("comfy_image_param_key") or "input_image"
-        per_call_timeout = float(timeout_s) if timeout_s else 600.0
-        results: list[MeshCandidate] = []
-        for i in range(max(1, num_candidates)):
-            call_seed = (seed or 0) + i
-            params_for_call = dict(comfy_params)
-            # OpenSpec change `comfy-worker-seed-setdefault-bug-fix`(2026-05-04):
-            # per-candidate seed 直接覆盖(NOT setdefault),与 image / audio 同步。
-            params_for_call["seed"] = call_seed
-            # round 5 D10:filename only(LoadImage 节点自动 prefix ComfyUI input/);
-            # source_image_filename 已由 executor 写到 FORGEUE_COMFY_INPUT_DIR
-            params_for_call[image_param_key] = source_image_filename
-            results.extend(self._run_once_mesh(
-                comfy_workflow=comfy_workflow,
-                params=params_for_call,
-                params_snapshot=dict(params_for_call),    # snapshot 隔离 caller spec mutation(D5)
-                seed=call_seed,
-                timeout_s=per_call_timeout,
-                source_image_filename=source_image_filename,
-            ))
-        return results
+        return asyncio.run(self.agenerate_mesh(
+            spec=spec, source_image_filename=source_image_filename,
+            num_candidates=num_candidates, seed=seed, timeout_s=timeout_s,
+        ))
 
-    def _run_once_mesh(
+    async def _run_once_mesh_async(
         self,
         *,
         comfy_workflow: str,
@@ -807,17 +923,15 @@ class ComfyAgentWorker(ComfyWorker):
         timeout_s: float,
         source_image_filename: str,
     ) -> list[MeshCandidate]:
-        """One subprocess.run for mesh capability → 1+ MeshCandidate(per outputs.glb)。
+        """mesh capability の一回非同期 subprocess 呼び出し → 1+ MeshCandidate。
 
-        Sub-process 调用 / JSON 解析 / outputs 守门复用 image-mode 同样的逻辑骨架,
-        但产物构造走 mesh path:
+        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
+        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
+        产物构造走 mesh path:
         - 从 outputs.glb 路径读 GLB bytes 到 MeshCandidate.data
-        - **不**做 worker 内部 in-tree copy(image-mode 沿用 shutil.copy2;mesh 由
-          ArtifactRepository.put 自动写到 <artifact_root>/<run_id>/<artifact_id>.glb,
-          与 Hunyuan / Tripo3D mesh worker 命名约定一致;D5)
+        - 不做 worker 内部 in-tree copy(由 ArtifactRepository.put 自动落 in-tree)
         - GLB magic bytes 校验(b"glTF" prefix)
-        - metadata 含 comfy_manifest / comfy_params_snapshot / comfy_capability /
-          comfy_original_filename / comfy_source_image_path(D5)
+        - metadata 含 comfy_manifest / comfy_params_snapshot / comfy_capability / ...
         """
         cmd = [
             str(self.python_exe), "-m", "comfyui_api", "run",
@@ -827,64 +941,78 @@ class ComfyAgentWorker(ComfyWorker):
             "--lifecycle", "none",
             "--timeout", str(int(timeout_s)),
         ]
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.scripts_dir),
-                timeout=timeout_s + 30.0,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise WorkerTimeout(
-                f"ComfyAgentWorker.generate_mesh subprocess wall-clock exceeded "
-                f"{timeout_s + 30.0}s (CLI internal timeout was {timeout_s}s)"
-            ) from exc
-        except FileNotFoundError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_mesh: failed to spawn subprocess "
-                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-            ) from exc
+        async with _comfy_submit_lock():
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=str(self.scripts_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.agenerate_mesh: failed to spawn subprocess "
+                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+                ) from exc
+            try:
+                raw_out, raw_err = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=timeout_s + _SUBPROC_BUFFER_S,
+                )
+            except asyncio.TimeoutError as exc:
+                raise WorkerTimeout(
+                    f"ComfyAgentWorker.agenerate_mesh subprocess wall-clock exceeded "
+                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
+                ) from exc
+            finally:
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                    await proc.wait()
 
-        stdout = (result.stdout or "").strip()
+        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
+        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
+        returncode = proc.returncode
+
+        stdout = stdout_text
         if not stdout:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_mesh: empty stdout (exit code {result.returncode}; "
-                f"stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+                f"ComfyAgentWorker.agenerate_mesh: empty stdout (exit code {returncode}; "
+                f"stderr first 500 chars: {stderr_text[:500]!r})"
             )
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError as exc:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_mesh: stdout is not valid JSON "
-                f"(exit code {result.returncode}; first 500 chars: {stdout[:500]!r})"
+                f"ComfyAgentWorker.agenerate_mesh: stdout is not valid JSON "
+                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
             ) from exc
         if not isinstance(data, dict):
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_mesh: stdout JSON is not a dict (got {type(data).__name__})"
+                f"ComfyAgentWorker.agenerate_mesh: stdout JSON is not a dict (got {type(data).__name__})"
             )
         if not data.get("ok"):
             error_msg = str(data.get("error", ""))
             if "TimeoutError" in error_msg:
                 raise WorkerTimeout(
-                    f"ComfyAgentWorker.generate_mesh: ComfyUI reported TimeoutError: {error_msg}"
+                    f"ComfyAgentWorker.agenerate_mesh: ComfyUI reported TimeoutError: {error_msg}"
                 )
             for marker in _UNSUPPORTED_ERROR_MARKERS:
                 if marker in error_msg:
                     raise WorkerUnsupportedResponse(
-                        f"ComfyAgentWorker.generate_mesh: deterministic param error: {error_msg}"
+                        f"ComfyAgentWorker.agenerate_mesh: deterministic param error: {error_msg}"
                     )
             raise WorkerError(
-                f"ComfyAgentWorker.generate_mesh: comfyui_api returned ok=false "
-                f"(exit {result.returncode}, error: {error_msg})"
+                f"ComfyAgentWorker.agenerate_mesh: comfyui_api returned ok=false "
+                f"(exit {returncode}, error: {error_msg})"
             )
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_mesh: stdout JSON missing 'outputs' field or "
+                f"ComfyAgentWorker.agenerate_mesh: stdout JSON missing 'outputs' field or "
                 f"not a dict (got {data.get('outputs')!r})"
             )
         outputs = data["outputs"]
@@ -937,6 +1065,68 @@ class ComfyAgentWorker(ComfyWorker):
             ))
         return candidates
 
+    async def agenerate_audio(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[AudioCandidate]:
+        """Audio capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+
+        - 仅在 _capability == "audio" 时可调(否则 raise)
+        - audio capability 是 text-to-audio,无 source bytes 输入
+        - 通过 _run_once_audio_async 使用 asyncio.create_subprocess_exec
+        """
+        # Capability 守门
+        if self._capability != "audio":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_audio: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-audio' 的 worker 可调 agenerate_audio(audio-mode);"
+                f"image-mode worker 应调 agenerate(),mesh-mode worker 应调 agenerate_mesh()"
+            )
+        # Reject legacy v1 spec shape
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_audio: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_audio: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like "
+                "'Audio_Workflows/audio_stable_audio_example')"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_audio: spec.comfy_params must be dict "
+                f"(got {type(comfy_params).__name__})"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_audio: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+        per_call_timeout = float(timeout_s) if timeout_s else 300.0
+
+        results: list[AudioCandidate] = []
+        for i in range(max(1, num_candidates)):
+            call_seed = (seed or 0) + i
+            params_for_call = dict(comfy_params)
+            params_for_call["seed"] = call_seed
+            results.extend(await self._run_once_audio_async(
+                comfy_workflow=comfy_workflow,
+                params=params_for_call,
+                params_snapshot=dict(params_for_call),
+                seed=call_seed,
+                timeout_s=per_call_timeout,
+            ))
+        return results
+
     def generate_audio(
         self,
         *,
@@ -945,15 +1135,8 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int | None = None,
         timeout_s: float | None = None,
     ) -> list[AudioCandidate]:
-        """Audio capability path(OpenSpec change comfy-agent-cli-audio-adoption Phase 2)。
-
-        - 仅在 `_capability == "audio"` 时可调(否则 raise)
-        - 不在 `ComfyWorker` ABC 上(返 list[AudioCandidate],与 image-mode list[ImageCandidate] / mesh-mode list[MeshCandidate] 类型不兼容)
-        - audio capability 是 text-to-audio(per design D7),**无** source bytes 输入 — prompt 已在 `spec["comfy_params"]` 内
-        - 调用模式同 image / mesh:per-candidate loop in worker(F-Plan-3 + F-Plan-R5-A round-5);N 次 subprocess.run + outputs.audio path → AudioCandidate
-        - F-Plan-4 + F-Plan-R7-C symmetry argument:`is_file` + `is_symlink` 防护(沿用 image / mesh G11 R2 fix);path containment 留 follow-on `comfy-agent-cli-path-containment-hardening`
-        - F5 round-1 magic bytes mandatory:扩展名 + magic bytes 二次校验(flac=fLaC / mp3=ID3|MPEG sync / wav=RIFF+WAVE)
-        - F4 + F-Plan-R7-A round-7:metadata 仅含 5 个 comfy_* provenance keys;duration_seconds / sample_rate 顶层 None always
+        """Audio capability sync shim — 委托 asyncio.run(self.agenerate_audio(...))。
+        保持 probe 脚本 / 旧调用路径兼容(TBD-010 Task 3)。
         """
         # Capability 守门
         if self._capability != "audio":
@@ -962,56 +1145,11 @@ class ComfyAgentWorker(ComfyWorker):
                 f"worker;只有 model_id='comfy/local-audio' 的 worker 可调 generate_audio(audio-mode);"
                 f"image-mode worker 应调 generate(),mesh-mode worker 应调 generate_mesh()"
             )
-        # Reject legacy v1 spec shape(对齐 image / mesh)
-        if "workflow_graph" in spec:
-            raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate_audio: spec.workflow_graph is deprecated; "
-                "use spec.comfy_workflow + spec.comfy_params instead"
-            )
-        comfy_workflow = spec.get("comfy_workflow")
-        if not isinstance(comfy_workflow, str) or not comfy_workflow:
-            raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate_audio: spec.comfy_workflow REQUIRED, "
-                "must be non-empty string (manifest name like "
-                "'Audio_Workflows/audio_stable_audio_example')"
-            )
-        comfy_params = spec.get("comfy_params", {})
-        if not isinstance(comfy_params, dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_audio: spec.comfy_params must be dict "
-                f"(got {type(comfy_params).__name__})"
-            )
-        lifecycle = spec.get("comfy_lifecycle", "none")
-        if lifecycle != "none":
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_audio: spec.comfy_lifecycle must be "
-                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
-            )
-        per_call_timeout = float(timeout_s) if timeout_s else 300.0
+        return asyncio.run(self.agenerate_audio(
+            spec=spec, num_candidates=num_candidates, seed=seed, timeout_s=timeout_s,
+        ))
 
-        # F-Plan-3 + F-Plan-R5-A round-5 per-candidate loop in worker(对照 image
-        # `:427` / mesh `:689` 模式;executor 调一次即可,不需要外层 loop)
-        results: list[AudioCandidate] = []
-        for i in range(max(1, num_candidates)):
-            call_seed = (seed or 0) + i
-            params_for_call = dict(comfy_params)
-            # G11-F3 round-8 codex finding fix:per-candidate seed 直接覆盖,
-            # 不用 `setdefault`(否则 caller 在 `comfy_params` 内填 seed 时,
-            # `num_candidates>1` 所有 candidate 拿同一个 seed → 重复 candidate
-            # + provenance metadata 反映递增 seed 但实际不递增)。
-            # image (:442) / mesh (:703) 同模式 bug,留 follow-on
-            # `comfy-worker-seed-setdefault-bug-fix` change 三处一起修。
-            params_for_call["seed"] = call_seed
-            results.extend(self._run_once_audio(
-                comfy_workflow=comfy_workflow,
-                params=params_for_call,
-                params_snapshot=dict(params_for_call),  # snapshot 隔离 caller spec mutation
-                seed=call_seed,
-                timeout_s=per_call_timeout,
-            ))
-        return results
-
-    def _run_once_audio(
+    async def _run_once_audio_async(
         self,
         *,
         comfy_workflow: str,
@@ -1020,16 +1158,14 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int,
         timeout_s: float,
     ) -> list[AudioCandidate]:
-        """One subprocess.run for audio capability → 1+ AudioCandidate(per outputs.audio)。
+        """audio capability の一回非同期 subprocess 呼び出し → 1+ AudioCandidate。
 
-        Sub-process 调用 / JSON 解析 / outputs 守门复用 image / mesh 同样的逻辑骨架,
+        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
+        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
         产物构造走 audio path:
-        - 从 outputs.audio 路径(absolute paths per F4 round-1 probe runner.py::extract_outputs)读 audio bytes
-        - F-Plan-4 round-2 path trust-boundary 防护:`is_file` + `is_symlink`(沿 image / mesh G11 R2 fix)
-        - 扩展名 whitelist `{flac, mp3, wav}`(D10);不在 raise WorkerUnsupportedResponse
-        - F5 round-1 magic bytes mandatory 二次校验(扩展名 + magic 一致才接受)
-        - **不**做 worker 内部 in-tree copy(audio 沿 mesh 模式;由 ArtifactRepository.put 自动落 in-tree)
-        - F-Plan-R7-A metadata 仅 5 个 comfy_* provenance keys
+        - 从 outputs.audio 路径读 audio bytes
+        - 扩展名 whitelist + magic bytes 二次校验(F5 round-1)
+        - 不做 worker 内部 in-tree copy(由 ArtifactRepository.put 自动落 in-tree)
         """
         cmd = [
             str(self.python_exe), "-m", "comfyui_api", "run",
@@ -1039,64 +1175,78 @@ class ComfyAgentWorker(ComfyWorker):
             "--lifecycle", "none",
             "--timeout", str(int(timeout_s)),
         ]
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.scripts_dir),
-                timeout=timeout_s + 30.0,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise WorkerTimeout(
-                f"ComfyAgentWorker.generate_audio subprocess wall-clock exceeded "
-                f"{timeout_s + 30.0}s (CLI internal timeout was {timeout_s}s)"
-            ) from exc
-        except FileNotFoundError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_audio: failed to spawn subprocess "
-                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-            ) from exc
+        async with _comfy_submit_lock():
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=str(self.scripts_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.agenerate_audio: failed to spawn subprocess "
+                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+                ) from exc
+            try:
+                raw_out, raw_err = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=timeout_s + _SUBPROC_BUFFER_S,
+                )
+            except asyncio.TimeoutError as exc:
+                raise WorkerTimeout(
+                    f"ComfyAgentWorker.agenerate_audio subprocess wall-clock exceeded "
+                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
+                ) from exc
+            finally:
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                    await proc.wait()
 
-        stdout = (result.stdout or "").strip()
+        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
+        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
+        returncode = proc.returncode
+
+        stdout = stdout_text
         if not stdout:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_audio: empty stdout (exit code {result.returncode}; "
-                f"stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+                f"ComfyAgentWorker.agenerate_audio: empty stdout (exit code {returncode}; "
+                f"stderr first 500 chars: {stderr_text[:500]!r})"
             )
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError as exc:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_audio: stdout is not valid JSON "
-                f"(exit code {result.returncode}; first 500 chars: {stdout[:500]!r})"
+                f"ComfyAgentWorker.agenerate_audio: stdout is not valid JSON "
+                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
             ) from exc
         if not isinstance(data, dict):
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_audio: stdout JSON is not a dict (got {type(data).__name__})"
+                f"ComfyAgentWorker.agenerate_audio: stdout JSON is not a dict (got {type(data).__name__})"
             )
         if not data.get("ok"):
             error_msg = str(data.get("error", ""))
             if "TimeoutError" in error_msg:
                 raise WorkerTimeout(
-                    f"ComfyAgentWorker.generate_audio: ComfyUI reported TimeoutError: {error_msg}"
+                    f"ComfyAgentWorker.agenerate_audio: ComfyUI reported TimeoutError: {error_msg}"
                 )
             for marker in _UNSUPPORTED_ERROR_MARKERS:
                 if marker in error_msg:
                     raise WorkerUnsupportedResponse(
-                        f"ComfyAgentWorker.generate_audio: deterministic param error: {error_msg}"
+                        f"ComfyAgentWorker.agenerate_audio: deterministic param error: {error_msg}"
                     )
             raise WorkerError(
-                f"ComfyAgentWorker.generate_audio: comfyui_api returned ok=false "
-                f"(exit {result.returncode}, error: {error_msg})"
+                f"ComfyAgentWorker.agenerate_audio: comfyui_api returned ok=false "
+                f"(exit {returncode}, error: {error_msg})"
             )
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_audio: stdout JSON missing 'outputs' field or "
+                f"ComfyAgentWorker.agenerate_audio: stdout JSON missing 'outputs' field or "
                 f"not a dict (got {data.get('outputs')!r})"
             )
         outputs = data["outputs"]
@@ -1108,27 +1258,22 @@ class ComfyAgentWorker(ComfyWorker):
         candidates: list[AudioCandidate] = []
         for src_str in audio_paths:
             src = Path(src_str)
-            # F-Plan-4 round-2 path trust-boundary 防护(沿 image / mesh G11 R2 fix
-            # `comfy_worker.py:541-554` / `:805-814`)
+            # F-Plan-4 round-2 path trust-boundary 防护
             if not src.is_file():
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_audio: outputs.audio path does not exist: {src}"
+                    f"ComfyAgentWorker.agenerate_audio: outputs.audio path does not exist: {src}"
                 )
             if src.is_symlink():
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_audio: outputs.audio path is a symlink, "
+                    f"ComfyAgentWorker.agenerate_audio: outputs.audio path is a symlink, "
                     f"refusing to follow: {src}"
                 )
-            # OpenSpec change `comfy-agent-cli-path-containment-hardening`
-            # (2026-05-04 follow-on for G11-F2):assert path under
-            # `comfy_output_root` before read_bytes(R7-C `disputed-permanent-drift`
-            # 之 follow-on commitment 兑现)
             self._assert_path_within_comfy_output_root(src, output_kind="audio")
             # D10:扩展名 whitelist + magic bytes 二次校验(F5 round-1 mandatory)
             ext = src.suffix.lower().lstrip(".")
             if ext not in self._AUDIO_FORMAT_WHITELIST:
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_audio: unsupported audio format {ext!r}, "
+                    f"ComfyAgentWorker.agenerate_audio: unsupported audio format {ext!r}, "
                     f"expected one of {sorted(self._AUDIO_FORMAT_WHITELIST)} "
                     f"(file: {src.name})"
                 )
@@ -1144,18 +1289,10 @@ class ComfyAgentWorker(ComfyWorker):
             )
             if not magic_ok:
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_audio: audio format mismatch "
+                    f"ComfyAgentWorker.agenerate_audio: audio format mismatch "
                     f"(file: {src.name}; extension={ext!r}; magic bytes={audio_bytes[:12].hex()}) — "
                     f"扩展名与 payload bytes 不一致;F5 round-1 二次校验拒绝"
                 )
-            # F-Plan-R6-A:Artifact `shape="waveform"` 与 UE bridge `_KIND_MAP` 唯一映射
-            # 对齐(executor 在 repo.put 时设置);本 candidate 仅持 audio bytes + format。
-            # F-Plan-R7-A:metadata 仅 5 个 comfy_* provenance keys。
-            # OpenSpec change `audio-metadata-parser`(2026-05-04 follow-on for D10):
-            # duration_seconds / sample_rate 由 stdlib parser 从 audio bytes 提取
-            # (FLAC STREAMINFO / WAV fmt chunk / MP3 first frame header)。
-            # 解析失败时 silent fallback (None, None)(audio still persists with
-            # missing metadata fields — 不阻断,匹配先前 always-None 行为）。
             from framework.providers.workers.audio_metadata import parse_audio_metadata
             duration_seconds, sample_rate = parse_audio_metadata(audio_bytes, ext)
             candidates.append(AudioCandidate(
@@ -1167,7 +1304,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_capability": "audio",
                     "comfy_original_filename": src.name,
                     "comfy_subprocess_run_metadata": {
-                        "exit_code": result.returncode,
+                        "exit_code": returncode,
                         "project_id": self.project_id,
                         "seed": seed,
                         "model_id": self.model_id,
@@ -1182,6 +1319,69 @@ class ComfyAgentWorker(ComfyWorker):
     # Video capability (Phase 3 — comfy-agent-cli-video-adoption)
     # ------------------------------------------------------------------------
 
+    async def agenerate_video(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[VideoCandidate]:
+        """Video capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+
+        - 仅在 _capability == "video" 时可调(否则 raise)
+        - video capability 是 text-to-video,无 source bytes 输入
+        - 通过 _run_once_video_async 使用 asyncio.create_subprocess_exec
+        """
+        # Capability 守门
+        if self._capability != "video":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_video: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-video' 的 worker 可调 agenerate_video(video-mode);"
+                f"image-mode 应调 agenerate(),mesh-mode 应调 agenerate_mesh(),audio-mode 应调 agenerate_audio()"
+            )
+        # Reject legacy v1 spec shape
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_video: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_video: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like "
+                "'Vedio/Wan2.1-T2V-1.3B_native_5sec' — D5 上游 'Vedio/' 拼写照实跟随,不做翻译)"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_video: spec.comfy_params must be dict "
+                f"(got {type(comfy_params).__name__})"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_video: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+        # D3 默认 worker_timeout_s: 600(Wan T2V 1.3B 5sec ≈ 7 分钟 + 启动余量)
+        per_call_timeout = float(timeout_s) if timeout_s else 600.0
+
+        results: list[VideoCandidate] = []
+        for i in range(max(1, num_candidates)):
+            call_seed = (seed or 0) + i
+            params_for_call = dict(comfy_params)
+            params_for_call["seed"] = call_seed
+            results.extend(await self._run_once_video_async(
+                comfy_workflow=comfy_workflow,
+                params=params_for_call,
+                params_snapshot=dict(params_for_call),
+                seed=call_seed,
+                timeout_s=per_call_timeout,
+            ))
+        return results
+
     def generate_video(
         self,
         *,
@@ -1190,20 +1390,8 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int | None = None,
         timeout_s: float | None = None,
     ) -> list[VideoCandidate]:
-        """Video capability path(OpenSpec change comfy-agent-cli-video-adoption Phase 3)。
-
-        - 仅在 `_capability == "video"` 时可调(否则 raise)
-        - 不在 `ComfyWorker` ABC 上(返 list[VideoCandidate],与其它 capability 类型不兼容)
-        - video capability 是 text-to-video(per design D7),**无** source bytes 输入 — prompt 已在 `spec["comfy_params"]` 内
-        - 调用模式同 audio:per-candidate loop in worker;N 次 subprocess.run + outputs.video path → VideoCandidate
-        - round-3 PF1 D-Runner-Extension:`outputs.video` key 由 user-authored
-          `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 提供(收集 VHS_VideoCombine
-          legacy `gifs` UI key 的 video preview dict);沿 image / audio / glb 同款 4-dict 协议
-        - F-Plan-4 + F-Plan-R7-C symmetry:`is_file` + `is_symlink` 防护(沿 audio G11 R2 fix)+
-          `_assert_path_within_comfy_output_root`(沿 path-containment-hardening follow-on)
-        - round-2 F4 + round-3 PF2 BMFF strict 5-tuple 校验(扩展名 mp4-only + len + ftyp + box_size in [8,len] reject==1 + major_brand non-empty)
-        - D8 + round-2 F2 + round-3 PF3 sweep mp4-only;webm follow-on `comfy-video-webm-adoption`
-        - D8:metadata 仅含 5 个 comfy_* provenance keys;duration_seconds / frame_count / width / height / fps 顶层 None always(follow-on `video-metadata-parser`)
+        """Video capability sync shim — 委托 asyncio.run(self.agenerate_video(...))。
+        保持 probe 脚本 / 旧调用路径兼容(TBD-010 Task 3)。
         """
         # Capability 守门
         if self._capability != "video":
@@ -1212,55 +1400,11 @@ class ComfyAgentWorker(ComfyWorker):
                 f"worker;只有 model_id='comfy/local-video' 的 worker 可调 generate_video(video-mode);"
                 f"image-mode 应调 generate(),mesh-mode 应调 generate_mesh(),audio-mode 应调 generate_audio()"
             )
-        # Reject legacy v1 spec shape(对齐 image / mesh / audio)
-        if "workflow_graph" in spec:
-            raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate_video: spec.workflow_graph is deprecated; "
-                "use spec.comfy_workflow + spec.comfy_params instead"
-            )
-        comfy_workflow = spec.get("comfy_workflow")
-        if not isinstance(comfy_workflow, str) or not comfy_workflow:
-            raise WorkerUnsupportedResponse(
-                "ComfyAgentWorker.generate_video: spec.comfy_workflow REQUIRED, "
-                "must be non-empty string (manifest name like "
-                "'Vedio/Wan2.1-T2V-1.3B_native_5sec' — D5 上游 'Vedio/' 拼写照实跟随,不做翻译)"
-            )
-        comfy_params = spec.get("comfy_params", {})
-        if not isinstance(comfy_params, dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_video: spec.comfy_params must be dict "
-                f"(got {type(comfy_params).__name__})"
-            )
-        lifecycle = spec.get("comfy_lifecycle", "none")
-        if lifecycle != "none":
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_video: spec.comfy_lifecycle must be "
-                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
-            )
-        # D3 默认 worker_timeout_s: 600 (Wan T2V 1.3B 5sec ≈ 7 分钟 + 启动余量;
-        # 对照 audio 默认 300s)
-        per_call_timeout = float(timeout_s) if timeout_s else 600.0
+        return asyncio.run(self.agenerate_video(
+            spec=spec, num_candidates=num_candidates, seed=seed, timeout_s=timeout_s,
+        ))
 
-        # Per-candidate loop in worker(沿 audio F-Plan-3 + F-Plan-R5-A round-5;
-        # executor 调一次即可,不需要外层 loop)
-        results: list[VideoCandidate] = []
-        for i in range(max(1, num_candidates)):
-            call_seed = (seed or 0) + i
-            params_for_call = dict(comfy_params)
-            # Per-candidate seed 直接覆盖(沿 audio G11-F3 round-8 fix 同款,
-            # 不用 setdefault — 否则 caller 在 comfy_params 内填 seed 时 num_candidates>1
-            # 所有 candidate 拿同一 seed)
-            params_for_call["seed"] = call_seed
-            results.extend(self._run_once_video(
-                comfy_workflow=comfy_workflow,
-                params=params_for_call,
-                params_snapshot=dict(params_for_call),  # snapshot 隔离 caller spec mutation
-                seed=call_seed,
-                timeout_s=per_call_timeout,
-            ))
-        return results
-
-    def _run_once_video(
+    async def _run_once_video_async(
         self,
         *,
         comfy_workflow: str,
@@ -1269,16 +1413,14 @@ class ComfyAgentWorker(ComfyWorker):
         seed: int,
         timeout_s: float,
     ) -> list[VideoCandidate]:
-        """One subprocess.run for video capability → 1+ VideoCandidate(per outputs.video)。
+        """video capability の一回非同期 subprocess 呼び出し → 1+ VideoCandidate。
 
-        Sub-process 调用 / JSON 解析 / outputs 守门复用 audio 同样的逻辑骨架,
+        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
+        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
         产物构造走 video path:
-        - 从 outputs.video 路径(absolute paths per round-3 PF1 D-Runner-Extension:user-authored runner.py 加 video collection block)读 video bytes
-        - F-Plan-4 round-2 path trust-boundary 防护:`is_file` + `is_symlink`(沿 audio G11 R2 fix)
-        - 扩展名 whitelist `{mp4}`(D8 + round-2 F2 + round-3 PF3 sweep mp4-only);不在 raise WorkerUnsupportedResponse
-        - round-2 F4 + round-3 PF2 BMFF strict 5-tuple 校验(len >= 16 + ftyp at offset 4 + box_size in [8,len] reject box_size==1 + major_brand non-empty/non-zero/non-spaces)
-        - **不**做 worker 内部 in-tree copy(沿 audio 模式;由 ArtifactRepository.put 自动落 in-tree)
-        - D8 metadata 仅 5 个 comfy_* provenance keys;5 个 video metadata 顶层字段 None always
+        - 从 outputs.video 路径读 video bytes
+        - 扩展名 whitelist mp4-only + BMFF strict 5-tuple 校验
+        - 不做 worker 内部 in-tree copy
         """
         cmd = [
             str(self.python_exe), "-m", "comfyui_api", "run",
@@ -1288,64 +1430,78 @@ class ComfyAgentWorker(ComfyWorker):
             "--lifecycle", "none",
             "--timeout", str(int(timeout_s)),
         ]
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(self.scripts_dir),
-                timeout=timeout_s + 30.0,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise WorkerTimeout(
-                f"ComfyAgentWorker.generate_video subprocess wall-clock exceeded "
-                f"{timeout_s + 30.0}s (CLI internal timeout was {timeout_s}s)"
-            ) from exc
-        except FileNotFoundError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_video: failed to spawn subprocess "
-                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-            ) from exc
+        async with _comfy_submit_lock():
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=str(self.scripts_dir),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.agenerate_video: failed to spawn subprocess "
+                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+                ) from exc
+            try:
+                raw_out, raw_err = await asyncio.wait_for(
+                    proc.communicate(),
+                    timeout=timeout_s + _SUBPROC_BUFFER_S,
+                )
+            except asyncio.TimeoutError as exc:
+                raise WorkerTimeout(
+                    f"ComfyAgentWorker.agenerate_video subprocess wall-clock exceeded "
+                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
+                ) from exc
+            finally:
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                    await proc.wait()
 
-        stdout = (result.stdout or "").strip()
+        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
+        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
+        returncode = proc.returncode
+
+        stdout = stdout_text
         if not stdout:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_video: empty stdout (exit code {result.returncode}; "
-                f"stderr first 500 chars: {(result.stderr or '')[:500]!r})"
+                f"ComfyAgentWorker.agenerate_video: empty stdout (exit code {returncode}; "
+                f"stderr first 500 chars: {stderr_text[:500]!r})"
             )
         try:
             data = json.loads(stdout)
         except json.JSONDecodeError as exc:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_video: stdout is not valid JSON "
-                f"(exit code {result.returncode}; first 500 chars: {stdout[:500]!r})"
+                f"ComfyAgentWorker.agenerate_video: stdout is not valid JSON "
+                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
             ) from exc
         if not isinstance(data, dict):
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_video: stdout JSON is not a dict (got {type(data).__name__})"
+                f"ComfyAgentWorker.agenerate_video: stdout JSON is not a dict (got {type(data).__name__})"
             )
         if not data.get("ok"):
             error_msg = str(data.get("error", ""))
             if "TimeoutError" in error_msg:
                 raise WorkerTimeout(
-                    f"ComfyAgentWorker.generate_video: ComfyUI reported TimeoutError: {error_msg}"
+                    f"ComfyAgentWorker.agenerate_video: ComfyUI reported TimeoutError: {error_msg}"
                 )
             for marker in _UNSUPPORTED_ERROR_MARKERS:
                 if marker in error_msg:
                     raise WorkerUnsupportedResponse(
-                        f"ComfyAgentWorker.generate_video: deterministic param error: {error_msg}"
+                        f"ComfyAgentWorker.agenerate_video: deterministic param error: {error_msg}"
                     )
             raise WorkerError(
-                f"ComfyAgentWorker.generate_video: comfyui_api returned ok=false "
-                f"(exit {result.returncode}, error: {error_msg})"
+                f"ComfyAgentWorker.agenerate_video: comfyui_api returned ok=false "
+                f"(exit {returncode}, error: {error_msg})"
             )
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.generate_video: stdout JSON missing 'outputs' field or "
+                f"ComfyAgentWorker.agenerate_video: stdout JSON missing 'outputs' field or "
                 f"not a dict (got {data.get('outputs')!r})"
             )
         outputs = data["outputs"]
@@ -1357,61 +1513,53 @@ class ComfyAgentWorker(ComfyWorker):
         candidates: list[VideoCandidate] = []
         for src_str in video_paths:
             src = Path(src_str)
-            # F-Plan-4 round-2 path trust-boundary 防护(沿 audio G11 R2 fix)
+            # F-Plan-4 round-2 path trust-boundary 防护
             if not src.is_file():
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_video: outputs.video path does not exist: {src}"
+                    f"ComfyAgentWorker.agenerate_video: outputs.video path does not exist: {src}"
                 )
             if src.is_symlink():
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_video: outputs.video path is a symlink, "
+                    f"ComfyAgentWorker.agenerate_video: outputs.video path is a symlink, "
                     f"refusing to follow: {src}"
                 )
-            # path-containment-hardening sandbox prefix gate(沿 audio path-containment
-            # follow-on R7-C disputed-permanent-drift 兑现)
             self._assert_path_within_comfy_output_root(src, output_kind="video")
             # D8 + round-2 F2 + round-3 PF3 sweep:扩展名 whitelist mp4-only
             ext = src.suffix.lower().lstrip(".")
             if ext not in self._VIDEO_FORMAT_WHITELIST:
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_video: unsupported video format {ext!r}, "
+                    f"ComfyAgentWorker.agenerate_video: unsupported video format {ext!r}, "
                     f"expected 'mp4' (webm follow-on `comfy-video-webm-adoption`; round-2 F2);"
                     f"file: {src.name}"
                 )
             video_bytes = src.read_bytes()
             # round-2 F4 + round-3 PF2 BMFF strict 5-tuple 校验
-            # (1) 文件长度 >= 16 bytes(最少容纳 1 个 32-bit ftyp box)
             if len(video_bytes) < 16:
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_video: mp4 too short: {len(video_bytes)} bytes "
+                    f"ComfyAgentWorker.agenerate_video: mp4 too short: {len(video_bytes)} bytes "
                     f"(need >= 16 for minimal BMFF header; file: {src.name})"
                 )
-            # (2) ftyp box at offset 4
             if video_bytes[4:8] != b"ftyp":
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_video: mp4 BMFF header mismatch: "
+                    f"ComfyAgentWorker.agenerate_video: mp4 BMFF header mismatch: "
                     f"offset 4-8 = {video_bytes[4:8]!r}, expected b'ftyp' "
                     f"(file: {src.name})"
                 )
-            # (3) box_size sanity:reject box_size == 1 (largesize follow-on `video-bmff-largesize-support`)
             box_size = int.from_bytes(video_bytes[0:4], "big")
             if box_size == 1 or box_size < 8 or box_size > len(video_bytes):
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_video: mp4 BMFF first box_size={box_size} "
+                    f"ComfyAgentWorker.agenerate_video: mp4 BMFF first box_size={box_size} "
                     f"out of range [8, {len(video_bytes)}] "
                     f"(largesize box_size==1 deferred to follow-on `video-bmff-largesize-support`; "
                     f"round-3 PF2;file: {src.name})"
                 )
-            # (4) major_brand non-empty / non-zero / non-spaces
             major_brand = video_bytes[8:12]
             if major_brand == b"\x00\x00\x00\x00" or major_brand == b"    ":
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.generate_video: mp4 BMFF major_brand is empty / "
+                    f"ComfyAgentWorker.agenerate_video: mp4 BMFF major_brand is empty / "
                     f"all-zeros / all-spaces: {major_brand!r} (file: {src.name})"
                 )
-            # D8 + D1:VideoCandidate format hardcoded "mp4"(round-2 F2 + round-3 PF3 sweep);
-            # 5 个 video metadata 顶层字段 None always(ComfyUI agent CLI 不暴露 video metadata;
-            # follow-on `video-metadata-parser` 用 ffprobe / mutagen 解析填充)
+            # D8 + D1:VideoCandidate format hardcoded "mp4";5 個の video metadata フィールドは常に None
             candidates.append(VideoCandidate(
                 data=video_bytes,
                 format="mp4",
@@ -1421,7 +1569,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_capability": "video",
                     "comfy_original_filename": src.name,
                     "comfy_subprocess_run_metadata": {
-                        "exit_code": result.returncode,
+                        "exit_code": returncode,
                         "project_id": self.project_id,
                         "seed": seed,
                         "model_id": self.model_id,

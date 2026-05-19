@@ -72,6 +72,92 @@ def _make_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subpr
     )
 
 
+class _AsyncFakeProcess:
+    """模拟 asyncio.subprocess.Process,用于替代 subprocess.CompletedProcess。
+    TBD-010 Task 3:现有测试将 _make_completed 返回值换成 _AsyncFakeProcess 实例。
+    _AsyncFakeProcess.to_async_mock() 返回供 patch asyncio.create_subprocess_exec 使用的工厂函数。
+    """
+
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = "") -> None:
+        # 保存为 bytes,模拟 asyncio.create_subprocess_exec stdout pipe 输出
+        self._stdout_bytes = stdout.encode("utf-8") if isinstance(stdout, str) else stdout
+        self._stderr_bytes = stderr.encode("utf-8") if isinstance(stderr, str) else stderr
+        self.returncode = returncode
+
+    async def communicate(self):
+        return (self._stdout_bytes, self._stderr_bytes)
+
+    async def wait(self):
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+def _make_async_completed(stdout: str, returncode: int = 0, stderr: str = "") -> _AsyncFakeProcess:
+    """_make_completed 的 async 版本,返回 _AsyncFakeProcess 实例。
+    与 _make_completed 同接口,方便逐步替换。"""
+    return _AsyncFakeProcess(stdout=stdout, returncode=returncode, stderr=stderr)
+
+
+def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, *, side_effect=None):
+    """返回 asyncio.create_subprocess_exec 的 patch context manager。
+
+    用法:
+        with _patch_create_subprocess_exec(_make_async_completed(stdout)) as mock:
+            worker.generate(...)
+            cmd = mock.call_args[0]  # 注意: create_subprocess_exec 接收 *args
+
+    side_effect: callable(*a, **kw) -> _AsyncFakeProcess 列表迭代(类似 subprocess.run mock side_effect)。
+    """
+    import asyncio as _aio
+    from contextlib import contextmanager
+
+    calls = []
+
+    if side_effect is not None:
+        _effects = list(side_effect) if not callable(side_effect) else None
+        _effect_fn = side_effect if callable(side_effect) else None
+        _effect_iter = iter(_effects) if _effects else None
+
+        async def _factory(*a, **kw):
+            calls.append(a)
+            if _effect_fn:
+                return _effect_fn(*a, **kw)
+            return next(_effect_iter)
+    else:
+        async def _factory(*a, **kw):
+            calls.append(a)
+            return fake_proc
+
+    class _Ctx:
+        """パッチのコンテキストマネージャ。call_args_list / call_count / call_args をサポート。"""
+        def __init__(self):
+            self._orig = None
+            self.call_args_list = calls
+
+        @property
+        def call_args(self):
+            return self.call_args_list[-1] if self.call_args_list else None
+
+        @property
+        def call_count(self):
+            return len(self.call_args_list)
+
+        def __enter__(self):
+            self._orig = _aio.create_subprocess_exec
+            _aio.create_subprocess_exec = _factory  # type: ignore[assignment]
+            return self
+
+        def __exit__(self, *_):
+            _aio.create_subprocess_exec = self._orig  # type: ignore[assignment]
+
+    return _Ctx()
+
+
 def _ok_stdout(image_paths: list[str]) -> str:
     return json.dumps({
         "ok": True,
@@ -194,11 +280,10 @@ def test_probe_sync_nonzero_exit_raises(tmp_path):
 
 def test_exit2_missing_param_maps_to_unsupported(tmp_path):
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(
+    with _patch_create_subprocess_exec(_make_async_completed(
             json.dumps({"ok": False, "error": "ValueError: Missing required param 'text'"}),
             returncode=2,
-        )
+        )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="Missing required param"):
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
@@ -208,11 +293,10 @@ def test_exit2_missing_param_maps_to_unsupported(tmp_path):
 
 def test_exit2_value_out_of_range_maps_to_unsupported(tmp_path):
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(
+    with _patch_create_subprocess_exec(_make_async_completed(
             json.dumps({"ok": False, "error": "param 'width' value out of range [256, 2048]"}),
             returncode=2,
-        )
+        )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="value out of range"):
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
@@ -222,11 +306,10 @@ def test_exit2_value_out_of_range_maps_to_unsupported(tmp_path):
 
 def test_exit2_value_not_in_list_maps_to_unsupported(tmp_path):
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(
+    with _patch_create_subprocess_exec(_make_async_completed(
             json.dumps({"ok": False, "error": "ComfyUI rejected: value_not_in_list"}),
             returncode=2,
-        )
+        )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="value_not_in_list"):
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
@@ -236,8 +319,7 @@ def test_exit2_value_not_in_list_maps_to_unsupported(tmp_path):
 
 def test_stdout_not_json_maps_to_unsupported(tmp_path):
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed("<html>error page</html>", returncode=2)
+    with _patch_create_subprocess_exec(_make_async_completed("<html>error page</html>", returncode=2)) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="not valid JSON"):
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
@@ -247,11 +329,10 @@ def test_stdout_not_json_maps_to_unsupported(tmp_path):
 
 def test_stdout_missing_outputs_field_maps_to_unsupported(tmp_path):
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(
+    with _patch_create_subprocess_exec(_make_async_completed(
             json.dumps({"ok": True, "duration_s": 10.0}),  # missing "outputs"
             returncode=0,
-        )
+        )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="missing 'outputs'"):
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
@@ -261,11 +342,10 @@ def test_stdout_missing_outputs_field_maps_to_unsupported(tmp_path):
 
 def test_exit2_timeout_maps_to_worker_timeout(tmp_path):
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(
+    with _patch_create_subprocess_exec(_make_async_completed(
             json.dumps({"ok": False, "error": "TimeoutError: Prompt did not complete within 300s"}),
             returncode=2,
-        )
+        )) as run_mock:
         with pytest.raises(WorkerTimeout, match="TimeoutError"):
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
@@ -275,11 +355,10 @@ def test_exit2_timeout_maps_to_worker_timeout(tmp_path):
 
 def test_exit2_unrecognised_error_maps_to_worker_error(tmp_path):
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(
+    with _patch_create_subprocess_exec(_make_async_completed(
             json.dumps({"ok": False, "error": "RuntimeError: some unexpected condition"}),
             returncode=2,
-        )
+        )) as run_mock:
         with pytest.raises(WorkerError, match="ok=false") as exc_info:
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
@@ -300,8 +379,7 @@ def test_subprocess_invocation_passes_workflow_params_lifecycle_timeout(tmp_path
     worker = _make_worker(tmp_path)
     png = tmp_path / "out.png"
     _make_png_file(png)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(png)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(png)]))) as run_mock:
         worker.generate(
             spec={
                 "comfy_workflow": "GameAssets/01b_singleview_sdxl",
@@ -312,7 +390,7 @@ def test_subprocess_invocation_passes_workflow_params_lifecycle_timeout(tmp_path
             seed=42,
             timeout_s=120.0,
         )
-    cmd = run_mock.call_args[0][0]
+    cmd = list(run_mock.call_args)
     assert "--workflow" in cmd
     assert "GameAssets/01b_singleview_sdxl" in cmd
     assert "--params" in cmd
@@ -328,13 +406,12 @@ def test_subprocess_invocation_passes_task_project_id_as_dash_dash_project(tmp_p
     worker = _make_worker(tmp_path)  # project_id="proj_test"
     png = tmp_path / "out.png"
     _make_png_file(png)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(png)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(png)]))) as run_mock:
         worker.generate(
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
         )
-    cmd = run_mock.call_args[0][0]
+    cmd = list(run_mock.call_args)
     project_idx = cmd.index("--project")
     assert cmd[project_idx + 1] == "proj_test"
 
@@ -349,8 +426,7 @@ def test_outputs_paths_are_copied_into_run_artifact_tree(tmp_path):
     worker = _make_worker(tmp_path)
     src = tmp_path / "external" / "out.png"
     _make_png_file(src)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(src)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(src)]))) as run_mock:
         candidates = worker.generate(
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
@@ -364,11 +440,10 @@ def test_outputs_paths_are_copied_into_run_artifact_tree(tmp_path):
 def test_outputs_glb_non_empty_raises_unsupported_response(tmp_path):
     """image-generation path must reject glb output (mesh deferred to TBD-009)."""
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(json.dumps({
             "ok": True,
             "outputs": {"images": [], "glb": ["/path/to/mesh.glb"], "audio": []},
-        }))
+        }))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="glb"):
             worker.generate(
                 spec={"comfy_workflow": "GameAssets/02_mini_textured_3d_hunyuan"},
@@ -379,11 +454,10 @@ def test_outputs_glb_non_empty_raises_unsupported_response(tmp_path):
 def test_outputs_audio_non_empty_raises_unsupported_response(tmp_path):
     """image-generation path must reject audio output (audio deferred to TBD-009)."""
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(json.dumps({
             "ok": True,
             "outputs": {"images": [], "glb": [], "audio": ["/path/to/track.mp3"]},
-        }))
+        }))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="audio"):
             worker.generate(
                 spec={"comfy_workflow": "Audio_Workflows/audio_ace_step_1"},
@@ -417,17 +491,16 @@ def test_cancel_under_to_thread_does_not_orphan_processes(tmp_path):
     worker = _make_worker(tmp_path)
     png = tmp_path / "out.png"
     _make_png_file(png)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(png)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(png)]))) as run_mock:
         worker.generate(
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
         )
-    # Verify subprocess.run was called exactly once per candidate.
+    # Verify create_subprocess_exec was called exactly once per candidate.
     # No persistent server process spawned; subprocess returns immediately.
     assert run_mock.call_count == 1
     # Default lifecycle "none" passed in argv — no auto-start ComfyUI server.
-    cmd = run_mock.call_args[0][0]
+    cmd = list(run_mock.call_args)
     lifecycle_idx = cmd.index("--lifecycle")
     assert cmd[lifecycle_idx + 1] == "none"
 
@@ -480,8 +553,7 @@ def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     ctx.task.project_id = "proj_test"
     ctx.run_dir = tmp_path / "run_dir"
 
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(png)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(png)]))) as run_mock:
         candidates, chosen_model, pricing = executor._generate_via_worker(
             ctx=ctx, spec={"comfy_workflow": "X"}, num=1, seed=0, timeout_s=60.0,
         )
@@ -489,7 +561,7 @@ def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     assert pricing is None
     assert len(candidates) == 1
     # subprocess argv should contain expected config from env + ctx
-    cmd = run_mock.call_args[0][0]
+    cmd = list(run_mock.call_args)
     assert "comfyui_api" in " ".join(cmd)
 
 
@@ -674,9 +746,7 @@ def test_mesh_mode_raises_on_missing_outputs_glb(tmp_path):
     worker = _make_mesh_worker(tmp_path)
     fake_input = tmp_path / "input.png"
     fake_input.write_bytes(b"<png>")
-    with patch("subprocess.run") as run_mock:
-        # outputs.glb empty
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"outputs\.glb empty"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "Mesh/01", "comfy_params": {}},
@@ -693,11 +763,10 @@ def test_mesh_mode_accepts_non_empty_outputs_images_as_auxiliary(tmp_path):
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout(
             [str(fake_glb)],
             extra_outputs={"images": [str(tmp_path / "preview.png")]},
-        ))
+        ))) as run_mock:
         cands = worker.generate_mesh(
             spec={"comfy_workflow": "Mesh/02_with_preview", "comfy_params": {}},
             source_image_filename=fake_input.name,
@@ -720,10 +789,9 @@ def test_mesh_mode_emits_info_log_for_auxiliary_outputs_images_with_count_and_pa
     _make_glb_file(fake_glb)
     preview_paths = [str(tmp_path / "preview.png")]
     caplog.set_level(logging.INFO, logger="framework.providers.workers.comfy_worker")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout(
             [str(fake_glb)], extra_outputs={"images": preview_paths},
-        ))
+        ))) as run_mock:
         worker.generate_mesh(
             spec={"comfy_workflow": "Mesh/02", "comfy_params": {}},
             source_image_filename=fake_input.name,
@@ -743,10 +811,9 @@ def test_mesh_mode_raises_on_rejected_outputs_audio(tmp_path):
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout(
             [str(fake_glb)], extra_outputs={"audio": ["unexpected.wav"]},
-        ))
+        ))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*audio"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "Mesh/03", "comfy_params": {}},
@@ -762,10 +829,9 @@ def test_mesh_mode_raises_on_rejected_outputs_video(tmp_path):
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout(
             [str(fake_glb)], extra_outputs={"video": ["unexpected.mp4"]},
-        ))
+        ))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*video"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "Mesh/04", "comfy_params": {}},
@@ -777,11 +843,10 @@ def test_mesh_mode_raises_on_rejected_outputs_video(tmp_path):
 def test_image_mode_still_rejects_outputs_video(tmp_path):
     """image-mode regression(B4 修订三段表 image-mode REJECTED 集 = {glb, audio, video})。"""
     worker = _make_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(json.dumps({
             "ok": True,
             "outputs": {"images": ["x.png"], "video": ["x.mp4"]},
-        }))
+        }))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"rejected non-empty outputs.*video"):
             worker.generate(spec={
                 "comfy_workflow": "GameAssets/01b_singleview_sdxl",
@@ -801,8 +866,7 @@ def test_comfy_mesh_candidate_data_is_glb_bytes_read_from_outputs_glb_path(tmp_p
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb, extra_bytes=b"some-payload-bytes")
     expected_bytes = fake_glb.read_bytes()
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock:
         cands = worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_filename=fake_input.name,
@@ -821,8 +885,7 @@ def test_comfy_mesh_candidate_metadata_records_comfy_provenance(tmp_path):
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset_textured_00001.glb"
     _make_glb_file(fake_glb)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock:
         cands = worker.generate_mesh(
             spec={
                 "comfy_workflow": "Mesh/02_mini_textured_3d_hunyuan",
@@ -856,8 +919,7 @@ def test_comfy_mesh_candidate_metadata_snapshot_isolated_from_spec_mutation(tmp_
         "comfy_workflow": "M/01",
         "comfy_params": {"steps": 20, "seed_init": 42},
     }
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock:
         cands = worker.generate_mesh(
             spec=spec, source_image_filename=fake_input.name, num_candidates=1,
         )
@@ -877,8 +939,7 @@ def test_comfy_mesh_rejects_non_glb_magic_bytes(tmp_path):
     fake_glb = tmp_path / "fake.glb"
     fake_glb.parent.mkdir(parents=True, exist_ok=True)
     fake_glb.write_bytes(b"NOT_A_GLB" + b"\x00" * 16)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="glTF binary magic"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "M/01", "comfy_params": {}},
@@ -899,8 +960,7 @@ def test_comfy_mesh_rejects_symlink_outputs_glb_path(tmp_path):
         os.symlink(str(real_glb), str(sym_glb))
     except (OSError, NotImplementedError, AttributeError):
         pytest.skip("symlink unsupported on this OS / unprivileged user")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(sym_glb)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(sym_glb)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="symlink"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "M/01", "comfy_params": {}},
@@ -921,10 +981,11 @@ def test_generate_mesh_injects_source_image_filename_into_comfy_params_under_def
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb)
     captured_argv: list[list[str]] = []
-    def _capture(*args, **kwargs):
-        captured_argv.append(list(args[0]))
-        return _make_completed(_ok_mesh_stdout([str(fake_glb)]))
-    with patch("subprocess.run", side_effect=_capture):
+    def _capture_factory1(*args, **kwargs):
+        # create_subprocess_exec 以位置参数方式传入各 argv 项
+        captured_argv.append(list(args))
+        return _make_async_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with _patch_create_subprocess_exec(side_effect=_capture_factory1) as run_mock:
         worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": {"steps": 20}},
             source_image_filename=fake_input.name,
@@ -948,10 +1009,10 @@ def test_generate_mesh_injects_under_custom_comfy_image_param_key_when_bundle_de
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb)
     captured_argv: list[list[str]] = []
-    def _capture(*args, **kwargs):
-        captured_argv.append(list(args[0]))
-        return _make_completed(_ok_mesh_stdout([str(fake_glb)]))
-    with patch("subprocess.run", side_effect=_capture):
+    def _capture_factory2(*args, **kwargs):
+        captured_argv.append(list(args))
+        return _make_async_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with _patch_create_subprocess_exec(side_effect=_capture_factory2) as run_mock:
         worker.generate_mesh(
             spec={
                 "comfy_workflow": "M/01",
@@ -977,8 +1038,7 @@ def test_generate_mesh_does_not_mutate_caller_spec_comfy_params(tmp_path):
     _make_glb_file(fake_glb)
     caller_params = {"steps": 20, "guidance": 7.5}
     caller_params_id = id(caller_params)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(fake_glb)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock:
         worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": caller_params},
             source_image_filename=fake_input.name,
@@ -1057,19 +1117,19 @@ def test_generate_image_per_candidate_seed_overrides_comfy_params_seed(tmp_path)
     fakes = [tmp_path / f"out_{i}.png" for i in range(3)]
     for f in fakes:
         _make_png_file(f)
-    with patch("subprocess.run") as run_mock:
-        run_mock.side_effect = [
-            _make_completed(_ok_stdout([str(f)])) for f in fakes
-        ]
+    _fake_procs_image = [_make_async_completed(_ok_stdout([str(f)])) for f in fakes]
+    _fake_iter_image = iter(_fake_procs_image)
+    with _patch_create_subprocess_exec(side_effect=lambda *a, **kw: next(_fake_iter_image)) as run_mock:
         worker.generate(
             spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
             num_candidates=3,
             seed=100,  # base seed
         )
-    # 提取每个 subprocess.run 调用的 --params JSON 里的 seed 字段
+    # 提取每个 create_subprocess_exec 调用的 --params JSON 里的 seed 字段
     seeds_seen: list[int] = []
     for call in run_mock.call_args_list:
-        argv = call.args[0]
+        # call 是 tuple-of-args(create_subprocess_exec 的位置参数)
+        argv = list(call)
         idx = argv.index("--params")
         params = json.loads(argv[idx + 1])
         seeds_seen.append(params["seed"])
@@ -1087,10 +1147,9 @@ def test_generate_mesh_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
     fakes = [tmp_path / f"out_{i}.glb" for i in range(3)]
     for f in fakes:
         _make_glb_file(f)
-    with patch("subprocess.run") as run_mock:
-        run_mock.side_effect = [
-            _make_completed(_ok_mesh_stdout([str(f)])) for f in fakes
-        ]
+    _fake_procs_mesh = [_make_async_completed(_ok_mesh_stdout([str(f)])) for f in fakes]
+    _fake_iter_mesh = iter(_fake_procs_mesh)
+    with _patch_create_subprocess_exec(side_effect=lambda *a, **kw: next(_fake_iter_mesh)) as run_mock:
         worker.generate_mesh(
             spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
             source_image_filename="forgeue_test.png",
@@ -1099,7 +1158,8 @@ def test_generate_mesh_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
         )
     seeds_seen: list[int] = []
     for call in run_mock.call_args_list:
-        argv = call.args[0]
+        # call 是 tuple-of-args(create_subprocess_exec 的位置参数)
+        argv = list(call)
         idx = argv.index("--params")
         params = json.loads(argv[idx + 1])
         seeds_seen.append(params["seed"])
@@ -1181,8 +1241,7 @@ def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp
     injected_worker.name = "fake_comfy_injected"
     executor = GenerateImageExecutor(worker=injected_worker)
 
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(fake_png)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(fake_png)]))) as run_mock:
         result = executor.execute(ctx)
 
     # 应有 1 image artifact + 1 bundle artifact
@@ -1226,8 +1285,7 @@ def test_image_outputs_path_outside_comfy_output_root_raises_unsupported_respons
         f"Test setup error: bad_png {bad_png.resolve()} is unexpectedly under "
         f"comfy_output_root {worker.comfy_output_root}"
     )
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(bad_png)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(bad_png)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
             worker.generate(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -1244,8 +1302,7 @@ def test_mesh_outputs_path_outside_comfy_output_root_raises_unsupported_response
     bad_glb = bad_dir / "leak.glb"
     _make_glb_file(bad_glb)
     assert not bad_glb.resolve().is_relative_to(worker.comfy_output_root)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_mesh_stdout([str(bad_glb)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(bad_glb)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
             worker.generate_mesh(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -1275,54 +1332,27 @@ def _make_fake_agent_worker(tmp_path: Path) -> "ComfyAgentWorker":
 
 async def test_comfy_agenerate_uses_create_subprocess_exec(monkeypatch, tmp_path):
     """agenerate 主面必须使用 asyncio.create_subprocess_exec(非 subprocess.run)。
-    spy 注入到 asyncio.create_subprocess_exec,验证调用路径经过 async 接口。"""
+    monkeypatch asyncio.create_subprocess_exec 返回 fake Process,
+    验证 agenerate 调用路径经过 async 接口而非 subprocess.run。"""
     import asyncio
-    import sys
     import json as _json
 
-    # --- 准备 fake output PNG 文件 ---
-    fake_png = tmp_path / "scripts" / "out.png"
-    fake_png.parent.mkdir(parents=True, exist_ok=True)
+    # --- 准备 fake output PNG 文件(在 worker 的 comfy_output_root 内)---
+    # _make_fake_agent_worker 使用 scripts_dir = tmp_path/"scripts",
+    # comfy_output_root = scripts_dir.parent = tmp_path,所以 fake_png 需要在 tmp_path 下。
+    fake_png = tmp_path / "comfy_out.png"
     _make_png_file(fake_png)
 
-    # --- 构造 spy:记录是否经过 create_subprocess_exec ---
-    spawned = {"via": None}
-    real_create = asyncio.create_subprocess_exec
-
-    async def _spy(*a, **kw):
-        spawned["via"] = "create_subprocess_exec"
-        return await real_create(*a, **kw)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _spy)
-
-    # --- 同时 monkeypatch sys.executable,使真实 subprocess 快速退出并输出合法 JSON ---
-    # 写一个临时 Python 脚本:向 stdout 输出模拟 comfyui_api run 的 JSON 响应
-    fake_script = tmp_path / "fake_comfyui_api.py"
-    fake_script.write_text(
-        "import sys, json\n"
-        f"print(json.dumps({{'ok': True, 'outputs': {{'images': ['{str(fake_png).replace(chr(92), '/')}'], 'glb': [], 'audio': [], 'video': []}}}}),end='')\n"
-        "sys.exit(0)\n",
-        encoding="utf-8",
-    )
-    # monkeypatch python_exe 和 scripts_dir 使 comfyui_api 指向 fake_script
-    scripts_dir = tmp_path / "scripts"
-    scripts_dir.mkdir(exist_ok=True)
-    (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
-    artifacts_dir = tmp_path / "artifacts"
-    artifacts_dir.mkdir(exist_ok=True)
-
-    # 创建 worker,python_exe 指向真实 interpreter,但 module 路径 monkeypatch
-    # 方案:monkeypatch asyncio.create_subprocess_exec,但 subprocess 本身需返回合法输出。
-    # 由于真实 comfyui_api 不存在,我们需要另一个策略:
-    # monkeypatch _run_once_async(如果存在)或直接 monkeypatch create_subprocess_exec
-    # 返回 fake Process。
+    # --- 构造 worker ---
     worker = _make_fake_agent_worker(tmp_path)
 
-    # 创建 fake asyncio.Process:communicate() 返回合法 JSON bytes
-    fake_stdout = _json.dumps({
+    # --- 创建 fake asyncio.Process:communicate() 返回合法 JSON bytes ---
+    fake_stdout_bytes = _json.dumps({
         "ok": True,
         "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
     }).encode("utf-8")
+
+    spawned = {"via": None}
 
     class FakeProcess:
         """模拟 asyncio.subprocess.Process。"""
@@ -1330,7 +1360,7 @@ async def test_comfy_agenerate_uses_create_subprocess_exec(monkeypatch, tmp_path
             self.returncode = 0
 
         async def communicate(self):
-            return (fake_stdout, b"")
+            return (fake_stdout_bytes, b"")
 
         async def wait(self):
             return 0
@@ -1345,7 +1375,7 @@ async def test_comfy_agenerate_uses_create_subprocess_exec(monkeypatch, tmp_path
         spawned["via"] = "create_subprocess_exec"
         return FakeProcess()
 
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create)
+    monkeypatch.setattr(_asyncio, "create_subprocess_exec", _fake_create)
 
     # --- 调用 agenerate ---
     result = await worker.agenerate(
@@ -1574,18 +1604,58 @@ def test_comfy_submit_lock_safe_across_asyncio_run_loops(tmp_path):
 
 def test_comfy_generate_sync_shim_still_works(tmp_path):
     """sync generate() shim 在 agenerate 主面引入后仍可正常使用
-    (probe 脚本 / 旧调用路径兼容)。"""
+    (probe 脚本 / 旧调用路径兼容)。
+    generate() 委托 asyncio.run(agenerate(...)),agenerate 内部使用 asyncio.create_subprocess_exec。
+    monkeypatch asyncio.create_subprocess_exec 返回 fake Process 验证 sync shim 正常工作。"""
+    import asyncio
+    import json as _json
+
+    # fake output PNG 放在 comfy_output_root 内(= scripts_dir.parent = tmp_path)
+    fake_png = tmp_path / "out_shim.png"
+    _make_png_file(fake_png)
+
     worker = _make_fake_agent_worker(tmp_path)
-    png = tmp_path / "out_shim.png"
-    _make_png_file(png)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_stdout([str(png)]))
+
+    fake_stdout_bytes = _json.dumps({
+        "ok": True,
+        "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
+    }).encode("utf-8")
+
+    class FakeProcess:
+        """模拟 asyncio.subprocess.Process。"""
+        def __init__(self):
+            self.returncode = 0
+
+        async def communicate(self):
+            return (fake_stdout_bytes, b"")
+
+        async def wait(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    original_create = asyncio.create_subprocess_exec
+    asyncio.create_subprocess_exec = lambda *a, **kw: _wrap_coro(FakeProcess())  # type: ignore[assignment]
+
+    async def _wrap_coro(val):
+        return val
+
+    asyncio.create_subprocess_exec = lambda *a, **kw: _wrap_coro(FakeProcess())  # type: ignore[assignment]
+
+    try:
         result = worker.generate(
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
             seed=1,
             timeout_s=30,
         )
+    finally:
+        asyncio.create_subprocess_exec = original_create  # type: ignore[assignment]
+
     assert isinstance(result, list), (
         f"generate() sync shim は list[ImageCandidate] を返すべきだが {type(result)} が返された"
     )
