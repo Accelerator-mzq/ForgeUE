@@ -20,6 +20,9 @@ _VALID_REASONS = {"run_end", "cascade", "arun_cancel", "arun_error", "orchestrat
 # ComfyUI 冷启动最长等待时间(秒):正常 30-90s,留余量
 _READY_TIMEOUT_S = 120.0
 
+# comfyui_api status 子命令的最长等待时间(秒):防止 status 探活命令挂起无限阻塞
+_STATUS_TIMEOUT_S = 30.0
+
 # (mode, reason) → 是否执行 stop。
 # 仅当框架自身起动了 ComfyUI(_framework_started=True)时才真正调用 _spawn_stop。
 # - ensure_running:ComfyUI 常驻,任何 reason 都不 stop。
@@ -93,8 +96,12 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
     async def status(self) -> bool:
         """通过 `python -m comfyui_api status` 探测 ComfyUI 是否运行。
 
-        成功(返回码 0)→ True;任何异常或非零返回码 → False。
+        成功(返回码 0)→ True;任何异常、非零返回码或超时 → False。
+
+        超时保护:communicate() 超过 _STATUS_TIMEOUT_S 秒时取消并 kill 子进程,
+        避免挂起导致调用方(ensure/_wait_ready)持锁无限阻塞。
         """
+        proc = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 self._python, "-m", "comfyui_api", "status",
@@ -102,10 +109,19 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            await proc.communicate()
+            # 使用 wait_for 防止 status 子命令挂起无限阻塞
+            await asyncio.wait_for(proc.communicate(), timeout=_STATUS_TIMEOUT_S)
             return proc.returncode == 0
         except Exception:
             return False
+        finally:
+            # best-effort:若子进程仍在运行则强制 kill,防止僵尸进程
+            if proc is not None and proc.returncode is None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except Exception:
+                    pass
 
     async def ensure(self, mode: str) -> None:
         """确保 ComfyUI 进程处于就绪状态。
@@ -128,8 +144,13 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
             # 已就绪则幂等返回
             if self._ensured:
                 return
-            if await self.status():
-                # ComfyUI 已在运行,但不是我们起的
+            if self._framework_started:
+                # 前次 ensure 在 _wait_ready 期被 cancel —— 进程已由本框架 spawn。
+                # 不重新执行 status 探活(探活为 True 会误判 ownership 为"别人起的"),
+                # 直接补完 _wait_ready 即可恢复就绪状态,ownership 维持 True。
+                await self._wait_ready()
+            elif await self.status():
+                # ComfyUI 已在运行,但不是本框架起的
                 self._framework_started = False
             else:
                 # 需要冷启动:先 spawn,立即标记 ownership,再等 ready。
@@ -152,6 +173,8 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         异常:
             ValueError: reason 不在合法集合中。
         """
+        if mode not in _VALID_MODES:
+            raise ValueError(f"unknown lifecycle mode: {mode!r}")
         if reason not in _VALID_REASONS:
             raise ValueError(f"unknown release reason: {reason!r}")
         async with self._lock:
@@ -165,13 +188,17 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         fire-and-forget:不等待服务就绪,由 _wait_ready 轮询确认。
         """
         # detached 启动:不等待返回,stdout/stderr 丢弃以防缓冲区阻塞
-        proc = await asyncio.create_subprocess_exec(
+        # _proc 命名明确表示这是"有意 detached"的子进程引用,不 await 其完成。
+        # GC 时可能产生 ResourceWarning,属预期行为(无实际泄漏);实际进程由
+        # factory_v3 serve 在后台独立运行,由 _spawn_stop 负责关闭。
+        _proc = await asyncio.create_subprocess_exec(
             self._python, "-m", "factory_v3", "serve",
             cwd=str(self._scripts_dir),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        # 不 await proc.wait():detached 模式,调用方只投递启动命令即返回
+        # 不 await _proc.wait():detached 模式,调用方只投递启动命令即返回
+        del _proc  # 显式释放引用,避免 GC ResourceWarning 在单测日志中噪染
 
     async def _spawn_stop(self) -> None:
         """通过 `python -m factory_v3 stop` 停止 ComfyUI。等待命令完成。"""
