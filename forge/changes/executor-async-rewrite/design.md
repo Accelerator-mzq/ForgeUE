@@ -1,14 +1,15 @@
 # Executor 原生 async 重写 — 设计
 
-> **codex round 1-4 writeback(2026-05-19)**:本设计经四轮 codex adversarial
-> review,12 finding(round-1:2 BLOCKER+3 MAJOR;round-2:1 BLOCKER+3 MAJOR;
-> round-3:2 MAJOR;round-4:1 MAJOR)全部独立核验属实并 inline 修订 —— cascade
-> drain 显式失败(§2.2)、ComfyUI server-side abort 纳入 scope + comfy-submission
-> 按运行 loop 取串行锁解全局 `/interrupt` 歧义且避免跨 loop `asyncio.Lock` 错误
-> (§2.3)、`self_managed_session` 经 `Orchestrator.aclose()` + `release(mode,
-> reason)` ABC 契约闭合 + `arun` 用 `try/finally` 覆盖未分类异常退出 + teardown
-> bounded 且非遮蔽(§2.4 / §2.5)、`ComfyLifecycleManager` 并发单飞 + 冷启动
-> ownership 提前(§2.4)、Phase A 增量化且 comfy worker 前置(§5)。
+> **codex round 1-5 writeback(2026-05-19)**:本设计经五轮 codex adversarial
+> review,13 finding(round-1:2 BLOCKER+3 MAJOR;round-2:1 BLOCKER+3 MAJOR;
+> round-3:2 MAJOR;round-4:1 MAJOR;round-5:1 MAJOR)全部独立核验属实并 inline
+> 修订 —— cascade drain 显式失败(§2.2)、ComfyUI server-side abort 纳入 scope +
+> comfy-submission 按运行 loop 取串行锁解全局 `/interrupt` 歧义且避免跨 loop
+> `asyncio.Lock` 错误(§2.3)、`self_managed_session` 经 `Orchestrator.aclose()` +
+> `release(mode, reason)` ABC 契约闭合 + `arun` 用 `try/finally` 覆盖未分类异常
+> 退出 + teardown bounded 非遮蔽且 `arun`/`aclose` 共用 `_release_lifecycle_bounded`
+> helper(§2.4 / §2.5)、`ComfyLifecycleManager` 并发单飞 + 冷启动 ownership 提前
+> (§2.4)、Phase A 增量化且 comfy worker 前置(§5)。
 
 ## 1. 目标与背景
 
@@ -237,32 +238,41 @@ fan-out 下同一个 manager 注入所有 step,两个并发 comfy step 同时调
   (注:`self_managed_session` 的 manager 是 orchestrator 实例级,`arun` 的
   `finally` 对它调 `release(mode, <run-level reason>)` → 决策表判 no-op,不拆;它
   的真正拆除在 `aclose()`。)
-- **teardown 必须 bounded + 非遮蔽**(codex round-4 修订):`finally` 里的
-  `await release(...)` 不能裸调 —— `arun` 处理 `CancelledError` 时若收到二次
-  cancel,或 `_spawn_stop()`(`factory_v3 stop`)抛异常 / 卡死,裸 await 会让
-  cleanup 中断(`ensure_release` 仍泄漏)或让 release 异常**遮蔽**原始 executor
-  异常 / cancellation。契约:`finally`(及 `aclose()`)里的 release 一律走
+- **teardown 必须 bounded + 非遮蔽**(codex round-4 + round-5 修订):`finally` /
+  `aclose()` 里的 `await release(...)` 不能裸调 —— `arun` 处理 `CancelledError` 时
+  若收到二次 cancel,或 `_spawn_stop()`(`factory_v3 stop`)抛异常 / 卡死,裸 await
+  会让 cleanup 中断(`ensure_release` 仍泄漏)或让 release 异常**遮蔽**原始异常 /
+  cancellation。**`arun` 的 `finally` 和 `aclose()` 共用同一个 bounded 私有
+  helper**(codex round-5:不能只在 `finally` 用而 `aclose()` 仍裸 await):
   ```python
-  try:
-      await asyncio.wait_for(
-          asyncio.shield(manager.release(mode, reason)),
-          timeout=_RELEASE_TIMEOUT_S,
-      )
-  except BaseException as exc:           # release 失败/超时/被取消
-      run.metrics["lifecycle_release_failed"] = {"mode": mode, "reason": reason,
-                                                  "error": repr(exc)}
-      logging.getLogger(__name__).warning("lifecycle release failed: %r", exc)
-      # 不 re-raise — 保留 arun 的原始异常 / 返回值 / cancellation 语义
+  async def _release_lifecycle_bounded(self, manager, mode, reason, sink):
+      """bounded + 非遮蔽 release。sink 是失败留痕回调:
+      arun 路径传 lambda d: run.metrics.__setitem__("lifecycle_release_failed", d);
+      aclose 路径传 lambda d: setattr(self, "_lifecycle_release_failed", d)
+      (aclose 无 run / run.metrics)。"""
+      try:
+          await asyncio.wait_for(
+              asyncio.shield(manager.release(mode, reason)),
+              timeout=_RELEASE_TIMEOUT_S,
+          )
+      except BaseException as exc:           # release 失败/超时/被取消
+          sink({"mode": mode, "reason": reason, "error": repr(exc)})
+          logging.getLogger(__name__).warning("lifecycle release failed: %r", exc)
+          # 不 re-raise — 保留调用方的原始异常 / cancellation 语义
   ```
   `asyncio.shield` 让 release 在二次 cancel 下仍尽量跑完;`wait_for` bounded 防
-  `factory_v3 stop` 卡死无限挂住 `arun`;`except` 吞 release 自身的失败并记到
-  `run.metrics["lifecycle_release_failed"]`(泄漏风险显式留痕,verify/排障可见),
-  **绝不**让 release 的异常盖掉 `arun` 本身要传播的异常。`_RELEASE_TIMEOUT_S`
-  取 30s。
+  `factory_v3 stop` 卡死无限挂住 `arun` / `aclose`;`except` 吞 release 自身失败 →
+  `arun` 路径留痕 `run.metrics["lifecycle_release_failed"]`、`aclose()` 路径留痕
+  orchestrator 实例属性 `self._lifecycle_release_failed`(+ 两路径都 log warning);
+  **绝不**让 release 的异常盖掉调用方要传播的异常。`_RELEASE_TIMEOUT_S` 取 30s。
 - **新增 `Orchestrator.aclose()`**(codex round-1 MAJOR #3:为 `self_managed_session`
   提供 arun 之外的 session 边界)—— `async def aclose(self)`,对 orchestrator
-  实例级 `self._lifecycle` 调 `release(mode, "orchestrator_close")`。Orchestrator
-  同时实现 async context manager(`__aenter__` / `__aexit__` 调 `aclose`)。CLI
+  实例级 `self._lifecycle` 经上面的 `_release_lifecycle_bounded` helper 调
+  `release(mode, "orchestrator_close")`(失败留痕 `self._lifecycle_release_failed`)
+  —— **不是裸 `await release(...)`**(codex round-5:`aclose()` 同样要 bounded /
+  非遮蔽,否则 `factory_v3 stop` 卡死会无限挂 `aclose()` / 遮蔽 `__aexit__` 异常)。
+  Orchestrator 同时实现 async context manager(`__aenter__` / `__aexit__` 调
+  `aclose`)。CLI
   `framework.run` 在进程退出前调 `await orch.aclose()`(或用 `async with`)。
   单 run 的 CLI 场景:`self_managed_session` ≈ `ensure_running` 但进程在 CLI 退出时
   被干净拆除(而非 `ensure_running` 的暖留);多 `arun` 复用场景:跨 run 共享同一
@@ -334,10 +344,11 @@ async def __aexit__(self, *exc) -> None:  # 调 aclose
   `worker_error`(Phase C 定精确映射,tasks 里 fence)。
 - `_abort_comfy_prompt()` 失败 → 只记 warning 不抛(主路径已在 cancel,abort 是
   best-effort 加固)。
-- lifecycle release 失败 / 超时 / 被取消(§2.5):记 `run.metrics
-  ["lifecycle_release_failed"]`(mode / reason / error)+ log warning,不 re-raise
-  —— 不进 `FailureMode` 枚举,不遮蔽 `arun` 原始异常;泄漏风险显式留痕供 verify /
-  排障。
+- lifecycle release 失败 / 超时 / 被取消(§2.5):经 `_release_lifecycle_bounded`
+  helper 记留痕(`arun` 路径 → `run.metrics["lifecycle_release_failed"]`;`aclose()`
+  路径 → orchestrator 实例属性 `self._lifecycle_release_failed`)+ log warning,不
+  re-raise —— 不进 `FailureMode` 枚举,不遮蔽调用方原始异常;泄漏风险显式留痕供
+  verify / 排障。
 - ADR-007 边界不受影响:本地 ComfyUI `pricing: null` → 非 premium;远端 premium
   `attempts=1`。executor 转 async 是机制改动,不碰计费 / 重试语义。
 
@@ -392,10 +403,13 @@ async-subprocess 必须前置到 worker-backed executor 转换之前**。最终�
 - `arun` 未分类异常退出不泄漏:managed `ensure_release` 已 `_spawn_serve` 后,
   executor 抛未分类 `RuntimeError` → 断言 `arun` 的 `finally` 以 `arun_error`
   reason 调 `release` 且 `factory_v3 stop` 执行。
-- teardown bounded + 非遮蔽:(a) release await 期间二次 `task.cancel()` → 断言
-  `arun` 原始异常/取消语义保留;(b) `_spawn_stop()` 抛异常 → 断言记
-  `run.metrics["lifecycle_release_failed"]`、不遮蔽原始 `arun` 异常;(c)
-  `_spawn_stop()` 卡死 > `_RELEASE_TIMEOUT_S` → 断言 `arun` 不被无限挂住、失败留痕。
+- teardown bounded + 非遮蔽(`arun` 路径):(a) release await 期间二次
+  `task.cancel()` → 断言 `arun` 原始异常/取消语义保留;(b) `_spawn_stop()` 抛异常
+  → 断言记 `run.metrics["lifecycle_release_failed"]`、不遮蔽原始 `arun` 异常;
+  (c) `_spawn_stop()` 卡死 > `_RELEASE_TIMEOUT_S` → 断言 `arun` 不被无限挂住、失败留痕。
+- teardown bounded + 非遮蔽(`aclose()` 路径):`_spawn_stop()` 抛异常 / 卡死 /
+  二次 cancel → 断言 `aclose()` 不被无限挂住、失败留痕 `self._lifecycle_release_failed`、
+  不遮蔽 `__aexit__` 的原始异常。
 - `Orchestrator.aclose()`:`self_managed_session` 仅 `orchestrator_close` reason
   才 release,`run_end` / `cascade` / `arun_cancel` / `arun_error` 不;
   `ensure_release` 前四 reason 任一 release。

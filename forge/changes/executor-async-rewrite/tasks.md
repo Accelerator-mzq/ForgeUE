@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12+ / stdlib asyncio(`create_subprocess_exec` / `wait_for` / `CancelledError` / `Lock` / `iscoroutinefunction`,不引入 anyio/trio)/ pytest + `pytest.mark.asyncio` / 既有 `framework.providers` async 面。
 
-> **codex round 1-4 writeback**:Phase A 由「单 commit 大爆破」改增量(round-1);ComfyAgentWorker async-subprocess 前置到 worker-backed executor 转换之前以消除 `to_thread(worker.generate)` 不可取消窗口(round-2)。cascade drain 显式失败(Task 7);comfy cancel server-side `/interrupt` + comfy-submission 串行锁(**按运行 loop 取锁**,避免跨 loop `asyncio.Lock` 错误 — round-3)解全局 interrupt 歧义(Task 3-4);`ExternalProcessLifecycle.release(mode, reason)` ABC 契约闭合 + `reason` 含 `arun_error`(round-3)(Task 8-9);`ComfyLifecycleManager` `asyncio.Lock` + 冷启动 ownership 提前(Task 8);`Orchestrator.aclose()` + `arun` 用 `try/finally` 覆盖未分类异常退出 + release bounded(`wait_for`+`shield`)且非遮蔽、失败记 `run.metrics["lifecycle_release_failed"]`(round-3+4)(Task 9)。
+> **codex round 1-5 writeback**:Phase A 由「单 commit 大爆破」改增量(round-1);ComfyAgentWorker async-subprocess 前置到 worker-backed executor 转换之前以消除 `to_thread(worker.generate)` 不可取消窗口(round-2)。cascade drain 显式失败(Task 7);comfy cancel server-side `/interrupt` + comfy-submission 串行锁(**按运行 loop 取锁**,避免跨 loop `asyncio.Lock` 错误 — round-3)解全局 interrupt 歧义(Task 3-4);`ExternalProcessLifecycle.release(mode, reason)` ABC 契约闭合 + `reason` 含 `arun_error`(round-3)(Task 8-9);`ComfyLifecycleManager` `asyncio.Lock` + 冷启动 ownership 提前(Task 8);`Orchestrator.aclose()` + `arun` 用 `try/finally` 覆盖未分类异常退出;release bounded(`wait_for`+`shield`)非遮蔽 + `arun`/`aclose` 共用 `_release_lifecycle_bounded` helper(失败留痕:arun→`run.metrics`、aclose→`self._lifecycle_release_failed`)(round-4+5)(Task 9)。
 
 ---
 
@@ -661,6 +661,17 @@ async def test_release_hang_is_bounded(monkeypatch):
     ...  # ensure_release run 正常结束
     await asyncio.wait_for(orch.arun(...), timeout=5)      # 不挂死
     assert "lifecycle_release_failed" in run.metrics
+
+@pytest.mark.asyncio
+async def test_aclose_release_failure_is_bounded_and_recorded(monkeypatch):
+    """aclose() 的 release 同样 bounded:_spawn_stop 卡死/抛异常 → aclose 不挂死,
+    失败留痕 self._lifecycle_release_failed,不遮蔽 __aexit__ 原始异常。"""
+    async def _hang(self): await asyncio.sleep(1000)
+    monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _hang)
+    monkeypatch.setattr(orchestrator_mod, "_RELEASE_TIMEOUT_S", 0.2)
+    ...  # self_managed_session run 后
+    await asyncio.wait_for(orch.aclose(), timeout=5)       # 不挂死
+    assert orch._lifecycle_release_failed is not None
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
@@ -679,24 +690,31 @@ Expected: FAIL
   `arun_cancel` 后 re-raise;`except BaseException` 未分类异常 → `arun_error` 后
   re-raise),`finally` 读 `reason` 调 release。这样**未分类异常 re-raise 路径也
   释放**(否则 `ensure_release` 泄漏)。`_released` 标志保证 per-manager 一次。
-- **release 调用 bounded + 非遮蔽**(codex round-4 修订)—— `finally` 与 `aclose()`
-  里的 release 一律走:
+- **release 调用 bounded + 非遮蔽 — 抽共享 helper**(codex round-4 + round-5 修订)
+  —— `arun` 的 `finally` 与 `aclose()` **都走同一个** `_release_lifecycle_bounded`
+  helper(round-5:不能只 `finally` bounded 而 `aclose()` 裸 await):
   ```python
-  try:
-      await asyncio.wait_for(
-          asyncio.shield(manager.release(mode, reason)),
-          timeout=_RELEASE_TIMEOUT_S,
-      )
-  except BaseException as exc:
-      run.metrics["lifecycle_release_failed"] = {
-          "mode": mode, "reason": reason, "error": repr(exc)}
-      logging.getLogger(__name__).warning("lifecycle release failed: %r", exc)
-      # 不 re-raise — 保留 arun 原始异常 / cancellation
+  async def _release_lifecycle_bounded(self, manager, mode, reason, sink):
+      """bounded + 非遮蔽 release。sink: Callable[[dict], None] 失败留痕回调。"""
+      try:
+          await asyncio.wait_for(
+              asyncio.shield(manager.release(mode, reason)),
+              timeout=_RELEASE_TIMEOUT_S,
+          )
+      except BaseException as exc:
+          sink({"mode": mode, "reason": reason, "error": repr(exc)})
+          logging.getLogger(__name__).warning("lifecycle release failed: %r", exc)
+          # 不 re-raise — 保留调用方原始异常 / cancellation
   ```
-  `shield` 抗二次 cancel,`wait_for` 防 `factory_v3 stop` 卡死无限挂 `arun`,
-  `except` 吞 release 自身失败记 `run.metrics` 不遮蔽原始异常。orchestrator 模块
-  顶部加 `_RELEASE_TIMEOUT_S = 30.0`。
-- **`Orchestrator.aclose()`**:`async def aclose(self)` — 若 `self._lifecycle` 存在,`await self._lifecycle.release(mode, "orchestrator_close")`。加 `__aenter__` / `__aexit__`(`__aexit__` 调 `aclose`)。
+  `shield` 抗二次 cancel,`wait_for` 防 `factory_v3 stop` 卡死无限挂调用方,`except`
+  吞 release 自身失败经 `sink` 留痕、不遮蔽原始异常。orchestrator 模块顶部加
+  `_RELEASE_TIMEOUT_S = 30.0`。
+  - `arun` 的 `finally` 调 `await self._release_lifecycle_bounded(manager, mode,
+    reason, sink=lambda d: run.metrics.__setitem__("lifecycle_release_failed", d))`。
+  - `aclose()` 调 `await self._release_lifecycle_bounded(self._lifecycle, mode,
+    "orchestrator_close", sink=lambda d: setattr(self, "_lifecycle_release_failed", d))`
+    —— `aclose()` 无 `run` / `run.metrics`,失败留痕落 orchestrator 实例属性。
+- **`Orchestrator.aclose()`**:`async def aclose(self)` — 若 `self._lifecycle` 存在,经上面的 `_release_lifecycle_bounded` helper(**不是裸 `await release(...)`**)调 `release(mode, "orchestrator_close")`。加 `__aenter__` / `__aexit__`(`__aexit__` 调 `aclose`);`__init__` 加 `self._lifecycle_release_failed = None`。
 - `run.py`:CLI main 在 run 结束后 `await orch.aclose()`(或 `async with Orchestrator(...) as orch:`)。
 
 - [ ] **Step 4: 跑测试确认通过 + 全量**
