@@ -1711,3 +1711,102 @@ def test_comfy_generate_sync_shim_still_works(tmp_path):
     assert isinstance(result, list), (
         f"generate() sync shim 应返回 list[ImageCandidate],实际返回 {type(result)}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 4: cancel 时 server-side /interrupt 单测
+# ---------------------------------------------------------------------------
+
+
+def _make_slow_fake_worker(tmp_path: Path) -> "ComfyAgentWorker":
+    """构造 image-mode ComfyAgentWorker,用于 cancel 路径测试。
+    与 _make_fake_agent_worker 相同但独立命名,便于 Task 4 测试组引用。"""
+    return _make_worker(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_comfy_cancel_aborts_server_side_prompt(monkeypatch, tmp_path):
+    """Task 4 RED fence:cancel 时 _abort_comfy_prompt 必须被调用一次,
+    且 CLI 子进程(proc)被 terminate 后 returncode 不为 None。
+
+    monkeypatch _abort_comfy_prompt 为 spy coroutine,
+    agenerate 的 communicate 永久挂起以模拟 GPU job 运行中。
+    cancel agenerate task → finally 块需先调 _abort_comfy_prompt 再 terminate。
+    """
+    import asyncio as _aio
+
+    # --- spy:记录 _abort_comfy_prompt 被调用次数 ---
+    aborted = {"n": 0}
+
+    async def _spy_abort(self):
+        aborted["n"] += 1
+
+    monkeypatch.setattr(ComfyAgentWorker, "_abort_comfy_prompt", _spy_abort)
+
+    # --- 慢 fake process:communicate 永久挂起,terminate 后设置 returncode ---
+    class _SlowProcess:
+        """模拟正在运行 GPU job 的 subprocess:communicate 永久挂起。
+        terminate 被调用时将 returncode 设为 -15(SIGTERM)。"""
+
+        def __init__(self):
+            self.returncode = None
+
+        async def communicate(self):
+            # 永久挂起,模拟 ComfyUI 正在生成
+            await _aio.sleep(9999)
+            return (b"", b"")
+
+        def terminate(self):
+            # terminate 后 returncode 设为 -15
+            self.returncode = -15
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    # 保存 proc 引用供 cancel 后检查
+    last_proc_holder = {"proc": None}
+
+    async def _slow_create(*a, **kw):
+        p = _SlowProcess()
+        last_proc_holder["proc"] = p
+        return p
+
+    import asyncio as asyncio_mod
+    original_create = asyncio_mod.create_subprocess_exec
+    asyncio_mod.create_subprocess_exec = _slow_create  # type: ignore[assignment]
+
+    worker = _make_slow_fake_worker(tmp_path)
+
+    try:
+        # 启动 agenerate task(image-mode;timeout_s=600 避免内部超时先触发)
+        task = _aio.create_task(
+            worker.agenerate(
+                spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                num_candidates=1,
+                seed=1,
+                timeout_s=600,
+            )
+        )
+        # 等待 communicate 进入挂起状态
+        await _aio.sleep(0.2)
+        # cancel task
+        task.cancel()
+        with pytest.raises(_aio.CancelledError):
+            await task
+        # 给 finally 块一点时间完成
+        await _aio.sleep(0.1)
+        # 断言:_abort_comfy_prompt 被调用恰好 1 次
+        assert aborted["n"] == 1, (
+            f"_abort_comfy_prompt 应被调用 1 次,实际 {aborted['n']} 次"
+        )
+        # 断言:proc 被 terminate 后 returncode 不为 None
+        proc = last_proc_holder["proc"]
+        assert proc is not None, "proc 应在 agenerate 内被创建并由 _last_proc 保存"
+        assert proc.returncode is not None, (
+            f"proc.returncode 应在 terminate 后非 None,实际 {proc.returncode!r}"
+        )
+    finally:
+        asyncio_mod.create_subprocess_exec = original_create  # type: ignore[assignment]
