@@ -4,13 +4,20 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from framework.artifact_store import ArtifactRepository
 from framework.core.artifact import Artifact
 from framework.core.enums import StepType
 from framework.core.review import Verdict
 from framework.core.task import Run, Step, Task
+
+# 使用 TYPE_CHECKING 守门避免运行时循环导入:
+# lifecycle.py 不依赖 base.py,但 base.py 若直接 import lifecycle 会形成
+# base → lifecycle → (无依赖) 的单向链,理论上无循环。
+# 为防未来 lifecycle 引入其他 runtime 组件造成循环,保留 TYPE_CHECKING 守门。
+if TYPE_CHECKING:
+    from framework.runtime.lifecycle import ExternalProcessLifecycle
 
 
 @dataclass
@@ -27,6 +34,12 @@ class StepContext:
     See OpenSpec change comfy-agent-cli-adoption: design.md D8 +
     runtime-core/spec.md "StepContext exposes run_dir for in-tree
     artifact placement" Requirement.
+
+    `lifecycle` 由 Orchestrator 在 arun 开始时构建并注入
+    (Task 9 executor-async-rewrite):comfy/local* + comfy_lifecycle != none 时
+    为 ComfyLifecycleManager 实例;其余情况为 None。
+    executor 通过此字段感知 lifecycle 模式,无需直接操作 manager。
+    (Task 10 将解锁 ComfyAgentWorker 侧的 lifecycle gate)
     """
 
     run: Run
@@ -36,8 +49,7 @@ class StepContext:
     run_dir: Path = field(default_factory=lambda: Path("."))
     inputs: dict[str, Any] = field(default_factory=dict)
     upstream_artifact_ids: list[str] = field(default_factory=list)
-    # Task 8 中将在 lifecycle.py 定义 ExternalProcessLifecycle;
-    # 此处用字符串前向引用避免循环导入,默认 None(lifecycle 可选)
+    # Task 9:由 Orchestrator 注入的 lifecycle manager 实例;None 表示 lifecycle="none"
     lifecycle: "ExternalProcessLifecycle | None" = None
 
 

@@ -255,8 +255,6 @@ async def test_self_managed_session_released_only_at_aclose(
 async def test_ensure_release_released_at_run_end(monkeypatch, tmp_path):
     """ensure_release 模式:arun 正常结束 → release(ensure_release, run_end) 调用,
     决策表命中 → 触发 stop。"""
-    monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
-    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
 
     stopped = {"n": 0}
@@ -264,6 +262,13 @@ async def test_ensure_release_released_at_run_end(monkeypatch, tmp_path):
     async def _fake_spawn_stop(self) -> None:
         stopped["n"] += 1
 
+    async def _fake_ensure(self, mode: str) -> None:
+        # 模拟 ensure:将 _framework_started 置 True,使 release 决策表命中后执行 stop
+        self._framework_started = True
+        self._ensured = True
+
+    monkeypatch.setattr(ComfyLifecycleManager, "ensure", _fake_ensure)
+    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
     monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _fake_spawn_stop)
 
     seen: list = []
@@ -285,12 +290,15 @@ async def test_ensure_release_released_on_unclassified_exception(
 ):
     """arun 遇到未分类异常退出 → finally 以 arun_error reason 调用 release,
     ensure_release 决策表命中 → stop。原始 RuntimeError 不被遮蔽。"""
-    monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
-    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
 
     calls: list[tuple[str, str]] = []
     stopped = {"n": 0}
+
+    async def _fake_ensure(self, mode: str) -> None:
+        # 模拟 ensure:将 _framework_started 置 True,使 release 决策表命中后执行 stop
+        self._framework_started = True
+        self._ensured = True
 
     async def _fake_spawn_stop(self) -> None:
         stopped["n"] += 1
@@ -302,6 +310,8 @@ async def test_ensure_release_released_on_unclassified_exception(
         calls.append((mode, reason))
         await original_release(self, mode, reason)
 
+    monkeypatch.setattr(ComfyLifecycleManager, "ensure", _fake_ensure)
+    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
     monkeypatch.setattr(ComfyLifecycleManager, "release", _recording_release)
     monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _fake_spawn_stop)
 
@@ -395,14 +405,19 @@ async def test_aclose_release_failure_is_bounded_and_recorded(
 ):
     """aclose() 的 release 也有超时限制:_spawn_stop 挂起 →
     aclose 不会无限阻塞,失败记录在 orch._lifecycle_release_failed。"""
-    monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
-    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.setattr(orchestrator_mod, "_RELEASE_TIMEOUT_S", 0.2)
+
+    async def _fake_ensure(self, mode: str) -> None:
+        # 模拟 ensure:将 _framework_started 置 True,使 release 决策表命中后执行 stop
+        self._framework_started = True
+        self._ensured = True
 
     async def _hang_stop(self) -> None:
         await asyncio.sleep(1000)
 
+    monkeypatch.setattr(ComfyLifecycleManager, "ensure", _fake_ensure)
+    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
     monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _hang_stop)
 
     seen: list = []

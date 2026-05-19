@@ -197,6 +197,7 @@ def main(argv: list[str] | None = None) -> int:
             artifact_root=artifact_root, repo=repo,
         )
 
+    _run_failed = False
     try:
         result = orch.run(
             task=bundle.task, workflow=bundle.workflow, steps=bundle.steps,
@@ -205,6 +206,16 @@ def main(argv: list[str] | None = None) -> int:
     except DryRunFailed as exc:
         print("DRY-RUN FAILED:")
         print(json.dumps(exc.report.model_dump(mode="json"), ensure_ascii=False, indent=2))
+        _run_failed = True
+        result = None  # type: ignore[assignment]
+    finally:
+        # 释放 self_managed_session lifecycle manager(若有)。
+        # 对于 ensure_running / ensure_release 模式,aclose 是空操作
+        # (per-arun manager 已在 arun 内 release)。
+        import asyncio as _asyncio
+        _asyncio.run(orch.aclose())
+
+    if _run_failed:
         return 2
 
     # Emit a compact run summary — include verdicts + termination info so the
@@ -322,6 +333,7 @@ def _serve_run(*, orch: Orchestrator, bundle, args, artifact_root: Path, repo):
         )
         server = uvicorn.Server(config)
         server_task = asyncio.create_task(server.serve())
+        _serve_failed = False
         try:
             result = await orch.arun(
                 task=bundle.task, workflow=bundle.workflow,
@@ -331,11 +343,16 @@ def _serve_run(*, orch: Orchestrator, bundle, args, artifact_root: Path, repo):
             print("DRY-RUN FAILED:")
             print(json.dumps(exc.report.model_dump(mode="json"),
                              ensure_ascii=False, indent=2))
+            _serve_failed = True
+            result = None  # type: ignore[assignment]
+        finally:
+            reset_current_event_bus(token)
+            # 释放 self_managed_session lifecycle manager(若有)
+            await orch.aclose()
+        if _serve_failed:
             server.should_exit = True
             await server_task
             return 2
-        finally:
-            reset_current_event_bus(token)
         server.should_exit = True
         await server_task
         print(json.dumps({
