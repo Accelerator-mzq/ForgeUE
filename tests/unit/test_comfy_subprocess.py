@@ -1871,7 +1871,8 @@ def test_comfy_rejects_unknown_lifecycle(tmp_path):
     artifacts_dir = tmp_path / "artifacts"
     artifacts_dir.mkdir()
 
-    with pytest.raises(WorkerUnsupportedResponse, match="warp_drive"):
+    # 错误消息中必须包含四个合法值(以便用户排查)
+    with pytest.raises(WorkerUnsupportedResponse, match="ensure_running|ensure_release|self_managed_session|none"):
         ComfyAgentWorker(
             scripts_dir=scripts_dir,
             model_id="comfy/local",
@@ -1880,3 +1881,228 @@ def test_comfy_rejects_unknown_lifecycle(tmp_path):
             artifacts_dir=artifacts_dir,
             default_lifecycle="warp_drive",
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 10 round 2:agenerate* 四模式 gate 回归测试(RED → GREEN)
+# 验证 agenerate / agenerate_mesh / agenerate_audio / agenerate_video
+# 均接受 spec 中的合法 comfy_lifecycle 值(不仅限于 "none")。
+# 旧 gate 残存时这些测试会 FAIL(WorkerUnsupportedResponse 因 lifecycle 被 raise)。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_agenerate_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+    """agenerate: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+
+    旧 D6 gate 在 agenerate 内残存时,传入 ensure_running 会 raise
+    WorkerUnsupportedResponse("must be 'none' in this change scope")。
+    修复后 gate 替换为集合检查(四合法值),ensure_running 通过,
+    进入 subprocess 路径。此处 mock subprocess 返回合法图片输出以隔离副作用。
+    """
+    import asyncio as _aio
+
+    fake_png = tmp_path / "comfy_out.png"
+    _make_png_file(fake_png)
+
+    # 构造 image-mode worker(comfy/local)
+    worker = _make_worker(tmp_path)
+
+    fake_stdout = json.dumps({
+        "ok": True,
+        "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
+    }).encode("utf-8")
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self): return (fake_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    async def _fake_exec(*a, **kw):
+        return _FakeProc()
+
+    monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+
+    # ensure_running 是合法值 — 修复前旧 gate 会 raise WorkerUnsupportedResponse
+    # pytest.raises 捕获不到 → 测试通过;旧 gate 存在 → raise → RED FAIL
+    result = await worker.agenerate(
+        spec={
+            "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+            "comfy_lifecycle": "ensure_running",
+        },
+        num_candidates=1,
+        seed=0,
+        timeout_s=30.0,
+    )
+    assert isinstance(result, list), "agenerate 应返回 list[ImageCandidate]"
+
+
+@pytest.mark.asyncio
+async def test_agenerate_mesh_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+    """agenerate_mesh: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+
+    旧 D6 gate 在 agenerate_mesh 内残存时 raise;修复后 ensure_running 通过。
+    mock subprocess 返回合法 GLB 输出以隔离副作用。
+    """
+    import asyncio as _aio
+
+    fake_glb = tmp_path / "out.glb"
+    _make_glb_file(fake_glb)
+
+    worker = _make_mesh_worker(tmp_path)
+
+    fake_stdout = json.dumps({
+        "ok": True,
+        "outputs": {"glb": [str(fake_glb)], "images": [], "audio": [], "video": []},
+    }).encode("utf-8")
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self): return (fake_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    async def _fake_exec(*a, **kw):
+        return _FakeProc()
+
+    monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+
+    result = await worker.agenerate_mesh(
+        spec={
+            "comfy_workflow": "GameAssets/03_mini_image_to_3d_hunyuan_loadimage",
+            "comfy_lifecycle": "ensure_running",
+        },
+        source_image_filename="forgeue_abcdef.png",
+        num_candidates=1,
+        seed=0,
+        timeout_s=30.0,
+    )
+    assert isinstance(result, list), "agenerate_mesh 应返回 list[MeshCandidate]"
+
+
+@pytest.mark.asyncio
+async def test_agenerate_audio_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+    """agenerate_audio: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+
+    旧 D6 gate 在 agenerate_audio 内残存时 raise;修复后 ensure_running 通过。
+    mock subprocess 返回合法 FLAC 输出以隔离副作用。
+    """
+    import asyncio as _aio
+
+    # 构造合法 FLAC magic bytes 文件
+    fake_flac = tmp_path / "out.flac"
+    fake_flac.parent.mkdir(parents=True, exist_ok=True)
+    fake_flac.write_bytes(b"fLaC" + b"\x00" * 20)
+
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+    worker = ComfyAgentWorker(
+        scripts_dir=scripts_dir,
+        model_id="comfy/local-audio",
+        run_id="run_test",
+        project_id="proj_test",
+        artifacts_dir=artifacts_dir,
+    )
+
+    fake_stdout = json.dumps({
+        "ok": True,
+        "outputs": {
+            "audio": [{"filename": str(fake_flac), "format": "flac"}],
+            "images": [], "glb": [], "video": [],
+        },
+    }).encode("utf-8")
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self): return (fake_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    async def _fake_exec(*a, **kw):
+        return _FakeProc()
+
+    monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+
+    result = await worker.agenerate_audio(
+        spec={
+            "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
+            "comfy_lifecycle": "ensure_running",
+        },
+        num_candidates=1,
+        seed=0,
+        timeout_s=30.0,
+    )
+    assert isinstance(result, list), "agenerate_audio 应返回 list[AudioCandidate]"
+
+
+@pytest.mark.asyncio
+async def test_agenerate_video_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+    """agenerate_video: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+
+    旧 D6 gate 在 agenerate_video 内残存时 raise;修复后 ensure_running 通过。
+    mock subprocess 返回合法 MP4 输出以隔离副作用。
+    """
+    import asyncio as _aio
+
+    # 构造合法 MP4 BMFF 5-tuple header(ftyp box)
+    fake_mp4 = tmp_path / "out.mp4"
+    fake_mp4.parent.mkdir(parents=True, exist_ok=True)
+    box_size = 16
+    ftyp_box = (
+        box_size.to_bytes(4, "big")   # box_size
+        + b"ftyp"                       # box_type
+        + b"mp42"                       # major_brand
+        + b"\x00\x00\x00\x00"           # minor_version
+    )
+    fake_mp4.write_bytes(ftyp_box + b"\x00" * 256)
+
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(exist_ok=True)
+    worker = ComfyAgentWorker(
+        scripts_dir=scripts_dir,
+        model_id="comfy/local-video",
+        run_id="run_test",
+        project_id="proj_test",
+        artifacts_dir=artifacts_dir,
+    )
+
+    fake_stdout = json.dumps({
+        "ok": True,
+        "outputs": {
+            "video": [{"filename": str(fake_mp4), "format": "mp4"}],
+            "images": [], "glb": [], "audio": [],
+        },
+    }).encode("utf-8")
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self): return (fake_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    async def _fake_exec(*a, **kw):
+        return _FakeProc()
+
+    monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+
+    result = await worker.agenerate_video(
+        spec={
+            "comfy_workflow": "Vedio/Wan2.1-T2V-1.3B_native_5sec",
+            "comfy_lifecycle": "ensure_running",
+        },
+        num_candidates=1,
+        seed=0,
+        timeout_s=30.0,
+    )
+    assert isinstance(result, list), "agenerate_video 应返回 list[VideoCandidate]"
