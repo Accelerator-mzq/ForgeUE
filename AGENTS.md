@@ -173,7 +173,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ## forge 工作流
 
-> 本节与 `CLAUDE.md` § 工作流 段保持语义同步。完整规则见 [`docs/ai_workflow/README.md`](docs/ai_workflow/README.md) 和 [`forge/backlog/README.md`](forge/backlog/README.md)。
+> 本节与 `CLAUDE.md` § 工作流 段保持语义同步。backlog 协议见 [`forge/backlog/README.md`](forge/backlog/README.md)。
 
 ### 什么时候走 change,什么时候直接改代码
 

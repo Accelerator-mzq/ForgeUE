@@ -87,7 +87,7 @@ rules:
   tasks: |
     - 任务描述使用简体中文，保持 Markdown checklist 语法和代码/路径原文不变。
     - 每个 task 必须可被 Claude Code 或其他 coding agent 独立执行和验证。
-    - tasks.md 末尾必须包含 "## Documentation Sync" 章节，列出 archive 前要检查的 10 份文档（见 docs/ai_workflow/README.md §Documentation Sync Gate）。
+    - tasks.md 末尾必须包含 "## Documentation Sync" 章节，列出 archive 前要同步检查的 docs/ 五件套(SRS / HLD / LLD / test_spec / acceptance_report)。
     - 测试相关 task 不得硬编码测试总数；以 `python -m pytest -q` 实测输出为准。
     - 付费 provider 相关 task 默认通过环境变量 opt-in（如 FORGEUE_PROBE_VISUAL_REVIEW=1、FORGEUE_PROBE_HUNYUAN_3D=1）；框架级测试用 FakeAdapter / FakeComfyWorker 离线运行。
 
