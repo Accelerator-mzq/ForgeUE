@@ -104,4 +104,3 @@ rules:
     - 决策风格：先给分析 + 选项 + 取舍，得到一次授权后就完整执行；避免执行中途反复微确认。
     - 临时脚本（python -c、heredoc）使用 ASCII 标记 [OK] / [FAIL] / [SKIP]；禁用 emoji（Windows GBK stdout 遇 emoji 会崩，见 probes/README.md 和 CLAUDE.md）。
     - 当 README / CHANGELOG / docs 五件套之间数字不一致时，标记为 doc drift 并以 `python -m pytest -q` 实测为准。不要默默挑一个数字。
-    - .claude/commands/opsx/*、.claude/skills/openspec-*、.codex/skills/openspec-* 是 OpenSpec 默认产物 —— 不要修改或覆盖。
