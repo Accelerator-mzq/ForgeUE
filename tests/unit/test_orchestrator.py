@@ -434,3 +434,45 @@ async def test_aclose_release_failure_is_bounded_and_recorded(
     await asyncio.wait_for(orch.aclose(), timeout=5)
     # 失败留痕应记录在 orch._lifecycle_release_failed
     assert orch._lifecycle_release_failed is not None
+
+
+@pytest.mark.asyncio
+async def test_ensure_failure_still_releases_lifecycle(monkeypatch, tmp_path):
+    """回归测试(Important-1):ensure() 抛出异常时,lifecycle 仍须通过 finally 释放。
+
+    确保 ensure() 调用位于 try 块内部:
+    - ensure() 模拟 _wait_ready 超时场景:先将 _framework_started 置 True(代表进程已
+      spawn),再抛出 TimeoutError — 此时如果 ensure() 在 try 外,finally 不会执行,
+      进程泄漏;修复后 ensure() 在 try 内,finally 调用 release → _spawn_stop。
+    - 验证 _spawn_stop 被调用(即 release 真正执行,进程不泄漏)。
+    """
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
+
+    stop_called: list[bool] = []
+
+    async def _fake_ensure_then_fail(self, mode: str) -> None:
+        # 模拟:进程已 spawn(_framework_started=True),但 _wait_ready 超时
+        self._framework_started = True
+        raise TimeoutError("_wait_ready timed out")
+
+    async def _spy_stop(self) -> None:
+        stop_called.append(True)
+
+    monkeypatch.setattr(ComfyLifecycleManager, "ensure", _fake_ensure_then_fail)
+    monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _spy_stop)
+
+    exc = RuntimeError("executor-should-not-reach")
+    executor = _ErrorExecutor(exc)
+    orch, _, _ = _build_orch_with_executor(executor, tmp_path)
+
+    task, workflow, steps = _make_comfy_task_workflow_steps(mode="ensure_release")
+    # arun 应以 TimeoutError 退出(ensure 失败后 finally release → re-raise)
+    with pytest.raises(TimeoutError, match="_wait_ready"):
+        await orch.arun(
+            task=task, workflow=workflow, steps=steps,
+            run_id="r_ensure_fail", skip_dry_run=True,
+        )
+    # ensure_release + arun_error 在 _RELEASE_STOPS 决策集合中,
+    # _framework_started=True → _spawn_stop 必须被调用(进程不泄漏)
+    assert stop_called, "_spawn_stop 未被调用 — ensure() 失败后 finally 未 release(进程泄漏)"
