@@ -101,7 +101,6 @@ class MeshWorker(ABC):
         """Task 5 async 接口:默认实现用 asyncio.to_thread 包 sync generate。
         HunyuanMeshWorker 有专属 async agenerate 覆盖此默认;
         FakeMeshWorker 继承此默认以支持测试中 await worker.agenerate(...)。"""
-        import asyncio
         return await asyncio.to_thread(
             self.generate,
             source_image_bytes=source_image_bytes,

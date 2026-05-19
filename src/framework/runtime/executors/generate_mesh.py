@@ -16,9 +16,9 @@ num_candidates > 1 submits multiple tasks.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -165,7 +165,7 @@ class GenerateMeshExecutor(StepExecutor):
                 last_exc = wrapped
                 if attempt + 1 >= attempts or not _should_retry(policy, wrapped):
                     raise wrapped from exc
-                _backoff(policy, attempt)
+                await _backoff(policy, attempt)
             except _ComfyWorkerUnsupportedResponse as exc:
                 # 不 retry(deterministic);wrap 为 MeshWorkerUnsupportedResponse
                 raise MeshWorkerUnsupportedResponse(str(exc)) from exc
@@ -242,7 +242,7 @@ class GenerateMeshExecutor(StepExecutor):
                     last_exc = exc
                     if attempt + 1 >= attempts or not _should_retry(policy, exc):
                         break
-                    _backoff(policy, attempt)
+                    await _backoff(policy, attempt)
         if candidates is None:
             assert last_exc is not None
             raise last_exc
@@ -474,6 +474,7 @@ def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     return False
 
 
-def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+async def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
     if policy.backoff == "exponential":
-        time.sleep(min(2 ** attempt_zero_based, 8) * 0.01)
+        # executor 已 async 化,用 await asyncio.sleep 不阻塞事件循环
+        await asyncio.sleep(min(2 ** attempt_zero_based, 8) * 0.01)

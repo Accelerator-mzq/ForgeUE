@@ -16,9 +16,9 @@ Output:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import time
 from typing import Any
 
 from framework.core.artifact import (
@@ -88,7 +88,7 @@ class GenerateImageEditExecutor(StepExecutor):
                 last_exc = exc
                 if attempt + 1 >= attempts or not _should_retry(policy, exc):
                     break
-                _backoff(policy, attempt)
+                await _backoff(policy, attempt)
         if results is None:
             assert last_exc is not None
             raise last_exc
@@ -227,6 +227,7 @@ def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     return False
 
 
-def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+async def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
     if policy.backoff == "exponential":
-        time.sleep(min(2 ** attempt_zero_based, 8) * 0.01)
+        # executor 已 async 化,用 await asyncio.sleep 不阻塞事件循环
+        await asyncio.sleep(min(2 ** attempt_zero_based, 8) * 0.01)

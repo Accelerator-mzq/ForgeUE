@@ -20,10 +20,10 @@ Other contract pieces unchanged:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
-import time
 from pathlib import Path
 from typing import Any
 
@@ -120,7 +120,7 @@ class GenerateImageExecutor(StepExecutor):
                 last_exc = exc
                 if attempt + 1 >= attempts or not _should_retry(policy, exc):
                     break
-                _backoff(policy, attempt)
+                await _backoff(policy, attempt)
                 continue
         if candidates is None:
             assert last_exc is not None
@@ -340,7 +340,6 @@ class GenerateImageExecutor(StepExecutor):
         ImageCandidate.metadata so downstream artifacts don't carry
         framework-internal bookkeeping into persistent metadata.
         """
-        import asyncio
         assert self._router is not None
         prompt = str(spec.get("prompt_summary") or "")
         if not prompt:
@@ -513,6 +512,7 @@ def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     return False
 
 
-def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+async def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
     if policy.backoff == "exponential":
-        time.sleep(min(2 ** attempt_zero_based, 8) * 0.01)
+        # executor 已 async 化,用 await asyncio.sleep 不阻塞事件循环
+        await asyncio.sleep(min(2 ** attempt_zero_based, 8) * 0.01)
