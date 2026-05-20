@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -549,8 +550,7 @@ class Orchestrator:
             # 正常退出为 (None, None, None)。覆盖三条出口:正常 / CancelledError /
             # 未分类异常 / DAG first_exc。原 L506-508 + L556 两处显式 __exit__ 已删,
             # 由本统一出口替代。
-            import sys as _sys
-            exc_type, exc_val, exc_tb = _sys.exc_info()
+            exc_type, exc_val, exc_tb = sys.exc_info()
             run_span_ctx.__exit__(exc_type, exc_val, exc_tb)
             # ──────────────────────────────────────────────────────────────
 
