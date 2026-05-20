@@ -870,6 +870,28 @@ git commit -m "docs(tbd-010): SRS/HLD/LLD 同步 + executor-async-rewrite L2 liv
 - `forge/changes/executor-async-rewrite/.review-passed`:9 review_outcomes + 2 pause_decisions + process_evidence(tdd_event_chain × 11 + subagent_review_chain × 1)
 - 1 freeze WARNING(`invariant-7-verify-count`):per-task `record-verify` 缺失 → 留待 `/forge:verify` 阶段统一 ack(主代理 change-level verify 视为可接受)
 
+- [x] **Step 7(`/forge:verify` 闭环 — `.verify-passed` marker + freeze)**
+
+**三维度分析(`forge:verifying-three-dimensions`)**:
+- **Completeness**:`forge validate` exit 0(无 spec-files-missing / coverage_gap CRITICAL);11 个 Requirement(spec deltas)全 grep 命中 codebase 实施(`runtime-core.md` × 2 + `workflow-orchestrator.md` × 3 + `provider-routing.md` × 6 = 11 Requirements;实施 file:line evidence 详见 git diff `457b1ad..HEAD` 61 files / +4838 LOC)
+- **Correctness**:每个 Requirement 的 Given/When/Then scenarios 在 fence 中覆盖:`test_orchestrator.py`(11+ fence) / `test_comfy_subprocess.py` / `test_comfy_lifecycle.py` / `test_step_context.py` / `test_cascade_cancel.py` / 等;全量 pytest 1190 passed
+- **Coherence**:design.md §2.1-2.5 + Fluid Pause #1/#2 全部实装 codebase 命中(Round 2 review 已 line-by-line verified);naming/pattern(async def / lifecycle.py / WeakKeyDictionary / ExternalProcessLifecycle)沿项目惯例
+- **0 verify_findings**(三维度 clean,无 AI 产 WARNING/SUGGESTION)
+
+**evidence**:
+- `forge/changes/executor-async-rewrite/.evidence/test-output.log` log_hash sha256:2f6486a07bff...(`python -m pytest -q` exit 0)
+- `forge validate` exit 0(无 CRITICAL automated finding)
+
+**marker frozen**:
+- `forge/changes/executor-async-rewrite/.verify-passed`:0 verify_findings(三维度产)+ 2 pause_decisions 迁移 + process_evidence(tdd_event_chain × 11 + verify_invocations × 1 + subagent_review_chain × 1)
+- 1 freeze WARNING(`invariant-7-verify-count`,`verify_invocations.length=1; tasks count=63`):per-task `record-verify` 缺失,主代理统一跑 change-level verify → 留待 `/forge:archive` 阶段 `forge ack propose --action ack-warning` ack(skill 4.5)
+- staging_hash: 5f18304864ef5170...
+
+**Workaround 2 次**(同 forge plugin upstream bug `forge-plugin-staging-yaml-timestamp-roundtrip` 再发):
+- record-verify 写 staging 仍用 unquoted ISO timestamp → freeze yaml.load 转 Date object → canonicalize 拒 → 误导性 staging_hash mismatch
+- 自动化 `notes/fix_staging_hash.cjs`(Node CJS,用 forge plugin 自家 canonicalize + js-yaml):quote-wrap unquoted ISO + 重算 staging_hash 信封字段;freeze 通过
+
+
 
 ## Documentation Sync
 
