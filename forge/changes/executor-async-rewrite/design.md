@@ -462,4 +462,59 @@ entries:
     status: active
     triggered_by: null
     related_change: null
+  - id: fake-comfy-worker-mesh-audio-video-stub
+    category: future-work
+    description: >
+      FakeComfyWorker 当前只实现 ComfyWorker(image) ABC;加 stub agenerate_mesh
+      / agenerate_audio / agenerate_video 或重构为 multi-capability fake,
+      让 test fixture 在 mesh / audio / video executor 单测里也能直接注入。
+    reason: >
+      Round 2 review F3 reject:当前 mesh / audio / video executor 构建
+      ComfyAgentWorker(非 Fake),没有触发路径,但 test fixture API 不对等。
+      未来若想加 mesh / audio / video executor 的 fake-injection 单测,
+      会撞 AttributeError。低优先,无即时风险。
+    priority: low
+    status: active
+    triggered_by: review-round-2
+    related_change: null
+  - id: fake-comfy-worker-agenerate-yield-point
+    category: future-work
+    description: >
+      FakeComfyWorker.agenerate 当前直接 return self.generate(...),
+      虽然标 async def 但无实际让出点;加 await asyncio.sleep(0) 或
+      内联 generate 逻辑到 async def,让并发 fence 测试结果不被「fake 实际串行」干扰。
+    reason: >
+      Round 2 review F5 reject:实际单测多用 monkeypatch
+      _run_once_*_async 而非依赖 fake worker 的并发语义;影响低。
+    priority: low
+    status: active
+    triggered_by: review-round-2
+    related_change: null
+  - id: wait-ready-monotonic-time
+    category: future-work
+    description: >
+      ComfyLifecycleManager._wait_ready 当前用 counter 累加 elapsed += self._poll,
+      事件循环繁忙时 await asyncio.sleep(self._poll) 实际耗时可能 > self._poll,
+      累计漂移导致真正超时晚于 _READY_TIMEOUT_S。改用 time.monotonic() 或
+      asyncio.wait_for 包整个循环。
+    reason: >
+      Round 2 review F6 reject:status() 正常情况远小于 _STATUS_TIMEOUT_S,
+      漂移对实际行为影响低;_READY_TIMEOUT_S=120s 留 30%+ 余量。
+    priority: low
+    status: active
+    triggered_by: review-round-2
+    related_change: null
+  - id: multi-mode-comfy-dag-warning
+    category: future-work
+    description: >
+      _detect_comfy_lifecycle 只取第一个 comfy/local* step 的 lifecycle mode;
+      若 DAG 含多个 comfy step 且 mode 不一致(如 step_1 ensure_running、step_2
+      ensure_release),应 emit warning(user error 提示),或 raise 拒绝执行。
+    reason: >
+      Round 2 review F8 reject:当前 bundle 全是单 comfy step,multi-comfy-step
+      DAG 暂无实例;留 follow-on 待真实需求出现再处理。
+    priority: low
+    status: active
+    triggered_by: review-round-2
+    related_change: null
 ```

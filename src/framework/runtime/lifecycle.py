@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
+
+# 模块级 logger:status() 异常 + 其他生命周期事件诊断(F7 Round 2 fix)
+_logger = logging.getLogger(__name__)
 
 # lifecycle 模式合法值集合
 _VALID_MODES = {"none", "ensure_running", "ensure_release", "self_managed_session"}
@@ -24,6 +28,11 @@ _READY_TIMEOUT_S = 120.0
 
 # comfyui_api status 子命令的最长等待时间(秒):防止 status 探活命令挂起无限阻塞
 _STATUS_TIMEOUT_S = 30.0
+
+# F2 Round 2 fix:_spawn_stop 自身 wait_for 上限(秒)。
+# 设计 defense-in-depth:即使调用方未通过 _release_lifecycle_bounded(30s 兜底)
+# 而是直接 await manager.release(...),也保证 factory_v3 stop 子进程卡死时不无限阻塞。
+_STOP_TIMEOUT_S = 60.0
 
 # (mode, reason) → 是否执行 stop。
 # 仅当框架自身起动了 ComfyUI(_framework_started=True)时才真正调用 _spawn_stop。
@@ -131,7 +140,19 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
                 # 非 JSON / 解码失败 → 保守认为 off
                 return False
             return bool(data.get("online"))
-        except Exception:
+        except asyncio.TimeoutError:
+            # F7 Round 2 fix:wait_for 超时(comfyui_api status 子命令挂死)单独记 debug
+            _logger.debug(
+                "comfyui_api status timed out after %ss (scripts_dir=%s)",
+                _STATUS_TIMEOUT_S, self._scripts_dir,
+            )
+            return False
+        except Exception as exc:
+            # F7 Round 2 fix:其余异常(spawn 失败 / JSON 解析失败 / 编码失败)记 debug
+            _logger.debug(
+                "comfyui_api status probe failed: %r (scripts_dir=%s)",
+                exc, self._scripts_dir,
+            )
             return False
         finally:
             # best-effort:若子进程仍在运行则强制 kill,防止僵尸进程
@@ -242,14 +263,36 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         del _proc  # 显式释放引用,避免 GC ResourceWarning 在单测日志中噪染
 
     async def _spawn_stop(self) -> None:
-        """通过 `python -m factory_v3 stop` 停止 ComfyUI。等待命令完成。"""
+        """通过 `python -m factory_v3 stop` 停止 ComfyUI。等待命令完成。
+
+        F2 Round 2 fix(defense-in-depth):自身 wait_for(_STOP_TIMEOUT_S=60s)+
+        TimeoutError 路径 kill 兜底。原版裸 proc.wait() 完全依赖调用方
+        _release_lifecycle_bounded 的 30s wait_for 兜底,若 future 有路径直接
+        await manager.release(...) 不经 bounded helper,会静默无限阻塞。
+        """
         proc = await asyncio.create_subprocess_exec(
             self._python, "-m", "factory_v3", "stop",
             cwd=str(self._scripts_dir),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=_STOP_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            # factory_v3 stop 60s 未完成:kill 兜底 + 不 mask 调用方异常
+            _logger.warning(
+                "_spawn_stop timed out after %ss; falling back to kill (scripts_dir=%s)",
+                _STOP_TIMEOUT_S, self._scripts_dir,
+            )
+            try:
+                proc.kill()
+                await proc.wait()
+            except Exception as exc:
+                # best-effort kill 仍失败:记 warning,不抛出(不 mask 原 cancel/release exception)
+                _logger.warning(
+                    "_spawn_stop kill fallback failed: %r (scripts_dir=%s)",
+                    exc, self._scripts_dir,
+                )
 
     async def _wait_ready(self) -> None:
         """轮询 status() 直到 ComfyUI 就绪,超过 _READY_TIMEOUT_S 则抛 TimeoutError。

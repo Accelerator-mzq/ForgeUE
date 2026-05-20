@@ -340,6 +340,93 @@ async def test_spawn_serve_writes_log_when_env_set(monkeypatch, tmp_path):
         "env 指定时 stderr 应合并到 stdout(STDOUT 常量)"
 
 
+# ── F2 Round 2 fix:_spawn_stop 自身 wait_for + kill 兜底回归 ────────────────
+# 根因:原 _spawn_stop 裸 proc.wait() 完全依赖调用方 _release_lifecycle_bounded
+# 的 30s wait_for 兜底。若未来有路径直接 await manager.release(...) 不经 bounded
+# helper,会静默无限阻塞。修复:_spawn_stop 自身加 _STOP_TIMEOUT_S(60s)wait_for
+# + TimeoutError 路径 kill 兜底,defense-in-depth。
+
+@pytest.mark.asyncio
+async def test_spawn_stop_self_bounded_on_hang(monkeypatch):
+    """F2 Round 2 fence:_spawn_stop 在 factory_v3 stop 子进程卡死时,
+    必须经 _STOP_TIMEOUT_S 超时 → 调 kill 兜底 → 不静默无限阻塞。"""
+    import framework.runtime.lifecycle as lc_mod
+
+    # 把 _STOP_TIMEOUT_S 改小以加速测试(原值 60s)
+    monkeypatch.setattr(lc_mod, "_STOP_TIMEOUT_S", 0.1)
+
+    kill_called = {"n": 0}
+
+    class _HangingStopProc:
+        """wait() 永远不返回(模拟 factory_v3 stop 子进程卡死)。"""
+        returncode = None
+
+        async def wait(self):
+            # 第一次 wait():无限挂起,直到被 wait_for cancel
+            # 但因为 wait_for 是 wrap 这个 coroutine,cancel 后 raise CancelledError
+            await asyncio.sleep(9999)
+
+        def kill(self):
+            kill_called["n"] += 1
+            # kill 之后让 returncode 不再 None,下一次 wait() 立刻返回
+            self.returncode = -9
+
+    # 第二次 wait()(kill 之后)立刻返回 — 模拟 kill 兜底成功
+    hanging_proc = _HangingStopProc()
+
+    async def _wait_after_kill():
+        return  # 立刻返回
+
+    # 把 hanging_proc.wait() 替换:第一次 sleep 永久;kill 后第二次立即返回
+    original_wait = hanging_proc.wait
+    call_count = {"n": 0}
+
+    async def _wait():
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            await asyncio.sleep(9999)  # 触发 wait_for timeout
+        # kill 后第二次 wait() 立即返回
+        return
+
+    hanging_proc.wait = _wait
+
+    async def _create_hanging_stop(*args, **kwargs):
+        return hanging_proc
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create_hanging_stop)
+
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    # 应在 _STOP_TIMEOUT_S(0.1s)+ kill 后第二次 wait 内完成,不卡死
+    await asyncio.wait_for(mgr._spawn_stop(), timeout=2.0)
+
+    assert kill_called["n"] == 1, (
+        f"_spawn_stop 应在 _STOP_TIMEOUT_S 超时后调 kill 兜底,实测 kill 调用 {kill_called['n']} 次"
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_stop_happy_path_no_kill(monkeypatch):
+    """F2 fence pair:_spawn_stop happy path(factory_v3 stop 正常完成)不应调 kill。"""
+    kill_called = {"n": 0}
+
+    class _NormalStopProc:
+        returncode = 0
+        async def wait(self):
+            return  # 立即返回
+        def kill(self):
+            kill_called["n"] += 1
+
+    async def _create(*args, **kwargs):
+        return _NormalStopProc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    await mgr._spawn_stop()
+
+    assert kill_called["n"] == 0, "_spawn_stop happy path 不应触发 kill 兜底"
+
+
 @pytest.mark.asyncio
 async def test_spawn_serve_uses_devnull_when_env_unset(monkeypatch):
     """FORGEUE_COMFY_LIFECYCLE_LOG env 未设时,维持 DEVNULL 默认行为(后向兼容)。"""

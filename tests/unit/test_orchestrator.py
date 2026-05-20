@@ -504,3 +504,163 @@ async def test_ensure_failure_still_releases_lifecycle(monkeypatch, tmp_path):
     # ensure_release + arun_error 在 _RELEASE_STOPS 决策集合中,
     # _framework_started=True → _spawn_stop 必须被调用(进程不泄漏)
     assert stop_called, "_spawn_stop 未被调用 — ensure() 失败后 finally 未 release(进程泄漏)"
+
+
+# ── F1 Round 2 fix:run_span_ctx 全路径 finally close 回归 ──────────────────
+# 根因:原 arun 实现把 run_span_ctx.__exit__ 放在三处分散点(DAG first_exc / 正常
+# 退出 L556),CancelledError / 未分类异常路径 finally 块只 release lifecycle 不
+# close span,OTel 部署下漏 span。修复:把 __exit__ 统一进 finally,用 sys.exc_info()
+# 拿 active exception 传给 tracer。
+
+@pytest.mark.asyncio
+async def test_run_span_closed_on_cancelled_error(monkeypatch, tmp_path):
+    """F1 Round 2 fence:arun 被外部 cancel 时,run_span_ctx 必须仍被 __exit__。
+
+    monkeypatch span() 工厂返回一个 spy context manager,记录 __enter__/__exit__ 调用。
+    arun 在 ensure() 后 cancel,需观察到 1 次 __enter__ + 1 次 __exit__(exc 类型为 CancelledError)。
+    """
+    enter_calls: list[dict] = []
+    exit_calls: list[dict] = []
+
+    class _SpySpan:
+        def __init__(self, label, attrs):
+            self.label = label
+            self.attrs = attrs
+
+        def __enter__(self):
+            enter_calls.append({"label": self.label, "attrs": self.attrs})
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            exit_calls.append({
+                "label": self.label,
+                "exc_type": exc_type.__name__ if exc_type else None,
+            })
+            return False  # 不吞异常
+
+    def _fake_span(label, attrs):
+        return _SpySpan(label, attrs)
+
+    monkeypatch.setattr(orchestrator_mod, "span", _fake_span)
+
+    # 构造在 ensure() 内部 cancel 的 executor — 让 arun 走 CancelledError 路径
+    class _CancelOnEnsureExecutor(StepExecutor):
+        step_type = StepType.generate
+        capability_ref = "mock.comfy"
+        async def execute(self, ctx):
+            # 不该走到这里(应在 ensure 阶段被 cancel)
+            raise AssertionError("executor 不应被调用")
+
+    executor = _CancelOnEnsureExecutor()
+
+    async def _ensure_then_cancel(self, mode):
+        # 进入 ensure 时直接抛 CancelledError 模拟外部 cancel
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(ComfyLifecycleManager, "ensure", _ensure_then_cancel)
+    monkeypatch.setattr(ComfyLifecycleManager, "release", AsyncMock())
+
+    orch, _, _ = _build_orch_with_executor(executor, tmp_path)
+    task, workflow, steps = _make_comfy_task_workflow_steps(mode="ensure_running")
+
+    with pytest.raises(asyncio.CancelledError):
+        await orch.arun(
+            task=task, workflow=workflow, steps=steps,
+            run_id="r_cancel_span", skip_dry_run=True,
+        )
+
+    # 必须 enter 1 次 run span + exit 1 次 run span
+    run_enters = [c for c in enter_calls if c["label"] == "run"]
+    run_exits = [c for c in exit_calls if c["label"] == "run"]
+    assert len(run_enters) == 1, f"run span __enter__ 应恰好 1 次,实测 {len(run_enters)}"
+    assert len(run_exits) == 1, f"run span __exit__ 应恰好 1 次(CancelledError 路径漏关),实测 {len(run_exits)}"
+    assert run_exits[0]["exc_type"] == "CancelledError", (
+        f"__exit__ 应感知 active CancelledError,实测 {run_exits[0]['exc_type']!r}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_span_closed_on_normal_exit(monkeypatch, tmp_path):
+    """F1 Round 2 fence:正常退出路径下,run_span_ctx 仍恰好 __exit__ 一次(防止 finally 与原 L556 重复 close)。"""
+    enter_calls: list = []
+    exit_calls: list = []
+
+    class _SpySpan:
+        def __init__(self, label, attrs):
+            self.label = label
+        def __enter__(self):
+            enter_calls.append(self.label)
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            exit_calls.append({"label": self.label, "exc_type": exc_type})
+            return False
+
+    monkeypatch.setattr(orchestrator_mod, "span", lambda label, attrs: _SpySpan(label, attrs))
+
+    executor = _LifecycleRecordingExecutor(seen=[])
+    orch, _, _ = _build_orch_with_executor(executor, tmp_path)
+    task, workflow, steps = _make_comfy_task_workflow_steps(mode="none")
+
+    # ensure() 在 mode=none 路径下直接 return,无 lifecycle 干预;arun 走正常退出
+    result = await orch.arun(
+        task=task, workflow=workflow, steps=steps,
+        run_id="r_normal_span", skip_dry_run=True,
+    )
+    assert result.run.status == RunStatus.succeeded
+
+    run_exits = [c for c in exit_calls if c["label"] == "run"]
+    assert len(run_exits) == 1, f"正常路径 run span __exit__ 应恰好 1 次,实测 {len(run_exits)}"
+    assert run_exits[0]["exc_type"] is None, "正常退出 __exit__ exc_type 应为 None"
+
+
+# ── F4 Round 2 fix:_detect_comfy_lifecycle 与 executor 读取 path 一致性 contract ──
+
+def test_detect_lifecycle_matches_executor_read_path(tmp_path):
+    """F4 contract fence:orchestrator._detect_comfy_lifecycle 与 executor
+    内部读取 step.config['spec']['comfy_lifecycle'] 必须从同一字段读到同值。
+
+    防止未来 bundle format drift 导致两端读到不同 mode(orch 构建 manager 但
+    executor 读不到 lifecycle,或反之)。
+    """
+    # 构造一个 mock step,模拟 bundle JSON 形态
+    step = Step(
+        step_id="s_contract",
+        type=StepType.generate,
+        name="comfy-contract-fence",
+        risk_level=RiskLevel.medium,
+        capability_ref="image.generation",
+        provider_policy=ProviderPolicy(
+            capability_required="image.generation",
+            prepared_routes=[PreparedRoute(
+                model="comfy/local", api_key_env=None, api_base=None,
+                kind="image", pricing=None,
+            )],
+        ),
+        config={
+            "num_candidates": 1,
+            "spec": {
+                "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+                "comfy_lifecycle": "ensure_running",
+            },
+        },
+    )
+
+    orch = _make_orchestrator(tmp_path)
+    # orchestrator 侧读取
+    orch_mode = orch._detect_comfy_lifecycle([step])
+
+    # executor 侧读取路径(直接复刻 generate_image.py:298 + generate_mesh / audio / video 的逻辑)
+    spec_raw = (step.config or {}).get("spec", {})
+    spec = spec_raw if isinstance(spec_raw, dict) else {}
+    executor_mode = spec.get("comfy_lifecycle") if isinstance(spec, dict) else None
+
+    assert orch_mode == "ensure_running", (
+        f"_detect_comfy_lifecycle 应读到 ensure_running,实测 {orch_mode!r}"
+    )
+    assert executor_mode == "ensure_running", (
+        f"executor 侧 spec.get('comfy_lifecycle') 应读到 ensure_running,实测 {executor_mode!r}"
+    )
+    assert orch_mode == executor_mode, (
+        f"contract violation:orchestrator vs executor 读到不同值 "
+        f"(orch={orch_mode!r}, executor={executor_mode!r})"
+    )

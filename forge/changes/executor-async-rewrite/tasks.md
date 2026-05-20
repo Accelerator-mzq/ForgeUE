@@ -832,6 +832,26 @@ git commit -m "docs(tbd-010): SRS/HLD/LLD 同步 + executor-async-rewrite L2 liv
 
 **实证**:`async_lc_auto_smoke3` cold-start path succeeded(1185 passed,PNG 与既起动 path deterministic 一致 192985 bytes,factory_v3 自动起 66s)。
 
+- [x] **Step 5(Round 1 code-review fix)**:fresh code-reviewer subagent 4 Important + 3 Minor + 1 Suggestion(共 8 findings)→ 主代理逐条独立 verify + 4 accept / 4 reject
+
+**Accept 4 件(本 change scope 内修复 + Round 2 fence)**:
+- **F1**(`src/framework/runtime/orchestrator.py`):arun finally 加 span exit via `sys.exc_info()`,统一 4 出口(正常 / DAG first_exc / CancelledError / 未分类异常);删原 L506-508 + L556 两处分散显式 `__exit__`(OTel 漏 span 修复)
+- **F2**(`src/framework/runtime/lifecycle.py`):`_STOP_TIMEOUT_S = 60.0` 新增 module 常量;`_spawn_stop` 自身 `wait_for + kill` 兜底(defense-in-depth,不依赖调用方 bounded helper)
+- **F4**:加 contract fence `test_detect_lifecycle_matches_executor_read_path`(`tests/unit/test_orchestrator.py`)防 bundle format drift
+- **F7**(`src/framework/runtime/lifecycle.py`):`status()` 加 module-level `_logger` + `asyncio.TimeoutError` / `Exception` 分支 debug log;运维诊断 valuable
+
+**Reject 4 件 → 写入 `design.md ## Future Work`(archive 后自动反映 backlog active.md)**:
+- F3 `fake-comfy-worker-mesh-audio-video-stub`(test fixture API gap,无即时风险)
+- F5 `fake-comfy-worker-agenerate-yield-point`(单测多 monkeypatch _run_once_*_async,影响低)
+- F6 `wait-ready-monotonic-time`(_READY_TIMEOUT_S 30% 余量,实际无 impact)
+- F8 `multi-mode-comfy-dag-warning`(当前 bundle 单 comfy step)
+
+**5 new fences**(全 PASS):
+- `tests/unit/test_orchestrator.py`:`test_run_span_closed_on_cancelled_error` / `test_run_span_closed_on_normal_exit` / `test_detect_lifecycle_matches_executor_read_path`
+- `tests/unit/test_comfy_lifecycle.py`:`test_spawn_stop_self_bounded_on_hang` / `test_spawn_stop_happy_path_no_kill`
+
+全量回归:**1190 passed / 0 failed / 3 skipped**(prev 1185 + 5 new Round 2 fence)。
+
 
 ## Documentation Sync
 

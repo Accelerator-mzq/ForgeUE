@@ -503,9 +503,8 @@ class Orchestrator:
                     done.add(sid)
 
                 if first_exc is not None:
-                    run_span_ctx.__exit__(
-                        type(first_exc), first_exc, first_exc.__traceback__,
-                    )
+                    # F1 Round 2 fix:span exit 已统一移至 finally(沿 sys.exc_info());
+                    # 此处直接 raise,让 finally 路径关闭 span。
                     raise first_exc
 
                 if cascade_terminate:
@@ -545,6 +544,16 @@ class Orchestrator:
                 )
             # ──────────────────────────────────────────────────────────────
 
+            # ── 全路径 span close(F1 Round 2 fix:OTel span 不漏)─────────
+            # sys.exc_info() 在 finally 内拿当前 active exception(re-raise 中);
+            # 正常退出为 (None, None, None)。覆盖三条出口:正常 / CancelledError /
+            # 未分类异常 / DAG first_exc。原 L506-508 + L556 两处显式 __exit__ 已删,
+            # 由本统一出口替代。
+            import sys as _sys
+            exc_type, exc_val, exc_tb = _sys.exc_info()
+            run_span_ctx.__exit__(exc_type, exc_val, exc_tb)
+            # ──────────────────────────────────────────────────────────────
+
         run.ended_at = datetime.now(timezone.utc)
         if run.status == RunStatus.running:
             run.status = RunStatus.succeeded
@@ -553,7 +562,6 @@ class Orchestrator:
             run.metrics["budget_spent_usd"] = round(
                 budget_tracker.spend.total_usd, 6
             )
-        run_span_ctx.__exit__(None, None, None)
         return result
 
     # ---- single-step executor core --------------------------------------
