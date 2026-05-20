@@ -7,6 +7,8 @@ ComfyLifecycleManager 通过 asyncio.Lock 串行化 ensure/release 状态机,
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import sys
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -96,7 +98,14 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
     async def status(self) -> bool:
         """通过 `python -m comfyui_api status` 探测 ComfyUI 是否运行。
 
-        成功(返回码 0)→ True;任何异常、非零返回码或超时 → False。
+        关键:`comfyui_api status` 即使 ComfyUI off 时也 **exit 0** + 输出 JSON
+        `{"ok": true, "online": false}`(自身报告 status 成功,而非 ComfyUI 状态),
+        因此**必须** parse stdout JSON 看 `"online"` 字段,不能仅依赖 returncode
+        (2026-05-20 Fluid Pause #2 根因修复;Task 8 round 1 reviewer 漏抓)。
+
+        返回:
+            True:returncode == 0 且 JSON 含 `online: true`
+            False:任何其他情况(returncode != 0 / 非 JSON / online: false / 异常 / 超时)
 
         超时保护:communicate() 超过 _STATUS_TIMEOUT_S 秒时取消并 kill 子进程,
         避免挂起导致调用方(ensure/_wait_ready)持锁无限阻塞。
@@ -110,8 +119,18 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
                 stderr=asyncio.subprocess.PIPE,
             )
             # 使用 wait_for 防止 status 子命令挂起无限阻塞
-            await asyncio.wait_for(proc.communicate(), timeout=_STATUS_TIMEOUT_S)
-            return proc.returncode == 0
+            stdout_bytes, _ = await asyncio.wait_for(
+                proc.communicate(), timeout=_STATUS_TIMEOUT_S
+            )
+            if proc.returncode != 0:
+                return False
+            # comfyui_api status exit 0 不代表 ComfyUI online —— 必须 parse JSON
+            try:
+                data = json.loads(stdout_bytes.decode("utf-8", errors="replace"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                # 非 JSON / 解码失败 → 保守认为 off
+                return False
+            return bool(data.get("online"))
         except Exception:
             return False
         finally:
@@ -186,17 +205,39 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         """通过 `python -m factory_v3 serve` 以 detached 方式启动 ComfyUI。
 
         fire-and-forget:不等待服务就绪,由 _wait_ready 轮询确认。
+
+        Fluid Pause #2(2026-05-20 apply 阶段):若 FORGEUE_COMFY_LIFECYCLE_LOG
+        env 指定,把 stdout/stderr 重定向到该文件用于诊断 factory_v3 serve 冷
+        启动失败;否则维持 DEVNULL(默认 detached 行为不变,完全后向兼容)。
         """
-        # detached 启动:不等待返回,stdout/stderr 丢弃以防缓冲区阻塞
-        # _proc 命名明确表示这是"有意 detached"的子进程引用,不 await 其完成。
+        # detached 启动:默认 stdout/stderr 丢 DEVNULL 防缓冲区阻塞。
+        # FORGEUE_COMFY_LIFECYCLE_LOG 指定时改为重定向到文件,便于实机诊断。
+        # _proc 命名明确表示"有意 detached"的子进程引用,不 await 其完成。
         # GC 时可能产生 ResourceWarning,属预期行为(无实际泄漏);实际进程由
         # factory_v3 serve 在后台独立运行,由 _spawn_stop 负责关闭。
-        _proc = await asyncio.create_subprocess_exec(
-            self._python, "-m", "factory_v3", "serve",
-            cwd=str(self._scripts_dir),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
+        log_path_str = os.environ.get("FORGEUE_COMFY_LIFECYCLE_LOG")
+        log_file = None
+        stdout_target = asyncio.subprocess.DEVNULL
+        stderr_target = asyncio.subprocess.DEVNULL
+        if log_path_str:
+            log_path = Path(log_path_str)
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            # 'ab':追加 + 二进制(subprocess fd 输出无文本转换);parent 关 fd
+            # 后子进程继承的 fd 仍有效,继续写入到 factory_v3 serve 终止
+            log_file = open(log_path, "ab")
+            stdout_target = log_file
+            stderr_target = asyncio.subprocess.STDOUT  # 合并到 stdout 同一文件
+        try:
+            _proc = await asyncio.create_subprocess_exec(
+                self._python, "-m", "factory_v3", "serve",
+                cwd=str(self._scripts_dir),
+                stdout=stdout_target,
+                stderr=stderr_target,
+            )
+        finally:
+            # parent 可以关闭 file(subprocess 已继承 fd,父子独立)
+            if log_file is not None:
+                log_file.close()
         # 不 await _proc.wait():detached 模式,调用方只投递启动命令即返回
         del _proc  # 显式释放引用,避免 GC ResourceWarning 在单测日志中噪染
 

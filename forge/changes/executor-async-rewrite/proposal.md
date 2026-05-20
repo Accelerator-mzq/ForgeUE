@@ -41,6 +41,19 @@ SRS §7.3 TBD-010 记录了这个 follow-on。本 change 关闭 TBD-010。
   「submit→poll」段包 `_comfy_submit_lock`(按运行 event loop 取锁,同时只 1 个
   comfy prompt 在飞);cancel 时先 `comfyui_api cancel`(`POST /interrupt`,锁内 →
   中断的必是本 prompt)停 ComfyUI 服务端 GPU job,再 terminate CLI 子进程。
+- **NEW(apply 阶段 Fluid Pause #1 扩 scope)** `DryRunPass.run` 转 `async def`
+  —— comfy dry-run probe(`ComfyAgentWorker.probe_sync` 的 `subprocess.run`)随 4 个
+  capability 方法一并转 `asyncio.create_subprocess_exec`:新增 `aprobe` async probe
+  主面,`probe_sync` 降为 `asyncio.run(aprobe(...))` sync shim;`_check_comfy_reachability`
+  转 async;`Orchestrator.arun` 内 `dry_run.run(...)` 调用改 `await`。原 design §2.3
+  记 probe 转 `create_subprocess_exec` 但漏了「`DryRunPass.run` 是 sync 无法 await」
+  约束,本次扩 scope 补全 `DryRunPass` async 化。
+- **NEW(apply 阶段 Fluid Pause #2 根因修复)** `ComfyLifecycleManager.status()` 改
+  parse stdout JSON 看 `online` 字段 — Task 8 round 1 reviewer 漏抓:`comfyui_api status`
+  即使 ComfyUI off 也 exit 0 + `{"online": false}`,旧 `return proc.returncode == 0`
+  误判 online → `ensure()` 跳过 `_spawn_serve` → 自动拉起 path 全 step worker_error。
+  附 6 fence + `_spawn_serve` 加 `FORGEUE_COMFY_LIFECYCLE_LOG` env-conditional log capture
+  作为观测性加固(后向兼容 DEVNULL 默认)。
 - **NEW** `ExternalProcessLifecycle` 抽象基类(`ensure` / `release(mode, reason)` /
   `status`)+ 唯一具体实现 `ComfyLifecycleManager`(`ensure`/`release` 用
   `asyncio.Lock` 并发单飞;冷启动 spawn 成功即确立 ownership),支持 `comfy_lifecycle`
@@ -91,7 +104,9 @@ SRS §7.3 TBD-010 记录了这个 follow-on。本 change 关闭 TBD-010。
   - `src/framework/runtime/orchestrator.py`(`await` executor + cascade-cancel +
     `ComfyLifecycleManager` 所有权)
   - `src/framework/providers/workers/comfy_worker.py`(async-subprocess +
-    `agenerate*` + lifecycle gate 解锁)
+    `agenerate*` + lifecycle gate 解锁 + `aprobe` async probe)
+  - `src/framework/runtime/dry_run_pass.py`(Fluid Pause #1:`DryRunPass.run` /
+    `_check_comfy_reachability` 转 async,comfy probe 走 `aprobe`)
 - **Affected files (create)**:
   - `src/framework/runtime/lifecycle.py`(`ExternalProcessLifecycle` ABC +
     `ComfyLifecycleManager`)

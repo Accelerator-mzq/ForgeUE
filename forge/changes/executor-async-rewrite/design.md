@@ -156,6 +156,16 @@ shim 给 probe 兼容(D7,照搬 `mesh_worker.py:510-519` 模式)。`FakeComfyWor
 `proc.kill()` 只用于 `comfyui_api run` CLI 子进程(它只跟服务端 HTTP 通信,无需
 关心的孙进程)。
 
+**dry-run probe 与 DryRunPass async 化**(apply 阶段 Fluid Pause #1 扩 scope):
+原设计写「dry-run probe 也转 `create_subprocess_exec`」,但漏了 probe 的调用方
+`DryRunPass.run` 是 sync 方法(`probe_sync` docstring 既有 codex P2 fix 约束:
+sync 上下文无法 await)。apply 阶段 user 选择扩本 change scope 补全:`DryRunPass.run`
+转 `async def`、`_check_comfy_reachability` 转 async 并 `await ComfyAgentWorker.aprobe`
+(`aprobe` 为新增 async probe 主面,`probe_sync` 降为 `asyncio.run(aprobe(...))`
+sync shim);`Orchestrator.arun` 内 `dry_run.run(...)` 调用改 `await`。其余 DryRunPass
+检查(workflow 结构 / budget cap / secrets)保持 sync —— `async def run` 内同步
+代码合法,只有 comfy probe 一段需要 `await`。
+
 ### 2.4 ComfyUI lifecycle:`ExternalProcessLifecycle` + `ComfyLifecycleManager`
 
 新模块 `src/framework/runtime/lifecycle.py`。**A+seam**(D5):抽象接口先留好,

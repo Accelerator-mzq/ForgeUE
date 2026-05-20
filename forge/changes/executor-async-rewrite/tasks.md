@@ -16,13 +16,13 @@
 
 ### Task 1: orchestrator 临时 async bridge
 
-- [ ] task-1: orchestrator 加 iscoroutinefunction bridge — async executor 走 await,sync executor 仍走 to_thread,ABC 不变全测试绿
+- [x] task-1: orchestrator 加 iscoroutinefunction bridge — async executor 走 await,sync executor 仍走 to_thread,ABC 不变全测试绿
 
 **Files:**
 
 - Modify: `src/framework/runtime/orchestrator.py:511`
 
-- [ ] **Step 1: 改 orchestrator 执行点为 bridge**
+- [x] **Step 1: 改 orchestrator 执行点为 bridge**
 
 `orchestrator.py:511` 把 `exec_result = await asyncio.to_thread(executor.execute, ctx)` 改为:
 ```python
@@ -35,12 +35,12 @@ else:
 ```
 文件顶部确保 `import inspect`。
 
-- [ ] **Step 2: 跑全量测试**
+- [x] **Step 2: 跑全量测试**
 
 Run: `python -m pytest -q`
 Expected: PASS,0 failed(所有 executor 仍 sync,全走 to_thread 分支,行为不变)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add src/framework/runtime/orchestrator.py
@@ -49,30 +49,30 @@ git commit -m "refactor(runtime): orchestrator 加迁移期 async executor bridg
 
 ### Task 2: 转无 worker 的 executor 为 async
 
-- [ ] task-2: 转 generate_structured / review / select / validate / export / mock_executors 为 async def
+- [x] task-2: 转 generate_structured / review / select / validate / export / mock_executors 为 async def
 
 **Files:**
 
 - Modify: `generate_structured.py:73` / `review.py:50` / `select.py:35` / `validate.py:33` / `export.py:57` / `mock_executors.py:30,60,101`
 - Modify: 对应单测
 
-- [ ] **Step 1: 转 executor**
+- [x] **Step 1: 转 executor**
 
 每文件 `def execute` → `async def execute`。
 - `generate_structured` / `review`:函数体内 `self._router.structured(...)` 等改 `await self._router.astructured_with_usage(...)`(按实际方法对应 async 名)。
 - `select` / `validate` / `export` / `mock_executors`:仅签名改 `async def`,体不变(无 `await` 的 `async def` 合法);`export` 重文件拷贝可局部 `await asyncio.to_thread(...)`。
 bridge(Task 1)让转完的走 `await` 分支。
 
-- [ ] **Step 2: 转对应单测**
+- [x] **Step 2: 转对应单测**
 
 直接调这些 executor `.execute(ctx)` 的测试加 `@pytest.mark.asyncio` + `await`;`pytest` 未配 `asyncio_mode` 则在 `pyproject.toml` / `pytest.ini` 加 `asyncio_mode = auto`。
 
-- [ ] **Step 3: 跑测试**
+- [x] **Step 3: 跑测试**
 
 Run: `python -m pytest -q`
 Expected: PASS,0 failed
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/framework/runtime/executors/ tests/ pyproject.toml
@@ -81,14 +81,14 @@ git commit -m "refactor(runtime): 转 6 个无 worker executor 为 async"
 
 ### Task 3: ComfyAgentWorker async-subprocess + comfy-submission 串行锁
 
-- [ ] task-3: ComfyAgentWorker subprocess.run → create_subprocess_exec + agenerate* 主面 + sync shim + 进程级 comfy-submission 串行锁 + FakeComfyWorker async
+- [x] task-3: ComfyAgentWorker subprocess.run → create_subprocess_exec + agenerate* 主面 + sync shim + 进程级 comfy-submission 串行锁 + FakeComfyWorker async + probe/DryRunPass async(Fluid Pause #1 扩 scope)
 
 **Files:**
 
 - Modify: `src/framework/providers/workers/comfy_worker.py`(`ComfyWorker` ABC :108 / `FakeComfyWorker` :161 / `ComfyAgentWorker` 4 capability 方法 + 4 `_run_once*` helper :498/:800/:1014/:1263 + dry-run probe :1446)
 - Test: `tests/unit/test_comfy_subprocess.py`
 
-- [ ] **Step 1: 写 failing test**
+- [x] **Step 1: 写 failing test**
 
 ```python
 @pytest.mark.asyncio
@@ -128,12 +128,12 @@ def test_comfy_generate_sync_shim_still_works():
     assert isinstance(worker.generate(spec=..., num_candidates=1, seed=1, timeout_s=30), list)
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m pytest tests/unit/test_comfy_subprocess.py -k "create_subprocess_exec or submit_lock" -v`
 Expected: FAIL with `AttributeError: agenerate`
 
-- [ ] **Step 3: 实现 async-subprocess + 串行锁**
+- [x] **Step 3: 实现 async-subprocess + 串行锁**
 
 模块级(`comfy_worker.py` 顶部)加**按运行 loop 取锁**的 helper(不能用模块级单
 `asyncio.Lock` —— 它经 `_LoopBoundMixin` 绑定首个 loop,跨 loop 复用会 raise
@@ -176,28 +176,39 @@ async with _comfy_submit_lock():
 ```
 4 个 capability 方法转 async 主面 `agenerate` / `agenerate_mesh` / `agenerate_audio` / `agenerate_video`;同名 sync 方法保留为 `asyncio.run(self.agenerate*(...))` shim。`ComfyWorker` ABC + `FakeComfyWorker` 同步加 `agenerate*`。模块顶部加 `_SUBPROC_BUFFER_S` / `_PROC_GRACE_S` 常量。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量**
+- [x] **Step 4: 跑测试确认通过 + 全量**
 
 Run: `python -m pytest tests/unit/test_comfy_subprocess.py -v && python -m pytest -q`
 Expected: PASS(此刻 comfy executor 仍 sync,经 `worker.generate` sync shim 调用,正常)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/framework/providers/workers/comfy_worker.py tests/unit/test_comfy_subprocess.py
 git commit -m "refactor(comfy): ComfyAgentWorker async-subprocess + agenerate* + comfy-submission 串行锁"
 ```
 
+- [x] **Step 6: probe async 化 + DryRunPass async 化(apply 阶段 Fluid Pause #1 扩 scope)**
+
+user 在 apply 阶段 Fluid Pause #1 选择扩本 change scope。原 Step 3 把 dry-run probe 留作 sync `subprocess.run`(因 `DryRunPass.run` 是 sync),本 Step 补全:
+
+- `comfy_worker.py`:`probe_sync` 转 `aprobe` async 主面(`create_subprocess_exec` 跑 `comfyui_api status`),`probe_sync` 降为 `asyncio.run(aprobe(...))` sync shim。
+- `dry_run_pass.py`:`DryRunPass.run` → `async def run`;`_check_comfy_reachability` → `async def` 且 `await ComfyAgentWorker.aprobe(...)`;其余检查(workflow / budget / secrets)保持 sync。
+- `orchestrator.py`:`arun` 内 `dr_report = self.dry_run.run(...)` 改 `await self.dry_run.run(...)`。
+- 对应单测(`test_dry_run*` / probe 相关)转 `@pytest.mark.asyncio` + `await`。
+
+TDD:先转测试为 async(RED)→ 转实现(GREEN)。Run `python -m pytest -q` 全绿。Commit:`feat(comfy): probe + DryRunPass async 化(Fluid Pause #1 扩 scope)`。
+
 ### Task 4: ComfyAgentWorker cancel — terminate + server-side /interrupt
 
-- [ ] task-4: cancel 时先 comfyui_api cancel(POST /interrupt 停服务端 GPU job)再 terminate CLI 子进程
+- [x] task-4: cancel 时先 comfyui_api cancel(POST /interrupt 停服务端 GPU job)再 terminate CLI 子进程
 
 **Files:**
 
 - Modify: `src/framework/providers/workers/comfy_worker.py`
 - Test: `tests/unit/test_comfy_subprocess.py`
 
-- [ ] **Step 1: 写 failing test**
+- [x] **Step 1: 写 failing test**
 
 ```python
 @pytest.mark.asyncio
@@ -216,12 +227,12 @@ async def test_comfy_cancel_aborts_server_side_prompt(monkeypatch):
     assert aborted["n"] == 1 and proc.returncode is not None
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m pytest tests/unit/test_comfy_subprocess.py::test_comfy_cancel_aborts_server_side_prompt -v`
 Expected: FAIL
 
-- [ ] **Step 3: 实现 `_abort_comfy_prompt` + 接进 finally**
+- [x] **Step 3: 实现 `_abort_comfy_prompt` + 接进 finally**
 
 ```python
 async def _abort_comfy_prompt(self) -> None:
@@ -241,12 +252,12 @@ async def _abort_comfy_prompt(self) -> None:
 ```
 Task 3 的 `finally` 块在 `proc.terminate()` **之前**加 `await self._abort_comfy_prompt()`。暴露 `self._last_proc` 测试钩子。模块顶部加 `_ABORT_TIMEOUT_S`。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量**
+- [x] **Step 4: 跑测试确认通过 + 全量**
 
 Run: `python -m pytest tests/unit/test_comfy_subprocess.py -v && python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/framework/providers/workers/comfy_worker.py tests/unit/test_comfy_subprocess.py
@@ -255,27 +266,27 @@ git commit -m "feat(comfy): cancel 时 POST /interrupt 停服务端 prompt + ter
 
 ### Task 5: 转 worker-backed executor 为 async
 
-- [ ] task-5: 转 generate_image / image_edit / mesh / audio / video 为 async,直接 await worker.agenerate* + 删 generate_image asyncio.run shim
+- [x] task-5: 转 generate_image / image_edit / mesh / audio / video 为 async,直接 await worker.agenerate* + 删 generate_image asyncio.run shim
 
 **Files:**
 
 - Modify: `generate_image.py:68` / `generate_image_edit.py:48` / `generate_mesh.py:176` / `generate_audio.py:82` / `generate_video.py:86`
 - Modify: 对应单测
 
-- [ ] **Step 1: 转 executor**
+- [x] **Step 1: 转 executor**
 
 `def execute` → `async def execute`。worker 调用直接 `await worker.agenerate*`(Task 3 已提供,**无 `to_thread(worker.generate)` 占位**);router 调用 `await router.aimage_generation` 等。`generate_image._generate_via_router` 的 `asyncio.run(_fan_out())` shim 删除 —— `_fan_out` 改 `async def`,`per_call = await _fan_out()`;`_generate_via_worker` 改 `async def` + `await worker.agenerate(...)`。`generate_image_edit` / `mesh` / `audio` / `video` 同理。远端 mesh worker 已有 `agenerate`,直接 `await`。
 
-- [ ] **Step 2: 转对应单测**
+- [x] **Step 2: 转对应单测**
 
 同 Task 2 Step 2。
 
-- [ ] **Step 3: 跑测试**
+- [x] **Step 3: 跑测试**
 
 Run: `python -m pytest -q`
 Expected: PASS,0 failed
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/framework/runtime/executors/ tests/
@@ -284,14 +295,14 @@ git commit -m "refactor(runtime): 转 5 个 worker-backed executor 为 async(直
 
 ### Task 6: 硬切 StepExecutor.execute ABC + 删 bridge
 
-- [ ] task-6: StepExecutor.execute ABC 改 async def + StepContext 加 lifecycle 字段 + 删 orchestrator bridge
+- [x] task-6: StepExecutor.execute ABC 改 async def + StepContext 加 lifecycle 字段 + 删 orchestrator bridge
 
 **Files:**
 
 - Modify: `src/framework/runtime/executors/base.py:60`(ABC)+ `StepContext`
 - Modify: `src/framework/runtime/orchestrator.py`(删 bridge)
 
-- [ ] **Step 1: 硬切 ABC + 加 StepContext 字段**
+- [x] **Step 1: 硬切 ABC + 加 StepContext 字段**
 
 `base.py`:
 ```python
@@ -303,16 +314,16 @@ git commit -m "refactor(runtime): 转 5 个 worker-backed executor 为 async(直
 ```
 `lifecycle` 用字符串前向引用(Task 8 才建 `lifecycle.py`);文件首行已有 `from __future__ import annotations`。
 
-- [ ] **Step 2: 删 orchestrator bridge**
+- [x] **Step 2: 删 orchestrator bridge**
 
 `orchestrator.py` 把 Task 1 的 `if iscoroutinefunction(...)` 分支改回 `exec_result = await executor.execute(ctx)`;`inspect` 不再用则删 import。更新 :323-328 附近注释(删「sync executors in to_thread can't be interrupted」表述)。
 
-- [ ] **Step 3: 跑全量测试**
+- [x] **Step 3: 跑全量测试**
 
 Run: `python -m pytest -q`
 Expected: PASS,0 failed(11 executor 全 async,worker 全 async 面,bridge 已删,无遗留 `to_thread(worker.*)`)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/framework/runtime/executors/base.py src/framework/runtime/orchestrator.py
@@ -321,14 +332,14 @@ git commit -m "refactor(runtime): StepExecutor.execute 硬切 async ABC,删迁�
 
 ### Task 7: cascade-cancel 真停 + drain 显式失败
 
-- [ ] task-7: cascade 分支 cancel 后 await sibling,drain 超时显式失败不静默丢弃
+- [x] task-7: cascade 分支 cancel 后 await sibling,drain 超时显式失败不静默丢弃
 
 **Files:**
 
 - Modify: `src/framework/runtime/orchestrator.py:322-332`
 - Test: `tests/unit/test_cascade_cancel.py`
 
-- [ ] **Step 1: 写 failing test**
+- [x] **Step 1: 写 failing test**
 
 ```python
 @pytest.mark.asyncio
@@ -361,12 +372,12 @@ async def test_cascade_drain_timeout_is_explicit_failure():
     assert run.status == RunStatus.failed
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m pytest tests/unit/test_cascade_cancel.py -k "actually_stops or drain_timeout" -v`
 Expected: FAIL
 
-- [ ] **Step 3: 改 orchestrator cascade 分支**
+- [x] **Step 3: 改 orchestrator cascade 分支**
 
 `orchestrator.py:322-332`:
 ```python
@@ -391,12 +402,12 @@ Expected: FAIL
 ```
 模块顶部加 `_CASCADE_DRAIN_TIMEOUT_S = 30.0`。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量**
+- [x] **Step 4: 跑测试确认通过 + 全量**
 
 Run: `python -m pytest tests/unit/test_cascade_cancel.py -v && python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/framework/runtime/orchestrator.py tests/unit/test_cascade_cancel.py
@@ -407,14 +418,14 @@ git commit -m "feat(runtime): cascade-cancel 真停 + drain 超时显式失败"
 
 ### Task 8: `lifecycle.py` — ExternalProcessLifecycle + ComfyLifecycleManager
 
-- [ ] task-8: 新建 lifecycle.py — ExternalProcessLifecycle ABC(release(mode,reason))+ ComfyLifecycleManager 三模式,asyncio.Lock 并发安全 + 冷启动 ownership 提前
+- [x] task-8: 新建 lifecycle.py — ExternalProcessLifecycle ABC(release(mode,reason))+ ComfyLifecycleManager 三模式,asyncio.Lock 并发安全 + 冷启动 ownership 提前
 
 **Files:**
 
 - Create: `src/framework/runtime/lifecycle.py`
 - Test: `tests/unit/test_comfy_lifecycle.py`(新)
 
-- [ ] **Step 1: 写 failing test**
+- [x] **Step 1: 写 failing test**
 
 ```python
 # tests/unit/test_comfy_lifecycle.py
@@ -498,12 +509,12 @@ def test_external_process_lifecycle_is_abstract():
         ExternalProcessLifecycle()
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m pytest tests/unit/test_comfy_lifecycle.py -v`
 Expected: FAIL with `ModuleNotFoundError: framework.runtime.lifecycle`
 
-- [ ] **Step 3: 实现 `lifecycle.py`**
+- [x] **Step 3: 实现 `lifecycle.py`**
 
 ```python
 """框架托管外部进程的生命周期(TBD-010)。"""
@@ -582,12 +593,12 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
 ```
 `status` / `_spawn_serve` / `_spawn_stop` 内部用 `asyncio.create_subprocess_exec`,`cwd=self._scripts_dir`。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量**
+- [x] **Step 4: 跑测试确认通过 + 全量**
 
 Run: `python -m pytest tests/unit/test_comfy_lifecycle.py -v && python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/framework/runtime/lifecycle.py tests/unit/test_comfy_lifecycle.py
@@ -596,7 +607,7 @@ git commit -m "feat(runtime): ExternalProcessLifecycle ABC(release(mode,reason))
 
 ### Task 9: Orchestrator 持有 lifecycle + aclose() disposal 钩子
 
-- [ ] task-9: Orchestrator arun 构造/复用 manager + StepContext 注入 + try/finally 全退出路径 release(mode,reason) + aclose() disposal 钩子
+- [x] task-9: Orchestrator arun 构造/复用 manager + StepContext 注入 + try/finally 全退出路径 release(mode,reason) + aclose() disposal 钩子
 
 **Files:**
 
@@ -605,7 +616,7 @@ git commit -m "feat(runtime): ExternalProcessLifecycle ABC(release(mode,reason))
 - Modify: `src/framework/run.py`(CLI 退出前 `await orch.aclose()`)
 - Test: `tests/unit/test_orchestrator.py`
 
-- [ ] **Step 1: 写 failing test**
+- [x] **Step 1: 写 failing test**
 
 ```python
 @pytest.mark.asyncio
@@ -674,12 +685,12 @@ async def test_aclose_release_failure_is_bounded_and_recorded(monkeypatch):
     assert orch._lifecycle_release_failed is not None
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m pytest tests/unit/test_orchestrator.py -k "lifecycle or aclose or self_managed or ensure_release" -v`
 Expected: FAIL
 
-- [ ] **Step 3: 实现 orchestrator 接线**
+- [x] **Step 3: 实现 orchestrator 接线**
 
 - `base.py`:`lifecycle` 前向引用换真实 `from framework.runtime.lifecycle import ExternalProcessLifecycle`。
 - `arun` 启动:扫各 step `prepared_routes`,若含 `comfy/local*` 且 resolved `comfy_lifecycle != "none"` → 取 mode。`self_managed_session` → manager 挂 `self._lifecycle`(orchestrator 实例级,跨 arun 复用,无则构造);其余非 none → per-arun 构造。scripts_dir 从 `FORGEUE_COMFY_SCRIPTS_DIR`。
@@ -717,12 +728,12 @@ Expected: FAIL
 - **`Orchestrator.aclose()`**:`async def aclose(self)` — 若 `self._lifecycle` 存在,经上面的 `_release_lifecycle_bounded` helper(**不是裸 `await release(...)`**)调 `release(mode, "orchestrator_close")`。加 `__aenter__` / `__aexit__`(`__aexit__` 调 `aclose`);`__init__` 加 `self._lifecycle_release_failed = None`。
 - `run.py`:CLI main 在 run 结束后 `await orch.aclose()`(或 `async with Orchestrator(...) as orch:`)。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量**
+- [x] **Step 4: 跑测试确认通过 + 全量**
 
 Run: `python -m pytest tests/unit/test_orchestrator.py -v && python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/framework/runtime/orchestrator.py src/framework/runtime/executors/base.py src/framework/run.py tests/unit/test_orchestrator.py
@@ -731,7 +742,7 @@ git commit -m "feat(runtime): orchestrator 持有 ComfyLifecycleManager + aclose
 
 ### Task 10: 解锁 comfy_lifecycle gate
 
-- [ ] task-10: comfy_worker 接受 4 模式只对集合外值 raise + executor 经 ctx.lifecycle ensure
+- [x] task-10: comfy_worker 接受 4 模式只对集合外值 raise + executor 经 ctx.lifecycle ensure
 
 **Files:**
 
@@ -739,7 +750,7 @@ git commit -m "feat(runtime): orchestrator 持有 ComfyLifecycleManager + aclose
 - Modify: comfy executor(调 worker 前 `await ctx.lifecycle.ensure(mode)`)
 - Test: `tests/unit/test_comfy_subprocess.py`
 
-- [ ] **Step 1: 写 failing test**
+- [x] **Step 1: 写 failing test**
 
 ```python
 def test_comfy_accepts_four_lifecycle_modes():
@@ -752,21 +763,21 @@ def test_comfy_rejects_unknown_lifecycle():
         _make_fake_agent_worker(default_lifecycle="warp_drive")
 ```
 
-- [ ] **Step 2: 跑测试确认失败**
+- [x] **Step 2: 跑测试确认失败**
 
 Run: `python -m pytest tests/unit/test_comfy_subprocess.py -k lifecycle -v`
 Expected: FAIL
 
-- [ ] **Step 3: 解锁 gate**
+- [x] **Step 3: 解锁 gate**
 
 `comfy_worker.py` 所有 `lifecycle != "none"` 的 raise 改为:接受 `{none, ensure_running, ensure_release, self_managed_session}`,只对**集合外**值 raise `WorkerUnsupportedResponse`(消息列 4 个合法值)。comfy executor 在调 worker 前,若 `ctx.lifecycle is not None` 先 `await ctx.lifecycle.ensure(resolved_mode)`。
 
-- [ ] **Step 4: 跑测试确认通过 + 全量**
+- [x] **Step 4: 跑测试确认通过 + 全量**
 
 Run: `python -m pytest tests/unit/test_comfy_subprocess.py -v && python -m pytest -q`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/framework/providers/workers/comfy_worker.py src/framework/runtime/executors/ tests/unit/test_comfy_subprocess.py
@@ -777,18 +788,19 @@ git commit -m "feat(comfy): 解锁 comfy_lifecycle 四模式 gate + executor 经
 
 ### Task 11: 文档同步 + L2 live evidence
 
-- [ ] task-11: SRS/HLD/LLD/CHANGELOG 同步 + ComfyUI ensure_running 自动拉起 live smoke evidence
+- [x] task-11: SRS/HLD/LLD/CHANGELOG 同步 + ComfyUI ensure_running 自动拉起 live smoke evidence
 
 **Files:**
 
 - Modify: `docs/requirements/SRS.md` / `docs/design/HLD.md` / `docs/design/LLD.md` / `docs/testing/test_spec.md` / `docs/acceptance/acceptance_report.md` / `CHANGELOG.md` / `examples/comfy_local_smoke.json`
 - Create: `forge/changes/executor-async-rewrite/notes/live_smoke_lifecycle_<date>.md`
+- Modify(Fluid Pause #2 round): `src/framework/runtime/lifecycle.py`(`status()` JSON parse 根因修复 + `_spawn_serve` env-conditional log capture)/ `tests/unit/test_comfy_lifecycle.py`(6 new fence)
 
-- [ ] **Step 1: 文档同步**
+- [x] **Step 1: 文档同步**
 
 见下方 `## Documentation Sync` 章节逐条核对。
 
-- [ ] **Step 2: L2 live evidence**
+- [x] **Step 2: L2 live evidence**
 
 终端 1 **不**手动启 ComfyUI;终端 2:
 ```bash
@@ -798,13 +810,28 @@ python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-
 ```
 确认框架经 `ComfyLifecycleManager` 自动拉起 ComfyUI、image 真实生成、产物落 `artifacts/<today>/async_lc_smoke/comfy/`。命令 + 输出 + 产物路径写入 evidence note。
 
-- [ ] **Step 3: 跑全量 + Commit**
+evidence:`forge/changes/executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`(既起动 path `async_lc_smoke2` PNG 192985 bytes + Fluid Pause #2 修复后自动拉起 path `async_lc_auto_smoke3` PNG 192985 bytes / `_spawn_serve` log 显示 factory_v3 冷起动 66s)。
 
-Run: `python -m pytest -q`
+- [x] **Step 3: 跑全量 + Commit**
+
+Run: `python -m pytest -q` → 1179 passed(既起动 path 后);1185 passed(Fluid Pause #2 + 6 new fence 后)
 ```bash
 git add docs/ CHANGELOG.md examples/ forge/changes/executor-async-rewrite/notes/
 git commit -m "docs(tbd-010): SRS/HLD/LLD 同步 + executor-async-rewrite L2 live evidence"
 ```
+73c251d:docs/ CHANGELOG.md examples/comfy_local_smoke.json + L2 live evidence(既起动 path)。
+
+- [x] **Step 4(Fluid Pause #2 — apply 阶段根因修复)**:`ComfyLifecycleManager.status()` 根因修复 + `_spawn_serve` 观测性加固
+
+**根因**:Task 8 round 1 reviewer 漏抓 — `status()` 旧实现仅看 `proc.returncode == 0`,没 parse stdout JSON 的 `online` 字段。`comfyui_api status` 即使 ComfyUI off 也 exit 0 + `{"online": false}` → 误判为 online → `ensure()` 跳过 `_spawn_serve` → executor 直接 worker.agenerate 接不上 ComfyUI → step retry × 3 全 worker_error。自动拉起 path 不通的真根因。
+
+**修复**:
+1. `src/framework/runtime/lifecycle.py:status` 改为 parse stdout JSON 看 `data.get("online")`;returncode != 0 / 非 JSON / 解码失败 全保守 False
+2. `src/framework/runtime/lifecycle.py:_spawn_serve` 增 `FORGEUE_COMFY_LIFECYCLE_LOG` env-conditional log capture(诊断未来冷起动失败,后向兼容 DEVNULL 默认)
+3. `tests/unit/test_comfy_lifecycle.py` 加 6 个 fence:`test_status_returns_false_when_online_false_in_json`(根因 fence)+ 3 个 status 边界 + 2 个 _spawn_serve log/devnull 分支
+
+**实证**:`async_lc_auto_smoke3` cold-start path succeeded(1185 passed,PNG 与既起动 path deterministic 一致 192985 bytes,factory_v3 自动起 66s)。
+
 
 ## Documentation Sync
 

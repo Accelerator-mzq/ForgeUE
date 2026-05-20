@@ -3,8 +3,8 @@
 **日期**:2026-05-20
 **Change**:`forge/changes/executor-async-rewrite/`
 **Branch**:`feature/forge-migration`
-**HEAD(smoke 实跑时)**:`17fb716`(Task 10 round 2 fix 后,Task 11 进行中)
-**全量回归**:`1179 passed / 0 failed / 3 skipped`(controller 实测)
+**HEAD(smoke 实跑时)**:`17fb716`(Task 10 round 2 fix 后,Task 11 进行中);Fluid Pause #2 根因修复后 HEAD 待新 commit
+**全量回归**:`1179 passed / 0 failed / 3 skipped`(既起动 path);`1185 passed / 0 failed / 3 skipped`(Fluid Pause #2 根因修复 + 6 新 fence 后)
 
 ## 目的
 
@@ -115,24 +115,76 @@ ComfyUI 在 run 结束后**仍在跑** —— 符合 `ensure_running` 模式的 
 | Task 9 | Orchestrator 持有 lifecycle + try/finally + aclose | ✅ `arun` 内 manager 构建 + `ensure()` 走通,run_end 路径调 `release(mode="ensure_running", reason="run_end")` — 决策表 no-op,符合预期。`framework.run` 退出前调 `await orch.aclose()` |
 | Task 10 | 解锁 comfy_lifecycle 四模式 gate | ✅ bundle `comfy_lifecycle: "ensure_running"` 通过 `__init__` + 4 个 `agenerate*` gate 全部 `_VALID_LIFECYCLES` 集合检查 |
 
-## 自动拉起 caveat(known limitation)
+## Fluid Pause #2:自动拉起 path 根因修复 + 实证(2026-05-20)
 
-本次 evidence 是「ComfyUI 已经在跑 + framework `ensure_running` 探活检测既起动 → 使用」的路径,**不是**「ComfyUI 未起动 → framework `_spawn_serve` 自动拉起」的路径。
+### 第一次自动拉起失败(`async_lc_smoke` / `async_lc_auto_smoke`)
 
-第一次跑(run_id `async_lc_smoke`)在 ComfyUI 未起动状态下试图让 framework 自动拉起,结果 3 次 step retry 全部 `worker_error`:
-- `_spawn_serve()` 跑 `python -m factory_v3 serve`(stdout/stderr=`DEVNULL`,fire-and-forget),OS 层进程虽然投递了但 controller 这里看不到任何信号
-- `_wait_ready()` polling `comfyui_api status` 120s 全部返回 `online: false`,最后超时抛 `TimeoutError`
-- 路径走 `arun_error` → finally `release(mode="ensure_running", reason="arun_error")`(决策表 no-op,符合 `ensure_running` 语义)
-- step level 3 retry 全 worker_error
+ComfyUI 未起动状态下试图让 framework 自动拉起,3 次 step retry 全部 `worker_error`。controller 初判为「`_spawn_serve` 观测性不足」,加 `FORGEUE_COMFY_LIFECYCLE_LOG` env-conditional log capture 后**仍**失败,且 log file **未创建** → `_spawn_serve` 根本没被调到。
 
-随后 controller 本人手动 `python -m factory_v3 serve`(同一条命令,同一 cwd),ComfyUI 在 ~10s 内成功起动到 `online: true`。说明 `factory_v3 serve` 本身可工作,问题在 framework 经 `_spawn_serve` 调用时无法直接看到失败信号。
+### 根因(Task 8 round 1 reviewer 漏抓)
 
-**后续 follow-on(executor-async-rewrite scope 外)**:
-- `_spawn_serve` 改为可选 capture stderr 到 forge change `.evidence/` 或 `artifacts/<run_id>/lifecycle.log`,便于诊断真实环境的冷启动失败
-- 当前 detached + `DEVNULL` 设计取舍是为了不阻塞调用方,trade-off 是观测性弱
-- `_READY_TIMEOUT_S = 120.0` 对 ComfyUI 首次安装 + 模型下载场景偏紧;`ensure_running` 模式下可配置加长
+`ComfyLifecycleManager.status()` 旧实现仅看 `proc.returncode == 0`,**没 parse stdout JSON 的 `online` 字段**。实测:`comfyui_api status` 即使 ComfyUI off 也 **exit 0** + 输出 `{"ok": true, "online": false}`(自身报告 status 调用成功,而非 ComfyUI online 状态)。
 
-这两条建议作为本 change archive 后的 follow-on 记录(`forge/backlog/active.md` 加 entry)。
+错误链:
+1. `ensure()` 调 `status() → True`(returncode 0 误判,实际 online=false)
+2. `_framework_started=False`(认为 "ComfyUI 已在跑,不是本框架起的")→ `_ensured=True` → return
+3. `_spawn_serve` 永远不被调用(吻合 log file 缺失现象)
+4. executor 走 `worker.agenerate` → 真实接 ComfyUI → connection refused → `WorkerError` × 3 retry
+
+### 修复(`src/framework/runtime/lifecycle.py:status`)
+
+`status()` 改为 parse stdout JSON 看 `"online"` 字段:
+- `returncode != 0` → False(快路径)
+- exit 0 + JSON parse 成功 → `bool(data.get("online"))`
+- exit 0 + 非 JSON / 解码失败 → False(保守判定)
+
+附 6 个新 fence(`tests/unit/test_comfy_lifecycle.py`):
+- `test_status_returns_false_when_online_false_in_json`(根因 fence)
+- `test_status_returns_true_when_online_true_in_json`
+- `test_status_returns_false_when_stdout_is_not_json`(防御性)
+- `test_status_returns_false_when_returncode_nonzero`(returncode fast-path)
+- `test_spawn_serve_writes_log_when_env_set`(log capture branch fence)
+- `test_spawn_serve_uses_devnull_when_env_unset`(后向兼容 fence)
+
+并附 `_spawn_serve` 的 env-conditional log capture(`FORGEUE_COMFY_LIFECYCLE_LOG`)— 虽不是根因,但对未来诊断有价值,保留作为加固。
+
+### 自动拉起 path 实证(`async_lc_auto_smoke3`)
+
+```bash
+PYTHONPATH=src \
+FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts \
+FORGEUE_COMFY_LIFECYCLE=ensure_running \
+FORGEUE_COMFY_LIFECYCLE_LOG=forge/changes/executor-async-rewrite/notes/spawn_serve_auto3_20260520.log \
+python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id async_lc_auto_smoke3
+```
+
+**跑前**:`python -m comfyui_api status` → `online: false`(controller `factory_v3 stop` 后确认)
+**结果**:
+```json
+{
+  "run_id": "async_lc_auto_smoke3",
+  "status": "succeeded",
+  "visited_steps": ["step_image"],
+  "artifact_ids": [
+    "async_lc_auto_smoke3_step_image_cand_73ff24e5_0",
+    "async_lc_auto_smoke3_step_image_set_73ff24e5"
+  ],
+  "failure_events": []
+}
+```
+
+**关键指标**:
+- `status: succeeded`,单 step,无 retry,无 fallback
+- PNG 候选 **192,985 bytes**(与 `async_lc_smoke2` 既起动 path **deterministic 一致** — 同 seed 7777 / 同 SDXL workflow)
+- `_spawn_serve` log file:160 bytes / 7 lines / 含 `{pid: 54368, started_in_s: 66.2, log_path: D:\AI\ComfyUI\scripts\factory_v3\.comfyui.log}` — factory_v3 冷起动 ComfyUI **66 秒**(在 `_READY_TIMEOUT_S=120.0` 内)
+- 跑后 `comfyui_api status` → `online: true`(`ensure_running` × `run_end` 决策表 no-op,符合预期)
+- artifact: `artifacts/2026-05-20/async_lc_auto_smoke3/async_lc_auto_smoke3_step_image_cand_73ff24e5_0.png` 192985 bytes,controller 实测
+
+### Follow-on(executor-async-rewrite scope 内已闭)
+
+- ~~`_spawn_serve` 观测性不足~~ → 已加 env-conditional log capture(2026-05-20)
+- ~~自动拉起 path 不通~~ → 已修 `status()` JSON parse(2026-05-20 Fluid Pause #2 根因)
+- `_READY_TIMEOUT_S = 120.0` 对超大模型首次下载场景偏紧 → 保留为 follow-on(可配置化,backlog active 增 entry)
 
 ## Cleanup
 

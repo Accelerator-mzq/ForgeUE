@@ -241,3 +241,122 @@ async def test_status_subprocess_timeout_returns_false(monkeypatch):
     # 应在 _STATUS_TIMEOUT_S(0.1s) 内返回 False,不挂起
     result = await asyncio.wait_for(mgr.status(), timeout=2.0)
     assert result is False, "subprocess 挂起时 status() 应返回 False"
+
+
+# ── Fluid Pause #2 根因修复回归 fence(2026-05-20)─────────────────────────────
+# 根因:`comfyui_api status` 即使 ComfyUI off 也 exit 0 + JSON `{"online": false}`,
+# 旧实现 `return proc.returncode == 0` 误判为 online → `ensure()` 跳过 `_spawn_serve`,
+# executor 直接 worker.agenerate 接不上 ComfyUI → step retry × 3 全 worker_error。
+# 修复:status() 改为 parse stdout JSON 看 `online` 字段。
+
+class _FakeProc:
+    """伪造 subprocess.Process,可指定 returncode + stdout 字节内容。"""
+    def __init__(self, returncode: int, stdout: bytes = b"", stderr: bytes = b""):
+        self.returncode = returncode
+        self._stdout = stdout
+        self._stderr = stderr
+
+    async def communicate(self):
+        return self._stdout, self._stderr
+
+    def kill(self):
+        pass
+
+    async def wait(self):
+        pass
+
+
+def _patch_subprocess(monkeypatch, proc):
+    """把 asyncio.create_subprocess_exec 替换为返回固定 _FakeProc 的 coroutine。"""
+    async def _create(*args, **kwargs):
+        return proc
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _create)
+
+
+@pytest.mark.asyncio
+async def test_status_returns_false_when_online_false_in_json(monkeypatch):
+    """根因回归:exit 0 + `{"online": false}` → False(不可误判 online)。"""
+    _patch_subprocess(monkeypatch, _FakeProc(returncode=0, stdout=b'{"ok": true, "online": false}'))
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    assert await mgr.status() is False
+
+
+@pytest.mark.asyncio
+async def test_status_returns_true_when_online_true_in_json(monkeypatch):
+    """exit 0 + `{"online": true}` → True(真正在跑)。"""
+    _patch_subprocess(monkeypatch, _FakeProc(returncode=0, stdout=b'{"ok": true, "online": true}'))
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    assert await mgr.status() is True
+
+
+@pytest.mark.asyncio
+async def test_status_returns_false_when_stdout_is_not_json(monkeypatch):
+    """exit 0 但 stdout 非 JSON(向后兼容 / 解析失败防御)→ False(保守判定)。"""
+    _patch_subprocess(monkeypatch, _FakeProc(returncode=0, stdout=b"not a json"))
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    assert await mgr.status() is False
+
+
+@pytest.mark.asyncio
+async def test_status_returns_false_when_returncode_nonzero(monkeypatch):
+    """returncode != 0 → 直接 False(不 parse JSON)。"""
+    _patch_subprocess(monkeypatch, _FakeProc(returncode=1, stdout=b'{"online": true}'))
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    assert await mgr.status() is False
+
+
+@pytest.mark.asyncio
+async def test_spawn_serve_writes_log_when_env_set(monkeypatch, tmp_path):
+    """FORGEUE_COMFY_LIFECYCLE_LOG env 指定时,_spawn_serve 应:
+    - 创建 log file 的 parent dir(若不存在)
+    - 把 subprocess stdout 重定向到该 log file
+    - stderr 合并到 stdout 同一 file(asyncio.subprocess.STDOUT)
+    """
+    log_path = tmp_path / "subdir" / "spawn.log"
+    monkeypatch.setenv("FORGEUE_COMFY_LIFECYCLE_LOG", str(log_path))
+
+    captured = {}
+
+    async def _capture(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _capture)
+
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    await mgr._spawn_serve()
+
+    # parent dir 应被 mkdir
+    assert log_path.parent.exists(), "log file 的 parent 目录应被创建"
+    # log file 应被打开(open(..., 'ab'))→ file 存在
+    assert log_path.exists(), "log file 应在 _spawn_serve 中被创建"
+    # subprocess stdout 应是 file 对象(非 DEVNULL)
+    stdout_target = captured["kwargs"].get("stdout")
+    assert stdout_target is not None and stdout_target is not asyncio.subprocess.DEVNULL, \
+        "env 指定时 stdout 不应是 DEVNULL"
+    # stderr 合并到 stdout
+    assert captured["kwargs"].get("stderr") == asyncio.subprocess.STDOUT, \
+        "env 指定时 stderr 应合并到 stdout(STDOUT 常量)"
+
+
+@pytest.mark.asyncio
+async def test_spawn_serve_uses_devnull_when_env_unset(monkeypatch):
+    """FORGEUE_COMFY_LIFECYCLE_LOG env 未设时,维持 DEVNULL 默认行为(后向兼容)。"""
+    monkeypatch.delenv("FORGEUE_COMFY_LIFECYCLE_LOG", raising=False)
+
+    captured = {}
+
+    async def _capture(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _capture)
+
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    await mgr._spawn_serve()
+
+    assert captured["kwargs"].get("stdout") == asyncio.subprocess.DEVNULL, \
+        "env 未设时 stdout 应保持 DEVNULL"
+    assert captured["kwargs"].get("stderr") == asyncio.subprocess.DEVNULL, \
+        "env 未设时 stderr 应保持 DEVNULL"
