@@ -842,3 +842,20 @@ archive 前同步核对 `docs/` 五件套:
 - **LLD** (`docs/design/LLD.md`):§5.7 + `default_lifecycle != "none" → WorkerUnsupportedResponse`(:954 附近)描述更新为「集合外值才 raise」;`StepExecutor.execute` 签名、`StepContext.lifecycle` 字段、`ComfyAgentWorker.agenerate*` + `_abort_comfy_prompt` + comfy-submission 锁、新 `lifecycle.py` 模块(`ExternalProcessLifecycle.release(mode,reason)`)、`Orchestrator.aclose()` 补入。
 - **test_spec** (`docs/testing/test_spec.md`):新增 fence(`test_cascade_cancel` 真停 + drain 显式失败 / `test_comfy_lifecycle` 三模式 + 并发单飞 + 冷启动不泄漏 + release 决策表 / `test_comfy_subprocess` async-subprocess + 串行锁 + server-side abort / `test_orchestrator` aclose)登记;测试总数以 `python -m pytest -q` 实测为准,不硬编码。
 - **acceptance_report** (`docs/acceptance/acceptance_report.md`):TBD-010 关闭对应验收状态行更新;§8.1 自动化验收基线数字以 `python -m pytest -q` 实测刷新。
+
+```yaml
+applied_commits:
+  - tasks.md#task-1: 9e101723bfac197069bbb9842bd1f48ee9b3b85e
+  - tasks.md#task-2: 5bc1f2ded12d1f2d80e2838355b7fae6e9d9e4e6
+  - tasks.md#task-3: 4bff9080db530e13655bec7f078b87c73b236e82
+  - tasks.md#task-4: 205cc5ffc5bd6d79c31cdc45c79c84461d579828
+  - tasks.md#task-5: cf1d6e8490b92a41f61b5d0610ac4547326ef519
+  - tasks.md#task-6: 408492cbaa8ba9a852714f1467206dbc2a15ce06
+  - tasks.md#task-7: c5a16c2b283ce7be62d554a8c74cc9a7ceecc8da
+  - tasks.md#task-8: 8c53054c3c1e1633a7526a1e2a36a323b95dd690
+  - tasks.md#task-9: 63012a71a7a579c670d223014da0d512c80d9e3e
+  - tasks.md#task-10: 17fb716016b4d5e7e0175c0e1337ace7c98fed8f
+  - tasks.md#task-11: 97a3343069dffede7e702643c6027306a7cf2741
+final_head: 97a3343069dffede7e702643c6027306a7cf2741
+```
+
