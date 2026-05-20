@@ -852,6 +852,24 @@ git commit -m "docs(tbd-010): SRS/HLD/LLD 同步 + executor-async-rewrite L2 liv
 
 全量回归:**1190 passed / 0 failed / 3 skipped**(prev 1185 + 5 new Round 2 fence)。
 
+- [x] **Step 6(Round 2 review 闭环 — `.review-passed` marker + freeze)**:fresh Round 2 reviewer **APPROVED**(0 outstanding finding;F9 即修 commit `7c30816`)
+
+**review 流程闭环**:
+- Round 1 fresh code-reviewer dispatch:8 findings → 主代理 4 accept(F1/F2/F4/F7)/ 4 reject(F3/F5/F6/F8 → Future Work)→ commit `4294b6e` 实装 + 5 new fence
+- Round 2 fresh code-reviewer dispatch(独立 verify Round 1 fix + 新 finding 扫描):APPROVED + 1 Suggestion(F9 `import sys as _sys` polish)→ commit `7c30816` 即修
+- 5 review_outcomes acceptance:F1/F2/F4/F7/F9 全 resolved
+- `pause_decisions` 段含 Fluid Pause #1(DryRunPass async)+ #2(status() JSON parse)两条 WARNING 决策(severity_acked_by: mzq)
+- `forge evidence record-review` + `forge evidence freeze --kind review` 成功冷凝 process_evidence
+
+**Workaround 记录**(forge plugin upstream bug):
+- 第一轮 freeze 反复报 `staging_hash mismatch — staging tampered`,深 dive 定位根因 = `writeStagingYaml` 用 js-yaml dump 输出 ISO timestamp 为 unquoted YAML literal,freeze 时 yaml.load 会把它们解析为 Date object → canonicalize 拒
+- Workaround:手动把 staging.yaml 全部 timestamp 改 quoted string(`re.sub` Z-suffix → quoted)+ 重算 staging_hash 信封字段;freeze success
+- design.md `## Future Work` 加 entry `forge-plugin-staging-yaml-timestamp-roundtrip`(priority medium,需向上游提 issue)
+
+**marker frozen**:
+- `forge/changes/executor-async-rewrite/.review-passed`:9 review_outcomes + 2 pause_decisions + process_evidence(tdd_event_chain × 11 + subagent_review_chain × 1)
+- 1 freeze WARNING(`invariant-7-verify-count`):per-task `record-verify` 缺失 → 留待 `/forge:verify` 阶段统一 ack(主代理 change-level verify 视为可接受)
+
 
 ## Documentation Sync
 

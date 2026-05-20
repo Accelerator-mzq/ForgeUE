@@ -504,6 +504,23 @@ entries:
     status: active
     triggered_by: review-round-2
     related_change: null
+  - id: forge-plugin-staging-yaml-timestamp-roundtrip
+    category: future-work
+    description: >
+      forge plugin v3.0.0 的 `writeStagingYaml` 用 js-yaml dump 输出 ISO 8601
+      timestamp 作为 unquoted YAML literal,后续 freeze 时 yaml.load 会把这些
+      literal 解析为 Date object,导致 canonicalize 拒(non-JSON value)并报
+      误导性 "staging_hash mismatch — staging tampered" 错误。本 change apply
+      review 阶段实测复现 + workaround:手动把 staging.yaml 内全部 timestamp
+      改 quoted string + 重算 staging_hash 信封字段。
+    reason: >
+      上游 forge plugin bug,影响 freeze CLI。Workaround 已在本 change 实施过,
+      但应向 forge plugin upstream 提 issue + PR(在 writeStagingYaml 的
+      yaml.dump 调用上加 schema=JSON_SCHEMA 或 explicit string force)。
+    priority: medium
+    status: active
+    triggered_by: review-round-2-freeze-debug
+    related_change: null
   - id: multi-mode-comfy-dag-warning
     category: future-work
     description: >
