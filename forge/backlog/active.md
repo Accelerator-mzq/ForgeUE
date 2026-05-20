@@ -1,24 +1,135 @@
 # Active Backlog
 
 > 生成产物 —— 由 `/forge:archive` 自动重生成,**勿手编**。Schema 见 README.md。
-> 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 18 项 legacy requirements 待办(不计入上面 0)。
+> 待办计 10 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 18 项 legacy requirements 待办(不计入上面 10)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (0)
+## Future Work (7)
 
-(无)
+### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
 
-## Out of Scope (0)
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: FakeComfyWorker.agenerate 当前直接 return self.generate(...), 虽然标 async def 但无实际让出点;加 await asyncio.sleep(0) 或 内联 generate 逻辑到 async def,让并发 fence 测试结果不被「fake 实际串行」干扰。
 
-(无)
+- **reason**: Round 2 review F5 reject:实际单测多用 monkeypatch _run_once_*_async 而非依赖 fake worker 的并发语义;影响低。
 
-## Non-Goals (0) — 原则不做,不计入待办
+- **priority**: low
+- **related change**: (无)
+- **triggered_by**: undefined#undefined
 
-(无)
+### `2026-05-20-executor-async-rewrite::fake-comfy-worker-mesh-audio-video-stub`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: FakeComfyWorker 当前只实现 ComfyWorker(image) ABC;加 stub agenerate_mesh / agenerate_audio / agenerate_video 或重构为 multi-capability fake, 让 test fixture 在 mesh / audio / video executor 单测里也能直接注入。
+
+- **reason**: Round 2 review F3 reject:当前 mesh / audio / video executor 构建 ComfyAgentWorker(非 Fake),没有触发路径,但 test fixture API 不对等。 未来若想加 mesh / audio / video executor 的 fake-injection 单测, 会撞 AttributeError。低优先,无即时风险。
+
+- **priority**: low
+- **related change**: (无)
+- **triggered_by**: undefined#undefined
+
+### `2026-05-20-executor-async-rewrite::forge-plugin-staging-yaml-timestamp-roundtrip`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: forge plugin v3.0.0 的 `writeStagingYaml` 用 js-yaml dump 输出 ISO 8601 timestamp 作为 unquoted YAML literal,后续 freeze 时 yaml.load 会把这些 literal 解析为 Date object,导致 canonicalize 拒(non-JSON value)并报 误导性 "staging_hash mismatch — staging tampered" 错误。本 change apply review 阶段实测复现 + workaround:手动把 staging.yaml 内全部 timestamp 改 quoted string + 重算 staging_hash 信封字段。
+
+- **reason**: 上游 forge plugin bug,影响 freeze CLI。Workaround 已在本 change 实施过, 但应向 forge plugin upstream 提 issue + PR(在 writeStagingYaml 的 yaml.dump 调用上加 schema=JSON_SCHEMA 或 explicit string force)。
+
+- **priority**: medium
+- **related change**: (无)
+- **triggered_by**: undefined#undefined
+
+### `2026-05-20-executor-async-rewrite::managed-process-registry-generalization`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: 把 ComfyLifecycleManager 泛化成通用 ManagedProcessRegistry(brainstorm 方案 C),支持多个框架托管的外部 subprocess provider。
+
+- **reason**: 本 change 采 A+seam —— 抽象 ExternalProcessLifecycle ABC + 唯一具体实现 ComfyLifecycleManager。TBD-011 引入第二个托管 subprocess provider 且其 形态(怎么起 / 探活 / 停)明确后,由 A→C 机械泛化(把现有类塞进 registry 当一个 entry)。现在从单样本 ComfyUI 猜 registry 抽象边界会猜错。
+
+- **priority**: medium
+- **related change**: (无)
+- **triggered_by**: (无)
+
+### `2026-05-20-executor-async-rewrite::multi-mode-comfy-dag-warning`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: _detect_comfy_lifecycle 只取第一个 comfy/local* step 的 lifecycle mode; 若 DAG 含多个 comfy step 且 mode 不一致(如 step_1 ensure_running、step_2 ensure_release),应 emit warning(user error 提示),或 raise 拒绝执行。
+
+- **reason**: Round 2 review F8 reject:当前 bundle 全是单 comfy step,multi-comfy-step DAG 暂无实例;留 follow-on 待真实需求出现再处理。
+
+- **priority**: low
+- **related change**: (无)
+- **triggered_by**: undefined#undefined
+
+### `2026-05-20-executor-async-rewrite::tbd-011-provider-kind-schema`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: ModelRegistry schema 扩 ProviderDef.kind + extra 字段 + ResolvedRoute provider_name / provider_kind,让 subprocess / non-OpenAI provider 配置 统一进 config/models.yaml,不再分裂到 FORGEUE_COMFY_* env。
+
+- **reason**: 本 change 的 lifecycle config 走既有 FORGEUE_COMFY_LIFECYCLE env;TBD-011 把它(及 scripts_dir / python_exe)移进 model registry yaml。SRS §7.3 TBD-011 既定 follow-on,用户已明确为 TBD-010 之后的下一个 change。
+
+- **priority**: high
+- **related change**: (无)
+- **triggered_by**: (无)
+
+### `2026-05-20-executor-async-rewrite::wait-ready-monotonic-time`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: ComfyLifecycleManager._wait_ready 当前用 counter 累加 elapsed += self._poll, 事件循环繁忙时 await asyncio.sleep(self._poll) 实际耗时可能 > self._poll, 累计漂移导致真正超时晚于 _READY_TIMEOUT_S。改用 time.monotonic() 或 asyncio.wait_for 包整个循环。
+
+- **reason**: Round 2 review F6 reject:status() 正常情况远小于 _STATUS_TIMEOUT_S, 漂移对实际行为影响低;_READY_TIMEOUT_S=120s 留 30%+ 余量。
+
+- **priority**: low
+- **related change**: (无)
+- **triggered_by**: undefined#undefined
+
+## Out of Scope (3)
+
+### `2026-05-20-executor-async-rewrite::remote-worker-async-internals`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: 远端 Hunyuan3D / Tripo3D mesh worker 内部实现的 async 改造。
+- **reason**: 远端 mesh worker 已是 async-native(`HunyuanTokenHubWorker.agenerate` + `httpx.AsyncClient` + `asyncio.gather` 轮询),executor 转 async 后直接 `await` 其既有 async 面即可,worker 内部无需任何改动。
+
+- **priority**: low
+- **related change**: (无)
+- **triggered_by**: (无)
+
+### `2026-05-20-executor-async-rewrite::workflow-concurrency-model-change`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: workflow 级调度 / DAG fan-out 并发模型的语义改动。
+- **reason**: workflow 并发由 scheduler 与 DAG fan-out 决定;本 change 只把 executor 的 执行机制从「to_thread 线程」换成「原生 await」,不改变 orchestrator 的 调度顺序、ready 判定或 fan-out 语义,避免 scope 蔓延。
+
+- **priority**: low
+- **related change**: (无)
+- **triggered_by**: (无)
+
+### `2026-05-20-executor-async-rewrite::ws-server-async-alignment`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: WebSocket 进度服务器 `framework.server.ws_server` 与 async executor 的协作对齐。
+- **reason**: ws_server 不经 executor ABC 执行路径,与本次 executor async 重写无耦合; 其自身已是 async(`asyncio.wait(FIRST_COMPLETED)`)。若未来需要 ws 与 async executor 深度协作,另立独立 change。
+
+- **priority**: low
+- **related change**: (无)
+- **triggered_by**: (无)
+
+## Non-Goals (1) — 原则不做,不计入待办
+
+### `2026-05-20-executor-async-rewrite::third-party-async-framework`
+
+- **source change**: 2026-05-20-executor-async-rewrite
+- **description**: 引入 anyio / trio 等第三方 async 框架替代 stdlib asyncio。
+- **reason**: ForgeUE 基础设施层与既有 async 代码(ProviderAdapter / mesh worker / EventBus / ws_server)全部基于 stdlib asyncio;引入第三方 async 框架会 增加依赖面、与既有代码不一致,且本 change 的 cancel / subprocess / lifecycle 需求 stdlib asyncio 已完全覆盖(`create_subprocess_exec` / `wait_for` / `CancelledError`)。本 change 原则上只用 stdlib asyncio。
+
+- **priority**: (未排序)
+- **related change**: (无)
+- **triggered_by**: (无)
 
 
 ## Legacy Requirements (18)

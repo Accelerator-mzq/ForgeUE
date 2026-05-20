@@ -1,32 +1,57 @@
-schema: forge-verify/v1
-verified_at: 2026-05-20T09:41:31.925Z
-verified_by: ai-agent
-tasks_hash: sha256:09c6d56f2dee7945327d279d0c060b006175258a4c2ff81f5178bb3ceab046b0
-content_hash: sha256:f56f63a342a0d6710f641d28de6dde1c67c46c8d12db7d00f17f3637c399b651
+schema: forge-review/v1
+tasks_hash: sha256:562da7d7e1a2cb15af9d1fe8d5ed4f74622ca309d57817a70511a1ca38c0f966
+content_hash: sha256:152bf2e6b497780a22866621468b24d490e5ea56357d73997d750af247201d68
+reviewed_by: ai-agent
 git:
   is_git_repo: true
-  head: 59f965799983db93e765a98ce02cdc914ad1a2b7
-  diff_hash: sha256:53100db9a66000f13751982c61cb559fcc1e64580a027a979764fccb3d1b4219
-evidence:
-  - scenario_id: project-tests
-    test_command: python -m pytest -q
-    test_file: tests/
-    log_path: ./.evidence/test-output.log
-    log_hash: sha256:2f6486a07bffd82dd16cf5a1219e0cbbf242744e2cc2e18ed2c8498f54f6b5af
-    pass: true
-verify_findings:
-  - id: 7
+  head: 7c30816c39400c4e47d3cc2f7edb2aee1e4e35e9
+  diff_hash: sha256:8f60c8a376f2b63a1203f9c2a3284d9fc3f9c1be2a8d0c99b7cdb7ae860c755a
+review_outcomes:
+  - id: 1
+    severity: important
+    accepted: true
+    resolved: true
+    resolution_commit: 4294b6efa54acc2bff8c91d7b48b15efeb0db48d
+  - id: 2
+    severity: important
+    accepted: true
+    resolved: true
+    resolution_commit: 4294b6efa54acc2bff8c91d7b48b15efeb0db48d
+  - id: 3
+    severity: important
+    accepted: false
     resolved: false
-    finding_hash: 0bd350575fcd24819142280487cb3ea29d1a383521833b5dc3e6145fce1cc590
-    content_hash: sha256:0000000000000000000000000000000000000000000000000000000000000000
-    git_head: 59f965799983db93e765a98ce02cdc914ad1a2b7
-    dimension: process_evidence
-    check_type: invariant-7-verify-count
-    severity: WARNING
-    automated: true
-    evidence: verify_invocations.length=1; tasks count=63
-    recommendation: subagent 实施完每 task 必须调 forge evidence record-verify;若主代理已统一跑
-      change-level verify 视为可接受 → forge ack propose --action ack-warning
+    resolution_commit: null
+  - id: 4
+    severity: important
+    accepted: true
+    resolved: true
+    resolution_commit: 4294b6efa54acc2bff8c91d7b48b15efeb0db48d
+  - id: 5
+    severity: minor
+    accepted: false
+    resolved: false
+    resolution_commit: null
+  - id: 6
+    severity: minor
+    accepted: false
+    resolved: false
+    resolution_commit: null
+  - id: 7
+    severity: minor
+    accepted: true
+    resolved: true
+    resolution_commit: 4294b6efa54acc2bff8c91d7b48b15efeb0db48d
+  - id: 8
+    severity: suggestion
+    accepted: false
+    resolved: false
+    resolution_commit: null
+  - id: 9
+    severity: suggestion
+    accepted: true
+    resolved: true
+    resolution_commit: 7c30816c39400c4e47d3cc2f7edb2aee1e4e35e9
 pause_decisions:
   - id: 1
     paused_at: 2026-05-19T22:50:00Z
@@ -46,7 +71,7 @@ pause_decisions:
     other_rationale: null
     other_acked_by: null
   - id: 2
-    paused_at: 2026-05-19T23:08:09.419Z
+    paused_at: 2026-05-19T23:08:09Z
     task_ref: tasks.md#task-11
     issue_summary: _spawn_serve detached + DEVNULL 观测性不足 → 根因诊断发现 status() JSON
       parse 缺失,误判 ComfyUI off 为 online,跳过 _spawn_serve;扩本 change scope 修复
@@ -387,7 +412,7 @@ process_evidence:
         kind: light-mode-trivial
       tdd_exemption_acked_by: mzq
   verify_invocations:
-    - invoked_at: 2026-05-20T09:41:31.925Z
+    - invoked_at: 2026-05-20T09:41:31Z
       task_refs:
         - tasks.md#task-1
         - tasks.md#task-2
@@ -409,16 +434,29 @@ process_evidence:
       runner_report_hash: sha256:2f6486a07bffd82dd16cf5a1219e0cbbf242744e2cc2e18ed2c8498f54f6b5af
   subagent_review_chain:
     - task_ref: tasks.md#task-11
-      implementer_commit: 7c308167b50b0e30a93cfd5e3df8a73c0a39defc
+      implementer_commit: a7c6cc2b69ffb2001311c7f4c66c66422698c20f
       spec_reviewer_iterations: []
       quality_reviewer_iterations:
-        - reviewer_commit: a7c6cc2
+        - reviewer_commit: 4294b6e25c699af2a9658c9e4f324e31f8c320a3
           outcome: approved-with-concerns
           notes_log_path: forge/changes/executor-async-rewrite/.evidence/review-round-1.md
-        - reviewer_commit: 4294b6e
+        - reviewer_commit: 7c30816c39400c4e47d3cc2f7edb2aee1e4e35e9
           outcome: approved
           notes_log_path: forge/changes/executor-async-rewrite/.evidence/review-round-2.md
-      main_agent_check_off_at: 2026-05-20T08:43:44.209000Z
-process_evidence_staging_hash: 5f18304864ef51706eae848a19d8e7a5bf349d1047e7c12c926d44a00151e7fd
-ack_log_entry_count: 34
-ack_log_tail_hash: ae3fdeda6651326714b34e7d8f68787c9a6b9ba7dca7eec2a652fa7fe3c86e04
+      main_agent_check_off_at: 2026-05-20T08:43:44Z
+process_evidence_staging_hash: 35fd8f28caf21e4dd6ca42c1346b229ee07373e4fed59256756c2ebb251af164
+verify_findings:
+  - id: 7
+    resolved: false
+    finding_hash: 8c7839932c4ce0f081b3bc2fe81913dff8f901779eda2ffbdeae4aff1cb8ef49
+    content_hash: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    git_head: db83a0b7a3b7b0f995db6af65da3d19030d1f853
+    dimension: process_evidence
+    check_type: invariant-7-verify-count
+    severity: WARNING
+    automated: true
+    evidence: verify_invocations.length=1; tasks count=64
+    recommendation: subagent 实施完每 task 必须调 forge evidence record-verify;若主代理已统一跑
+      change-level verify 视为可接受 → forge ack propose --action ack-warning
+ack_log_entry_count: 17
+ack_log_tail_hash: cda31581a969a9a8e649234c6d2f0897604d7801f0f91fc2a53185e83e5ac181

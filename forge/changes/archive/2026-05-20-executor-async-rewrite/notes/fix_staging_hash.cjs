@@ -14,7 +14,13 @@ const fs = require("node:fs");
 const STAGING = "forge/changes/executor-async-rewrite/.evidence/process-evidence.staging.yaml";
 let raw = fs.readFileSync(STAGING, "utf8");
 
-// 1. quote-wrap unquoted ISO timestamp(Z 后缀 or +HH:MM 后缀)
+// 1a. truncate ms-precision ISO timestamps(forge schema 严格 YYYY-MM-DDTHH:MM:SSZ 无 ms)
+const MS_RE = /(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d+(Z|[+-]\d{2}:\d{2})/g;
+let msCount = 0;
+raw = raw.replace(MS_RE, (_, ts, tz) => { msCount++; return ts + tz; });
+console.log(`truncated ${msCount} ms-precision timestamps`);
+
+// 1b. quote-wrap unquoted ISO timestamp(Z 后缀 or +HH:MM 后缀)
 const ISO_RE = /(:\s)((\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})))(\s*\n)/g;
 let count = 0;
 raw = raw.replace(ISO_RE, (_, pre, ts, _ts, post) => {
