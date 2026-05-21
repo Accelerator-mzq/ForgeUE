@@ -2157,17 +2157,19 @@ requirements:
     notes: ""
   - id: LR-0134
     title: TBD-012 repo.put streaming payload zero-copy
-    description: "`repo-put-streaming-payload`(D4 副作用 follow-on,大文件 stream copy):扩 `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copy2` 不全读入内存;影响 PayloadRef API + 所有 worker 路径(image / mesh / audio / video)同步迁移"
-    status: unimplemented
+    description: "`repo-put-streaming-payload` Phase 1:扩 `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copyfile + chmod + os.replace atomic`(R5-F4 D-PermissionNormalize + D4 D-Atomic);新增 `hash_path` stream SHA-256;`load_run_metadata` file kind drift 校验改 stream;Worker / Candidate / executor 协议 Phase 1 不动,留 Phase 2 follow-on `worker-candidate-source-path-migration` 兑现 user-visible 内存收益。Phase 1 接口能力 + 5 file generator 路径 Phase 2 迁移完成后整体 closed。"
+    status: implemented
     source:
       document: docs/requirements/SRS.md
       section: TBD-012
       kind: srs
-    evidence: []
+    evidence:
+      - "forge/changes/archive/2026-05-21-repo-put-streaming-payload/ — Phase 1 change 完整 archived 2026-05-21(8/8 tasks ✓,pytest 1190→1224 + 4 skipped 0 fail,L2 heavy fence RSS peak 16.23 MB / 49% headroom under 32 MB,Round 1 5 finding 接受 + Round 2 derivative 修 + Round 3 self-review CLEAN,.verify-passed + .review-passed v2 markers freezed)"
+      - "forge/changes/archive/2026-05-21-repo-put-streaming-payload/archive_summary.yaml — schema=forge-archive-summary/v2,spec_updates_applied: artifact-contract + probe-and-validation 双 create;handoff_to_backlog 8 entries 入 forge/backlog/active.md(含 Phase 2 `worker-candidate-source-path-migration` medium)"
     confidence: high
     priority:
     review: confirmed
-    notes: ""
+    notes: "2026-05-21 Phase 1 closed by repo-put-streaming-payload change;Phase 2 follow-on worker-candidate-source-path-migration 入 active.md medium 待启,完成后整体改 implemented"
   - id: LR-0135
     title: TBD-013 RemoteControl HTTP bridge
     description: RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor

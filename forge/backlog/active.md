@@ -2,7 +2,7 @@
 
 > 生成产物 —— 由 `/forge:archive` 自动重生成,**勿手编**。Schema 见 README.md。
 > 待办计 18 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 17 项 legacy requirements 待办(不计入上面 18)。
+> 另有 16 项 legacy requirements 待办(不计入上面 18)。
 
 ## Warnings (0)
 
@@ -307,7 +307,7 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - **triggered_by**: (无)
 
 
-## Legacy Requirements (17)
+## Legacy Requirements (16)
 
 ### `ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)`
 
@@ -329,5 +329,4 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - `LR-0129` **TBD-004 FBX self-containment 校验** — FBX self-containment 校验
 - `LR-0130` **TBD-005 DashScope / Tripo3D 下辖 parser 实装** — DashScope / Tripo3D 下辖 parser 实装
 - `LR-0133` **TBD-011 ModelRegistry ProviderDef.kind schema 扩展** — ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env
-- `LR-0134` **TBD-012 repo.put streaming payload zero-copy** — `repo-put-streaming-payload`(D4 副作用 follow-on,大文件 stream copy):扩 `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copy2` 不全读入内存;影响 PayloadRef API + 所有 worker 路径(image / mesh / audio / video)同步迁移
 - `LR-0135` **TBD-013 RemoteControl HTTP bridge** — RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor
