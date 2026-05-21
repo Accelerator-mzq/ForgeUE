@@ -55,7 +55,12 @@ class InlineBackend(PayloadBackend):
         return ref.inline_value
 
     def exists(self, ref: PayloadRef) -> bool:
-        return ref.inline_value is not None
+        # D10 D-NullValueAmbiguity:value=None 是合法 inline JSON null payload。
+        # 用 model_fields_set 区分"显式 None"(在 set 中,payload 存在)
+        # vs "未设字段"(不在 set 中,payload 不存在)。
+        # 旧实现 `ref.inline_value is not None` 会把 value=None 误判为"不存在",
+        # 导致 load_run_metadata resume 时 payload_present guard 静默丢弃 null artifact。
+        return ref.kind == PayloadKind.inline and "inline_value" in ref.model_fields_set
 
     def absolute_path(self, ref: PayloadRef) -> Path:
         """Inline payload 没有外部路径,始终 raise ValueError。"""
