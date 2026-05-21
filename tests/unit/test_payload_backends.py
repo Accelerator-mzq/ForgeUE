@@ -13,6 +13,7 @@ from framework.artifact_store.payload_backends import (
     PayloadTooLarge,
     get_backend_registry,
 )
+from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
 
@@ -110,3 +111,39 @@ def test_registry_dispatch(tmp_path: Path):
     assert reg.read(file_ref) == b"hello"
     assert reg.exists(inline_ref)
     assert reg.exists(file_ref)
+
+
+# ---------- absolute_path ABC fence (TBD-012 step 2) ----------
+
+def test_file_backend_absolute_path_returns_resolved(tmp_path: Path):
+    """FileBackend.absolute_path 返回解析后的绝对路径,在 root 下。"""
+    b = FileBackend(root=str(tmp_path))
+    ref = PayloadRef(kind=PayloadKind.file, file_path="run-x/aid.bin", size_bytes=0)
+    p = b.absolute_path(ref)
+    assert isinstance(p, Path)
+    # 应在 root 下且对应 ref.file_path
+    assert p == (tmp_path / "run-x" / "aid.bin").resolve()
+
+
+def test_inline_backend_absolute_path_raises():
+    """InlineBackend.absolute_path 应 raise ValueError(inline 无外部路径)。"""
+    b = InlineBackend()
+    ref = PayloadRef(kind=PayloadKind.inline, inline_value={"k": 1}, size_bytes=0)
+    with pytest.raises(ValueError, match="inline payload has no external path"):
+        b.absolute_path(ref)
+
+
+def test_blob_backend_absolute_path_raises():
+    """BlobBackend.absolute_path 应 raise NotImplementedError(stub 一致语义)。"""
+    b = BlobBackend()
+    ref = PayloadRef(kind=PayloadKind.blob, blob_key="some-key", size_bytes=0)
+    with pytest.raises(NotImplementedError):
+        b.absolute_path(ref)
+
+
+def test_file_backend_absolute_path_rejects_traversal(tmp_path: Path):
+    """FileBackend.absolute_path 复用 _resolve traversal guard,拒绝路径穿越。"""
+    b = FileBackend(root=str(tmp_path))
+    ref = PayloadRef(kind=PayloadKind.file, file_path="../escape.bin", size_bytes=0)
+    with pytest.raises(ValueError, match="escapes artifact root"):
+        b.absolute_path(ref)
