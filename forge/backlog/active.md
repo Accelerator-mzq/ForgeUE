@@ -2,7 +2,7 @@
 
 > 生成产物 —— 由 `/forge:archive` 自动重生成,**勿手编**。Schema 见 README.md。
 > 待办计 10 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 18 项 legacy requirements 待办(不计入上面 10)。
+> 另有 17 项 legacy requirements 待办(不计入上面 10)。
 
 ## Warnings (0)
 
@@ -62,7 +62,7 @@
 - **reason**: Round 2 review F8 reject:当前 bundle 全是单 comfy step,multi-comfy-step DAG 暂无实例;留 follow-on 待真实需求出现再处理。
 
 - **priority**: low
-- **related change**: (无)
+- **related change**: null
 - **triggered_by**: undefined#undefined
 
 ### `2026-05-20-executor-async-rewrite::tbd-011-provider-kind-schema`
@@ -106,7 +106,7 @@
 - **reason**: workflow 并发由 scheduler 与 DAG fan-out 决定;本 change 只把 executor 的 执行机制从「to_thread 线程」换成「原生 await」,不改变 orchestrator 的 调度顺序、ready 判定或 fan-out 语义,避免 scope 蔓延。
 
 - **priority**: low
-- **related change**: (无)
+- **related change**: null
 - **triggered_by**: (无)
 
 ### `2026-05-20-executor-async-rewrite::ws-server-async-alignment`
@@ -128,11 +128,11 @@
 - **reason**: ForgeUE 基础设施层与既有 async 代码(ProviderAdapter / mesh worker / EventBus / ws_server)全部基于 stdlib asyncio;引入第三方 async 框架会 增加依赖面、与既有代码不一致,且本 change 的 cancel / subprocess / lifecycle 需求 stdlib asyncio 已完全覆盖(`create_subprocess_exec` / `wait_for` / `CancelledError`)。本 change 原则上只用 stdlib asyncio。
 
 - **priority**: (未排序)
-- **related change**: (无)
+- **related change**: null
 - **triggered_by**: (无)
 
 
-## Legacy Requirements (18)
+## Legacy Requirements (17)
 
 ### `ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)`
 
@@ -153,7 +153,6 @@
 - `LR-0128` **TBD-003 WS 鉴权 / 多租户 session** — WS 鉴权 / 多租户 session
 - `LR-0129` **TBD-004 FBX self-containment 校验** — FBX self-containment 校验
 - `LR-0130` **TBD-005 DashScope / Tripo3D 下辖 parser 实装** — DashScope / Tripo3D 下辖 parser 实装
-- `LR-0132` **TBD-010 executor 原生 async 重写** — GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主 spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED
 - `LR-0133` **TBD-011 ModelRegistry ProviderDef.kind schema 扩展** — ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env
 - `LR-0134` **TBD-012 repo.put streaming payload zero-copy** — `repo-put-streaming-payload`(D4 副作用 follow-on,大文件 stream copy):扩 `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copy2` 不全读入内存;影响 PayloadRef API + 所有 worker 路径(image / mesh / audio / video)同步迁移
 - `LR-0135` **TBD-013 RemoteControl HTTP bridge** — RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor
