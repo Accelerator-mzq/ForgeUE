@@ -147,3 +147,23 @@ def test_file_backend_absolute_path_rejects_traversal(tmp_path: Path):
     ref = PayloadRef(kind=PayloadKind.file, file_path="../escape.bin", size_bytes=0)
     with pytest.raises(ValueError, match="escapes artifact root"):
         b.absolute_path(ref)
+
+
+# ---------- source_path keyword raise fence (TBD-012 step 3) ----------
+
+def test_inline_backend_write_rejects_source_path(tmp_path):
+    """InlineBackend.write 收到 source_path 非空应 raise ValueError (D10 守门)。"""
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"x")
+    b = InlineBackend()
+    with pytest.raises(ValueError, match="source_path is only supported by FileBackend"):
+        b.write(run_id="r", artifact_id="a", source_path=src)
+
+
+def test_blob_backend_write_rejects_source_path(tmp_path):
+    """BlobBackend.write 收到 source_path 非空应 raise ValueError (D10 守门)。"""
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"x")
+    b = BlobBackend()
+    with pytest.raises(ValueError, match="source_path is only supported by FileBackend"):
+        b.write(run_id="r", artifact_id="a", source_path=src)
