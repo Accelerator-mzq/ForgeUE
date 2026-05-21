@@ -14,4 +14,4 @@ pause_decisions:
       User option=4 (Other 等价 option=1):接受 fix(D10 spec 要求 + backward compatible — 既有 18 处
       inline 调用 grep 0 命中 value=None),Task 8 verification 阶段回写 proposal §影响模块 把
       artifact.py 加进 ABC 跟进改动段(commit a7b6253)。PayloadRef 字段结构零变更,仅 validator 微调。
-created_by_tool_version: forge-4.0.2
+created_by_tool_version: 4.0.2
