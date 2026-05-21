@@ -167,3 +167,122 @@ def test_blob_backend_write_rejects_source_path(tmp_path):
     b = BlobBackend()
     with pytest.raises(ValueError, match="source_path is only supported by FileBackend"):
         b.write(run_id="r", artifact_id="a", source_path=src)
+
+
+# ---------- zero-copy 分支 fence (TBD-012 step 4) ----------
+
+import os as _os
+import shutil as _shutil
+from unittest.mock import patch as _patch
+
+
+def test_file_backend_zero_copy_byte_equal(tmp_path):
+    """zero-copy 落盘 bytes 与 source 完全一致;D9 size_bytes 取 dest stat。"""
+    src = tmp_path / "source.bin"
+    payload = b"forge-zero-copy-payload" * 1024  # ~24 KB
+    src.write_bytes(payload)
+    b = FileBackend(root=str(tmp_path / "store"))
+    ref = b.write(  # 不传 value(留 _MISSING),只传 source_path
+        run_id="r1", artifact_id="aid_zc", suffix=".bin",
+        source_path=src,
+    )
+    assert ref.kind == PayloadKind.file
+    dest_abs = b.absolute_path(ref)
+    # D9 invariant:size_bytes 取 dest stat
+    assert ref.size_bytes == dest_abs.stat().st_size
+    assert ref.size_bytes == len(payload)
+    assert ref.file_path == "r1/aid_zc.bin"
+    assert dest_abs.read_bytes() == payload
+
+
+def test_file_backend_zero_copy_cap_rejection_without_read(tmp_path):
+    """R4-F3 + cap pre-copy fence:超 cap source stat 阶段拒签,不调 copyfile。"""
+    src = tmp_path / "huge.bin"
+    from framework.artifact_store.payload_backends.file_backend import FILE_MAX_BYTES
+    # sparse file (only 1 byte allocated)
+    with src.open("wb") as f:
+        f.seek(FILE_MAX_BYTES + 1)
+        f.write(b"\x00")
+    b = FileBackend(root=str(tmp_path / "store"))
+    with _patch("framework.artifact_store.payload_backends.file_backend.shutil.copyfile") as spy:
+        from framework.artifact_store.payload_backends.base import PayloadTooLarge
+        with pytest.raises(PayloadTooLarge):
+            b.write(run_id="r", artifact_id="aid_huge", source_path=src)
+        assert not spy.called, "copyfile SHALL NOT be invoked when cap rejected"
+
+
+def test_file_backend_zero_copy_missing_source_raises(tmp_path):
+    b = FileBackend(root=str(tmp_path / "store"))
+    with pytest.raises(FileNotFoundError):
+        b.write(run_id="r", artifact_id="aid", source_path=tmp_path / "absent.bin")
+
+
+def test_file_backend_zero_copy_rejects_directory_source(tmp_path):
+    """R4-F3 D-RegularFileGuard:目录拒签。"""
+    src_dir = tmp_path / "a_directory"
+    src_dir.mkdir()
+    b = FileBackend(root=str(tmp_path / "store"))
+    with pytest.raises(ValueError, match="must be a regular file"):
+        b.write(run_id="r", artifact_id="aid", source_path=src_dir)
+
+
+def test_file_backend_write_enforces_mutex_at_backend_layer(tmp_path):
+    """R6-F3 D-BackendMutexGuard:value/source_path 二选一守门 + 缺一守门。"""
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"from_source")
+    b = FileBackend(root=str(tmp_path / "store"))
+    # 同时传 value + source_path → raise
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        b.write(value=b"x", run_id="r", artifact_id="aid", source_path=src)
+    # value=None + source_path → 仍算"已传 value",同样 raise
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        b.write(value=None, run_id="r", artifact_id="aid2", source_path=src)
+    # 两者都缺 → raise(_MISSING + source_path=None)
+    with pytest.raises(ValueError, match="requires either value or source_path"):
+        b.write(run_id="r", artifact_id="aid3")
+
+
+def test_file_backend_zero_copy_normalizes_permissions(tmp_path):
+    """R5-F4 D-PermissionNormalize:source 只读时 dest 仍可写(0o644 归一化)。"""
+    import sys
+    src = tmp_path / "readonly_source.bin"
+    src.write_bytes(b"payload-from-readonly-source")
+    if sys.platform != "win32":
+        src.chmod(0o444)
+    b = FileBackend(root=str(tmp_path / "store"))
+    ref = b.write(run_id="r", artifact_id="aid_ro", suffix=".bin", source_path=src)
+    dest_abs = b.absolute_path(ref)
+    assert dest_abs.read_bytes() == b"payload-from-readonly-source"
+    # 重复写同 artifact_id 也应该成功
+    new_src = tmp_path / "rewrite_source.bin"
+    new_src.write_bytes(b"rewritten-payload")
+    ref2 = b.write(run_id="r", artifact_id="aid_ro", suffix=".bin", source_path=new_src)
+    assert b.absolute_path(ref2).read_bytes() == b"rewritten-payload"
+
+
+def test_file_backend_zero_copy_failure_preserves_existing_dest(tmp_path):
+    """R4-F1 D-Atomic:copyfile 抛异常时既有 dest 上 valid payload 不破坏,tmp 清理。"""
+    b = FileBackend(root=str(tmp_path / "store"))
+    existing = b"existing-valid-payload-do-not-corrupt"
+    ref_old = b.write(
+        value=existing, run_id="r", artifact_id="aid_atomic", suffix=".bin",
+    )
+    dest_abs = b.absolute_path(ref_old)
+    assert dest_abs.read_bytes() == existing
+
+    src = tmp_path / "new_source.bin"
+    src.write_bytes(b"new-payload-that-should-not-overwrite")
+    with _patch(
+        "framework.artifact_store.payload_backends.file_backend.shutil.copyfile",
+        side_effect=OSError("simulated disk full mid-copy"),
+    ):
+        with pytest.raises(OSError, match="simulated disk full"):
+            b.write(
+                run_id="r", artifact_id="aid_atomic", suffix=".bin",
+                source_path=src,
+            )
+
+    # 关键 invariant:既有 valid payload 未被覆盖 + 没有 .part.* tmp 残留
+    assert dest_abs.read_bytes() == existing, "既有 valid payload 不应被破坏(atomic)"
+    tmp_files = list(dest_abs.parent.glob(f"{dest_abs.name}.part.*"))
+    assert tmp_files == [], f"tmp 文件应被清理,但找到:{tmp_files}"
