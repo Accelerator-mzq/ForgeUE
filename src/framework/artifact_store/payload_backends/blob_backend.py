@@ -1,10 +1,11 @@
 """Blob backend — interface reserved (§D.2). Not implemented in MVP."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
-from framework.artifact_store.payload_backends.base import PayloadBackend
+from framework.artifact_store.payload_backends.base import PayloadBackend, _MISSING
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -14,7 +15,20 @@ class BlobBackend(PayloadBackend):
 
     kind = PayloadKind.blob
 
-    def write(self, value: Any, *, run_id: str, artifact_id: str, suffix: str = "") -> PayloadRef:
+    def write(
+        self,
+        value: Any = _MISSING,
+        *,
+        run_id: str,
+        artifact_id: str,
+        suffix: str = "",
+        source_path: str | os.PathLike | None = None,
+    ) -> PayloadRef:
+        # D10 守门:BlobBackend 不支持 source_path 零拷贝路径
+        if source_path is not None:
+            raise ValueError(
+                "source_path is only supported by FileBackend, not BlobBackend"
+            )
         raise NotImplementedError("BlobBackend.write is deferred (post-MVP)")
 
     def read(self, ref: PayloadRef) -> Any:

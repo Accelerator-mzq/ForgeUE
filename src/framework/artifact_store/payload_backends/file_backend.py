@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge
+from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge, _MISSING
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -44,17 +44,38 @@ class FileBackend(PayloadBackend):
             raise ValueError(f"file_path {rel_path} escapes artifact root")
         return p
 
-    def write(self, value: Any, *, run_id: str, artifact_id: str, suffix: str = "") -> PayloadRef:
+    def write(
+        self,
+        value: Any = _MISSING,
+        *,
+        run_id: str,
+        artifact_id: str,
+        suffix: str = "",
+        source_path: str | os.PathLike | None = None,
+    ) -> PayloadRef:
+        # Task 3:zero-copy 分支留 Task 4 实装;source_path 非空暂 raise
+        if source_path is not None:
+            raise NotImplementedError(
+                "FileBackend zero-copy branch is implemented in TBD-012 Task 4"
+            )
+        if value is _MISSING:
+            raise ValueError("FileBackend.write requires value or source_path")
+
+        # 既有 value 路径完全保留
+        rel = f"{run_id}/{artifact_id}{suffix}"
+        abs_path = self._resolve(rel)
+        abs_path.parent.mkdir(parents=True, exist_ok=True)
         data = _coerce_bytes(value, suffix)
         if len(data) > FILE_MAX_BYTES:
             raise PayloadTooLarge(
                 f"file payload {len(data)} bytes exceeds cap {FILE_MAX_BYTES}"
             )
-        rel = f"{run_id}/{artifact_id}{suffix}"
-        abs_path = self._resolve(rel)
-        abs_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path.write_bytes(data)
-        return PayloadRef(kind=PayloadKind.file, file_path=rel, size_bytes=len(data))
+        return PayloadRef(
+            kind=PayloadKind.file,
+            file_path=rel,
+            size_bytes=len(data),
+        )
 
     def read(self, ref: PayloadRef) -> bytes:
         if ref.file_path is None:

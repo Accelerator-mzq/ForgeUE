@@ -5,10 +5,11 @@ Cap: 64 KB per plan.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge
+from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge, _MISSING
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -26,7 +27,23 @@ def _estimate_size(value: Any) -> int:
 class InlineBackend(PayloadBackend):
     kind = PayloadKind.inline
 
-    def write(self, value: Any, *, run_id: str, artifact_id: str, suffix: str = "") -> PayloadRef:
+    def write(
+        self,
+        value: Any = _MISSING,
+        *,
+        run_id: str,
+        artifact_id: str,
+        suffix: str = "",
+        source_path: str | os.PathLike | None = None,
+    ) -> PayloadRef:
+        # D10 守门:InlineBackend 不支持 source_path 零拷贝路径
+        if source_path is not None:
+            raise ValueError(
+                "source_path is only supported by FileBackend, not InlineBackend"
+            )
+        if value is _MISSING:
+            raise ValueError("InlineBackend.write requires value (got _MISSING)")
+        # 既有 inline logic:_estimate_size + INLINE_MAX_BYTES cap + PayloadRef
         size = _estimate_size(value)
         if size > INLINE_MAX_BYTES:
             raise PayloadTooLarge(
