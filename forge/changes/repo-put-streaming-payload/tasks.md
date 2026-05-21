@@ -1466,3 +1466,33 @@ archive 前同步检查以下 docs/ 五件套,确认 zero-copy + stream hashing 
     grep -E "PASSED|\[heavy-fence\] RSS peak delta" forge/changes/repo-put-streaming-payload/.evidence/heavy-fence-rss-200mb.log
     ```
     应同时输出两行。
+
+---
+
+## Apply 阶段产出(/forge:apply 2026-05-21 完成)
+
+```yaml
+applied_commits:
+  - task-1: ec42d34  # feat(artifact-store): add hash_path stream SHA-256 helper (GREEN)
+  - task-2: 4a1d2d6  # feat(payload-backends): add absolute_path ABC method (GREEN)
+  - task-3: 3c1168f  # feat(payload-backends): add source_path keyword + _MISSING sentinel to write ABC (GREEN)
+  - task-4: efb694b  # feat(file-backend): implement source_path zero-copy branch (GREEN)
+  - task-5: 616bcba  # feat(repository): add source_path keyword to repo.put with D9 hash-dest semantics (GREEN)
+  - task-6: f662ef3  # refactor(repository): stream hash file kind drift in load_run_metadata (GREEN)
+  - task-7: f3808e6  # test(repo-put-streaming): add opt-in 200MB RSS heavy fence (single)
+  - task-8: a7b6253  # docs(propose): task-8 verify done + sync proposal §影响模块 含 D10 validator 微调
+final_head: a7b6253
+pause_decisions:
+  - paused_at: 2026-05-21T22:05:00Z
+    task_ref: tasks.md#task-5
+    issue_summary: |
+      Task 5 subagent 实施 D10 D-NullValueAmbiguity spec 时发现 PayloadRef._validate_exclusive 旧守门
+      `inline_value is None` 拒签会让 spec R2-F3 scenario `test_explicit_value_none_preserved_as_inline_null_payload`
+      失败;proposal §影响模块 之前写 src/framework/core/artifact.py "不影响(PayloadRef schema 零变更)"。
+      subagent 自行做了 1 行 condition 微调 `"inline_value" not in self.model_fields_set`。
+    chosen_option: 4
+    notes: |
+      User option=4 (Other 等价 option=1):接受 fix(D10 spec 要求 + backward compatible — 既有 18 处
+      inline 调用 grep 0 命中 value=None),Task 8 verification 阶段回写 proposal §影响模块 把
+      artifact.py 加进 ABC 跟进改动段(commit a7b6253)。PayloadRef 字段结构零变更,仅 validator 微调。
+```
