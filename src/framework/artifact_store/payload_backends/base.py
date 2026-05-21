@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from framework.core.artifact import PayloadRef
@@ -27,6 +28,15 @@ class PayloadBackend(ABC):
 
     @abstractmethod
     def exists(self, ref: PayloadRef) -> bool: ...
+
+    @abstractmethod
+    def absolute_path(self, ref: PayloadRef) -> Path:
+        """Return the on-disk absolute path for *ref*.
+
+        Only FileBackend has a meaningful implementation;
+        InlineBackend SHALL raise ValueError, BlobBackend stub raises
+        NotImplementedError.
+        """
 
 
 class PayloadBackendRegistry:

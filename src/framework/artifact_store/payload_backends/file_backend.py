@@ -65,3 +65,9 @@ class FileBackend(PayloadBackend):
         if ref.file_path is None:
             return False
         return self._resolve(ref.file_path).is_file()
+
+    def absolute_path(self, ref: PayloadRef) -> Path:
+        """Return resolved absolute Path;复用 _resolve traversal guard。"""
+        if ref.file_path is None:
+            raise ValueError("PayloadRef.file_path is None")
+        return self._resolve(ref.file_path)

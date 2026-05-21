@@ -5,6 +5,7 @@ Cap: 64 KB per plan.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge
@@ -38,3 +39,7 @@ class InlineBackend(PayloadBackend):
 
     def exists(self, ref: PayloadRef) -> bool:
         return ref.inline_value is not None
+
+    def absolute_path(self, ref: PayloadRef) -> Path:
+        """Inline payload 没有外部路径,始终 raise ValueError。"""
+        raise ValueError("inline payload has no external path")
