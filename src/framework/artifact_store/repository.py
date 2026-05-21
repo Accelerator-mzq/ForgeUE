@@ -246,17 +246,39 @@ class ArtifactRepository:
                 payload_present = False
             if not payload_present:
                 continue
-            # For external-bytes payloads, verify the bytes haven't
-            # drifted since the dump (overwrite, partial write, manual
-            # edit). hash_payload re-canonicalizes via the same path as
-            # the original write, so the comparison is apples-to-apples.
-            if art.payload_ref.kind in (_PayloadKind.file, _PayloadKind.blob):
+            # For external-bytes payloads, verify the bytes haven't drifted
+            # since the dump (overwrite, partial write, manual edit).
+            # D-DriftScope (R3-F4):仅 file kind 改 stream;blob kind 保旧行为
+            # (BlobBackend stub 未实装,既有 self._registry.read(ref) 抛
+            # NotImplementedError 被 catch → continue 兜底,语义无变化)。
+            # 不要把 blob 字面合并到 hash_path 路径,因 BlobBackend.absolute_path 也
+            # raise NotImplementedError → 不可达分支误导实现者。
+            if art.payload_ref.kind == _PayloadKind.file:
+                # File-kind stream drift:hash_path(absolute_path),不全读;
+                # 8 MB chunks → bounded RSS even for large video / mesh artifacts
+                try:
+                    backend = self._registry.get(_PayloadKind.file)
+                    abs_path = backend.absolute_path(art.payload_ref)
+                except (KeyError, ValueError):
+                    continue
+                try:
+                    current_hash = hash_path(abs_path)
+                except (FileNotFoundError, OSError):
+                    continue
+                if current_hash != art.hash:
+                    continue
+            elif art.payload_ref.kind == _PayloadKind.blob:
+                # Blob-kind 保旧行为:既有 self._registry.read(ref) 抛
+                # NotImplementedError 被 catch → continue。BlobBackend 实装后
+                # (follow-on `blob-backend-streaming-implementation`)再设计
+                # drift 策略(可能走 etag / Last-Modified header,不是本地全 hash)
                 try:
                     current = self._registry.read(art.payload_ref)
                 except Exception:
                     continue
                 if hash_payload(current) != art.hash:
                     continue
+            # inline 路径不变(在更上面的代码段处理)
             self.register_existing(art)
             n += 1
         return n
