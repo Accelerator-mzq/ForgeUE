@@ -40,7 +40,7 @@
 
 ## Task 1: `hash_path` stream 哈希函数
 
-- [ ] task-1: hashing.py 新增 hash_path stream SHA-256 helper + 等价性 fence
+- [x] task-1: hashing.py 新增 hash_path stream SHA-256 helper + 等价性 fence
 
 **Files:**
 
@@ -151,7 +151,7 @@ git commit -m "feat(artifact-store): add hash_path stream SHA-256 helper (TBD-01
 
 ## Task 2: `PayloadBackend.absolute_path` ABC 方法 + 三 backend 实装
 
-- [ ] task-2: PayloadBackend.absolute_path ABC + FileBackend 实装 + InlineBackend/BlobBackend raise
+- [x] task-2: PayloadBackend.absolute_path ABC + FileBackend 实装 + InlineBackend/BlobBackend raise
 
 **Files:**
 
@@ -285,7 +285,7 @@ git commit -m "feat(payload-backends): add absolute_path ABC method (TBD-012 ste
 
 ## Task 3: `PayloadBackend.write` ABC 扩 `source_path` keyword + InlineBackend/BlobBackend raise
 
-- [ ] task-3: PayloadBackend.write ABC 签名扩 source_path keyword + Inline/Blob backend guard
+- [x] task-3: PayloadBackend.write ABC 签名扩 source_path keyword + Inline/Blob backend guard
 
 **Files:**
 
@@ -434,7 +434,7 @@ git commit -m "feat(payload-backends): add source_path keyword to write ABC (TBD
 
 ## Task 4: `FileBackend.write` source_path zero-copy 分支
 
-- [ ] task-4: FileBackend.write 加 source_path zero-copy 分支(copy2 + stat cap 校验)
+- [x] task-4: FileBackend.write 加 source_path zero-copy 分支(copy2 + stat cap 校验)
 
 **Files:**
 
@@ -698,7 +698,7 @@ git commit -m "feat(file-backend): add source_path zero-copy branch (TBD-012 ste
 
 ## Task 5: `ArtifactRepository.put` 接 `source_path` + 二选一守门
 
-- [ ] task-5: ArtifactRepository.put 接 source_path keyword + 二选一守门 + hash 分两路
+- [x] task-5: ArtifactRepository.put 接 source_path keyword + 二选一守门 + hash 分两路
 
 **Files:**
 
@@ -1019,7 +1019,7 @@ git commit -m "feat(repository): add source_path keyword to repo.put (TBD-012 st
 
 ## Task 6: `load_run_metadata` drift 校验改 stream
 
-- [ ] task-6: load_run_metadata 中 **仅 file kind** drift 校验改用 hash_path stream;blob kind 保旧行为(D-DriftScope R3-F4 拍板)
+- [x] task-6: load_run_metadata 中 **仅 file kind** drift 校验改用 hash_path stream;blob kind 保旧行为(D-DriftScope R3-F4 拍板)
 
 **Files:**
 
@@ -1217,7 +1217,7 @@ git commit -m "refactor(repository): stream-hash file/blob drift check in load_r
 
 ## Task 7: 200 MB RSS opt-in heavy fence
 
-- [ ] task-7: 200 MB zero-copy RSS 增量 opt-in fence(FORGEUE_RUN_HEAVY_FENCE=1)
+- [x] task-7: 200 MB zero-copy RSS 增量 opt-in fence(FORGEUE_RUN_HEAVY_FENCE=1)
 
 **Files:**
 
@@ -1343,7 +1343,7 @@ git commit -m "test(repo-put-streaming): add opt-in 200MB RSS fence (TBD-012 ste
 
 ## Task 8: pytest baseline + comfy_local_smoke_video 端到端冒烟
 
-- [ ] task-8: pytest baseline 不回退 + mock_linear 冒烟 + 可选 comfy video live + forge validate
+- [x] task-8: pytest baseline 不回退 + mock_linear 冒烟 + 可选 comfy video live + forge validate
 
 **Files:**
 

@@ -237,6 +237,14 @@ entries:
   跟进 + raise;`absolute_path` raise NotImplementedError(stub 与 `write` 一致语义)。
   drift 校验 blob kind 保旧行为(本 change 不改 BlobBackend 内部,留 follow-on
   `blob-backend-streaming-implementation`)
+- `src/framework/core/artifact.py` — `PayloadRef._validate_exclusive` model_validator
+  内 inline kind 守门改用 `"inline_value" not in self.model_fields_set` 判断**字段是否
+  显式设置**,替代旧的 `inline_value is None` 判断(D10 D-NullValueAmbiguity apply 阶
+  段实施暴露:旧守门把合法的 `value=None` inline JSON null payload 当成"未设字段"误
+  拒,与 spec R2-F3 `test_explicit_value_none_preserved_as_inline_null_payload` 冲突)。
+  **PayloadRef 字段结构(kind / inline_value / file_path / blob_key / size_bytes)零
+  变更**;仅 validator 1 行 condition 微调,既有 18 处 inline 调用站点 grep 0 命中
+  `value=None`,backward compatible
 
 **不影响**:
 - `src/framework/artifact_store/lineage.py` / `variant_tracker.py`(不读写 payload bytes)
