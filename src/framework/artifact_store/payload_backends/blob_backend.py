@@ -29,6 +29,11 @@ class BlobBackend(PayloadBackend):
             raise ValueError(
                 "source_path is only supported by FileBackend, not BlobBackend"
             )
+        # R1-F1 spec 对等守门:value 缺失 + source_path=None → ValueError(与 InlineBackend 一致)
+        if value is _MISSING and source_path is None:
+            raise ValueError(
+                "BlobBackend.write requires value or source_path (got _MISSING + None)"
+            )
         raise NotImplementedError("BlobBackend.write is deferred (post-MVP)")
 
     def read(self, ref: PayloadRef) -> Any:
