@@ -178,6 +178,42 @@ def test_source_modified_between_stat_and_copy_hashes_dest_not_source(repo, tmp_
     assert art.hash != hash_payload(original), "hash 不应来自被替换前的 source 内容"
 
 
+def test_null_inline_payload_survives_resume(repo, tmp_path):
+    """D10 + R3 resume seam fence:value=None inline payload 在 dump+load 全 round-trip 后仍存活。
+
+    InlineBackend.exists() 当前实装 `return ref.inline_value is not None`,
+    value=None 时返回 False → load_run_metadata 的 payload_present guard 把该 artifact
+    误判为"不存在"并静默丢弃。
+    正确实装应用 model_fields_set 区分"显式 None"vs"未设字段"。
+    """
+    from framework.artifact_store import ArtifactRepository
+
+    inline_type = ArtifactType(modality="text", shape="structured", display_name="null_payload")
+    art = repo.put(
+        artifact_id="aid_null_resume",
+        value=None,
+        artifact_type=inline_type,
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=_producer(),
+    )
+    assert art.payload_ref.inline_value is None
+
+    run_dir = tmp_path / "run_dir_null"
+    repo.dump_run_metadata(run_id="r1", run_dir=run_dir)
+
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    fresh._artifacts.clear()
+    n = fresh.load_run_metadata(run_id="r1", run_dir=run_dir)
+    assert n == 1, (
+        "null inline artifact 应在 resume 后存活,而非被 payload_present guard 静默丢弃"
+    )
+    assert "aid_null_resume" in fresh._artifacts
+    assert fresh._artifacts["aid_null_resume"].payload_ref.inline_value is None
+
+
 @pytest.mark.skipif(
     os.environ.get("FORGEUE_RUN_HEAVY_FENCE") != "1",
     reason="FORGEUE_RUN_HEAVY_FENCE not set — opt-in heavy RSS fence",
