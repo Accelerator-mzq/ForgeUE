@@ -156,12 +156,21 @@ monitor:
 # (brainstorm/propose/apply 计划/verify 实现的对抗性审查)。
 # loose 模式 — 永不阻塞 forge 主流程 fence;收敛/severity 走 defaults。
 stage_extensions:
+  # 防 a1 hang:单轮硬超时 10 分钟,output 文件 3 分钟不动判 zombie,失败一次即停,不做多轮收敛
+  defaults:
+    timeout_sec: 600
+    zombie_threshold_sec: 180
+    max_retries: 1
+    convergence:
+      max_rounds: 1
   brainstorming:
     - name: codex-adversarial
       enabled: true
       build_prompt: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
         --output "${PROMPT_FILE}"
+        --user-focus "聚焦 change ${CHANGE_ID} 的 brainstorm draft;评估想法边界、关键假设、是否值得继续推进;不要 surface working tree 中未合并代码的实现细节问题。"
+        --target-label "${CHANGE_ID}-brainstorm"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
@@ -174,6 +183,8 @@ stage_extensions:
       build_prompt: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
         --output "${PROMPT_FILE}"
+        --user-focus "聚焦 change ${CHANGE_ID} 的 4 件套 (proposal.md / design.md / specs/ / tasks.md) 的设计决策、边界、可行性;不要 surface working tree 中未合并代码 (如 TBD-010 / executor lifecycle 等历史 finding) 的问题。"
+        --target-label "${CHANGE_ID}-propose"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
@@ -186,6 +197,8 @@ stage_extensions:
       build_prompt: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
         --output "${PROMPT_FILE}"
+        --user-focus "聚焦 change ${CHANGE_ID} 的 tasks.md 是否可独立执行、风险点、测试覆盖是否充分;不要 surface working tree 中其他无关代码的问题。"
+        --target-label "${CHANGE_ID}-apply-plan"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
@@ -206,6 +219,8 @@ stage_extensions:
       build_prompt: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" build-prompt
         --output "${PROMPT_FILE}"
+        --user-focus "聚焦 change ${CHANGE_ID} 实施结果的三维 verify (Completeness / Correctness / Coherence);评估 tests 与 spec 是否一致、是否真的覆盖;不要 surface working tree 中未合并代码的问题。"
+        --target-label "${CHANGE_ID}-verify"
       command: >
         node "${FORGE_HELPER_DIR}/codex-review-helper.mjs" run
         --mode adversarial
