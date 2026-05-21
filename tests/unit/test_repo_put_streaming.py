@@ -176,3 +176,83 @@ def test_source_modified_between_stat_and_copy_hashes_dest_not_source(repo, tmp_
     assert art.hash == hash_path(dest_abs)
     assert art.payload_ref.size_bytes == dest_abs.stat().st_size
     assert art.hash != hash_payload(original), "hash 不应来自被替换前的 source 内容"
+
+
+@pytest.mark.skipif(
+    os.environ.get("FORGEUE_RUN_HEAVY_FENCE") != "1",
+    reason="FORGEUE_RUN_HEAVY_FENCE not set — opt-in heavy RSS fence",
+)
+def test_zero_copy_rss_bounded_200mb(tmp_path):
+    """200 MB zero-copy 路径 RSS peak delta < 32 MB(D-FenceOpt-in + R5-F2 peak sampling)。
+
+    Opt-in via FORGEUE_RUN_HEAVY_FENCE=1 — 200MB 临时文件创建 / 拷贝 / hash
+    在 CI 慢,默认 skip;开发者 / 验收手动跑过守门 zero-copy 实质行为。
+    """
+    import psutil
+    process = psutil.Process()
+
+    # 创建 200 MB 源文件(分块写,避免一次性 200 MB in-memory)
+    src = tmp_path / "big.bin"
+    chunk = b"\xA5" * (8 * 1024 * 1024)
+    with src.open("wb") as f:
+        for _ in range(25):  # 25 * 8MB = 200 MB
+            f.write(chunk)
+
+    # R5-F2 D-PeakRSSSampling:后台 thread 50ms 采样 RSS 取 max,捕获瞬时峰值
+    import threading
+    import time as _time
+    rss_before = process.memory_info().rss
+    rss_peak = rss_before
+    stop_sampling = threading.Event()
+
+    def _sample_peak():
+        nonlocal rss_peak
+        while not stop_sampling.is_set():
+            try:
+                rss_peak = max(rss_peak, process.memory_info().rss)
+            except psutil.Error:
+                break
+            _time.sleep(0.05)  # 50ms
+
+    sampler = threading.Thread(target=_sample_peak, daemon=True)
+    sampler.start()
+    try:
+        reg = get_backend_registry(artifact_root=str(tmp_path / "store"))
+        repo = ArtifactRepository(backend_registry=reg)
+        art = repo.put(
+            artifact_id="aid_big",
+            source_path=src,
+            artifact_type=_video_type(),
+            role=ArtifactRole.intermediate,
+            format="mp4",
+            mime_type="video/mp4",
+            payload_kind=PayloadKind.file,
+            producer=_producer(),
+            file_suffix=".mp4",
+        )
+    finally:
+        stop_sampling.set()
+        sampler.join(timeout=2.0)
+
+    rss_after = process.memory_info().rss
+    rss_delta_mb = (rss_after - rss_before) / (1024 * 1024)
+    rss_peak_delta_mb = (rss_peak - rss_before) / (1024 * 1024)
+    rss_before_mb = rss_before / (1024 * 1024)
+    rss_after_mb = rss_after / (1024 * 1024)
+    rss_peak_mb = rss_peak / (1024 * 1024)
+
+    # R2-F4 + R5-F2:输出 peak RSS,evidence 捕获真实数值
+    print(
+        f"\n[heavy-fence] RSS peak delta: {rss_peak_delta_mb:.2f} MB "
+        f"(threshold < 32 MB; rss_before={rss_before_mb:.1f} MB, "
+        f"rss_peak={rss_peak_mb:.1f} MB, rss_after={rss_after_mb:.1f} MB, "
+        f"end_delta={rss_delta_mb:.2f} MB, payload=200 MB)"
+    )
+
+    assert art.payload_ref.size_bytes == 200 * 1024 * 1024
+    # R5-F2:核心断言基于 peak,end_delta 仅诊断
+    assert rss_peak_delta_mb < 32, (
+        f"zero-copy RSS peak delta {rss_peak_delta_mb:.2f} MB exceeds 32 MB fence "
+        f"(rss_before={rss_before_mb:.1f} MB, rss_peak={rss_peak_mb:.1f} MB, "
+        f"rss_after={rss_after_mb:.1f} MB)"
+    )
