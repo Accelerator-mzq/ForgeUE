@@ -169,6 +169,14 @@ def test_blob_backend_write_rejects_source_path(tmp_path):
         b.write(run_id="r", artifact_id="a", source_path=src)
 
 
+def test_blob_backend_write_requires_value_or_source_path():
+    """Spec 与 InlineBackend 对等:value 缺失 + source_path 缺失 → ValueError,
+    不是 NotImplementedError。R1-F1 BlobBackend _MISSING guard fence。"""
+    b = BlobBackend()
+    with pytest.raises(ValueError, match="requires value or source_path"):
+        b.write(run_id="r", artifact_id="a")
+
+
 # ---------- zero-copy 分支 fence (TBD-012 step 4) ----------
 
 import os as _os
