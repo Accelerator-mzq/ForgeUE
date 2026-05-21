@@ -110,9 +110,9 @@ patch 源模块对已绑定引用无效)。断言 spy 未被调用(确认未走�
 
 ## Scenario: stream drift 校验通过且不调 hash_payload
 
-**Given** `tests/unit/test_artifact_repository.py::test_load_metadata_uses_stream_hash`
+**Given** `tests/unit/test_artifact_repository.py::test_load_metadata_uses_stream_hash_for_file_kind`
 **When** 执行 `python -m pytest tests/unit/test_artifact_repository.py
-::test_load_metadata_uses_stream_hash -v`
+::test_load_metadata_uses_stream_hash_for_file_kind -v`
 **Then** 退出码 == 0
 **And** drift 通过的 entry 数 == 输入 _artifacts.json 中 file kind 条目数
 **And** spy_hash_payload.called == False(file kind 路径未触发全读)
@@ -134,7 +134,7 @@ patch 源模块对已绑定引用无效)。断言 spy 未被调用(确认未走�
 
 - 5 个新 / 扩单元用例位置(精确路径):
   - `tests/unit/test_artifact_repository.py::test_hash_path_equivalent_to_hash_payload`
-  - `tests/unit/test_artifact_repository.py::test_load_metadata_uses_stream_hash`
+  - `tests/unit/test_artifact_repository.py::test_load_metadata_uses_stream_hash_for_file_kind`
   - `tests/unit/test_repo_put_streaming.py::test_zero_copy_rss_bounded_200mb`
     (opt-in)
   - `tests/unit/test_repo_put_streaming.py::test_value_source_path_mutually_exclusive`

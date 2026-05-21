@@ -681,8 +681,8 @@ blob_key / size_bytes` 字段保留,既有 `_artifacts.json` 序列化兼容。
 | ------------------------------------------------- | ---- | ------ |
 | `test_hash_path_equivalent_to_hash_payload`       | 单元 | 默认   |
 | `test_hash_path_chunk_size_does_not_affect_output`| 单元 | 默认   |
-| `test_load_metadata_uses_stream_hash`(spy)       | 单元 | 默认   |
-| `test_load_metadata_corrupt_file_rejected_stream` | 单元 | 默认   |
+| `test_load_metadata_uses_stream_hash_for_file_kind`(spy) | 单元 | 默认   |
+| `test_load_metadata_rejects_corrupted_file_stream` | 单元 | 默认   |
 
 ### 7.3 扩 `tests/unit/test_payload_backends.py`
 
@@ -710,7 +710,7 @@ blob_key / size_bytes` 字段保留,既有 `_artifacts.json` 序列化兼容。
 | 18 处既有 `repo.put` 调用静默 broken       | API 完全向后兼容(`value` 不变,`source_path=None` 缺省);grep 18 处确认无 keyword-only 强制     |
 | `shutil.copy2` 跨盘性能不可控              | 文档声明同盘最优;`probe-and-validation` RSS fence opt-in 不在 CI 验证速度                       |
 | `hash_path` 与 `hash_payload` 输出不一致   | `test_hash_path_equivalent_to_hash_payload` 在 4 个 size grade fence 守门                         |
-| `load_run_metadata` drift 改 stream 后语义漂移 | `test_load_metadata_corrupt_file_rejected_stream` 守门 corrupt 拒签;spy hash_payload 守门未触发  |
+| `load_run_metadata` drift 改 stream 后语义漂移 | `test_load_metadata_rejects_corrupted_file_stream` 守门 corrupt 拒签;spy hash_payload 守门未触发  |
 | ABC 签名扩 keyword 破坏第三方 backend(无) | 检查 `framework.artifact_store.payload_backends/` 内只有 3 个实装,无外部插件;改动安全           |
 
 ## 9. Future Work {#forge-future-work}
