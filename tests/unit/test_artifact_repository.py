@@ -151,3 +151,120 @@ def test_hash_path_rejects_non_positive_chunk_size(tmp_path, bad_chunk_size):
     p.write_bytes(b"some-content-that-must-be-hashed")
     with pytest.raises(ValueError, match="chunk_size must be positive"):
         hash_path(p, chunk_size=bad_chunk_size)
+
+
+# ---------------------------------------------------------------------------
+# TBD-012 Task 6: load_run_metadata file-kind drift uses hash_path (stream)
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch as _patch_t6  # noqa: E402
+
+
+def test_load_metadata_uses_stream_hash_for_file_kind(repo, tmp_path):
+    """File kind drift 校验应走 hash_path 不走 hash_payload(spy 守门)。"""
+    src = tmp_path / "raw.bin"
+    src.write_bytes(b"forge-drift-test" * 4096)  # 64 KB
+    art = repo.put(
+        artifact_id="aid_drift",
+        source_path=src,
+        artifact_type=ArtifactType(modality="image", shape="raster", display_name="img"),
+        role=ArtifactRole.intermediate,
+        format="bin",
+        mime_type="application/octet-stream",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="r_drift", step_id="s1", provider="t", model="m"),
+        file_suffix=".bin",
+    )
+    run_dir = tmp_path / "run_dir"
+    repo.dump_run_metadata(run_id="r_drift", run_dir=run_dir)
+
+    # 另起 repo 跑 load(同一 store 让 backend exists 返回 True)
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    fresh._artifacts.clear()
+
+    import framework.artifact_store.repository as repo_mod
+    with _patch_t6.object(
+        repo_mod, "hash_payload",
+        side_effect=AssertionError("hash_payload SHALL NOT be invoked on file kind drift check"),
+    ):
+        n = fresh.load_run_metadata(run_id="r_drift", run_dir=run_dir)
+    assert n == 1
+    assert "aid_drift" in fresh._artifacts
+
+
+def test_load_metadata_rejects_corrupted_file_stream(repo, tmp_path):
+    """落盘 bytes 被改后 stream drift 应检出 → entry skipped。"""
+    src = tmp_path / "good.bin"
+    src.write_bytes(b"good-original-data" * 1024)
+    art = repo.put(
+        artifact_id="aid_corrupt",
+        source_path=src,
+        artifact_type=ArtifactType(modality="image", shape="raster", display_name="img"),
+        role=ArtifactRole.intermediate,
+        format="bin",
+        mime_type="application/octet-stream",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="r_corrupt", step_id="s1", provider="t", model="m"),
+        file_suffix=".bin",
+    )
+    run_dir = tmp_path / "run_dir_corrupt"
+    repo.dump_run_metadata(run_id="r_corrupt", run_dir=run_dir)
+
+    backend = repo.backend_registry.get(PayloadKind.file)
+    on_disk = backend.absolute_path(art.payload_ref)
+    on_disk.write_bytes(b"TAMPERED")
+
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    fresh._artifacts.clear()
+    n = fresh.load_run_metadata(run_id="r_corrupt", run_dir=run_dir)
+    assert n == 0
+    assert "aid_corrupt" not in fresh._artifacts
+
+
+def test_load_metadata_blob_kind_preserves_legacy_behavior(repo, tmp_path):
+    """R3-F4 D-DriftScope:blob kind 保旧行为(不走 hash_path),走 read+hash_payload。
+
+    BlobBackend.exists() stub 抛 NotImplementedError;
+    BlobBackend.read() stub 抛 NotImplementedError。
+    测试 patch exists() → True 让流程进入 drift 块,然后 read() 抛 NotImplementedError
+    被 `except Exception: continue` 兜住。关键断言:hash_path spy 未触发(D-DriftScope)。
+    """
+    import json
+    from unittest.mock import MagicMock
+    run_dir = tmp_path / "run_dir_blob"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    blob_art_dict = {
+        "artifact_id": "aid_blob",
+        "artifact_type": {"modality": "image", "shape": "raster", "display_name": "x"},
+        "role": "intermediate",
+        "format": "bin",
+        "mime_type": "application/octet-stream",
+        "payload_ref": {"kind": "blob", "blob_key": "s3://stub/key", "size_bytes": 0},
+        "schema_version": "1.0.0",
+        "hash": "0" * 64,
+        "producer": {"run_id": "r_blob", "step_id": "s1", "provider": "t", "model": "m"},
+        "lineage": {},
+        "metadata": {},
+        "validation": {"status": "pending"},
+        "tags": [],
+        "created_at": "2026-05-21T10:00:00+00:00",
+    }
+    (run_dir / "_artifacts.json").write_text(
+        json.dumps([blob_art_dict], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    fresh._artifacts.clear()
+    import framework.artifact_store.repository as repo_mod
+
+    # patch exists() → True 让流程越过 payload_present 守门进入 drift 块;
+    # read() 保持原 stub 行为(抛 NotImplementedError)→ except Exception: continue 兜
+    with _patch_t6.object(repo_mod, "hash_path",
+                          side_effect=AssertionError("hash_path SHALL NOT be invoked on blob kind drift")):
+        with _patch_t6.object(fresh._registry, "exists", return_value=True):
+            n = fresh.load_run_metadata(run_id="r_blob", run_dir=run_dir)
+    # BlobBackend.read() 抛 NotImplementedError → except Exception: continue → n=0
+    # 关键不是 n 值,是 hash_path spy 没被触发(D-DriftScope)
+    assert n == 0
+    assert "aid_blob" not in fresh._artifacts
