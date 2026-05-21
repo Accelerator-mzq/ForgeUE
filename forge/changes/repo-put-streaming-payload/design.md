@@ -315,10 +315,11 @@ NOT 「caller 传入的 source 文件」**。`repo.put(source_path=...)` 内部:
   (默认 pytest):用 monkeypatch shutil.copyfile side_effect 在 copy 期间改写 source bytes,
   断言落盘 dest bytes 是 copy 时刻的 source(modified)+ Artifact.hash 取 dest 而非 source +
   size_bytes 与 dest stat 一致;不再 opt-in,常驻 pytest -q 守门 D9 D-HashSource-vs-Dest 不变式。
-- `test_payload_backends.py::test_post_copy_cap_overflow_preserves_existing_dest`
-  (默认 pytest):monkeypatch `tmp_dest.stat` 让 post-copy size_check 触发
-  PayloadTooLarge;断言既有 `abs_path` 上 valid payload 字节未变 + `.part.*` tmp
-  文件已清理。
+- `test_payload_backends.py::test_file_backend_post_copy_cap_overflow_preserves_existing_dest`
+  (默认 pytest):monkeypatch `shutil.copyfile` 让 dst tmp 在 copy 完成后被并发写大
+  到超 cap,触发 post-copy `dest_size > FILE_MAX_BYTES` recheck PayloadTooLarge;
+  断言既有 `abs_path` 上 valid payload 字节未变 + `.part.*` tmp 文件已清理(沿 R4-F1
+  + R5-F3 atomic invariant)。
 
 ### D10. `value` 参数 "未传" 判断:`_MISSING` sentinel vs `None`
 
