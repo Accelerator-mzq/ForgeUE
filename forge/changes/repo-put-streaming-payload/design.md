@@ -311,10 +311,10 @@ NOT 「caller 传入的 source 文件」**。`repo.put(source_path=...)` 内部:
 既有 valid payload,unlink 会破坏数据安全)。
 
 **fence 守门**:
-- `test_repo_put_streaming.py::test_source_modified_after_stat_but_before_copy`
-  (opt-in heavy fence,不在默认 pytest -q):用 monkeypatch 模拟 stat / copy 之间
-  source 被改;断言 Artifact.hash 与 落盘 dest 一致(NOT 与改前 source 一致),
-  size_bytes 与 落盘 dest 一致。
+- `test_repo_put_streaming.py::test_source_modified_between_stat_and_copy_hashes_dest_not_source`
+  (默认 pytest):用 monkeypatch shutil.copyfile side_effect 在 copy 期间改写 source bytes,
+  断言落盘 dest bytes 是 copy 时刻的 source(modified)+ Artifact.hash 取 dest 而非 source +
+  size_bytes 与 dest stat 一致;不再 opt-in,常驻 pytest -q 守门 D9 D-HashSource-vs-Dest 不变式。
 - `test_payload_backends.py::test_post_copy_cap_overflow_preserves_existing_dest`
   (默认 pytest):monkeypatch `tmp_dest.stat` 让 post-copy size_check 触发
   PayloadTooLarge;断言既有 `abs_path` 上 valid payload 字节未变 + `.part.*` tmp
