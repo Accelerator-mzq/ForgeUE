@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from pathlib import Path
 from typing import Any
 
 
@@ -25,4 +27,32 @@ def hash_inputs(*parts: Any) -> str:
     for p in parts:
         h.update(_canonicalize(p))
         h.update(b"\x1f")  # separator
+    return h.hexdigest()
+
+
+def hash_path(
+    path: str | os.PathLike,
+    *,
+    chunk_size: int = 8 * 1024 * 1024,
+) -> str:
+    """文件流式 SHA-256,等价于 hash_payload(Path(path).read_bytes()) 但 RSS bounded。
+
+    Output equivalent to `hash_payload(Path(path).read_bytes())` but with
+    bounded RSS (chunk_size + small overhead).
+
+    R4-F4:chunk_size <= 0 raises ValueError —— `f.read(0)` 会返回空 bytes 让
+    非空文件得到 empty file hash(silent corruption)。
+    """
+    if chunk_size <= 0:
+        raise ValueError(
+            f"hash_path chunk_size must be positive, got {chunk_size}"
+        )
+    h = hashlib.sha256()
+    p = Path(path)
+    with p.open("rb") as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            h.update(chunk)
     return h.hexdigest()
