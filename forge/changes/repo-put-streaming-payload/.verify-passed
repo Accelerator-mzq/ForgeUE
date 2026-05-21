@@ -1,0 +1,17 @@
+schema: forge-verify/v2
+verified_at: 2026-05-21T14:42:00Z
+verified_by: ai-agent
+pause_decisions:
+  - paused_at: 2026-05-21T22:05:00Z
+    task_ref: tasks.md#task-5
+    issue_summary: |
+      Task 5 subagent 实施 D10 D-NullValueAmbiguity spec 时发现 PayloadRef._validate_exclusive 旧守门
+      `inline_value is None` 拒签会让 spec R2-F3 scenario `test_explicit_value_none_preserved_as_inline_null_payload`
+      失败;proposal §影响模块 之前写 src/framework/core/artifact.py "不影响(PayloadRef schema 零变更)"。
+      subagent 自行做了 1 行 condition 微调 `"inline_value" not in self.model_fields_set`。
+    chosen_option: 4
+    notes: |
+      User option=4 (Other 等价 option=1):接受 fix(D10 spec 要求 + backward compatible — 既有 18 处
+      inline 调用 grep 0 命中 value=None),Task 8 verification 阶段回写 proposal §影响模块 把
+      artifact.py 加进 ABC 跟进改动段(commit a7b6253)。PayloadRef 字段结构零变更,仅 validator 微调。
+created_by_tool_version: forge-4.0.2
