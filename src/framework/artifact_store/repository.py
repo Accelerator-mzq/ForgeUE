@@ -15,15 +15,17 @@ actually report cache hits instead of silently rerunning the pipeline.
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-from framework.artifact_store.hashing import hash_payload
+from framework.artifact_store.hashing import hash_path, hash_payload
 from framework.core.enums import PayloadKind as _PayloadKind
 from framework.artifact_store.lineage import LineageIndex
 from framework.artifact_store.payload_backends.base import (
     PayloadBackendRegistry,
+    _MISSING,
     get_backend_registry,
 )
 from framework.artifact_store.variant_tracker import VariantTracker
@@ -56,7 +58,8 @@ class ArtifactRepository:
         self,
         *,
         artifact_id: str,
-        value: Any,
+        value: Any = _MISSING,
+        source_path: str | os.PathLike | None = None,
         artifact_type: ArtifactType,
         role: ArtifactRole,
         format: str,
@@ -70,11 +73,41 @@ class ArtifactRepository:
         validation: ValidationRecord | None = None,
         file_suffix: str = "",
     ) -> Artifact:
-        """Persist the payload, compute hash, and register the Artifact."""
+        """Persist the payload, compute hash, and register the Artifact.
+
+        Either *value* (any type, including None for inline JSON null) OR
+        *source_path* MUST be provided (mutually exclusive, D10 sentinel-based).
+        *source_path* requires payload_kind == PayloadKind.file.
+
+        D10 D-NullValueAmbiguity: 用 _MISSING identity 区分 "未传" vs "显式 None"
+        (value=None 是合法 inline JSON null payload,不能当 '未传' 处理)。
+        """
+        # 三守门:互斥 / 两者都缺 / payload_kind 错误
+        if value is _MISSING and source_path is None:
+            raise ValueError("repo.put requires either value or source_path")
+        if value is not _MISSING and source_path is not None:
+            raise ValueError("repo.put: value and source_path are mutually exclusive")
+        if source_path is not None and payload_kind != PayloadKind.file:
+            raise ValueError(
+                f"repo.put: source_path requires payload_kind=file (got {payload_kind!r})"
+            )
+
+        # 落盘(backend 透传 source_path keyword)
         ref = self._registry.write(
             payload_kind, value,
             run_id=producer.run_id, artifact_id=artifact_id, suffix=file_suffix,
+            source_path=source_path,
         )
+
+        # 哈希分两路(D9 D-HashSource-vs-Dest):
+        # source_path 路径取 dest 文件哈希,与落盘数据同源(隔离 source 并发改)
+        # value 路径沿用 hash_payload(value) 既有语义
+        if source_path is not None:
+            dest_abs = self._registry.get(payload_kind).absolute_path(ref)
+            content_hash = hash_path(dest_abs)
+        else:
+            content_hash = hash_payload(value)
+
         art = Artifact(
             artifact_id=artifact_id,
             artifact_type=artifact_type,
@@ -83,7 +116,7 @@ class ArtifactRepository:
             mime_type=mime_type,
             payload_ref=ref,
             schema_version=schema_version,
-            hash=hash_payload(value),
+            hash=content_hash,
             producer=producer,
             lineage=lineage or Lineage(),
             metadata=metadata or {},

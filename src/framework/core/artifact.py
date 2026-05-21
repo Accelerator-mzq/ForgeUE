@@ -20,7 +20,9 @@ class PayloadRef(BaseModel):
 
     @model_validator(mode="after")
     def _validate_exclusive(self) -> "PayloadRef":
-        if self.kind == PayloadKind.inline and self.inline_value is None:
+        # D10 D-NullValueAmbiguity:inline_value=None 是合法 JSON null payload
+        # (区分 "未设置 inline_value" vs "显式传 None"),用 model_fields_set 守门
+        if self.kind == PayloadKind.inline and "inline_value" not in self.model_fields_set:
             raise ValueError("inline payload requires inline_value")
         if self.kind == PayloadKind.file and not self.file_path:
             raise ValueError("file payload requires file_path")
