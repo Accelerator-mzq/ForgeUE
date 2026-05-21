@@ -113,3 +113,41 @@ def test_find_by_tag_and_producer(repo: ArtifactRepository):
     assert {a.artifact_id for a in repo.find_by_tag("tavern")} == {"a1"}
     assert {a.artifact_id for a in repo.find_by_producer(run_id="r1")} == {"a1"}
     assert {a.artifact_id for a in repo.find_by_producer(step_id="s2")} == {"a2"}
+
+
+# ---------------------------------------------------------------------------
+# TBD-012 Task 1: hash_path stream SHA-256 helper
+# ---------------------------------------------------------------------------
+
+import pytest  # noqa: E402 — 追加在文件末尾,import 跟随测试块
+
+from framework.artifact_store.hashing import hash_path, hash_payload  # noqa: E402
+
+
+@pytest.mark.parametrize("size", [1, 64 * 1024, 1 * 1024 * 1024, 50 * 1024 * 1024])
+def test_hash_path_equivalent_to_hash_payload(tmp_path, size):
+    # 跨多个 size grade 验证 stream / value 哈希等价
+    p = tmp_path / f"blob_{size}.bin"
+    data = (b"\xA5" * size) if size <= 1024 * 1024 else (b"\xA5" * (size // 16)) * 16
+    p.write_bytes(data)
+    assert hash_path(p) == hash_payload(p.read_bytes())
+
+
+def test_hash_path_chunk_size_does_not_affect_output(tmp_path):
+    # 不同 chunk_size 输出 SHALL 完全一致
+    p = tmp_path / "blob_chunked.bin"
+    p.write_bytes(b"forge-ue-test-pattern" * 12345)  # ~258 KB
+    h1 = hash_path(p, chunk_size=1024)
+    h2 = hash_path(p, chunk_size=8 * 1024 * 1024)
+    h3 = hash_payload(p.read_bytes())
+    assert h1 == h2 == h3
+
+
+@pytest.mark.parametrize("bad_chunk_size", [0, -1, -8 * 1024])
+def test_hash_path_rejects_non_positive_chunk_size(tmp_path, bad_chunk_size):
+    """R4-F4 fence:chunk_size <= 0 必须 raise ValueError;否则 f.read(0) 静默返
+    回空 bytes,非空文件会得到 empty hash(silent corruption)。"""
+    p = tmp_path / "nonempty.bin"
+    p.write_bytes(b"some-content-that-must-be-hashed")
+    with pytest.raises(ValueError, match="chunk_size must be positive"):
+        hash_path(p, chunk_size=bad_chunk_size)
