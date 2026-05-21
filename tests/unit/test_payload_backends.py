@@ -286,3 +286,44 @@ def test_file_backend_zero_copy_failure_preserves_existing_dest(tmp_path):
     assert dest_abs.read_bytes() == existing, "既有 valid payload 不应被破坏(atomic)"
     tmp_files = list(dest_abs.parent.glob(f"{dest_abs.name}.part.*"))
     assert tmp_files == [], f"tmp 文件应被清理,但找到:{tmp_files}"
+
+
+def test_file_backend_post_copy_cap_overflow_preserves_existing_dest(tmp_path):
+    """D9 + R5-F3 fence:post-copy `dest_size > FILE_MAX_BYTES` 分支触发 PayloadTooLarge 时
+    既有 abs_path 上 valid payload 不破坏 + tmp 文件清理(race window 防御)。"""
+    from framework.artifact_store.payload_backends.base import PayloadTooLarge
+    from framework.artifact_store.payload_backends.file_backend import FILE_MAX_BYTES
+    import shutil as _shutil
+
+    b = FileBackend(root=str(tmp_path / "store"))
+    # 先写一个既有 valid payload 到 abs_path
+    existing = b"existing-valid-payload-do-not-corrupt"
+    ref_old = b.write(value=existing, run_id="r", artifact_id="aid_postcp", suffix=".bin")
+    dest_abs = b.absolute_path(ref_old)
+    assert dest_abs.read_bytes() == existing
+
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"normal-size-payload-pre-copy")
+
+    # monkeypatch shutil.copyfile:在 copyfile 后把 tmp_dest 写大到超 cap,
+    # 模拟 source 在 stat / copy 之间被并发扩写,落盘超 cap bytes 的 race window 场景
+    real_copyfile = _shutil.copyfile
+
+    def race_then_oversize(src_p, dst_p, **kwargs):
+        # 拷贝原始 payload bytes,然后将 tmp_dest 替换为超 cap 大小内容
+        real_copyfile(src_p, dst_p, **kwargs)
+        with open(dst_p, "wb") as f:
+            f.write(b"\x00" * (FILE_MAX_BYTES + 1))
+
+    import framework.artifact_store.payload_backends.file_backend as fb_mod
+    with _patch.object(fb_mod.shutil, "copyfile", side_effect=race_then_oversize):
+        with pytest.raises(PayloadTooLarge, match="post-copy"):
+            b.write(
+                run_id="r", artifact_id="aid_postcp", suffix=".bin", source_path=src,
+            )
+
+    # Invariant 1:既有 valid payload 不应被破坏(D4 atomic:只改 tmp,不动 abs_path)
+    assert dest_abs.read_bytes() == existing, "既有 valid payload 不应被破坏(R4-F1 atomic)"
+    # Invariant 2:.part.* tmp 文件应被清理(except BaseException + unlink)
+    tmp_files = list(dest_abs.parent.glob(f"{dest_abs.name}.part.*"))
+    assert tmp_files == [], f"tmp 文件应被清理,但找到:{tmp_files}"
