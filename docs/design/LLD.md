@@ -826,20 +826,29 @@ class ExternalProcessLifecycle(ABC):
 
 ```python
 async def arun(self, task, workflow, steps, ...) -> RunResult:
-    lifecycle = self._lifecycle_manager   # 由调用方注入或构造
+    selection = self._managed_process_registry.select(steps=steps)
+    lifecycle = selection.lifecycle if selection else None
+    mode = selection.mode if selection else None
+    reason = "run_end"
     try:
-        await lifecycle.ensure_running()
+        if lifecycle:
+            await lifecycle.ensure(mode)
         # ... 主流程 ...
     finally:
-        await self._release_lifecycle_bounded(lifecycle, timeout=30.0)
+        if lifecycle:
+            await self._release_lifecycle_bounded(lifecycle, mode, reason)
 
 async def aclose(self) -> None:
-    """disposal 钩子;框架/测试结束时调用确保进程清理。"""
-    if self._lifecycle_manager:
-        await self._lifecycle_manager.release("shutdown", "aclose")
+    """释放 self_managed_session 持有的抽象 lifecycle。"""
+    if self._lifecycle:
+        await self._release_lifecycle_bounded(
+            self._lifecycle,
+            "self_managed_session",
+            "orchestrator_close",
+        )
 ```
 
-`_release_lifecycle_bounded(lifecycle, timeout)`:套 `asyncio.wait_for(lifecycle.release(...), timeout=timeout)`;超时记 warning 不 raise(防 release 本身挂死导致 orchestrator 无法退出)。
+`_release_lifecycle_bounded(lifecycle, mode, reason)`:套 `asyncio.wait_for(lifecycle.release(mode, reason), timeout=30s)`;超时记 warning/metrics 不 raise(防 release 本身挂死导致 orchestrator 无法退出)。
 
 ---
 
