@@ -1,11 +1,13 @@
 """F0-3 acceptance: ArtifactRepository write/read, lineage queries, variant siblings."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
 from framework.artifact_store import ArtifactRepository, get_backend_registry
+from framework.artifact_store.repository import ArtifactMetadataIntegrityError
 from framework.artifact_store.payload_backends import BlobBackend, PayloadBackendRegistry
 from framework.artifact_store.payload_backends.blob_backend import InMemoryBlobClient
 from framework.core.artifact import ArtifactType, Lineage, ProducerRef
@@ -335,3 +337,175 @@ def test_repo_put_blob_source_path_persists_payload(tmp_path):
     assert art.payload_ref.kind == PayloadKind.blob
     assert art.payload_ref.blob_key == "bucket/r_blob_source/aid_blob_source.bin"
     assert repo.read_payload("aid_blob_source") == payload
+
+
+def _read_json(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_json(path: Path, value) -> None:
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def test_dump_run_metadata_writes_integrity_file(repo: ArtifactRepository, tmp_path: Path):
+    """FOR-14:dump _artifacts.json 后必须写伴生 integrity 文件。"""
+    repo.put(
+        artifact_id="aid_integrity_1",
+        value={"x": 1},
+        artifact_type=_text_type(),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="r_integrity", step_id="s1"),
+    )
+    repo.put(
+        artifact_id="aid_integrity_2",
+        value={"x": 2},
+        artifact_type=_text_type(),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="r_integrity", step_id="s2"),
+    )
+
+    run_dir = tmp_path / "run_dir_integrity"
+    dumped = repo.dump_run_metadata(run_id="r_integrity", run_dir=run_dir)
+
+    artifacts_path = run_dir / "_artifacts.json"
+    integrity_path = run_dir / "_artifacts.integrity.json"
+    integrity = _read_json(integrity_path)
+
+    assert dumped == 2
+    assert artifacts_path.is_file()
+    assert integrity_path.is_file()
+    assert integrity == {
+        "schema_version": "1.0",
+        "artifacts_file": "_artifacts.json",
+        "algorithm": "sha256",
+        "artifacts_sha256": hash_path(artifacts_path),
+        "artifact_count": 2,
+        "artifact_ids": ["aid_integrity_1", "aid_integrity_2"],
+    }
+
+
+def test_load_run_metadata_fails_fast_when_inline_payload_metadata_changes(
+    repo: ArtifactRepository,
+    tmp_path: Path,
+):
+    """FOR-14:inline payload 属于 metadata 本身,被改后 resume 必须 fail-fast。"""
+    repo.put(
+        artifact_id="aid_inline_tamper",
+        value={"x": 1},
+        artifact_type=_text_type(),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="r_inline_tamper", step_id="s1"),
+    )
+    run_dir = tmp_path / "run_dir_inline_tamper"
+    repo.dump_run_metadata(run_id="r_inline_tamper", run_dir=run_dir)
+
+    artifacts_path = run_dir / "_artifacts.json"
+    data = _read_json(artifacts_path)
+    data[0]["payload_ref"]["inline_value"] = {"x": 2}
+    data[0]["hash"] = hash_payload({"x": 2})
+    _write_json(artifacts_path, data)
+
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    with pytest.raises(ArtifactMetadataIntegrityError, match="hash mismatch"):
+        fresh.load_run_metadata(run_id="r_inline_tamper", run_dir=run_dir)
+    assert not fresh.exists("aid_inline_tamper")
+
+
+def test_load_run_metadata_fails_fast_when_artifact_id_changes(
+    repo: ArtifactRepository,
+    tmp_path: Path,
+):
+    """FOR-14:即使 integrity hash 被同步改写,artifact_id 摘要也要挡住改名。"""
+    repo.put(
+        artifact_id="aid_original",
+        value={"x": 1},
+        artifact_type=_text_type(),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="r_id_tamper", step_id="s1"),
+    )
+    run_dir = tmp_path / "run_dir_id_tamper"
+    repo.dump_run_metadata(run_id="r_id_tamper", run_dir=run_dir)
+
+    artifacts_path = run_dir / "_artifacts.json"
+    integrity_path = run_dir / "_artifacts.integrity.json"
+    data = _read_json(artifacts_path)
+    data[0]["artifact_id"] = "aid_renamed"
+    _write_json(artifacts_path, data)
+
+    integrity = _read_json(integrity_path)
+    integrity["artifacts_sha256"] = hash_path(artifacts_path)
+    _write_json(integrity_path, integrity)
+
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    with pytest.raises(ArtifactMetadataIntegrityError, match="artifact id list mismatch"):
+        fresh.load_run_metadata(run_id="r_id_tamper", run_dir=run_dir)
+    assert not fresh.exists("aid_original")
+    assert not fresh.exists("aid_renamed")
+
+
+def test_load_run_metadata_fails_fast_when_integrity_json_is_invalid(
+    repo: ArtifactRepository,
+    tmp_path: Path,
+):
+    """FOR-14:integrity 文件坏掉时不得退回 legacy 路径。"""
+    repo.put(
+        artifact_id="aid_bad_integrity",
+        value={"x": 1},
+        artifact_type=_text_type(),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="r_bad_integrity", step_id="s1"),
+    )
+    run_dir = tmp_path / "run_dir_bad_integrity"
+    repo.dump_run_metadata(run_id="r_bad_integrity", run_dir=run_dir)
+    (run_dir / "_artifacts.integrity.json").write_text("{not json", encoding="utf-8")
+
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    with pytest.raises(ArtifactMetadataIntegrityError, match="invalid JSON"):
+        fresh.load_run_metadata(run_id="r_bad_integrity", run_dir=run_dir)
+    assert not fresh.exists("aid_bad_integrity")
+
+
+def test_load_run_metadata_legacy_without_integrity_file_still_loads(
+    repo: ArtifactRepository,
+    tmp_path: Path,
+):
+    """FOR-14:旧 run 没有 integrity 文件时保持兼容,且 load 不 backfill。"""
+    repo.put(
+        artifact_id="aid_legacy",
+        value={"x": 1},
+        artifact_type=_text_type(),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="r_legacy", step_id="s1"),
+    )
+    run_dir = tmp_path / "run_dir_legacy"
+    repo.dump_run_metadata(run_id="r_legacy", run_dir=run_dir)
+    integrity_path = run_dir / "_artifacts.integrity.json"
+    integrity_path.unlink()
+
+    fresh = ArtifactRepository(backend_registry=repo.backend_registry)
+    loaded = fresh.load_run_metadata(run_id="r_legacy", run_dir=run_dir)
+
+    assert loaded == 1
+    assert fresh.exists("aid_legacy")
+    assert not integrity_path.exists(), "resume load 不应为 legacy run 自动 backfill"
