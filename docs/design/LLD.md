@@ -826,7 +826,7 @@ class ExternalProcessLifecycle(ABC):
 
 ```python
 async def arun(self, task, workflow, steps, ...) -> RunResult:
-    selection = self._managed_process_registry.select(steps=steps)
+    selection = self.managed_process_registry.select(steps=steps)
     lifecycle = selection.lifecycle if selection else None
     mode = selection.mode if selection else None
     reason = "run_end"
