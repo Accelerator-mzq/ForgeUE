@@ -123,7 +123,7 @@
 | `kind` | `inline / file / blob` | 载体态 |
 | `inline_value` | Any? | `kind=inline` 时填 |
 | `file_path` | str? | 相对 Artifact Store root |
-| `blob_key` | str? | 对象存储 key(blob 预留) |
+| `blob_key` | str? | 对象存储 key(`BlobBackend` MVP 使用可注入 client 协议) |
 | `size_bytes` | int | 体积 |
 
 **ArtifactType**
@@ -1274,7 +1274,7 @@ def by_lineage(self, source_artifact_id: str) -> list[Artifact]
 | --- | --- | --- |
 | Inline | `inline_backend.py` | `PayloadRef.kind=inline`,上限 64 KB |
 | File | `file_backend.py` | `kind=file`,落 `<artifact_root>/<run_id>/<artifact_id>.<ext>` |
-| Blob | `blob_backend.py` | 预留,MVP 不启用 |
+| Blob | `blob_backend.py` | `kind=blob`,写入 `<bucket>/<run_id>/<artifact_id>.<ext>`;默认 `InMemoryBlobClient`,生产侧可注入 S3/MinIO/Azure adapter |
 
 ### 8.3 Hashing(`hashing.py`)
 

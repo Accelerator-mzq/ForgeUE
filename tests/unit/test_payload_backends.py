@@ -1,4 +1,4 @@
-"""F0-2 acceptance: inline + file round-trip, 10MB image + 200 byte JSON, blob stubbed."""
+"""F0-2 acceptance: inline + file + blob payload backend behavior."""
 from __future__ import annotations
 
 import json
@@ -13,6 +13,7 @@ from framework.artifact_store.payload_backends import (
     PayloadTooLarge,
     get_backend_registry,
 )
+from framework.artifact_store.hashing import hash_path, hash_payload
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -90,16 +91,54 @@ def test_file_rejects_over_cap(tmp_path: Path, monkeypatch):
         b.write(b"x" * 2048, run_id="r1", artifact_id="a1", suffix=".bin")
 
 
-# ---------- Blob stub ----------
+# ---------- Blob MVP ----------
 
-def test_blob_not_implemented():
-    b = BlobBackend()
-    from framework.core.artifact import PayloadRef
-    ref = PayloadRef(kind=PayloadKind.blob, blob_key="bucket/key", size_bytes=1)
-    with pytest.raises(NotImplementedError):
+def test_blob_backend_write_bytes_roundtrip():
+    """BlobBackend MVP:value bytes 写入对象存储后可按 blob_key 读回。"""
+    b = BlobBackend(bucket="bucket")
+    payload = b"blob-payload-from-value"
+    result = b.write(
+        payload,
+        run_id="run_blob",
+        artifact_id="asset_1",
+        suffix=".bin",
+    )
+    ref = result.ref
+    assert ref.kind == PayloadKind.blob
+    assert ref.blob_key == "bucket/run_blob/asset_1.bin"
+    assert ref.size_bytes == len(payload)
+    assert result.content_hash == hash_payload(payload)
+    assert b.read(ref) == payload
+    assert b.exists(ref)
+
+
+def test_blob_backend_write_source_path_streams_file(tmp_path: Path):
+    """BlobBackend MVP:source_path 分支走路径上传协议,不改变 PayloadRef schema。"""
+    src = tmp_path / "source.mp4"
+    payload = b"blob-payload-from-source-path" * 128
+    src.write_bytes(payload)
+    b = BlobBackend(bucket="bucket")
+    result = b.write(
+        run_id="run_blob",
+        artifact_id="video_1",
+        suffix=".mp4",
+        source_path=src,
+    )
+    ref = result.ref
+    assert ref.kind == PayloadKind.blob
+    assert ref.blob_key == "bucket/run_blob/video_1.mp4"
+    assert ref.size_bytes == len(payload)
+    assert result.content_hash == hash_path(src)
+    assert b.read(ref) == payload
+    assert b.exists(ref)
+
+
+def test_blob_backend_missing_key_raises_key_error():
+    """BlobBackend 已实装;读取不存在的 object key 时透出 KeyError。"""
+    b = BlobBackend(bucket="bucket")
+    ref = PayloadRef(kind=PayloadKind.blob, blob_key="bucket/missing.bin", size_bytes=1)
+    with pytest.raises(KeyError):
         b.read(ref)
-    with pytest.raises(NotImplementedError):
-        b.write({}, run_id="r", artifact_id="a")
 
 
 # ---------- Registry dispatch ----------
@@ -137,10 +176,10 @@ def test_inline_backend_absolute_path_raises():
 
 
 def test_blob_backend_absolute_path_raises():
-    """BlobBackend.absolute_path 应 raise NotImplementedError(stub 一致语义)。"""
+    """BlobBackend 是对象存储语义,没有本地 absolute_path。"""
     b = BlobBackend()
     ref = PayloadRef(kind=PayloadKind.blob, blob_key="some-key", size_bytes=0)
-    with pytest.raises(NotImplementedError):
+    with pytest.raises(ValueError, match="blob payload has no local path"):
         b.absolute_path(ref)
 
 
@@ -163,21 +202,38 @@ def test_inline_backend_write_rejects_source_path(tmp_path):
         b.write(run_id="r", artifact_id="a", source_path=src)
 
 
-def test_blob_backend_write_rejects_source_path(tmp_path):
-    """BlobBackend.write 收到 source_path 非空应 raise ValueError (D10 守门)。"""
+def test_blob_backend_write_enforces_mutex_at_backend_layer(tmp_path):
+    """BlobBackend.write 与 FileBackend 一样守 value/source_path 二选一。"""
     src = tmp_path / "src.bin"
     src.write_bytes(b"x")
     b = BlobBackend()
-    with pytest.raises(ValueError, match="source_path is only supported by FileBackend"):
-        b.write(run_id="r", artifact_id="a", source_path=src)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        b.write(value=b"x", run_id="r", artifact_id="a", source_path=src)
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        b.write(value=None, run_id="r", artifact_id="a2", source_path=src)
 
 
 def test_blob_backend_write_requires_value_or_source_path():
     """Spec 与 InlineBackend 对等:value 缺失 + source_path 缺失 → ValueError,
     不是 NotImplementedError。R1-F1 BlobBackend _MISSING guard fence。"""
     b = BlobBackend()
-    with pytest.raises(ValueError, match="requires value or source_path"):
+    with pytest.raises(ValueError, match="requires either value or source_path"):
         b.write(run_id="r", artifact_id="a")
+
+
+def test_blob_backend_source_path_missing_source_raises(tmp_path):
+    b = BlobBackend()
+    with pytest.raises(FileNotFoundError):
+        b.write(run_id="r", artifact_id="aid", source_path=tmp_path / "absent.bin")
+
+
+def test_blob_backend_source_path_rejects_directory_source(tmp_path):
+    """BlobBackend source_path 分支只接受 regular file。"""
+    src_dir = tmp_path / "a_directory"
+    src_dir.mkdir()
+    b = BlobBackend()
+    with pytest.raises(ValueError, match="must be a regular file"):
+        b.write(run_id="r", artifact_id="aid", source_path=src_dir)
 
 
 # ---------- zero-copy 分支 fence (TBD-012 step 4) ----------

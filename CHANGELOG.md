@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FOR-11 blob backend streaming implementation**:`BlobBackend` 从
+  `NotImplementedError` stub 升级为 MVP object-store backend,提供可注入
+  `BlobClient` protocol + 默认 `InMemoryBlobClient`;支持 value/source_path 写入、
+  read/exists、blob resume drift 校验,并允许
+  `ArtifactRepository.put(source_path=..., payload_kind=PayloadKind.blob)`。同步
+  retired active backlog `blob-backend-streaming-implementation`。
 - **FOR-13 worker candidate source_path migration**:`ImageCandidate` / `MeshCandidate`
   / `AudioCandidate` / `VideoCandidate` 扩 `source_path`;本地 ComfyUI worker 只读格式校验所需
   文件头,由 generator executor 优先调用 `repo.put(source_path=...)` 落盘,`data`

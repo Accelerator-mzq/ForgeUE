@@ -13,7 +13,7 @@
 - `docs/design/LLD.md` §F0-3(PayloadRef + Repository)
 - 实现:`src/framework/artifact_store/repository.py` /
   `src/framework/artifact_store/hashing.py` /
-  `src/framework/artifact_store/payload_backends/{base,file_backend}.py`
+  `src/framework/artifact_store/payload_backends/{base,file_backend,blob_backend}.py`
 
 ## Requirement: repo.put 提供 zero-copy 源路径写入入口
 
@@ -26,20 +26,24 @@
 二选一守门 SHALL 基于 identity 比较:
 - 不传入任一(`value is _MISSING and source_path is None`)SHALL raise `ValueError`
 - 同时传入两者(`value is not _MISSING and source_path is not None`)SHALL raise `ValueError`
-- `source_path is not None and payload_kind != PayloadKind.file` SHALL raise `ValueError`
+- `source_path is not None and payload_kind not in {PayloadKind.file, PayloadKind.blob}` SHALL raise `ValueError`
 
 当 `source_path` 不为空时(D9 D-HashSource-vs-Dest):
 - `repo.put` SHALL 把 `source_path` 透传到 `PayloadBackend.write` 的同名 keyword
   参数,**不**在 ArtifactRepository 层读 bytes
 - `PayloadBackend.write` SHALL 返回 `WriteResult(ref, content_hash)`,`repo.put`
   SHALL 信任该 `content_hash`,不在 `os.replace` 后对 final dest 重算 hash
-- source_path 分支的内容哈希 SHALL 走 `hash_path(tmp_dest)` 对**staging 临时文件**
-  stream 取样,并且必须发生在 `os.replace(tmp_dest, abs_path)` 之前;
-  **不**走 `hash_path(source_path)`(避免 source 在 stat / copy / hash 三阶段间被
-  并发改导致漂移)
-- `PayloadRef.size_bytes` SHALL 等于 `Path(dest_abs).stat().st_size`(post-copy
-  dest stat),与 hash 同源 — `FileBackend.write` 仅在 pre-copy 用 `src.stat()`
-  做 fail-fast cap 校验,最终 size_bytes 取 dest stat
+- file backend 的 source_path 分支内容哈希 SHALL 走 `hash_path(tmp_dest)` 对
+  **staging 临时文件** stream 取样,并且必须发生在
+  `os.replace(tmp_dest, abs_path)` 之前;**不**走 `hash_path(source_path)`
+  (避免 source 在 stat / copy / hash 三阶段间被并发改导致漂移)
+- blob backend 的 source_path 分支 SHALL 走 `BlobClient.upload_path(...)` 上传,
+  内容哈希用 `hash_path(source_path)` stream 计算,并返回
+  `PayloadRef(kind=blob, blob_key=<bucket>/<run_id>/<artifact_id><suffix>)`;
+  真实 S3/MinIO/Azure adapter 可在同一 protocol 下做 multipart upload
+- file backend 的 `PayloadRef.size_bytes` SHALL 等于 `Path(dest_abs).stat().st_size`
+  (post-copy dest stat),与 hash 同源 — `FileBackend.write` 仅在 pre-copy 用
+  `src.stat()` 做 fail-fast cap 校验,最终 size_bytes 取 dest stat
 
 当 `source_path` 为空(既有调用站点的行为)时,`repo.put` 行为 SHALL 与本 change 之
 前完全一致 —— 18 处既有 `repo.put` 调用站点 SHALL 无须修改;`value=None` inline 调
@@ -148,10 +152,12 @@ suffix: str = "", source_path: str | os.PathLike | None = None) -> WriteResult`
 `ArtifactRepository.put` SHALL 从 `WriteResult.ref` 构造 Artifact payload_ref,并从
 `WriteResult.content_hash` 构造 Artifact.hash。
 
-`InlineBackend.write` 与 `BlobBackend.write` SHALL 在收到非空 `source_path` 时
-raise `ValueError("source_path is only supported by FileBackend")`。两者也 SHALL
-在收到 `value is _MISSING` 且 `source_path is None` 时 raise `ValueError`(缺参
-兜底,正常情况下 repo.put 已守门,backend 是次级 fence)。
+`InlineBackend.write` SHALL 在收到非空 `source_path` 时 raise
+`ValueError("source_path is only supported by FileBackend")`。`BlobBackend.write`
+SHALL 接受 `source_path`,与 `FileBackend.write` 一样执行 value/source_path 二选一
+守门。Inline / File / Blob 三个 backend 都 SHALL 在收到
+`value is _MISSING` 且 `source_path is None` 时 raise `ValueError`(缺参兜底,
+正常情况下 repo.put 已守门,backend 是次级 fence)。
 
 ## Requirement: FileBackend.write 提供 zero-copy 落盘分支
 
@@ -196,6 +202,31 @@ raise `ValueError("source_path is only supported by FileBackend")`。两者也 S
 两条分支在外部观察(落盘 bytes)上 SHALL 等价(byte-equal scenario 下 source /
 dest hash / size 一致,但**契约约束 dest**)。
 
+## Requirement: BlobBackend.write 提供对象存储 MVP 分支
+
+**ADDED (FOR-11).** `BlobBackend` SHALL 从 `NotImplementedError` stub 升级为
+MVP object-store backend:
+
+- 暴露 `BlobClient` protocol,包含 `upload_bytes` / `upload_path` / `read_bytes`
+  / `exists` 四个方法;框架默认不引入 boto3 / azure-storage-blob 等重依赖
+- 暴露 `InMemoryBlobClient` 作为默认 client,供本地测试和离线 run 使用
+- `BlobBackend(bucket="forgeue-artifacts", client=None)` SHALL 默认构造
+  `InMemoryBlobClient`
+- key 形状 SHALL 为 `<bucket>/<run_id>/<artifact_id><suffix>`,写入后返回
+  `PayloadRef(kind=PayloadKind.blob, blob_key=key, size_bytes=<bytes>)`
+- value 分支 SHALL 经 `_coerce_bytes(value)` 上传,`content_hash` 沿用
+  `hash_payload(value)` 语义
+- source_path 分支 SHALL 验证 source 是 regular file,用 `hash_path(source_path)`
+  stream 计算内容 hash,再调用 `BlobClient.upload_path(...)` 上传;不存在的 source
+  传播 `FileNotFoundError`,目录 / FIFO / device / socket raise `ValueError`
+- `read(ref)` SHALL 通过 `BlobClient.read_bytes(ref.blob_key)` 返回 bytes,
+  `exists(ref)` SHALL 通过 client 判断 object 是否存在
+- `absolute_path(ref)` SHALL raise `ValueError("blob payload has no local path")`,
+  因对象存储没有本地绝对路径
+
+`ArtifactRepository.put(source_path=..., payload_kind=PayloadKind.blob)` SHALL
+通过同一 registry dispatch 进入 BlobBackend,不再被 repo 入口拒签。
+
 ## Scenario: zero-copy 路径不全量驻留内存
 
 **Given** 一个 100 MB 的本地文件 `src`
@@ -218,11 +249,11 @@ payload 的 hash drift 校验 SHALL 改用 `hash_path(backend.absolute_path(ref)
 式实现,**不**走既有 `hash_payload(self._registry.read(art.payload_ref))` 全读路
 径。
 
-**`blob` kind 保旧行为不动**(本 change scope D-DriftScope 拍板):BlobBackend
-MVP 未实装,既有 `self._registry.read(ref)` 抛 NotImplementedError 被
-`except Exception: continue` 兜底,语义无变化。blob stream drift 留 follow-on
-`blob-backend-streaming-implementation` 实装 BlobBackend.absolute_path 时再设
-计(可能走 etag / Last-Modified header,不是本地全 hash)。
+**`blob` kind 在 FOR-11 后走 BlobBackend.read + hash_payload drift 校验**:
+`current = self._registry.read(art.payload_ref)`,若 `hash_payload(current) !=
+art.hash` 则 skip。Blob payload 没有本地 `absolute_path`;真实云 adapter 可在
+`read_bytes` 内部用 SDK 下载 object bytes,更高级的 etag / Last-Modified 优化留
+后续 adapter 层演进。
 
 **`inline` kind 既有行为完全保留:SHALL 不做 payload drift 校验**(R4-F2
 D-InlineDriftNonGoal,与 proposal §What 5 + design §5.6 一致):inline payload 跟
@@ -249,8 +280,8 @@ register。对 `inline` 直接 register(无判定步骤)。
 - 不改 `FILE_MAX_BYTES = 500 * 1024 * 1024` 上限值
 - 不引入 async IO(`aiofiles` / `asyncio.to_thread`)—— `hash_path` 与
   `FileBackend.write` 保持同步实现
-- 不动 inline / blob backend 内部实现(只在 ABC 层加 keyword 参数透传 + raise
-  guard)
+- 不引入真实 S3/MinIO/Azure SDK adapter;FOR-11 仅实现 `BlobClient` protocol +
+  默认内存 client,真实云 SDK adapter 后续按同一协议接入
 - Phase 1 曾不迁移既有 `repo.put` 调用站点;FOR-13 已迁移 image / mesh /
   audio / video generator 的本地 ComfyUI source_path 路径。既有 value 路径仍完全
   向后兼容,供 fake / 远端 worker 与无 source_path 的候选对象使用。
@@ -265,7 +296,8 @@ register。对 `inline` 直接 register(无判定步骤)。
   —— 覆盖 FOR-12 staging hash atomicity:hash 失败发生时 final payload 与旧 metadata
   保持一致,tmp 清理
 - 单元测试 `tests/unit/test_artifact_repository.py` —— 扩 hash_path / hash_payload
-  等价性 fence + drift 校验 fence
-- 单元测试 `tests/unit/test_payload_backends.py` —— 扩 InlineBackend / BlobBackend
-  对非空 source_path raise ValueError fence + FileBackend cap 拒签 fence
+  等价性 fence + file/blob drift 校验 fence + repo.put blob source_path fence
+- 单元测试 `tests/unit/test_payload_backends.py` —— 扩 InlineBackend source_path
+  拒签、BlobBackend value/source_path/write/read/exists/guard fence + FileBackend
+  cap 拒签 fence
 - baseline:`python -m pytest -q` 实测;既有用例 SHALL 不回退(不硬编码总数)

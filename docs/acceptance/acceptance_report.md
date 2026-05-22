@@ -157,7 +157,7 @@
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
 | FR-STORE-001 artifact_type 映射 | test_core_schemas | ✅ |
-| FR-STORE-002 PayloadRef 三态 | test_payload_backends | ✅ inline+file / ⏳ blob 接口预留 |
+| FR-STORE-002 PayloadRef 三态 | test_payload_backends + test_artifact_repository | ✅ inline+file+blob MVP |
 | FR-STORE-003 体积上限 | test_payload_backends | ✅ |
 | FR-STORE-004 modality metadata | test_core_schemas | ✅ |
 | FR-STORE-005 Lineage | test_artifact_repository | ✅ |
@@ -783,6 +783,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.10 | 2026-05-19 | 验收状态失真修正:§5.4 NFR-SEC-004 与 §5.5 NFR-OBS-002 原标 ✅,代码核实为部分实装,均改 ⚠️ —— NFR-SEC-004 `missing_secrets()`(`secrets.py:57`)存在但未接入 `DryRunPass` 主流程、缺 key 不阻断 Run;NFR-OBS-002 step_start/step_done 已 emit 但失败路径只记 `failure_events`、不 emit `step_failed` 事件。修正缘起 forge legacy-bridge extract backlog 重核(代码级核验暴露 acceptance 矩阵漂移);仅文档状态修正,不影响代码 / 测试。 | ForgeUE Team |
 | v1.11 | 2026-05-20 | forge change `executor-async-rewrite`(TBD-010 close):§2 L0 自动化基线 848 → **1179 passed / 3 skipped / 0 failed**(实测);§8.1 L0 / 测试覆盖行更新 1144 → 1179;§8.3 主线闭合状态 L0 行更新;FR-RUNTIME-005 / FR-WORKER-001 状态刷新(StepExecutor.execute 原生 async / ComfyAgentWorker async-subprocess / 新 lifecycle.py 三模式 / cascade-cancel 真停 / DryRunPass async / `comfy_lifecycle` 四值受理);SRS §7.3 TBD-010 ✅ closed;L2 live evidence `docs/archive/forge_changes/2026-05-20-executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`。 | ForgeUE Team |
 | v1.12 | 2026-05-22 | Linear FOR-13 `worker-candidate-source-path-migration`:FR-WORKER-001 / 011 / 012 验收证据补 source_path migration。Comfy image / mesh / audio / video worker 只读格式校验头并返回 `source_path`;四个 generator executor source_path 优先落盘,bytes 路径保留 fake / 远端兼容回退。对应 source_path fence 见 `docs/testing/test_spec.md` v1.8;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
+| v1.13 | 2026-05-22 | Linear FOR-11 `blob-backend-streaming-implementation`:FR-STORE-002 blob 载体从预留接口升级为 MVP。`BlobBackend` 提供 `BlobClient` protocol + 默认 `InMemoryBlobClient`,支持 value/source_path 写入、read/exists、blob resume drift 校验;`ArtifactRepository.put(source_path=...)` 允许 `PayloadKind.blob`。对应 fence 见 `docs/testing/test_spec.md` v1.9;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
 
 ### 9.3 签收区
 

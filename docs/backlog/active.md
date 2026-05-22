@@ -1,14 +1,14 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 8 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 待办计 7 项(Future Work + Out of Scope;Non-Goals 不计入)。
 > 另有 15 项 legacy requirements 待办(不计入上面 8)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (7)
+## Future Work (6)
 
 ### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
 
@@ -53,20 +53,6 @@
 - **priority**: low
 - **related change**: (无)
 - **triggered_by**: undefined#undefined
-
-### `2026-05-21-repo-put-streaming-payload::blob-backend-streaming-implementation`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: BlobBackend MVP stub 的实装(S3 / MinIO / Azure Blob),与 source_path
-zero-copy 接口对齐。
-
-- **reason**: BlobBackend 当前是 NotImplementedError stub,本 change 在 ABC 上为它加了
-source_path keyword(透传 + raise),未来实装时直接走对象存储 multipart
-upload 接 source_path,接口边界已锁定。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
 
 ### `2026-05-21-repo-put-streaming-payload::hash-path-async-variant`
 

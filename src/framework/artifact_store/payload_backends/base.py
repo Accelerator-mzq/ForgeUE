@@ -46,7 +46,7 @@ class PayloadBackend(ABC):
         """Persist *value* (or zero-copy from *source_path* on FileBackend) and
         return a WriteResult carrying PayloadRef + content hash.
 
-        Only FileBackend honors *source_path*; InlineBackend / BlobBackend raise.
+        FileBackend and BlobBackend honor *source_path*; InlineBackend raises.
         `value=_MISSING` is the unset sentinel; `value=None` is a legitimate
         inline JSON null payload (different identity, D10).
         """
@@ -62,9 +62,8 @@ class PayloadBackend(ABC):
     def absolute_path(self, ref: PayloadRef) -> Path:
         """Return the on-disk absolute path for *ref*.
 
-        Only FileBackend has a meaningful implementation;
-        InlineBackend SHALL raise ValueError, BlobBackend stub raises
-        NotImplementedError.
+        Only FileBackend has a meaningful local-path implementation;
+        InlineBackend and BlobBackend SHALL raise ValueError.
         """
 
 

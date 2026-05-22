@@ -77,7 +77,7 @@ class ArtifactRepository:
 
         Either *value* (any type, including None for inline JSON null) OR
         *source_path* MUST be provided (mutually exclusive, D10 sentinel-based).
-        *source_path* requires payload_kind == PayloadKind.file.
+        *source_path* requires payload_kind in {PayloadKind.file, PayloadKind.blob}.
 
         D10 D-NullValueAmbiguity: 用 _MISSING identity 区分 "未传" vs "显式 None"
         (value=None 是合法 inline JSON null payload,不能当 '未传' 处理)。
@@ -87,9 +87,13 @@ class ArtifactRepository:
             raise ValueError("repo.put requires either value or source_path")
         if value is not _MISSING and source_path is not None:
             raise ValueError("repo.put: value and source_path are mutually exclusive")
-        if source_path is not None and payload_kind != PayloadKind.file:
+        if source_path is not None and payload_kind not in {
+            PayloadKind.file,
+            PayloadKind.blob,
+        }:
             raise ValueError(
-                f"repo.put: source_path requires payload_kind=file (got {payload_kind!r})"
+                "repo.put: source_path requires payload_kind=file or blob "
+                f"(got {payload_kind!r})"
             )
 
         # 落盘并接收 backend 已验证的内容 hash。
@@ -243,11 +247,8 @@ class ArtifactRepository:
                 continue
             # For external-bytes payloads, verify the bytes haven't drifted
             # since the dump (overwrite, partial write, manual edit).
-            # D-DriftScope (R3-F4):仅 file kind 改 stream;blob kind 保旧行为
-            # (BlobBackend stub 未实装,既有 self._registry.read(ref) 抛
-            # NotImplementedError 被 catch → continue 兜底,语义无变化)。
-            # 不要把 blob 字面合并到 hash_path 路径,因 BlobBackend.absolute_path 也
-            # raise NotImplementedError → 不可达分支误导实现者。
+            # file kind 走本地 hash_path;blob kind 走 backend.read()+hash_payload,
+            # 因对象存储没有可用的本地 absolute_path。
             if art.payload_ref.kind == _PayloadKind.file:
                 # File-kind stream drift:hash_path(absolute_path),不全读;
                 # 8 MB chunks → bounded RSS even for large video / mesh artifacts
@@ -263,10 +264,9 @@ class ArtifactRepository:
                 if current_hash != art.hash:
                     continue
             elif art.payload_ref.kind == _PayloadKind.blob:
-                # Blob-kind 保旧行为:既有 self._registry.read(ref) 抛
-                # NotImplementedError 被 catch → continue。BlobBackend 实装后
-                # (follow-on `blob-backend-streaming-implementation`)再设计
-                # drift 策略(可能走 etag / Last-Modified header,不是本地全 hash)
+                # BlobBackend MVP:读回 object bytes 后按 Artifact.hash 比对。
+                # 后续真实云 adapter 可在 read 内部用 SDK 实现下载;更高级的
+                # etag / Last-Modified 优化不改变本层语义。
                 try:
                     current = self._registry.read(art.payload_ref)
                 except Exception:

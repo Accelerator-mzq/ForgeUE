@@ -216,7 +216,7 @@ ForgeUE **不做**:
 | 编号 | 需求 |
 | --- | --- |
 | FR-STORE-001 | `Artifact` 应为一等公民,通过 `artifact_type` 两段式(`<modality>.<shape>`)+ 扁平显示名双向映射 |
-| FR-STORE-002 | `PayloadRef` 应支持 `inline` / `file` / `blob` 三态,MVP 实装 `inline` + `file`,`blob` 预留接口 |
+| FR-STORE-002 | `PayloadRef` 应支持 `inline` / `file` / `blob` 三态,MVP 实装 `inline` + `file` + `blob`;`BlobBackend` 使用可注入 `BlobClient` protocol + 默认 `InMemoryBlobClient`,真实 S3/MinIO/Azure SDK adapter 留后续接入 |
 | FR-STORE-003 | `inline` 载体上限 64 KB,`file` 载体上限 500 MB |
 | FR-STORE-004 | 各 modality 应有专属 metadata:image(width/height/color_space/...)、audio(`format` ∈ {`flac`,`mp3`,`wav`} + `duration_seconds` + `sample_rate`,自 v1.7 起,three-key whitelist;source-of-truth=`Artifact.metadata` 顶层,**不**在 `worker_metadata` 嵌套内重复)、mesh(format/poly_count/scale_unit/...)、text.structured(schema_name/version/language)、**video**(`format` ∈ {`mp4`} 自 v1.8 起,one-element whitelist round-2 F2 + round-3 PF3 sweep;webm follow-on `comfy-video-webm-adoption`)+ `duration_seconds` + `frame_count` + `width` + `height` + `fps`(5 顶层 None defaults — ComfyUI agent CLI 不暴露,follow-on `video-metadata-parser` 加 ffprobe 解析填充;source-of-truth=`Artifact.metadata` 顶层,**不**在 `worker_metadata` 嵌套内重复) |
 | FR-STORE-005 | 系统应维护 Lineage 血缘:`source_artifact_ids` / `source_step_ids` / `transformation_kind` / `selected_by_verdict_id` / `variant_group_id` |

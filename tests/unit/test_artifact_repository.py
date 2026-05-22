@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 from framework.artifact_store import ArtifactRepository, get_backend_registry
+from framework.artifact_store.payload_backends import BlobBackend, PayloadBackendRegistry
+from framework.artifact_store.payload_backends.blob_backend import InMemoryBlobClient
 from framework.core.artifact import ArtifactType, Lineage, ProducerRef
 from framework.core.enums import ArtifactRole, PayloadKind
 
@@ -221,50 +223,92 @@ def test_load_metadata_rejects_corrupted_file_stream(repo, tmp_path):
     assert "aid_corrupt" not in fresh._artifacts
 
 
-def test_load_metadata_blob_kind_preserves_legacy_behavior(repo, tmp_path):
-    """R3-F4 D-DriftScope:blob kind 保旧行为(不走 hash_path),走 read+hash_payload。
-
-    BlobBackend.exists() stub 抛 NotImplementedError;
-    BlobBackend.read() stub 抛 NotImplementedError。
-    测试 patch exists() → True 让流程进入 drift 块,然后 read() 抛 NotImplementedError
-    被 `except Exception: continue` 兜住。关键断言:hash_path spy 未触发(D-DriftScope)。
-    """
-    import json
-    from unittest.mock import MagicMock
-    run_dir = tmp_path / "run_dir_blob"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    blob_art_dict = {
-        "artifact_id": "aid_blob",
-        "artifact_type": {"modality": "image", "shape": "raster", "display_name": "x"},
-        "role": "intermediate",
-        "format": "bin",
-        "mime_type": "application/octet-stream",
-        "payload_ref": {"kind": "blob", "blob_key": "s3://stub/key", "size_bytes": 0},
-        "schema_version": "1.0.0",
-        "hash": "0" * 64,
-        "producer": {"run_id": "r_blob", "step_id": "s1", "provider": "t", "model": "m"},
-        "lineage": {},
-        "metadata": {},
-        "validation": {"status": "pending"},
-        "tags": [],
-        "created_at": "2026-05-21T10:00:00+00:00",
-    }
-    (run_dir / "_artifacts.json").write_text(
-        json.dumps([blob_art_dict], ensure_ascii=False, indent=2),
-        encoding="utf-8",
+def test_load_metadata_blob_kind_registers_when_payload_matches(repo, tmp_path):
+    """FOR-11:BlobBackend MVP 实装后,blob kind 可随 run metadata 恢复。"""
+    art = repo.put(
+        artifact_id="aid_blob",
+        value=b"blob-payload-for-resume",
+        artifact_type=ArtifactType(modality="image", shape="raster", display_name="img"),
+        role=ArtifactRole.intermediate,
+        format="bin",
+        mime_type="application/octet-stream",
+        payload_kind=PayloadKind.blob,
+        producer=ProducerRef(run_id="r_blob", step_id="s1", provider="t", model="m"),
+        file_suffix=".bin",
     )
+    run_dir = tmp_path / "run_dir_blob"
+    repo.dump_run_metadata(run_id="r_blob", run_dir=run_dir)
 
     fresh = ArtifactRepository(backend_registry=repo.backend_registry)
     fresh._artifacts.clear()
     import framework.artifact_store.repository as repo_mod
 
-    # patch exists() → True 让流程越过 payload_present 守门进入 drift 块;
-    # read() 保持原 stub 行为(抛 NotImplementedError)→ except Exception: continue 兜
-    with _patch_t6.object(repo_mod, "hash_path",
-                          side_effect=AssertionError("hash_path SHALL NOT be invoked on blob kind drift")):
-        with _patch_t6.object(fresh._registry, "exists", return_value=True):
-            n = fresh.load_run_metadata(run_id="r_blob", run_dir=run_dir)
-    # BlobBackend.read() 抛 NotImplementedError → except Exception: continue → n=0
-    # 关键不是 n 值,是 hash_path spy 没被触发(D-DriftScope)
+    with _patch_t6.object(
+        repo_mod,
+        "hash_path",
+        side_effect=AssertionError("hash_path SHALL NOT be invoked on blob kind drift"),
+    ):
+        n = fresh.load_run_metadata(run_id="r_blob", run_dir=run_dir)
+
+    assert n == 1
+    assert "aid_blob" in fresh._artifacts
+    assert fresh.get("aid_blob").hash == art.hash
+
+
+def test_load_metadata_rejects_corrupted_blob_payload(tmp_path):
+    """FOR-11:blob object bytes 漂移时,metadata entry 必须被跳过。"""
+    client = InMemoryBlobClient()
+    reg = PayloadBackendRegistry()
+    reg.register(BlobBackend(bucket="bucket", client=client))
+    repo = ArtifactRepository(backend_registry=reg)
+    art = repo.put(
+        artifact_id="aid_blob_corrupt",
+        value=b"original-blob-payload",
+        artifact_type=ArtifactType(modality="image", shape="raster", display_name="img"),
+        role=ArtifactRole.intermediate,
+        format="bin",
+        mime_type="application/octet-stream",
+        payload_kind=PayloadKind.blob,
+        producer=ProducerRef(run_id="r_blob_corrupt", step_id="s1", provider="t", model="m"),
+        file_suffix=".bin",
+    )
+    run_dir = tmp_path / "run_dir_blob_corrupt"
+    repo.dump_run_metadata(run_id="r_blob_corrupt", run_dir=run_dir)
+    client.upload_bytes(
+        art.payload_ref.blob_key,
+        b"tampered-blob-payload",
+        metadata={"content_hash": "tampered", "source": "test"},
+    )
+
+    fresh = ArtifactRepository(backend_registry=reg)
+    fresh._artifacts.clear()
+    n = fresh.load_run_metadata(run_id="r_blob_corrupt", run_dir=run_dir)
+
     assert n == 0
-    assert "aid_blob" not in fresh._artifacts
+    assert "aid_blob_corrupt" not in fresh._artifacts
+
+
+def test_repo_put_blob_source_path_persists_payload(tmp_path):
+    """FOR-11:repo.put 的 source_path 入口也允许 blob backend 使用。"""
+    reg = PayloadBackendRegistry()
+    reg.register(BlobBackend(bucket="bucket"))
+    repo = ArtifactRepository(backend_registry=reg)
+    src = tmp_path / "blob-source.bin"
+    payload = b"blob-payload-from-repo-source-path"
+    src.write_bytes(payload)
+
+    art = repo.put(
+        artifact_id="aid_blob_source",
+        source_path=src,
+        artifact_type=ArtifactType(modality="image", shape="raster", display_name="img"),
+        role=ArtifactRole.intermediate,
+        format="bin",
+        mime_type="application/octet-stream",
+        payload_kind=PayloadKind.blob,
+        producer=ProducerRef(run_id="r_blob_source", step_id="s1", provider="t", model="m"),
+        file_suffix=".bin",
+    )
+
+    assert art.payload_ref.kind == PayloadKind.blob
+    assert art.payload_ref.blob_key == "bucket/r_blob_source/aid_blob_source.bin"
+    assert repo.read_payload("aid_blob_source") == payload

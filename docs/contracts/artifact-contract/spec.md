@@ -11,15 +11,15 @@ Artifact-contract defines how ForgeUE produces, stores, and tracks intermediate 
 - `docs/design/LLD.md` §5 (modality metadata tables; only invariants are lifted here)
 - Source: `src/framework/core/artifact.py` (Artifact / PayloadRef / Lineage)
 - Source: `src/framework/artifact_store/repository.py`
-- Source: `src/framework/artifact_store/payload_backends/` (inline / file / blob placeholder)
+- Source: `src/framework/artifact_store/payload_backends/` (inline / file / blob)
 - Source: `src/framework/artifact_store/lineage.py`, `variant_tracker.py`, `hashing.py`
 - Source: `src/framework/runtime/checkpoint_store.py` (Checkpoint → Artifact hash cross-ref)
 
 ## Current Behavior
 
-An Artifact carries a two-segment `artifact_type` of the form `<modality>.<shape>` with a flat display-name mapping, modality-specific metadata (image, audio, mesh, text.structured), a `Lineage` block, and a `PayloadRef` in one of three states: `inline` (≤ 64 KB), `file` (≤ 500 MB), or `blob` (reserved, not implemented in MVP). Every Artifact entering the store passes four validation layers: file-level (path / format signature / size), metadata-level (required fields), business-level (Step constraints), and UE-level (only on export steps, for naming / paths / formats).
+An Artifact carries a two-segment `artifact_type` of the form `<modality>.<shape>` with a flat display-name mapping, modality-specific metadata (image, audio, mesh, text.structured), a `Lineage` block, and a `PayloadRef` in one of three states: `inline` (≤ 64 KB), `file` (≤ 500 MB), or `blob` (object-store key via BlobBackend MVP). Every Artifact entering the store passes four validation layers: file-level (path / format signature / size), metadata-level (required fields), business-level (Step constraints), and UE-level (only on export steps, for naming / paths / formats).
 
-After each Step, `ArtifactRepository` dumps the Run's Artifact metadata index to `<run_dir>/_artifacts.json` (file/blob bytes are not rewritten). On `--resume`, `load_run_metadata` reloads the index and applies three filters: skip already-known ids, skip entries whose backend `exists()` returns False, and skip entries whose on-disk byte hash disagrees with the recorded hash. Without this reload, `CheckpointStore.find_hit` would always miss and silently re-execute the step. During DAG fan-out, `find_by_producer` iterates over a `list()` snapshot so the worker-thread `put()` can never trigger `dictionary changed size during iteration`.
+After each Step, `ArtifactRepository` dumps the Run's Artifact metadata index to `<run_dir>/_artifacts.json` (file/blob bytes are not rewritten). On `--resume`, `load_run_metadata` reloads the index and applies three filters: skip already-known ids, skip entries whose backend `exists()` returns False, and skip external payload entries whose current byte hash disagrees with the recorded hash (file via `hash_path(absolute_path)`, blob via `read()` + `hash_payload`). Without this reload, `CheckpointStore.find_hit` would always miss and silently re-execute the step. During DAG fan-out, `find_by_producer` iterates over a `list()` snapshot so the worker-thread `put()` can never trigger `dictionary changed size during iteration`.
 ## Requirements
 ## Requirement: Two-segment artifact type
 
@@ -41,7 +41,25 @@ The Literal extension to include `"video"` (D2) is forward-compatible: pre-exist
 
 ## Requirement: Three-state PayloadRef
 
-The system SHALL support three PayloadRef states — `inline` (bytes held in-memory, max 64 KB), `file` (path on disk, max 500 MB), and `blob` (reserved interface, not implemented in MVP).
+The system SHALL support three PayloadRef states — `inline` (bytes held in-memory, max 64 KB), `file` (path on disk, max 500 MB), and `blob` (object-store key backed by BlobBackend MVP).
+
+## Requirement: BlobBackend MVP stores blob payloads through an injectable client
+
+`BlobBackend` SHALL provide an MVP object-store backend without adding runtime dependencies on cloud SDKs. It SHALL expose a `BlobClient` protocol (`upload_bytes`, `upload_path`, `read_bytes`, `exists`) and default to `InMemoryBlobClient` for deterministic local behavior. A write SHALL create `PayloadRef(kind=PayloadKind.blob, blob_key="<bucket>/<run_id>/<artifact_id><suffix>", size_bytes=<uploaded bytes>)`.
+
+BlobBackend SHALL support both value writes and `source_path` writes. The `source_path` branch SHALL validate that the source is a regular file, compute `content_hash` with `hash_path(source_path)`, and call `BlobClient.upload_path(...)` so future S3 / MinIO / Azure adapters can stream or multipart upload without changing `ArtifactRepository.put`. Blob payloads have no local filesystem path; `absolute_path(ref)` SHALL raise `ValueError("blob payload has no local path")`.
+
+## Scenario: BlobBackend source_path writes through repo.put
+
+**Given** an `ArtifactRepository` whose registry contains `BlobBackend(bucket="bucket")` and a source file `blob-source.bin`
+**When** the caller executes `repo.put(source_path=blob-source.bin, payload_kind=PayloadKind.blob, artifact_id="aid_blob_source", producer.run_id="r_blob_source", file_suffix=".bin", ...)`
+**Then** the returned Artifact has `payload_ref.kind == PayloadKind.blob`, `payload_ref.blob_key == "bucket/r_blob_source/aid_blob_source.bin"`, and `repo.read_payload("aid_blob_source")` returns the source bytes.
+
+## Scenario: Blob payload drift is skipped during resume
+
+**Given** a blob Artifact was dumped to `_artifacts.json`, then the object bytes under the same `blob_key` were overwritten externally
+**When** `ArtifactRepository.load_run_metadata(...)` reloads the run
+**Then** it computes `hash_payload(repo.backend_registry.read(blob_ref))`, detects mismatch with the stored Artifact hash, and skips the entry instead of registering a stale cache hit.
 
 ## Scenario: Oversized inline payload is rejected
 
@@ -407,7 +425,7 @@ The `repo.put` call site SHALL use `file_suffix=f".{cand.format}"` (which post-F
 
 ## Invariants
 
-- The `blob` backend is reserved; interface exists but MVP only ships `inline` + `file`.
+- The `blob` backend MVP ships an injectable client protocol plus in-memory default; real cloud SDK adapters remain out of scope for the core package.
 - Artifact is a first-class citizen — bundles carry real Artifact objects end-to-end, not mocks (NFR-MAINT-005).
 - `artifact_hash` is the canonical cache key; cache decisions never compare raw bytes at runtime when a hash suffices.
 - `variant_group_id` allows multiple candidates to share a lineage cluster without collapsing their identity.
@@ -420,6 +438,6 @@ The `repo.put` call site SHALL use `file_suffix=f".{cand.format}"` (which post-F
 
 ## Non-Goals
 
-- Blob-backend implementation (reserved interface; ADR-level decision pending).
+- Real S3 / MinIO / Azure SDK adapters for BlobBackend (the core package exposes the protocol but does not depend on SDKs).
 - Content-semantic quality judgment — that belongs to `review-engine`.
 - Artifact versioning / schema evolution registry (SRS TBD, future change).

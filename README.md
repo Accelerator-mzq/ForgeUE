@@ -246,7 +246,7 @@ bundle 立即能 `"models_ref": "image_fast"`。注册表是进程单例，热�
 |---|---|---|
 | **Dry-run Pass**（零副作用预检）| Claude 原创 | `src/framework/runtime/dry_run_pass.py` |
 | **Checkpoint + content hash 缓存** | Claude 原创 | `src/framework/runtime/checkpoint_store.py` · resume 时命中哈希跳执行 |
-| **PayloadRef 三态**（inline/file/blob）| Claude 原创 | `src/framework/artifact_store/payload_backends/` · MVP 实现 inline + file |
+| **PayloadRef 三态**（inline/file/blob）| Claude 原创 | `src/framework/artifact_store/payload_backends/` · MVP 实现 inline + file + blob |
 | **Artifact Lineage + VariantTracker** | 自研 | `src/framework/artifact_store/lineage.py` · `variant_tracker.py` |
 | **5 维 rubric scoring + 5 类 Policy** | assistant 方案 | `src/framework/core/policies.py` · `review_engine/` |
 | **Verdict ↔ TransitionPolicy 引擎** | 共识 | `src/framework/runtime/transition_engine.py` · 支持 9 种 Decision |
@@ -379,7 +379,7 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 2. **多模态扩展** —— AudioCraft / TRELLIS / TripoSR worker（`providers/workers/` 已留位）
 3. **DAG Workflow** —— 非线性 + 分支 + merge（`Step.depends_on` 已支持多依赖）
 4. **Workflow 模板继承** —— `Workflow.template_ref` 字段已预留
-5. **Blob 存储后端** —— S3/MinIO（`PayloadRef.kind="blob"` 已支持，`payload_backends/blob.py` 空实现）
+5. **Blob 存储云 SDK adapter** —— `BlobBackend` MVP 已支持可注入 client + 内存默认实现;真实 S3/MinIO/Azure SDK adapter 可按 `BlobClient` protocol 后续接入
 6. **Resource Budget / GPU 调度** —— `BudgetPolicy.gpu_seconds_cap` 已有
 7. **Run Comparison / 基线回归** —— ✅ 已实装(2026-04-25,见 `src/framework/comparison/`)。CLI 入口 `python -m framework.comparison --baseline-run <id_a> --candidate-run <id_b> --artifact-root <root>`,read-only 比较两个完成的 Run 目录,产出 `comparison_report.json` + `comparison_summary.md`(覆盖 artifact / verdict / metric diff)。完整 flag 列表见 `--help`
 8. **Human-in-the-loop 标准协议** —— `human_gate` Step.type + `EscalationPolicy.notify_channel`

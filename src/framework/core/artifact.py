@@ -10,7 +10,7 @@ from framework.core.enums import ArtifactRole, PayloadKind
 
 
 class PayloadRef(BaseModel):
-    """Three-state carrier: inline / file / blob. MVP implements inline + file."""
+    """Three-state carrier: inline / file / blob."""
 
     kind: PayloadKind
     inline_value: Any | None = None

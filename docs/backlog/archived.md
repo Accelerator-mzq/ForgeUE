@@ -63,6 +63,25 @@
   `demo_artifacts/2026-05-22/adhoc/for13_source_path_migration/evidence.md`。
 - **archived_by**: FOR-13 worker-candidate-source-path-migration 2026-05-22
 
+## 2026-05-22 FOR-11 completion
+
+### `2026-05-21-repo-put-streaming-payload::blob-backend-streaming-implementation`
+
+- **new_status**: completed
+- **reason**: `BlobBackend` 已从 `NotImplementedError` stub 升级为 MVP:
+  提供 `BlobClient` protocol + `InMemoryBlobClient` 默认实现,支持 `value`
+  与 `source_path` 两条写入路径,返回 `PayloadRef(kind=blob, blob_key=...)`
+  与 backend 侧 `WriteResult.content_hash`;`ArtifactRepository.put(source_path=...)`
+  现在允许 `PayloadKind.file` 与 `PayloadKind.blob`,blob resume drift 通过
+  `read()` + `hash_payload()` 校验。
+- **evidence**: `src/framework/artifact_store/payload_backends/blob_backend.py`,
+  `src/framework/artifact_store/repository.py`,
+  `tests/unit/test_payload_backends.py`,
+  `tests/unit/test_artifact_repository.py`,
+  `docs/superpowers/plans/2026-05-22-for-11-blob-backend-streaming.md`,
+  `demo_artifacts/2026-05-22/adhoc/for11_blob_backend/evidence.md`。
+- **archived_by**: FOR-11 blob-backend-streaming-implementation 2026-05-22
+
 ## 2026-05-22 backlog audit
 
 ### `2026-05-20-executor-async-rewrite::tbd-011-provider-kind-schema`
@@ -118,7 +137,7 @@
 
 - **new_status**: obsolete
 - **reason**: InlineBackend 的 payload 本质嵌入 metadata 且有 64 KB cap,stream / zero-copy 无实际收益;BlobBackend 另有独立实装条目 `blob-backend-streaming-implementation`,无需保留这个混合 out-of-scope 项。
-- **evidence**: `src/framework/artifact_store/payload_backends/inline_backend.py` 保留 `INLINE_MAX_BYTES = 64 * 1024`;`src/framework/artifact_store/payload_backends/blob_backend.py` 仍是独立 stub。
+- **evidence**: `src/framework/artifact_store/payload_backends/inline_backend.py` 保留 `INLINE_MAX_BYTES = 64 * 1024`;`src/framework/artifact_store/payload_backends/blob_backend.py` 现已由 FOR-11 完成,blob backend 另有独立实现与 archive tombstone。
 - **archived_by**: backlog audit 2026-05-22
 
 ### `2026-05-21-repo-put-streaming-payload::worker-candidate-source-path-migration` (duplicate out-of-scope entry)
