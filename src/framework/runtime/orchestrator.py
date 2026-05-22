@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -53,6 +52,10 @@ from framework.runtime.failure_mode_map import synthesise_verdict as synth_failu
 from framework.runtime.lifecycle import ComfyLifecycleManager
 from framework.runtime.scheduler import Scheduler
 from framework.runtime.transition_engine import TransitionEngine
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
+)
 
 
 # cascade-cancel drain 超时上限(秒)。
@@ -67,14 +70,19 @@ _CASCADE_DRAIN_TIMEOUT_S: float = 30.0
 # 超时后 _release_lifecycle_bounded 记录失败留痕,不遮蔽调用方原始异常。
 _RELEASE_TIMEOUT_S: float = 30.0
 
-# comfy/local* 模型 ID 前缀集合,用于检测 step 是否需要 lifecycle 管理
-_COMFY_LOCAL_PREFIXES = ("comfy/local",)
-
-
 class DryRunFailed(RuntimeError):
     def __init__(self, report: DryRunReport) -> None:
         super().__init__(f"dry-run failed: {report.errors}")
         self.report = report
+
+
+@dataclass(frozen=True)
+class _ComfyLifecycleSelection:
+    """一次 lifecycle 选择结果:模式 + agent CLI 运行配置。"""
+
+    mode: str
+    scripts_dir: str | None
+    python_exe: str | None
 
 
 @dataclass
@@ -151,28 +159,33 @@ class Orchestrator:
     # ---- lifecycle 辅助方法 -------------------------------------------------
 
     @staticmethod
-    def _detect_comfy_lifecycle(steps: list[Step]) -> str | None:
-        """扫描所有 step 的 prepared_routes,检测是否含 comfy/local* 路由。
+    def _detect_comfy_lifecycle(steps: list[Step]) -> _ComfyLifecycleSelection | None:
+        """扫描 provider metadata,检测是否需要 ComfyUI lifecycle 管理。
 
-        若找到且 comfy_lifecycle != "none",返回该 mode 字符串;否则返回 None。
-        按第一个 comfy/local* step 的 config.spec.comfy_lifecycle 为准。
+        若找到 ComfyUI subprocess route 且 lifecycle != "none",返回 mode 与
+        agent CLI 配置;否则返回 None。按第一个命中的 ComfyUI route 为准。
         """
         for step in steps:
-            pp = step.provider_policy
+            pp = getattr(step, "provider_policy", None)
             if pp is None:
                 continue
-            for route in (pp.prepared_routes or []):
-                model = route.model or ""
-                if any(model.startswith(p) for p in _COMFY_LOCAL_PREFIXES):
-                    # 从 step.config.spec.comfy_lifecycle 读取 mode
-                    spec = (step.config or {}).get("spec", {}) if isinstance(
-                        (step.config or {}), dict
-                    ) else {}
-                    mode = spec.get("comfy_lifecycle", "none") if isinstance(
-                        spec, dict
-                    ) else "none"
-                    if mode and mode != "none":
-                        return mode
+            route = first_comfy_agent_route(pp.prepared_routes or [])
+            if route is None:
+                continue
+            # 从 step.config.spec 读取 lifecycle 覆盖值,再和 provider/env 配置合并。
+            config_raw = step.config or {}
+            spec_raw = (
+                config_raw.get("spec", {}) if isinstance(config_raw, dict)
+                else {}
+            )
+            spec = spec_raw if isinstance(spec_raw, dict) else {}
+            config = resolve_comfy_agent_config(route=route, spec=spec)
+            if config.default_lifecycle != "none":
+                return _ComfyLifecycleSelection(
+                    mode=config.default_lifecycle,
+                    scripts_dir=config.scripts_dir,
+                    python_exe=config.python_exe,
+                )
         return None
 
     async def _release_lifecycle_bounded(
@@ -289,24 +302,28 @@ class Orchestrator:
         result = RunResult(run=run, dry_run=dr_report)
 
         # ── lifecycle manager 检测与构建 ──────────────────────────────────
-        # 扫描 prepared_routes 寻找 comfy/local* 路由 + lifecycle mode != none
-        lc_mode = self._detect_comfy_lifecycle(steps)
+        # 扫描 provider metadata 寻找 ComfyUI subprocess 路由 + lifecycle mode != none
+        lc_selection = self._detect_comfy_lifecycle(steps)
+        lc_mode = lc_selection.mode if lc_selection is not None else None
         # per_arun_manager:仅对本次 arun 生命周期负责(非 self_managed_session 模式)
         per_arun_manager: ComfyLifecycleManager | None = None
 
-        if lc_mode is not None:
-            scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR", "")
+        if lc_selection is not None:
+            scripts_dir = lc_selection.scripts_dir
+            python_exe = lc_selection.python_exe
             if lc_mode == "self_managed_session":
                 # self_managed_session:跨 arun 复用同一个 manager 实例
                 if self._lifecycle is None:
                     self._lifecycle = ComfyLifecycleManager(
                         scripts_dir=scripts_dir or ".",
+                        python_exe=python_exe,
                     )
                 active_manager: ComfyLifecycleManager | None = self._lifecycle
             else:
                 # ensure_running / ensure_release:每次 arun 新建 manager
                 per_arun_manager = ComfyLifecycleManager(
                     scripts_dir=scripts_dir or ".",
+                    python_exe=python_exe,
                 )
                 active_manager = per_arun_manager
             # 注意:ensure() 调用移至 try 块内部(see Important-1 fix)
@@ -347,6 +364,7 @@ class Orchestrator:
             # ensure() 在 try 内:失败时 except BaseException 设置 arun_error,
             # finally 统一调用 release(保证进程不泄漏)
             if active_manager is not None:
+                assert lc_mode is not None
                 await active_manager.ensure(lc_mode)
             while current is not None and not terminated:
                 hops += 1

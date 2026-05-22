@@ -19,6 +19,10 @@ from pydantic import BaseModel, Field
 
 from framework.core.enums import RunMode, TaskType
 from framework.core.task import Step, Task, Workflow
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
+)
 
 
 # capability_ref prefixes that consume paid provider credits. Steps outside
@@ -121,45 +125,24 @@ class DryRunPass:
     ) -> None:
         """ComfyUI agent CLI 可达性探活(Step 6: async 化,await aprobe 替代 probe_sync)。
 
-        OpenSpec change comfy-agent-cli-adoption (round 2 G1 + round 3 P2);
-        extended by comfy-agent-cli-mesh-audio-video-adoption (P-F4 round-2
-        plan writeback): gate set 从 {comfy/local} 扩为 {comfy/local, comfy/local-mesh};
-        further extended by comfy-agent-cli-audio-adoption Phase 2 (commit 6):
-        gate set 再扩 `comfy/local-audio`。
-        Phase 3 (comfy-agent-cli-video-adoption commit 9): gate set 再扩
-        `comfy/local-video`(TBD-009 全 phase closed)。
-        Step 6 (executor-async-rewrite): 改为 async def,内部 await aprobe —
-        DryRunPass.run 已 async 化,无需再用 probe_sync sync shim。
-        probe gate: `model in {"comfy/local", "comfy/local-mesh",
-        "comfy/local-audio", "comfy/local-video"}` in any step's prepared_routes
-        (model id-based gate because ResolvedRoute lacks provider field).
-        无 comfy/local* route 的 bundle 完全跳过 probe(qwen / glm image
-        steps + remote hunyuan mesh steps 在无 ComfyUI 主机上不受影响)。
+        当前 gate 只看 provider metadata,不再依赖 comfy/local* model id。
+        这样用户可在 models.yaml 里用自定义 model id,仍复用同一个
+        ComfyUI subprocess provider。
         """
-        import os
-
         from framework.providers.workers.comfy_worker import (
             ComfyAgentWorker, WorkerUnsupportedResponse,
         )
 
-        # P-F4 + commit 6 (audio) + commit 9 (video): 4 capability gate
-        _COMFY_LOCAL_MODEL_IDS = {
-            "comfy/local", "comfy/local-mesh",
-            "comfy/local-audio", "comfy/local-video",
-        }
-        has_comfy_local = False
+        comfy_route = None
         for s in steps:
             pp = getattr(s, "provider_policy", None)
             if pp is None or not getattr(pp, "prepared_routes", None):
                 continue
-            if any(
-                getattr(r, "model", None) in _COMFY_LOCAL_MODEL_IDS
-                for r in pp.prepared_routes
-            ):
-                has_comfy_local = True
+            comfy_route = first_comfy_agent_route(pp.prepared_routes)
+            if comfy_route is not None:
                 break
-        if not has_comfy_local:
-            # 无 comfy/local* route — 完全跳过 probe
+        if comfy_route is None:
+            # 无 ComfyUI subprocess route — 完全跳过 probe
             return
 
         # ComfyUI reachability 报告为 WARNING(非 ERROR):bundle dry-run 可在
@@ -167,21 +150,23 @@ class DryRunPass:
         # 构造阶段(env unset → WorkerUnsupportedResponse → FailureModeMap →
         # abort_or_fallback)。此分离让 test_bundle_dry_run_passes 在 CI 上通过
         # 同时保留 live run 的 fail-fast 语义。
-        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
+        config = resolve_comfy_agent_config(route=comfy_route, spec={})
+        scripts_dir = config.scripts_dir
         if not scripts_dir:
             self._record(
                 report, "comfy.env_configured", True, warning_only=True,
             )
             report.warnings.append(
-                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses "
-                "comfy/local route but ComfyUI agent CLI location not "
+                "FORGEUE_COMFY_SCRIPTS_DIR env var unset and "
+                "provider_config.scripts_dir missing; bundle uses ComfyUI "
+                "subprocess route but ComfyUI agent CLI location is not "
                 "configured. Step-time worker construction will fail-fast "
-                "if env still unset at run time. See CLAUDE.md double-"
-                "terminal setup."
+                "if config is still missing at run time. See CLAUDE.md "
+                "double-terminal setup."
             )
             return
 
-        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
+        python_exe = config.python_exe
         try:
             # Step 6: await aprobe(async 主面),不再用 probe_sync sync shim
             await ComfyAgentWorker.aprobe(

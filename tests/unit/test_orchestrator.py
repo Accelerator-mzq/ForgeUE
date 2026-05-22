@@ -60,7 +60,20 @@ def _make_comfy_task_workflow_steps(
         provider_policy=ProviderPolicy(
             capability_required="image.generation",
             prepared_routes=[
-                PreparedRoute(model="comfy/local", kind="image"),
+                PreparedRoute(
+                    model="comfy/local",
+                    kind="image",
+                    provider_name="comfy_api",
+                    provider_kind="subprocess",
+                    provider_config={
+                        "adapter": "comfy_agent_cli",
+                        "scripts_dir": ".",
+                        "python_exe": None,
+                        "default_lifecycle": "none",
+                        "input_dir": None,
+                        "output_root": None,
+                    },
+                ),
             ],
         ),
         # comfy_lifecycle 存在 step.config.spec.comfy_lifecycle
@@ -634,6 +647,16 @@ def test_detect_lifecycle_matches_executor_read_path(tmp_path):
             prepared_routes=[PreparedRoute(
                 model="comfy/local", api_key_env=None, api_base=None,
                 kind="image", pricing=None,
+                provider_name="comfy_api",
+                provider_kind="subprocess",
+                provider_config={
+                    "adapter": "comfy_agent_cli",
+                    "scripts_dir": ".",
+                    "python_exe": None,
+                    "default_lifecycle": "none",
+                    "input_dir": None,
+                    "output_root": None,
+                },
             )],
         ),
         config={
@@ -647,7 +670,9 @@ def test_detect_lifecycle_matches_executor_read_path(tmp_path):
 
     orch = _make_orchestrator(tmp_path)
     # orchestrator 侧读取
-    orch_mode = orch._detect_comfy_lifecycle([step])
+    selection = orch._detect_comfy_lifecycle([step])
+    assert selection is not None
+    orch_mode = selection.mode
 
     # executor 侧读取路径(直接复刻 generate_image.py:298 + generate_mesh / audio / video 的逻辑)
     spec_raw = (step.config or {}).get("spec", {})
@@ -664,3 +689,44 @@ def test_detect_lifecycle_matches_executor_read_path(tmp_path):
         f"contract violation:orchestrator vs executor 读到不同值 "
         f"(orch={orch_mode!r}, executor={executor_mode!r})"
     )
+
+
+def test_detect_comfy_lifecycle_uses_provider_config_scripts_dir(tmp_path):
+    from framework.core.policies import PreparedRoute, ProviderPolicy
+    from framework.core.task import Step
+    from framework.core.enums import RiskLevel, StepType
+    from framework.runtime.orchestrator import Orchestrator
+
+    step = Step(
+        step_id="step_image",
+        type=StepType.generate,
+        name="image",
+        risk_level=RiskLevel.medium,
+        capability_ref="image.generation",
+        config={"spec": {"comfy_workflow": "X", "comfy_lifecycle": "ensure_running"}},
+        provider_policy=ProviderPolicy(
+            capability_required="image.generation",
+            prepared_routes=[
+                PreparedRoute(
+                    model="local/custom-image",
+                    kind="image",
+                    provider_name="comfy_api",
+                    provider_kind="subprocess",
+                    provider_config={
+                        "adapter": "comfy_agent_cli",
+                        "scripts_dir": str(tmp_path / "scripts"),
+                        "python_exe": str(tmp_path / "python.exe"),
+                        "default_lifecycle": "none",
+                        "input_dir": None,
+                        "output_root": None,
+                    },
+                )
+            ],
+        ),
+    )
+
+    selected = Orchestrator._detect_comfy_lifecycle([step])
+    assert selected is not None
+    assert selected.mode == "ensure_running"
+    assert selected.scripts_dir == str(tmp_path / "scripts")
+    assert selected.python_exe == str(tmp_path / "python.exe")

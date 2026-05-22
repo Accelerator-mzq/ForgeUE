@@ -729,7 +729,6 @@ async def test_dry_run_skips_probe_when_no_comfy_local_in_routes(tmp_path, monke
 async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypatch):
     """DryRunPass._check_comfy_reachability(async): comfy/local route 触发 aprobe subprocess。
     Step 6: async _check_comfy_reachability + aprobe 转换(原 sync probe_sync 路径已 async 化)。"""
-    from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
     scripts_dir = tmp_path / "scripts"
@@ -742,8 +741,20 @@ async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypat
 
     step = MagicMock()
     step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local", api_key_env=None, api_base=None,
-                      kind="image", pricing=None),
+        PreparedRoute(
+            model="comfy/local",
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        ),
     ]
 
     with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
@@ -755,6 +766,40 @@ async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypat
         assert "comfyui_api" in call_args
         assert "status" in call_args
     assert report.checks.get("comfy.cli_reachable") is True
+
+
+@pytest.mark.asyncio
+async def test_dry_run_probe_uses_comfy_provider_metadata_not_model_id(tmp_path, monkeypatch):
+    from framework.core.policies import PreparedRoute
+    from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
+
+    scripts_dir = tmp_path / "scripts"
+    (scripts_dir / "comfyui_api").mkdir(parents=True)
+    monkeypatch.delenv("FORGEUE_COMFY_SCRIPTS_DIR", raising=False)
+
+    step = MagicMock()
+    step.provider_policy.prepared_routes = [
+        PreparedRoute(
+            model="local/custom-image",
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        )
+    ]
+
+    dry_run = DryRunPass()
+    report = DryRunReport(passed=True)
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+    assert run_mock.call_count == 1
 
 
 # ===========================================================================
@@ -1192,7 +1237,6 @@ def test_generate_mesh_does_not_mutate_caller_spec_comfy_params(tmp_path):
 async def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monkeypatch):
     """P-F4: dry-run probe gate 扩为 set membership;comfy/local-mesh route 也触发 aprobe。
     Step 6: async _check_comfy_reachability 转换。"""
-    from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
     scripts_dir = tmp_path / "scripts"
@@ -1205,8 +1249,20 @@ async def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monk
 
     step = MagicMock()
     step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local-mesh", api_key_env=None, api_base=None,
-                      kind="mesh", pricing=None),
+        PreparedRoute(
+            model="comfy/local-mesh",
+            kind="mesh",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        ),
     ]
 
     with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
