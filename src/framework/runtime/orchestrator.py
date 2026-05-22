@@ -49,13 +49,14 @@ from framework.runtime.budget_tracker import (
 )
 from framework.runtime.failure_mode_map import classify as classify_failure
 from framework.runtime.failure_mode_map import synthesise_verdict as synth_failure_verdict
-from framework.runtime.lifecycle import ComfyLifecycleManager
+from framework.runtime.lifecycle import ExternalProcessLifecycle
+from framework.runtime.managed_process_registry import (
+    ManagedProcessRegistry,
+    ManagedProcessSelection,
+    build_default_managed_process_registry,
+)
 from framework.runtime.scheduler import Scheduler
 from framework.runtime.transition_engine import TransitionEngine
-from framework.providers.comfy_provider_config import (
-    first_comfy_agent_route,
-    resolve_comfy_agent_config,
-)
 
 
 # cascade-cancel drain 超时上限(秒)。
@@ -74,15 +75,6 @@ class DryRunFailed(RuntimeError):
     def __init__(self, report: DryRunReport) -> None:
         super().__init__(f"dry-run failed: {report.errors}")
         self.report = report
-
-
-@dataclass(frozen=True)
-class _ComfyLifecycleSelection:
-    """一次 lifecycle 选择结果:模式 + agent CLI 运行配置。"""
-
-    mode: str
-    scripts_dir: str | None
-    python_exe: str | None
 
 
 @dataclass
@@ -106,6 +98,7 @@ class Orchestrator:
         scheduler: Scheduler | None = None,
         transition_engine: TransitionEngine | None = None,
         dry_run_pass: DryRunPass | None = None,
+        managed_process_registry: ManagedProcessRegistry | None = None,
         max_loop: int = 64,
     ) -> None:
         self.repository = repository
@@ -114,10 +107,13 @@ class Orchestrator:
         self.scheduler = scheduler or Scheduler()
         self.transitions = transition_engine or TransitionEngine()
         self.dry_run = dry_run_pass or DryRunPass()
+        self.managed_process_registry = (
+            managed_process_registry or build_default_managed_process_registry()
+        )
         self._max_loop = max_loop
-        # self_managed_session 模式下跨 arun 复用的 lifecycle manager 实例
-        # 其他模式下为 None(per-arun manager 仅在 arun 局部变量中存在)
-        self._lifecycle: ComfyLifecycleManager | None = None
+        # self_managed_session 模式下跨 arun 复用的 lifecycle 实例。
+        # 其他模式下为 None(per-arun lifecycle 仅在 arun 局部变量中存在)。
+        self._lifecycle: ExternalProcessLifecycle | None = None
         # aclose() 中 release 失败时的留痕记录(dict 或 None)
         self._lifecycle_release_failed: dict | None = None
 
@@ -158,39 +154,16 @@ class Orchestrator:
 
     # ---- lifecycle 辅助方法 -------------------------------------------------
 
-    @staticmethod
-    def _detect_comfy_lifecycle(steps: list[Step]) -> _ComfyLifecycleSelection | None:
-        """扫描 provider metadata,检测是否需要 ComfyUI lifecycle 管理。
-
-        若找到 ComfyUI subprocess route 且 lifecycle != "none",返回 mode 与
-        agent CLI 配置;否则返回 None。按第一个命中的 ComfyUI route 为准。
-        """
-        for step in steps:
-            pp = getattr(step, "provider_policy", None)
-            if pp is None:
-                continue
-            route = first_comfy_agent_route(pp.prepared_routes or [])
-            if route is None:
-                continue
-            # 从 step.config.spec 读取 lifecycle 覆盖值,再和 provider/env 配置合并。
-            config_raw = step.config or {}
-            spec_raw = (
-                config_raw.get("spec", {}) if isinstance(config_raw, dict)
-                else {}
-            )
-            spec = spec_raw if isinstance(spec_raw, dict) else {}
-            config = resolve_comfy_agent_config(route=route, spec=spec)
-            if config.default_lifecycle != "none":
-                return _ComfyLifecycleSelection(
-                    mode=config.default_lifecycle,
-                    scripts_dir=config.scripts_dir,
-                    python_exe=config.python_exe,
-                )
-        return None
+    def _detect_managed_process(
+        self,
+        steps: list[Step],
+    ) -> ManagedProcessSelection | None:
+        """通过 registry 选择需要托管的外部进程 lifecycle。"""
+        return self.managed_process_registry.select(steps)
 
     async def _release_lifecycle_bounded(
         self,
-        manager: ComfyLifecycleManager,
+        manager: ExternalProcessLifecycle,
         mode: str,
         reason: str,
         sink: Callable[[dict], None],
@@ -198,7 +171,7 @@ class Orchestrator:
         """有界且非遮蔽的 lifecycle release。
 
         参数:
-            manager: 待 release 的 ComfyLifecycleManager 实例
+            manager: 待 release 的 ExternalProcessLifecycle 实例
             mode:    lifecycle 模式(ensure_running / ensure_release / self_managed_session)
             reason:  释放原因(run_end / cascade / arun_cancel / arun_error / orchestrator_close)
             sink:    失败留痕回调;接收 dict,写入 run.metrics 或 self 属性
@@ -301,33 +274,25 @@ class Orchestrator:
         )
         result = RunResult(run=run, dry_run=dr_report)
 
-        # ── lifecycle manager 检测与构建 ──────────────────────────────────
-        # 扫描 provider metadata 寻找 ComfyUI subprocess 路由 + lifecycle mode != none
-        lc_selection = self._detect_comfy_lifecycle(steps)
+        # ── lifecycle 检测与选择 ─────────────────────────────────────────
+        # Orchestrator 只依赖 registry 返回的通用 lifecycle,不关心具体 provider。
+        lc_selection = self._detect_managed_process(steps)
         lc_mode = lc_selection.mode if lc_selection is not None else None
-        # per_arun_manager:仅对本次 arun 生命周期负责(非 self_managed_session 模式)
-        per_arun_manager: ComfyLifecycleManager | None = None
+        # per_arun_lifecycle:仅对本次 arun 生命周期负责(非 self_managed_session 模式)。
+        per_arun_lifecycle: ExternalProcessLifecycle | None = None
 
         if lc_selection is not None:
-            scripts_dir = lc_selection.scripts_dir
-            python_exe = lc_selection.python_exe
             if lc_mode == "self_managed_session":
-                # self_managed_session:跨 arun 复用同一个 manager 实例
+                # self_managed_session:跨 arun 复用同一个 lifecycle 实例。
                 if self._lifecycle is None:
-                    self._lifecycle = ComfyLifecycleManager(
-                        scripts_dir=scripts_dir or ".",
-                        python_exe=python_exe,
-                    )
-                active_manager: ComfyLifecycleManager | None = self._lifecycle
+                    self._lifecycle = lc_selection.lifecycle
+                active_manager: ExternalProcessLifecycle | None = self._lifecycle
             else:
-                # ensure_running / ensure_release:每次 arun 新建 manager
-                per_arun_manager = ComfyLifecycleManager(
-                    scripts_dir=scripts_dir or ".",
-                    python_exe=python_exe,
-                )
-                active_manager = per_arun_manager
+                # ensure_running / ensure_release:每次 arun 使用本次 selection 的 lifecycle。
+                per_arun_lifecycle = lc_selection.lifecycle
+                active_manager = per_arun_lifecycle
             # 注意:ensure() 调用移至 try 块内部(see Important-1 fix)
-            # manager 构建(轻量,不失败)在 try 外;ensure() 可能抛出异常
+            # lifecycle 选择在 try 外;ensure() 可能抛出异常
             # 须由 finally 兜底 release,否则 _spawn_serve() 后泄漏进程
         else:
             active_manager = None
@@ -544,10 +509,10 @@ class Orchestrator:
             raise
         finally:
             # ── 全路径 release:无论正常/cascade/cancel/异常都执行 ──────────
-            if per_arun_manager is not None:
-                # per-arun manager:本路径负责 release(恰好调用 1 次)
+            if per_arun_lifecycle is not None:
+                # per-arun lifecycle:本路径负责 release(恰好调用 1 次)。
                 await self._release_lifecycle_bounded(
-                    per_arun_manager,
+                    per_arun_lifecycle,
                     lc_mode or "ensure_release",
                     release_reason,
                     sink=lambda d: run.metrics.__setitem__("lifecycle_release_failed", d),
@@ -597,7 +562,7 @@ class Orchestrator:
         produced_ids_per_step: dict[str, list[str]],
         pending_revision_hints: dict[str, dict],
         transitions: TransitionEngine,
-        lifecycle_manager: "ComfyLifecycleManager | None" = None,
+        lifecycle_manager: ExternalProcessLifecycle | None = None,
     ) -> "_StepOutcome":
         """Execute one step in-async. Mirrors v1 run()'s per-iteration body
         but returns a `_StepOutcome` for the caller to apply in aggregate."""
@@ -632,7 +597,7 @@ class Orchestrator:
         produced_ids_per_step: dict[str, list[str]],
         pending_revision_hints: dict[str, dict],
         transitions: TransitionEngine,
-        lifecycle_manager: "ComfyLifecycleManager | None" = None,
+        lifecycle_manager: ExternalProcessLifecycle | None = None,
     ) -> "_StepOutcome":
         run.current_step_id = step.step_id
         result.visited_step_ids.append(step.step_id)

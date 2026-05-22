@@ -4,6 +4,10 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from framework.runtime.managed_process_registry import ManagedProcessSelection
 
 
 _COMFY_ADAPTER = "comfy_agent_cli"
@@ -89,3 +93,40 @@ def resolve_comfy_agent_config(
         output_root=source_env.get("FORGEUE_COMFY_OUTPUT_ROOT")
         or provider_cfg.get("output_root"),
     )
+
+
+class ComfyManagedProcessAdapter:
+    """把 Comfy provider route 包装成通用 managed process selection。"""
+
+    name = _COMFY_ADAPTER
+
+    def select(
+        self,
+        route: object,
+        spec: Mapping | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> "ManagedProcessSelection | None":
+        if not is_comfy_agent_route(route):
+            return None
+        config = resolve_comfy_agent_config(route=route, spec=spec, env=env)
+        if config.default_lifecycle == "none":
+            return None
+        if not config.scripts_dir:
+            raise ValueError(
+                "ComfyUI scripts_dir is required for managed lifecycle"
+            )
+        # 延迟导入避免 provider config 与 framework.runtime 包初始化形成环。
+        from framework.runtime.lifecycle import ComfyLifecycleManager
+        from framework.runtime.managed_process_registry import ManagedProcessSelection
+
+        return ManagedProcessSelection(
+            adapter_name=self.name,
+            mode=config.default_lifecycle,
+            lifecycle=ComfyLifecycleManager(
+                scripts_dir=config.scripts_dir,
+                python_exe=config.python_exe,
+            ),
+            provider_name=getattr(route, "provider_name", None),
+            provider_kind=getattr(route, "provider_kind", "subprocess"),
+            route_model=getattr(route, "model", None),
+        )

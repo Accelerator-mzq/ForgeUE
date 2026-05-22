@@ -29,6 +29,7 @@ from framework.runtime.executors.base import (
     StepExecutor,
 )
 from framework.runtime.lifecycle import ComfyLifecycleManager
+from framework.runtime.managed_process_registry import ManagedProcessSelection
 from framework.runtime.orchestrator import Orchestrator
 
 
@@ -128,6 +129,7 @@ def _build_orch_with_executor(
     executor: StepExecutor,
     tmp_path: Path,
     capability_ref: str = "mock.comfy",
+    managed_process_registry=None,
 ) -> tuple[Orchestrator, CheckpointStore, ArtifactRepository]:
     """构建带真实 CheckpointStore + ArtifactRepository 的 Orchestrator。"""
     reg = get_backend_registry(artifact_root=str(tmp_path))
@@ -136,7 +138,10 @@ def _build_orch_with_executor(
     execs = ExecutorRegistry()
     execs.register(executor)
     orch = Orchestrator(
-        repository=repo, checkpoint_store=store, executor_registry=execs,
+        repository=repo,
+        checkpoint_store=store,
+        executor_registry=execs,
+        managed_process_registry=managed_process_registry,
     )
     return orch, store, repo
 
@@ -212,6 +217,56 @@ async def test_orchestrator_injects_lifecycle_for_managed_comfy(
     assert all(o is not None for o in seen), "部分 step ctx.lifecycle 为 None"
     # 所有 step 应该注入同一个 manager 实例
     assert len({id(o) for o in seen}) == 1, "各 step ctx.lifecycle 不是同一实例"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_managed_process_registry_selection(tmp_path):
+    """Orchestrator 只依赖 registry 返回的 ExternalProcessLifecycle 注入执行上下文。"""
+
+    class _DummyLifecycle:
+        def __init__(self) -> None:
+            self.ensure_calls: list[str] = []
+            self.release_calls: list[tuple[str, str]] = []
+
+        async def ensure(self, mode: str) -> None:
+            self.ensure_calls.append(mode)
+
+        async def release(self, mode: str, reason: str) -> None:
+            self.release_calls.append((mode, reason))
+
+        async def status(self) -> bool:
+            return True
+
+    dummy_lifecycle = _DummyLifecycle()
+    selection = ManagedProcessSelection(
+        adapter_name="dummy",
+        mode="ensure_release",
+        lifecycle=dummy_lifecycle,
+        provider_name="dummy_provider",
+        provider_kind="subprocess",
+        route_model="dummy/model",
+    )
+
+    class _DummyRegistry:
+        def select(self, steps, env=None):
+            return selection
+
+    seen: list = []
+    executor = _LifecycleRecordingExecutor(seen)
+    orch, _, _ = _build_orch_with_executor(
+        executor,
+        tmp_path,
+        managed_process_registry=_DummyRegistry(),
+    )
+
+    task, workflow, steps = _make_comfy_task_workflow_steps(mode="ensure_release")
+    await orch.arun(
+        task=task, workflow=workflow, steps=steps,
+        run_id="r_registry_lc", skip_dry_run=True,
+    )
+
+    assert seen == [dummy_lifecycle]
+    assert dummy_lifecycle.ensure_calls[0] == "ensure_release"
 
 
 @pytest.mark.asyncio
@@ -626,10 +681,10 @@ async def test_run_span_closed_on_normal_exit(monkeypatch, tmp_path):
     assert run_exits[0]["exc_type"] is None, "正常退出 __exit__ exc_type 应为 None"
 
 
-# ── F4 Round 2 fix:_detect_comfy_lifecycle 与 executor 读取 path 一致性 contract ──
+# ── F4 Round 2 fix:_detect_managed_process 与 executor 读取 path 一致性 contract ──
 
-def test_detect_lifecycle_matches_executor_read_path(tmp_path):
-    """F4 contract fence:orchestrator._detect_comfy_lifecycle 与 executor
+def test_detect_managed_process_matches_executor_read_path(tmp_path):
+    """F4 contract fence:orchestrator._detect_managed_process 与 executor
     内部读取 step.config['spec']['comfy_lifecycle'] 必须从同一字段读到同值。
 
     防止未来 bundle format drift 导致两端读到不同 mode(orch 构建 manager 但
@@ -670,7 +725,7 @@ def test_detect_lifecycle_matches_executor_read_path(tmp_path):
 
     orch = _make_orchestrator(tmp_path)
     # orchestrator 侧读取
-    selection = orch._detect_comfy_lifecycle([step])
+    selection = orch._detect_managed_process([step])
     assert selection is not None
     orch_mode = selection.mode
 
@@ -680,7 +735,7 @@ def test_detect_lifecycle_matches_executor_read_path(tmp_path):
     executor_mode = spec.get("comfy_lifecycle") if isinstance(spec, dict) else None
 
     assert orch_mode == "ensure_running", (
-        f"_detect_comfy_lifecycle 应读到 ensure_running,实测 {orch_mode!r}"
+        f"_detect_managed_process 应读到 ensure_running,实测 {orch_mode!r}"
     )
     assert executor_mode == "ensure_running", (
         f"executor 侧 spec.get('comfy_lifecycle') 应读到 ensure_running,实测 {executor_mode!r}"
@@ -691,7 +746,7 @@ def test_detect_lifecycle_matches_executor_read_path(tmp_path):
     )
 
 
-def test_detect_comfy_lifecycle_uses_provider_config_scripts_dir(tmp_path):
+def test_detect_managed_process_uses_provider_config_scripts_dir(tmp_path):
     from framework.core.policies import PreparedRoute, ProviderPolicy
     from framework.core.task import Step
     from framework.core.enums import RiskLevel, StepType
@@ -725,8 +780,9 @@ def test_detect_comfy_lifecycle_uses_provider_config_scripts_dir(tmp_path):
         ),
     )
 
-    selected = Orchestrator._detect_comfy_lifecycle([step])
+    orch = _make_orchestrator(tmp_path)
+    selected = orch._detect_managed_process([step])
     assert selected is not None
     assert selected.mode == "ensure_running"
-    assert selected.scripts_dir == str(tmp_path / "scripts")
-    assert selected.python_exe == str(tmp_path / "python.exe")
+    assert selected.lifecycle._scripts_dir == tmp_path / "scripts"
+    assert selected.lifecycle._python == str(tmp_path / "python.exe")
