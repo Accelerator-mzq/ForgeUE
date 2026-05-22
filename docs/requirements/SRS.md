@@ -430,7 +430,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | Hunyuan Image | Tencent tokenhub | `hunyuan_tokenhub_adapter.py` |
 | Hunyuan 3D | Tencent tokenhub | `providers/workers/mesh_worker.py` |
 | MiniMax | OpenAI 兼容 | LiteLLM |
-| ComfyUI(自 v1.6) | subprocess CLI(`python -m comfyui_api`,lifecycle=none only;项目级默认配置=`config/models.yaml` `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` 作为兼容覆盖)| `providers/workers/comfy_worker.py::ComfyAgentWorker`(配置走 `config/models.yaml` + `FORGEUE_COMFY_*` env)|
+| ComfyUI(自 v1.6;TBD-010 后支持 managed lifecycle) | subprocess CLI(`python -m comfyui_api`;lifecycle 合法值 `none` / `ensure_running` / `ensure_release` / `self_managed_session`;项目级默认配置=`config/models.yaml` `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` 作为兼容覆盖)| `providers/workers/comfy_worker.py::ComfyAgentWorker`(配置走 `config/models.yaml` + `FORGEUE_COMFY_*` env)|
 | Tripo3D | 预留(`/task` + 轮询) | `providers/workers/mesh_worker.py`(scaffold) |
 
 详细 API 契约见 `docs/api_des/*.md`。

@@ -16,16 +16,18 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 - **Audio** capability(自 v1.7):bundle 用 `audio_local` alias + text-to-audio 单 step(NOT DAG;无 source bytes),audio manifest 例 `Audio_Workflows/audio_stable_audio_example`(Stable Audio Open 1.0 ~2GB)或 `audio_ace_step_1_t2a_instrumentals`(ACE-Step v1 ~7GB);**不需要** `FORGEUE_COMFY_INPUT_DIR`(audio 路径无 source image)
 - **Video** capability(自 v1.8):bundle 用 `video_local` alias + text-to-video 单 step(NOT DAG;无 source bytes,沿 audio 模式),video manifest 例 `Vedio/Wan2.1-T2V-1.3B_native_5sec`(Wan 2.1 1.3B T2V ~3GB,7 分钟生成 / 6GB VRAM,默认 manifest)或 `Vedio/Wan2.2-T2V-A14B_GGUF`(Wan 2.2 A14B GGUF 量化 ~14GB+,advanced manifest 不进 examples)。**`Vedio/` 是上游 user-authored 拼写,ForgeUE 不做翻译**(改名破坏 ComfyUI 自家既有 workflow + custom node 索引;ForgeUE 端 alias 翻译会引入隐式 magic 不利审计;D5 决策);**不需要** `FORGEUE_COMFY_INPUT_DIR`(video 路径无 source image,沿 audio D7);format mp4-only(round-2 F2 + round-3 PF3 sweep,webm follow-on `comfy-video-webm-adoption`)+ BMFF strict 5-tuple header validation(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject `box_size==1` largesize + major_brand non-empty);**L2 evidence 单次约 7 分钟**,iteration 成本远高于 audio Phase 2 单次 1 分钟,首次跑 Wan 1.3B 模型 ~3GB HuggingFace 拉(用户负责预先暖启 ComfyUI;A14B / 14B 30+ 分钟 + 14-24+GB VRAM 不推荐 default smoke)
 
-**双终端工作流(本 change scope 唯一支持模式)**:
-- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(image L2 live smoke evidence:`docs/archive/forge_changes/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`;mesh L2 live smoke evidence:`docs/archive/forge_changes/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/notes/live_smoke_mesh_20260503_full.md`,GLB 真实生成 3.5MB)
+**ComfyUI lifecycle 与 smoke 工作流**:
+当前支持 4 个 lifecycle mode:`none` / `ensure_running` / `ensure_release` / `self_managed_session`。`config/models.yaml` 里的 `providers.comfy_api.subprocess.default_lifecycle` 仍默认 `none`,所以默认 L2 live smoke 仍按手工双终端跑;需要框架托管 ComfyUI 时,可通过 step `spec.comfy_lifecycle` / `FORGEUE_COMFY_LIFECYCLE` / `config/models.yaml` 改为 managed lifecycle。FOR-8 起同一 run 内多个 Comfy step 解析出不同 lifecycle mode 会 fail-fast。
+- 默认手工 smoke(lifecycle=`none`)的终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(image L2 live smoke evidence:`docs/archive/forge_changes/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`;mesh L2 live smoke evidence:`docs/archive/forge_changes/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/notes/live_smoke_mesh_20260503_full.md`,GLB 真实生成 3.5MB)
 - **ComfyUI 共享目录新增 ForgeUE 依赖**(round 5 user-authored mini-LoadImage 变体,本 change 必须):
   - `D:/AI/ComfyUI/workflows/official_main_validated_api/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(API workflow,LoadImage 变体)
   - `D:/AI/ComfyUI/scripts/comfyui_api/manifests/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(manifest,暴露 input_image patches)
   - 这两个文件是 user-authored ComfyUI 配置,ComfyUI 重装时**手工保留**(否则 ForgeUE mesh smoke 失败)
-- 终端 2 export env + 跑 ForgeUE(或 `.env` 文件持久化,`framework.run` 启动会 `hydrate_env` 自动加载):
+- 默认手工 smoke 的终端 2 export env + 跑 ForgeUE(或 `.env` 文件持久化,`framework.run` 启动会 `hydrate_env` 自动加载):
   ```bash
   export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
-  # FORGEUE_COMFY_PYTHON_EXE 留空 → sys.executable;FORGEUE_COMFY_LIFECYCLE 留空 → "none"(本 change 仅接受)
+  # FORGEUE_COMFY_PYTHON_EXE 留空 → sys.executable;FORGEUE_COMFY_LIFECYCLE 留空 → config default_lifecycle(当前默认 "none")
+  # 可显式设为 ensure_running / ensure_release / self_managed_session 走 managed lifecycle
   # round 5 D10:mesh capability REQUIRED — ComfyUI 自家 input/ 目录绝对路径
   export FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input
   python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>          # image-only
@@ -38,7 +40,7 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 
 **关键限制(round 2 OQ-6 + D6 + round 5 D10)**:
 - worker 项目级默认配置走 `config/models.yaml` 的 `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` 作为兼容覆盖层保留
-- `comfy_lifecycle: "none"` only(`ensure_running` / `ensure_release` / `self_managed_session` 留 SRS TBD-010 `executor-async-rewrite` 后续 change 解锁)
+- `comfy_lifecycle` 当前合法值为 `none` / `ensure_running` / `ensure_release` / `self_managed_session`;默认仍是 `none`,但 TBD-010 `executor-async-rewrite` 已解锁三种 managed lifecycle。FOR-8 起同一 run 多个 Comfy step lifecycle mode 不一致时直接 fail-fast。
 - Mesh capability:仅 image-to-mesh 路径(沿用 mesh worker ABC `source_image_bytes` 模式),不支持 standalone text-to-mesh manifest;ComfyUI LoadImage 节点要求 source bytes 在 `FORGEUE_COMFY_INPUT_DIR` 指向的 ComfyUI 自家 input/ 目录(round 5 D10)
 - Audio capability(自 v1.7):仅 text-to-audio 路径(`AudioWorker` ABC + `AudioCandidate(data, format, duration_seconds=None, sample_rate=None, metadata)`,无 audio-to-audio / image-to-audio source bytes 模式与 mesh image-to-mesh 不同);`AudioCandidate.duration_seconds` / `sample_rate` 永远 `None`(本 change scope 不引入 audio metadata parser,留 follow-on `audio-metadata-parser` change);magic bytes 二次校验强制(`fLaC` / `ID3`+MPEG sync / `RIFF`+`WAVE`)
 - Video capability(自 v1.8):仅 text-to-video 路径(`VideoWorker` ABC + `VideoCandidate(data, format, metadata, duration_seconds=None, frame_count=None, width=None, height=None, fps=None)`,沿 audio D7 无 source bytes;`comfy/local-video` virtual model id;**format mp4-only**(round-2 F2 + round-3 PF3 sweep,webm follow-on `comfy-video-webm-adoption`));5 个 video metadata 顶层字段永远 `None`(ComfyUI agent CLI 不暴露,留 follow-on `video-metadata-parser` 加 ffprobe 解析填充);**BMFF strict 5-tuple header validation 强制**(round-2 F4 + round-3 PF2:`len >= 16` + `data[4:8] == b"ftyp"` + `box_size in [8, len(data)]` reject `box_size == 1`(largesize follow-on `video-bmff-largesize-support`)+ `data[8:12]` major_brand non-empty / non-zero / non-spaces);UE bridge `_KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + **D12 packaging path 分流**(mp4 落 `Content/Movies/<run_id>/`,`.uasset` 落 `Content/Generated/<run_id>/`;UE 5.x packaging 把 `Content/Movies/` 打包为 standalone movie file 而非 .uasset 内嵌)
