@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import sys
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -299,14 +300,15 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
 
         轮询间隔由 poll_interval_s 控制(默认 2s;单测可设 0.01s 加速)。
         """
-        elapsed = 0.0
+        deadline = time.monotonic() + _READY_TIMEOUT_S
         while True:
             if await self.status():
                 return
-            if elapsed >= _READY_TIMEOUT_S:
+            # 用真实单调时钟算剩余时间,避免事件循环繁忙导致 sleep 晚醒后超时漂移。
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 raise TimeoutError(
                     f"ComfyUI 未能在 {_READY_TIMEOUT_S}s 内就绪"
                     f"(scripts_dir={self._scripts_dir})"
                 )
-            await asyncio.sleep(self._poll)
-            elapsed += self._poll
+            await asyncio.sleep(min(self._poll, remaining))
