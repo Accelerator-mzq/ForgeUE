@@ -23,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Backlog closeout rule**: `AGENTS.md` / `CLAUDE.md` / `docs/backlog/README.md` 现在要求凡是源自 `docs/backlog/active.md` 的任务,收尾时必须显式处理 active→archived 状态,小 bugfix 也不例外,避免只改代码不结账。
+- **FOR-10 wait-ready-monotonic-time**:`ComfyLifecycleManager._wait_ready` 改用 `time.monotonic()` 绝对 deadline,新增 oversleep 回归测试;对应 active backlog `wait-ready-monotonic-time` 已归档。
 - **FOR-11 blob backend streaming implementation**:`BlobBackend` 从
   `NotImplementedError` stub 升级为 MVP object-store backend,提供可注入
   `BlobClient` protocol + 默认 `InMemoryBlobClient`;支持 value/source_path 写入、

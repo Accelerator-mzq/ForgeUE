@@ -43,17 +43,6 @@
 - **related change**: null
 - **triggered_by**: undefined#undefined
 
-### `2026-05-20-executor-async-rewrite::wait-ready-monotonic-time`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: ComfyLifecycleManager._wait_ready 当前用 counter 累加 elapsed += self._poll, 事件循环繁忙时 await asyncio.sleep(self._poll) 实际耗时可能 > self._poll, 累计漂移导致真正超时晚于 _READY_TIMEOUT_S。改用 time.monotonic() 或 asyncio.wait_for 包整个循环。
-
-- **reason**: Round 2 review F6 reject:status() 正常情况远小于 _STATUS_TIMEOUT_S, 漂移对实际行为影响低;_READY_TIMEOUT_S=120s 留 30%+ 余量。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: undefined#undefined
-
 ### `2026-05-21-repo-put-streaming-payload::hash-path-async-variant`
 
 - **source change**: 2026-05-21-repo-put-streaming-payload

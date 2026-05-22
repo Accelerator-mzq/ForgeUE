@@ -82,6 +82,21 @@
   `demo_artifacts/2026-05-22/adhoc/for11_blob_backend/evidence.md`。
 - **archived_by**: FOR-11 blob-backend-streaming-implementation 2026-05-22
 
+## 2026-05-22 FOR-10 completion
+
+### `2026-05-20-executor-async-rewrite::wait-ready-monotonic-time`
+
+- **new_status**: completed
+- **reason**: `ComfyLifecycleManager._wait_ready` 已改为 `time.monotonic()` 绝对 deadline,不再依赖 `elapsed += self._poll` 的漂移计数;新增回归测试覆盖 oversleep 场景。
+- **evidence**: `src/framework/runtime/lifecycle.py`,
+  `tests/unit/test_comfy_lifecycle.py`,
+  `tests/unit/test_orchestrator.py`;
+  `python -m pytest tests/unit/test_comfy_lifecycle.py -q` → `28 passed`;
+  `python -m pytest tests/unit/test_orchestrator.py -q` → `16 passed`;
+  commit `170a3ea` 推送到 `origin/forge-codex`;
+  Linear FOR-10 状态已同步为 `Done`。
+- **archived_by**: FOR-10 wait-ready-monotonic-time 2026-05-22
+
 ## 2026-05-22 backlog audit
 
 ### `2026-05-20-executor-async-rewrite::tbd-011-provider-kind-schema`

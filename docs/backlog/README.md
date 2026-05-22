@@ -15,4 +15,5 @@
 
 - 不硬编码测试总数;测试事实以实际命令输出为准。
 - 变更 backlog 时同步更新相关 `docs/requirements/SRS.md` 或验收文档引用。
+- 从 `docs/backlog/active.md` 认领的工作,收尾时必须显式结账:完成则移到 `docs/backlog/archived.md`,未完成则保留在 `active.md` 并补原因;这条规则对小 bugfix 也适用。
 - 历史 archive 不重写原始叙述;只在当前文档中指向新路径。

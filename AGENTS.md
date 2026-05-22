@@ -187,7 +187,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 - **发布门** → 非平凡 work 在 merge / push / Linear Done 前必须先用 `superpowers:verification-before-completion` 做证据化验证,再用项目级 skill `document-release` 同步五件套、`docs/contracts/`、`docs/backlog/`、`CHANGELOG.md` 和 archive 引用。
 - **分支收尾** → `document-release` 完成并再次按范围验证后,才使用 `superpowers:finishing-a-development-branch` 做 merge / push。
 - **Linear 同步(Codex 环境)** → 若任务关联 Linear issue,`document-release` 阶段准备 evidence;只有目标分支 merge / push 成功后,才把 Linear 标为 Done 并评论证据。
-- **小 bugfix / typo / logic 微调** → 可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式。
+- **小 bugfix / typo / logic 微调** → 可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式;如果任务来源于 `docs/backlog/active.md`,收尾时还必须显式结账 backlog。
 - 实现只围绕当前任务范围;**禁止**顺手重构无关模块。
 
 ### 与 docs 五件套的关系
@@ -213,7 +213,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ### Backlog
 
-项目当前 backlog = `docs/backlog/`。`active.md` 列未决待办、`archived.md` 列 tombstone。状态查询:读 `docs/backlog/active.md`。
+项目当前 backlog = `docs/backlog/`。`active.md` 列未决待办、`archived.md` 列 tombstone。状态查询:读 `docs/backlog/active.md`。凡是从 `docs/backlog/active.md` 认领的任务,即使是小 bugfix,收尾时也必须显式结账:完成则同步归档到 `docs/backlog/archived.md`,未完成则保留在 `active.md` 并写清原因;不能只改代码不处理 backlog 状态。
 
 原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入 backlog;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。
 
