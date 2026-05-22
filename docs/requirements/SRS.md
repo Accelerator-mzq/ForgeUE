@@ -68,7 +68,7 @@ ForgeUE 是一套以 Task/Run/Workflow/Artifact 为一等公民、Review 为合�
 | DryRunPass | Run 启动前零副作用预检阶段 |
 | PayloadRef | Artifact 载体三态:`inline` / `file` / `blob` |
 | ModelRegistry | 三段式(providers / models / aliases)模型注册 |
-| PreparedRoute | `(model_id, api_key_env, api_base, kind)` 四元组 |
+| PreparedRoute | `(model_id, api_key_env, api_base, kind, provider_name, provider_kind, provider_config)` 七元组 |
 | BudgetTracker | Run 级成本累加器 |
 | ProviderAdapter | Provider 接入适配器(LiteLLM / Qwen / Hunyuan / 自研等) |
 | CapabilityRouter | 能力路由器,按 `capability_alias` 选 adapter |
@@ -239,7 +239,7 @@ ForgeUE **不做**:
 
 | 编号 | 需求 |
 | --- | --- |
-| FR-WORKER-001 | 系统应支持 ComfyUI worker,生成贴图类 Artifact(自 v1.6 起改为 agent CLI subprocess `python -m comfyui_api`,lifecycle=none only,worker 配置走 `FORGEUE_COMFY_*` env vars;v1.5 及之前为 HTTP `/prompt` + `/history` + `/view`,见 OpenSpec change `comfy-agent-cli-adoption`)|
+| FR-WORKER-001 | 系统应支持 ComfyUI worker,生成贴图类 Artifact(自 v1.6 起改为 agent CLI subprocess `python -m comfyui_api`,项目级默认配置走 `config/models.yaml` 的 `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` env vars 作为兼容覆盖;v1.5 及之前为 HTTP `/prompt` + `/history` + `/view`,见 OpenSpec change `comfy-agent-cli-adoption`)|
 | FR-WORKER-002 | 系统应支持 Hunyuan 3D worker(tokenhub 协议),生成 `mesh.gltf` / `mesh.fbx` |
 | FR-WORKER-003 | Tripo3D worker 应保留接口实现(scaffold),per-task 价格未公开时 parser 以 `NotImplementedError` 守门 |
 | FR-WORKER-004 | Mesh worker 应对返回的 URL 做 rank,按 `strong / ok / key / other / zip` 桶序排列;fallthrough 循环遍历候选 URL,`MeshWorkerUnsupportedResponse` 继续,`MeshWorkerError` 终止 |
@@ -429,7 +429,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | Hunyuan Image | Tencent tokenhub | `hunyuan_tokenhub_adapter.py` |
 | Hunyuan 3D | Tencent tokenhub | `providers/workers/mesh_worker.py` |
 | MiniMax | OpenAI 兼容 | LiteLLM |
-| ComfyUI(自 v1.6) | subprocess CLI(`python -m comfyui_api`,lifecycle=none only)| `providers/workers/comfy_worker.py::ComfyAgentWorker`(配置走 `FORGEUE_COMFY_*` env)|
+| ComfyUI(自 v1.6) | subprocess CLI(`python -m comfyui_api`,lifecycle=none only;项目级默认配置=`config/models.yaml` `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` 作为兼容覆盖)| `providers/workers/comfy_worker.py::ComfyAgentWorker`(配置走 `config/models.yaml` + `FORGEUE_COMFY_*` env)|
 | Tripo3D | 预留(`/task` + 轮询) | `providers/workers/mesh_worker.py`(scaffold) |
 
 详细 API 契约见 `docs/api_des/*.md`。
@@ -523,5 +523,5 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | TBD-009 ✅ | ComfyUI agent CLI mesh / audio / video workflow 接入。**Phase 1 mesh 已落地**(OpenSpec change `comfy-agent-cli-mesh-audio-video-adoption` 2026-05-03)。**Phase 2 audio 已落地**(OpenSpec change `comfy-agent-cli-audio-adoption` 2026-05-03,L2 PASS FLAC 1.17 MB)。**Phase 3 video 已落地**(OpenSpec change `comfy-agent-cli-video-adoption` 2026-05-04,5 项 D-fixed 用户拍板决策 + round-2 codex design review 4 finding writeback + round-3 codex plan review 4 finding writeback + round-4/5/6 implementation review 2 finding writeback;`comfy/local-video` virtual model id + `video_local` alias + `Vedio/Wan2.1-T2V-1.3B_native_5sec` 默认 manifest(D5 上游 `Vedio/` 拼写照实跟随);D1 UE bridge `file_media_source` 资产链路从零建 + D12 `Content/Movies/<run_id>/` packaging path 分流;round-2 F1 export gate 4 处 sweep(`_is_importable` + `PermissionPolicy.allow_import_file_media_source` + `_OP_ALLOW_ATTR` + `UEImportOperation.kind` Literal);round-3 PF1 D-Runner-Extension 用户授权扩 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 加 `video` collection block(VHS_VideoCombine 节点 legacy `gifs` UI key);BMFF strict 5-tuple header validation;mp4-only post-F2 sweep webm follow-on)。TBD-009 全 3 phase closed ✅ | 全 phase 已归档(2026-05-04 起 Phase 3 完成) |
 | TBD-012 | `repo-put-streaming-payload`(D4 副作用 follow-on,大文件 stream copy):video Phase 3 D4 决策走全字节读 `src.read_bytes()`,Wan 1.3B 5sec mp4 ~5-15MB 内存峰值可控;但 Wan A14B 高分辨率 / 长时长 / 远端 Sora 等真实 use case ≥100MB 时,扩 `repo.put` 接受 `source_path` zero-copy 路径走 `shutil.copy2` 不全读入内存;影响 PayloadRef API + 所有 worker 路径(image / mesh / audio / video)同步迁移 | 第一个 ≥100MB mp4 真实 use case 出现(罕见,Wan 1.3B 5sec baseline 不触发) |
 | TBD-010 ✅ | GenerateImageExecutor / GenerateMeshExecutor / generate_structured 等改为原生 async 路径,取消并发 cancel 完全语义;ComfyUI lifecycle 借此扩展到 ensure_running + 主 spec provider-routing 的 lifecycle 相关 Invariant + Non-Goal 一并 MODIFIED。**已落地**(forge change `executor-async-rewrite` 2026-05-20):全部 11 个 executor 硬切 `async def execute`;orchestrator 原生 `await executor.execute(ctx)`;ComfyAgentWorker async-subprocess + per-loop `_comfy_submit_lock` + `/interrupt` cancel;新 module `framework.runtime.lifecycle`(`ExternalProcessLifecycle` ABC + `ComfyLifecycleManager` 三模式);orchestrator try/finally release + `aclose()` disposal 钩子;`comfy_lifecycle` 四值受理(`none`/`ensure_running`/`ensure_release`/`self_managed_session`);DryRunPass.run async + `aprobe`(Fluid Pause #1)。全量 1179 passed。TBD-010 ✅ | forge change `executor-async-rewrite` 2026-05-20 closed |
-| TBD-011 | ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env | 第二个 subprocess provider 出现时(本地 SDXL / 第三方 CLI 工具 / 本地 mesh worker)|
+| TBD-011 ✅ | ModelRegistry schema 扩 `ProviderDef.kind` + `ProviderDef.subprocess` + `ResolvedRoute.provider_name / provider_kind / provider_config`(`model-registry-provider-kind-schema`;ComfyUI 项目级默认配置迁入 `config/models.yaml` 的 `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` 保留兼容覆盖) | 已落地于 `model-registry-provider-kind-schema`;验证: `python -m pytest tests/unit/test_model_registry.py tests/unit/test_registry_pricing.py tests/unit/test_comfy_provider_config.py tests/unit/test_comfy_subprocess.py tests/unit/test_generate_mesh_comfy.py tests/unit/test_generate_audio_comfy.py tests/unit/test_generate_video_comfy.py tests/unit/test_orchestrator.py tests/integration/test_example_bundles_smoke.py -q` → `235 passed` |
 | TBD-013 | RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor。**适用**:长会话多次操作(免重启 editor)/ 实时反馈(PIE 截图回 review)/ 真正"agent 与 live editor 协同"。**关键约束**:UE editor 必须常驻进程(端口非独立 daemon)+ 30010 防火墙放通 + reflection 调用拼 ObjectPath/UFUNCTION 比 Python API 繁琐脆。原 TBD-009;2026-05-05 与 SRS §7.3 TBD-009 ComfyUI 编号冲突 re-indexed to TBD-013;**2026-05-07 centralize-followon-backlog-registry P5 dogfood 暴露 SRS §7.3 漏 sync,补此行**(沿 acceptance_report.md TBD-013 同步) | A1 立项后 |

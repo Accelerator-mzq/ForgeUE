@@ -16,7 +16,15 @@ providers:
   test_dashscope: {}
   test_hunyuan: {}
   test_hunyuan_3d: {}
-  comfy_api: {}    # OpenSpec change comfy-agent-cli-adoption (placeholder; worker config via FORGEUE_COMFY_*)
+  comfy_api:
+    kind: subprocess
+    subprocess:
+      adapter: comfy_agent_cli
+      scripts_dir: null
+      python_exe: null
+      default_lifecycle: none
+      input_dir: null
+      output_root: null
 
 models:
   # text

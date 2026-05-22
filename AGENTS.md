@@ -5,6 +5,11 @@
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
 
+**ComfyUI 项目级配置主入口**:`config/models.yaml` 里的 `providers.comfy_api.subprocess`。
+`FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` /
+`FORGEUE_COMFY_LIFECYCLE` / `FORGEUE_COMFY_INPUT_DIR` /
+`FORGEUE_COMFY_OUTPUT_ROOT` 仍保留为本机覆盖层。
+
 ## ComfyUI 接入快查(详见 CLAUDE.md `## ComfyUI 接入` 完整版)
 
 **4 capability** all closed under TBD-009(SRS v1.8 起):

@@ -3,6 +3,11 @@
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
 
+**ComfyUI 项目级配置主入口**:`config/models.yaml` 里的 `providers.comfy_api.subprocess`。
+`FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` /
+`FORGEUE_COMFY_LIFECYCLE` / `FORGEUE_COMFY_INPUT_DIR` /
+`FORGEUE_COMFY_OUTPUT_ROOT` 仍保留为本机覆盖层。
+
 ## ComfyUI 接入(自 SRS v1.6 + v1.7 + v1.8,forge change `comfy-agent-cli-adoption` + Phase 1 mesh `comfy-agent-cli-mesh-audio-video-adoption` + Phase 2 audio `comfy-agent-cli-audio-adoption` + Phase 3 video `comfy-agent-cli-video-adoption` — TBD-009 全 phase closed)
 
 ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**。
@@ -32,7 +37,7 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 - mesh source image 副本:executor 写到 `$FORGEUE_COMFY_INPUT_DIR/forgeue_<sha1>.png`(`forgeue_` prefix 防与 ComfyUI 自家 input 文件冲突;非 ForgeUE 产物,cleanup 由用户管:`find $FORGEUE_COMFY_INPUT_DIR -name "forgeue_*.png" -mtime +7 -delete`)
 
 **关键限制(round 2 OQ-6 + D6 + round 5 D10)**:
-- worker 配置走 env vars `FORGEUE_COMFY_*`,**不**进 `config/models.yaml`(F-A schema 扩展登记 SRS TBD-011 后续 change)
+- worker 项目级默认配置走 `config/models.yaml` 的 `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` 作为兼容覆盖层保留
 - `comfy_lifecycle: "none"` only(`ensure_running` / `ensure_release` / `self_managed_session` 留 SRS TBD-010 `executor-async-rewrite` 后续 change 解锁)
 - Mesh capability:仅 image-to-mesh 路径(沿用 mesh worker ABC `source_image_bytes` 模式),不支持 standalone text-to-mesh manifest;ComfyUI LoadImage 节点要求 source bytes 在 `FORGEUE_COMFY_INPUT_DIR` 指向的 ComfyUI 自家 input/ 目录(round 5 D10)
 - Audio capability(自 v1.7):仅 text-to-audio 路径(`AudioWorker` ABC + `AudioCandidate(data, format, duration_seconds=None, sample_rate=None, metadata)`,无 audio-to-audio / image-to-audio source bytes 模式与 mesh image-to-mesh 不同);`AudioCandidate.duration_seconds` / `sample_rate` 永远 `None`(本 change scope 不引入 audio metadata parser,留 follow-on `audio-metadata-parser` change);magic bytes 二次校验强制(`fLaC` / `ID3`+MPEG sync / `RIFF`+`WAVE`)

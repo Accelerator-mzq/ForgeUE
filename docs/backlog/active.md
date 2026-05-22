@@ -1,14 +1,14 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 18 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 16 项 legacy requirements 待办(不计入上面 18)。
+> 待办计 10 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 15 项 legacy requirements 待办(不计入上面 14)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (11)
+## Future Work (9)
 
 ### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
 
@@ -29,17 +29,6 @@
 - **reason**: Round 2 review F3 reject:当前 mesh / audio / video executor 构建 ComfyAgentWorker(非 Fake),没有触发路径,但 test fixture API 不对等。 未来若想加 mesh / audio / video executor 的 fake-injection 单测, 会撞 AttributeError。低优先,无即时风险。
 
 - **priority**: low
-- **related change**: (无)
-- **triggered_by**: undefined#undefined
-
-### `2026-05-20-executor-async-rewrite::forge-plugin-staging-yaml-timestamp-roundtrip`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: forge plugin v3.0.0 的 `writeStagingYaml` 用 js-yaml dump 输出 ISO 8601 timestamp 作为 unquoted YAML literal,后续 freeze 时 yaml.load 会把这些 literal 解析为 Date object,导致 canonicalize 拒(non-JSON value)并报 误导性 "staging_hash mismatch — staging tampered" 错误。本 change apply review 阶段实测复现 + workaround:手动把 staging.yaml 内全部 timestamp 改 quoted string + 重算 staging_hash 信封字段。
-
-- **reason**: 上游 forge plugin bug,影响 freeze CLI。Workaround 已在本 change 实施过, 但应向 forge plugin upstream 提 issue + PR(在 writeStagingYaml 的 yaml.dump 调用上加 schema=JSON_SCHEMA 或 explicit string force)。
-
-- **priority**: medium
 - **related change**: (无)
 - **triggered_by**: undefined#undefined
 
@@ -64,17 +53,6 @@
 - **priority**: low
 - **related change**: null
 - **triggered_by**: undefined#undefined
-
-### `2026-05-20-executor-async-rewrite::tbd-011-provider-kind-schema`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: ModelRegistry schema 扩 ProviderDef.kind + extra 字段 + ResolvedRoute provider_name / provider_kind,让 subprocess / non-OpenAI provider 配置 统一进 config/models.yaml,不再分裂到 FORGEUE_COMFY_* env。
-
-- **reason**: 本 change 的 lifecycle config 走既有 FORGEUE_COMFY_LIFECYCLE env;TBD-011 把它(及 scripts_dir / python_exe)移进 model registry yaml。SRS §7.3 TBD-011 既定 follow-on,用户已明确为 TBD-010 之后的下一个 change。
-
-- **priority**: high
-- **related change**: (无)
-- **triggered_by**: (无)
 
 ### `2026-05-20-executor-async-rewrite::wait-ready-monotonic-time`
 
@@ -161,63 +139,7 @@ Phase 2 在 Phase 1 已就位的接口上做单点迁移,review 复杂度独立�
 - **related change**: (无)
 - **triggered_by**: (无)
 
-## Out of Scope (7)
-
-### `2026-05-20-executor-async-rewrite::remote-worker-async-internals`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: 远端 Hunyuan3D / Tripo3D mesh worker 内部实现的 async 改造。
-- **reason**: 远端 mesh worker 已是 async-native(`HunyuanTokenHubWorker.agenerate` + `httpx.AsyncClient` + `asyncio.gather` 轮询),executor 转 async 后直接 `await` 其既有 async 面即可,worker 内部无需任何改动。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
-
-### `2026-05-20-executor-async-rewrite::workflow-concurrency-model-change`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: workflow 级调度 / DAG fan-out 并发模型的语义改动。
-- **reason**: workflow 并发由 scheduler 与 DAG fan-out 决定;本 change 只把 executor 的 执行机制从「to_thread 线程」换成「原生 await」,不改变 orchestrator 的 调度顺序、ready 判定或 fan-out 语义,避免 scope 蔓延。
-
-- **priority**: low
-- **related change**: null
-- **triggered_by**: (无)
-
-### `2026-05-20-executor-async-rewrite::ws-server-async-alignment`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: WebSocket 进度服务器 `framework.server.ws_server` 与 async executor 的协作对齐。
-- **reason**: ws_server 不经 executor ABC 执行路径,与本次 executor async 重写无耦合; 其自身已是 async(`asyncio.wait(FIRST_COMPLETED)`)。若未来需要 ws 与 async executor 深度协作,另立独立 change。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
-
-### `2026-05-21-repo-put-streaming-payload::dryrunpass-lineage-variant-streaming`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: DryRunPass / Lineage / VariantTracker 等 artifact_store 周边模块改造。
-
-- **reason**: 这些模块只引用 Artifact 元数据(artifact_id / hash / payload_ref),
-不读写 payload bytes;与 zero-copy 收益场景零交集。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
-
-### `2026-05-21-repo-put-streaming-payload::inline-blob-backend-streaming`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: InlineBackend 与 BlobBackend 的 stream / zero-copy 改造。
-
-- **reason**: InlineBackend 限 64 KB cap,inline payload 本质就是嵌入到 PayloadRef
-随 Artifact 元数据流转(JSON 序列化),无 file 系统侧落盘 → zero-copy
-无意义;BlobBackend MVP 未实装(NotImplementedError stub),先实装 stream
-路径只会增加未来 S3 / MinIO 适配成本。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
+## Out of Scope (1)
 
 ### `2026-05-21-repo-put-streaming-payload::metadata-corruption-detection`
 
@@ -232,23 +154,6 @@ chain / Pydantic schema_version 兼容)是独立子问题,需配合 LiveMarker /
 SignedManifest 等,scope 远超本 change。
 
 - **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
-
-### `2026-05-21-repo-put-streaming-payload::worker-candidate-source-path-migration`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: Worker layer(AudioWorker / ImageWorker / MeshWorker / VideoWorker /
-ComfyAgentWorker)的 Candidate dataclass 扩 `source_path` 字段 + 5 处
-executor 迁移到 `repo.put(source_path=...)` 路径。
-
-- **reason**: 本 change Phase 1 仅做 backend / API 改造,Worker / Candidate 协议保留
-`data: bytes` 不变。迁移 Worker 层需要触及 ComfyUI agent CLI 输出解析
-(现在直接读到 bytes 丢弃 source path)+ 5 处 executor 调用站点 + Audio
-/ Mesh / Video / Image worker 单测全套,scope 超 1 个 change 边界。
-Phase 2 follow-on `worker-candidate-source-path-migration` 处理。
-
-- **priority**: medium
 - **related change**: (无)
 - **triggered_by**: (无)
 
@@ -307,7 +212,7 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - **triggered_by**: (无)
 
 
-## Legacy Requirements (16)
+## Legacy Requirements (15)
 
 ### `ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)`
 
@@ -328,5 +233,4 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - `LR-0128` **TBD-003 WS 鉴权 / 多租户 session** — WS 鉴权 / 多租户 session
 - `LR-0129` **TBD-004 FBX self-containment 校验** — FBX self-containment 校验
 - `LR-0130` **TBD-005 DashScope / Tripo3D 下辖 parser 实装** — DashScope / Tripo3D 下辖 parser 实装
-- `LR-0133` **TBD-011 ModelRegistry ProviderDef.kind schema 扩展** — ModelRegistry schema 扩 `ProviderDef.kind` + extra fields + `ResolvedRoute.provider_name / provider_kind`(`model-registry-provider-kind-schema` 后续 change),让 subprocess / non-OpenAI provider 配置统一进 yaml 不分裂到 env
 - `LR-0135` **TBD-013 RemoteControl HTTP bridge** — RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor
