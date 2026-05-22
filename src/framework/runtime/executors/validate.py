@@ -30,7 +30,8 @@ class SchemaValidateExecutor(StepExecutor):
     def __init__(self, *, schema_registry: SchemaRegistry) -> None:
         self._schemas = schema_registry
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 无 IO 操作,body 不变;async def 使 orchestrator 可以 await 调用
         schema_ref = (ctx.step.output_schema or {}).get("schema_ref") \
             or ctx.step.config.get("schema_ref")
         if not schema_ref:

@@ -16,9 +16,9 @@ Output:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import time
 from typing import Any
 
 from framework.core.artifact import (
@@ -45,7 +45,7 @@ class GenerateImageEditExecutor(StepExecutor):
     def __init__(self, *, router: CapabilityRouter) -> None:
         self._router = router
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # Task 5: 转 async,router 调用用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 1))
         if num < 1:
@@ -75,7 +75,8 @@ class GenerateImageEditExecutor(StepExecutor):
         for attempt in range(attempts):
             attempt_count = attempt + 1
             try:
-                results, chosen_model = self._router.image_edit(
+                # Task 5: 改用 async aimage_edit,消除 sync router 调用
+                results, chosen_model = await self._router.aimage_edit(
                     policy=ctx.step.provider_policy,
                     prompt=prompt, source_image_bytes=source_bytes,
                     n=num, size=size, timeout_s=timeout_s,
@@ -87,7 +88,7 @@ class GenerateImageEditExecutor(StepExecutor):
                 last_exc = exc
                 if attempt + 1 >= attempts or not _should_retry(policy, exc):
                     break
-                _backoff(policy, attempt)
+                await _backoff(policy, attempt)
         if results is None:
             assert last_exc is not None
             raise last_exc
@@ -226,6 +227,7 @@ def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     return False
 
 
-def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+async def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
     if policy.backoff == "exponential":
-        time.sleep(min(2 ** attempt_zero_based, 8) * 0.01)
+        # executor 已 async 化,用 await asyncio.sleep 不阻塞事件循环
+        await asyncio.sleep(min(2 ** attempt_zero_based, 8) * 0.01)

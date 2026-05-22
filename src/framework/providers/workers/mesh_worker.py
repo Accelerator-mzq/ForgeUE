@@ -72,6 +72,7 @@ class MeshCandidate:
     has_uv: bool = True
     has_rig: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_path: str | None = None  # FOR-13:本地 worker 可传文件路径给 ArtifactRepository 零拷贝落盘
 
 
 class MeshWorker(ABC):
@@ -89,6 +90,25 @@ class MeshWorker(ABC):
         timeout_s: float | None = None,
     ) -> list[MeshCandidate]:
         """Produce *num_candidates* meshes from *source_image_bytes*."""
+
+    async def agenerate(
+        self,
+        *,
+        source_image_bytes: bytes,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """Task 5 async 接口:默认实现用 asyncio.to_thread 包 sync generate。
+        HunyuanMeshWorker 有专属 async agenerate 覆盖此默认;
+        FakeMeshWorker 继承此默认以支持测试中 await worker.agenerate(...)。"""
+        return await asyncio.to_thread(
+            self.generate,
+            source_image_bytes=source_image_bytes,
+            spec=spec,
+            num_candidates=num_candidates,
+            timeout_s=timeout_s,
+        )
 
 
 # ----------------------------------------------------------------------------

@@ -16,9 +16,9 @@ num_candidates > 1 submits multiple tasks.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -38,11 +38,14 @@ from framework.providers.workers.mesh_worker import (
     MeshWorkerTimeout,
     MeshWorkerUnsupportedResponse,
 )
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
+)
 # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1 mesh:
 # 本地 ComfyUI mesh 走 executor-side branch + ComfyAgentWorker.generate_mesh,
 # ComfyWorker 异常 hierarchy 与 MeshWorker 不交叉(failure_mode_map 优先匹配 MeshWorker*),
 # 必须 wrap 才能让 FailureModeMap 路由正确(D9 + R2-F2)。
-import os
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
     WorkerError as _ComfyWorkerError,
@@ -70,16 +73,13 @@ class GenerateMeshExecutor(StepExecutor):
         self._worker = worker
 
     def _should_use_comfy_worker_path(self, ctx: StepContext) -> bool:
-        """OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1:
-        检测 prepared_routes 是否含 `comfy/local-mesh` model,决定是否走本地
-        ComfyAgentWorker dispatch(R2-F1 修订:provider_policy 在 Step 顶层,
-        不在 step.config 嵌套,沿用现有 generate_mesh.py:202 同模式)。"""
+        """根据 provider metadata 判断是否进入 ComfyAgentWorker 分支。"""
         pp = ctx.step.provider_policy
         if pp is None or not pp.prepared_routes:
             return False
-        return any(r.model == "comfy/local-mesh" for r in pp.prepared_routes)
+        return first_comfy_agent_route(pp.prepared_routes) is not None
 
-    def _generate_via_comfy_worker(
+    async def _generate_via_comfy_worker(
         self,
         *,
         ctx: StepContext,
@@ -93,33 +93,44 @@ class GenerateMeshExecutor(StepExecutor):
         本地 ComfyUI mesh dispatch(D7 + D9):
 
         1. 写 source_image_bytes 到 in-tree input 文件(idempotent via sha1;B2)
-        2. 构造 ComfyAgentWorker(model_id='comfy/local-mesh') + 调 generate_mesh
+        2. 构造 ComfyAgentWorker(model_id='comfy/local-mesh') + 调 agenerate_mesh
         3. 内部 retry loop 用 policy.max_attempts(本地非 premium,绕开 attempts=1
            强制;D4 + R2-F2)
         4. ComfyWorker 异常族 wrap 为 MeshWorker 异常族(D9 + R2-F2),让
            FailureModeMap 路由正确(R4-F1:wrapped MeshWorkerTimeout →
            mesh_worker_timeout → abort_or_fallback,与远端 mesh 终态一致)
+        Task 5: 转 async — 用 await worker.agenerate_mesh(...)
         """
-        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
-        if not scripts_dir:
+        pp = ctx.step.provider_policy
+        route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        if route is None:
             raise MeshWorkerUnsupportedResponse(
-                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses "
-                "comfy/local-mesh route but ComfyUI agent CLI location "
-                "not configured (see CLAUDE.md double-terminal setup)"
+                "ComfyAgentWorker route not found; prepared_routes must include "
+                "provider_kind='subprocess' and provider_config.adapter='comfy_agent_cli'"
+            )
+        try:
+            config = resolve_comfy_agent_config(route, spec=spec)
+        except ValueError as exc:
+            raise MeshWorkerUnsupportedResponse(str(exc)) from exc
+        if not config.scripts_dir:
+            raise MeshWorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var and provider_config.scripts_dir "
+                "are unset; ComfyUI agent CLI location not configured "
+                "(see CLAUDE.md double-terminal setup)"
             )
         # round 5 D10:source bytes 写到 ComfyUI 自家 input/ 目录(via REQUIRED env
         # FORGEUE_COMFY_INPUT_DIR),不是 ForgeUE in-tree(round 1-4 假设错 — ComfyUI
         # LoadImage 节点只读自己 input/ 的 filename,不接绝对路径)。
-        comfy_input_dir = os.environ.get("FORGEUE_COMFY_INPUT_DIR")
-        if not comfy_input_dir:
+        if not config.input_dir:
             raise MeshWorkerUnsupportedResponse(
-                "FORGEUE_COMFY_INPUT_DIR env var unset; mesh path requires "
-                "ComfyUI installation's own input/ directory (e.g. "
+                "FORGEUE_COMFY_INPUT_DIR env var and provider_config.input_dir "
+                "are unset; mesh path requires ComfyUI installation's own "
+                "input/ directory (e.g. "
                 "D:/AI/ComfyUI/apps/official-main-git-v092/input) for "
                 "LoadImage node to resolve source image filename — see "
                 "CLAUDE.md mesh adoption section"
             )
-        input_dir = Path(comfy_input_dir)
+        input_dir = Path(config.input_dir)
         input_dir.mkdir(parents=True, exist_ok=True)
         sha1_hex = hashlib.sha1(source_image_bytes).hexdigest()[:16]
         # round 5 D10:filename 'forgeue_' prefix 避免与 ComfyUI 自家 input 文件冲突;
@@ -129,17 +140,21 @@ class GenerateMeshExecutor(StepExecutor):
         if not input_path.exists():
             input_path.write_bytes(source_image_bytes)
 
-        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
-            scripts_dir=Path(scripts_dir),
-            model_id="comfy/local-mesh",         # D1 capability dispatch
+            scripts_dir=Path(config.scripts_dir),
+            model_id=route.model,
+            capability="mesh",
             run_id=ctx.run.run_id,
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
-            python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=lifecycle,
+            python_exe=Path(config.python_exe) if config.python_exe else None,
+            default_lifecycle=config.default_lifecycle,
+            output_root=Path(config.output_root) if config.output_root else None,
         )
+        # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
+        # ComfyLifecycleManager.ensure 幂等,重复调用安全)
+        if ctx.lifecycle is not None:
+            await ctx.lifecycle.ensure(config.default_lifecycle)
 
         # D9 + R2-F2:内部 retry loop(本地 mesh 走 standard retry,绕开
         # executor 主流程 attempts=1 强制);RetryPolicy.max_attempts 默认 2(policies.py:26)
@@ -150,7 +165,8 @@ class GenerateMeshExecutor(StepExecutor):
             try:
                 # round 5 D10:filename only(LoadImage 节点 prefix 自动 ComfyUI input/);
                 # source_image_filename 由 executor 算好,worker 只看 filename
-                return worker.generate_mesh(
+                # Task 5: 改用 await agenerate_mesh(async),消除 sync generate_mesh 调用
+                return await worker.agenerate_mesh(
                     spec=spec,
                     source_image_filename=input_filename,
                     num_candidates=num,
@@ -163,7 +179,7 @@ class GenerateMeshExecutor(StepExecutor):
                 last_exc = wrapped
                 if attempt + 1 >= attempts or not _should_retry(policy, wrapped):
                     raise wrapped from exc
-                _backoff(policy, attempt)
+                await _backoff(policy, attempt)
             except _ComfyWorkerUnsupportedResponse as exc:
                 # 不 retry(deterministic);wrap 为 MeshWorkerUnsupportedResponse
                 raise MeshWorkerUnsupportedResponse(str(exc)) from exc
@@ -173,7 +189,7 @@ class GenerateMeshExecutor(StepExecutor):
         assert last_exc is not None
         raise last_exc
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # Task 5: 转 async,worker 调用全用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 1))
         if num < 1:
@@ -205,6 +221,9 @@ class GenerateMeshExecutor(StepExecutor):
         # 用此 flag 决定 attribution(避免误用 `self._worker.name`,该字段是
         # framework.run 注入的 fallback worker 名,不一定是当前活跃 worker)。
         use_comfy_worker_path = self._should_use_comfy_worker_path(ctx)
+        pp = ctx.step.provider_policy
+        comfy_route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        comfy_model = getattr(comfy_route, "model", None)
 
         # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1:
         # comfy/local-mesh route → 走本地 ComfyAgentWorker 自有 retry loop;
@@ -212,7 +231,8 @@ class GenerateMeshExecutor(StepExecutor):
         if use_comfy_worker_path:
             attempt_count = 1
             try:
-                candidates = self._generate_via_comfy_worker(
+                # Task 5: await async helper
+                candidates = await self._generate_via_comfy_worker(
                     ctx=ctx,
                     spec=spec,
                     source_image_bytes=source_bytes,
@@ -228,7 +248,8 @@ class GenerateMeshExecutor(StepExecutor):
             for attempt in range(attempts):
                 attempt_count = attempt + 1
                 try:
-                    candidates = self._worker.generate(
+                    # Task 5: 远端 MeshWorker 异步接口 agenerate
+                    candidates = await self._worker.agenerate(
                         source_image_bytes=source_bytes, spec=spec,
                         num_candidates=num, timeout_s=timeout_s,
                     )
@@ -238,7 +259,7 @@ class GenerateMeshExecutor(StepExecutor):
                     last_exc = exc
                     if attempt + 1 >= attempts or not _should_retry(policy, exc):
                         break
-                    _backoff(policy, attempt)
+                    await _backoff(policy, attempt)
         if candidates is None:
             assert last_exc is not None
             raise last_exc
@@ -256,9 +277,9 @@ class GenerateMeshExecutor(StepExecutor):
         for i, cand in enumerate(candidates):
             aid = f"{ctx.run.run_id}_{ctx.step.step_id}_mesh_{spec_fp}_{i}"
             shape = _MESH_SHAPE_BY_FORMAT.get(cand.format, "gltf")
+            payload_kwargs = _candidate_payload_kwargs(cand)
             art = ctx.repository.put(
                 artifact_id=aid,
-                value=cand.data,
                 artifact_type=ArtifactType(
                     modality="mesh", shape=shape, display_name="mesh_asset",
                 ),
@@ -273,7 +294,7 @@ class GenerateMeshExecutor(StepExecutor):
                     # mesh worker 名(可能是 HunyuanMeshWorker / FakeMeshWorker)
                     provider=("comfy_agent_cli" if use_comfy_worker_path else self._worker.name),
                     model=(
-                        "comfy/local-mesh" if use_comfy_worker_path
+                        comfy_model if use_comfy_worker_path and comfy_model is not None
                         else cfg.get("model_hint", self._worker.name)
                     ),
                 ),
@@ -300,9 +321,10 @@ class GenerateMeshExecutor(StepExecutor):
                 validation=ValidationRecord(
                     status="passed",
                     checks=[ValidationCheck(name="mesh.bytes_nonempty",
-                                            result="passed" if cand.data else "failed")],
+                                            result="passed" if _candidate_payload_nonempty(cand) else "failed")],
                 ),
                 file_suffix=f".{cand.format}",
+                **payload_kwargs,
             )
             mesh_arts.append(art)
             mesh_ids.append(aid)
@@ -317,7 +339,7 @@ class GenerateMeshExecutor(StepExecutor):
         # the step's ProviderPolicy instead).
         route_pricing = _first_mesh_route_pricing(ctx)
         cost_usd = estimate_mesh_call_cost_usd(
-            model=("comfy/local-mesh" if use_comfy_worker_path else self._worker.name),
+            model=(comfy_model if use_comfy_worker_path and comfy_model is not None else self._worker.name),
             num_candidates=len(mesh_ids),
             route_pricing=route_pricing,
         )
@@ -456,6 +478,20 @@ def _resolve_source_image(ctx: StepContext) -> tuple[bytes | None, str | None]:
     return None, None
 
 
+def _candidate_payload_kwargs(cand: MeshCandidate) -> dict[str, Any]:
+    """FOR-13:本地 Comfy mesh 输出用 source_path,远端 worker 继续传 bytes。"""
+    if cand.source_path:
+        return {"source_path": cand.source_path}
+    return {"value": cand.data}
+
+
+def _candidate_payload_nonempty(cand: MeshCandidate) -> bool:
+    if cand.source_path:
+        path = Path(cand.source_path)
+        return path.is_file() and path.stat().st_size > 0
+    return bool(cand.data)
+
+
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     # Deterministic "unsupported response" never retries — the provider
     # returned the same thing it will return again. Let it bubble up so
@@ -470,6 +506,7 @@ def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     return False
 
 
-def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+async def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
     if policy.backoff == "exponential":
-        time.sleep(min(2 ** attempt_zero_based, 8) * 0.01)
+        # executor 已 async 化,用 await asyncio.sleep 不阻塞事件循环
+        await asyncio.sleep(min(2 ** attempt_zero_based, 8) * 0.01)

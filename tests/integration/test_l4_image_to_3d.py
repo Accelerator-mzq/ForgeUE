@@ -111,7 +111,7 @@ def _seed_spec_artifact(repo: ArtifactRepository, run_id: str) -> str:
     return aid
 
 
-def test_mesh_executor_happy_path(tmp_path: Path):
+async def test_mesh_executor_happy_path(tmp_path: Path):
     run_id = "run_l4_happy"
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
@@ -135,7 +135,8 @@ def test_mesh_executor_happy_path(tmp_path: Path):
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=[spec_id, img_id],
     )
-    result = GenerateMeshExecutor(worker=worker).execute(ctx)
+    # Task 5 RED: executor.execute 已转为 async def,需 await
+    result = await GenerateMeshExecutor(worker=worker).execute(ctx)
     assert result.metrics["mesh_count"] == 1
     assert result.metrics["source_image_artifact_id"] == img_id
 
@@ -165,7 +166,7 @@ def test_mesh_executor_happy_path(tmp_path: Path):
     assert worker.calls[0]["source_size"] > 0
 
 
-def test_mesh_executor_no_upstream_image_raises(tmp_path: Path):
+async def test_mesh_executor_no_upstream_image_raises(tmp_path: Path):
     run_id = "run_l4_no_img"
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
@@ -188,10 +189,10 @@ def test_mesh_executor_no_upstream_image_raises(tmp_path: Path):
         upstream_artifact_ids=[spec_id],    # no image upstream
     )
     with pytest.raises(RuntimeError, match="locate an upstream image"):
-        GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+        await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
 
 
-def test_mesh_executor_does_NOT_retry_on_worker_error(tmp_path: Path):
+async def test_mesh_executor_does_NOT_retry_on_worker_error(tmp_path: Path):
     """TBD-007 (2026-04-22 flipped): the original test asserted 'first worker
     call fails, second succeeds, attempts=2'. After TBD-007 the executor
     short-circuits attempts=1 for capability_ref='mesh.generation' (each
@@ -224,7 +225,7 @@ def test_mesh_executor_does_NOT_retry_on_worker_error(tmp_path: Path):
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=[spec_id, img_id])
     with pytest.raises(MeshWorkerError, match="simulated tripo 500"):
-        GenerateMeshExecutor(worker=worker).execute(ctx)
+        await GenerateMeshExecutor(worker=worker).execute(ctx)
 
 
 def _seed_candidate_trio(repo, run_id):
@@ -274,7 +275,7 @@ def _build_mesh_step_and_task(run_id, step_name="mesh"):
     return step, task, run
 
 
-def test_l4_mesh_reads_selected_candidate_from_review_verdict(tmp_path: Path):
+async def test_l4_mesh_reads_selected_candidate_from_review_verdict(tmp_path: Path):
     """TBD-008 (2026-04-22) Phase B3 — **real production path** fence.
 
     Validates: in the shape of `examples/image_to_3d_pipeline.json`, where
@@ -335,7 +336,7 @@ def test_l4_mesh_reads_selected_candidate_from_review_verdict(tmp_path: Path):
     )
 
     worker = FakeMeshWorker()
-    result = GenerateMeshExecutor(worker=worker).execute(ctx)
+    result = await GenerateMeshExecutor(worker=worker).execute(ctx)
 
     assert len(worker.calls) == 1
     received_size = worker.calls[0]["source_size"]
@@ -351,7 +352,7 @@ def test_l4_mesh_reads_selected_candidate_from_review_verdict(tmp_path: Path):
     assert cand_ids[1] in mesh_arts[0].lineage.source_artifact_ids
 
 
-def test_l4_mesh_resolves_selected_image_from_selected_set_bundle(tmp_path: Path):
+async def test_l4_mesh_resolves_selected_image_from_selected_set_bundle(tmp_path: Path):
     """TBD-008 (2026-04-22) forward-compat fence: workflows that DO run a
     SelectExecutor (emitting `bundle.selected_set`) must still be honoured
     by `_resolve_source_image`'s pass 2. This covers future / other bundles
@@ -391,7 +392,7 @@ def test_l4_mesh_resolves_selected_image_from_selected_set_bundle(tmp_path: Path
     )
 
     worker = FakeMeshWorker()
-    result = GenerateMeshExecutor(worker=worker).execute(ctx)
+    result = await GenerateMeshExecutor(worker=worker).execute(ctx)
 
     assert len(worker.calls) == 1
     assert worker.calls[0]["source_size"] == len(fixture_bytes["tavern_door_v2"])

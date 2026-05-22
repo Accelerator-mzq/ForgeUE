@@ -1873,7 +1873,7 @@ class TestHunyuanMeshFormatDetection:
                 num_candidates=1, timeout_s=60.0,
             ))
 
-    def test_unsupported_response_is_not_retried_by_executor(self, monkeypatch, tmp_path):
+    async def test_unsupported_response_is_not_retried_by_executor(self, monkeypatch, tmp_path):
         """Codex P1 regression — raising generic `MeshWorkerError` on
         ZIP-only responses causes GenerateMeshExecutor's default RetryPolicy
         (retry_on includes "provider_error") to re-submit the same Hunyuan
@@ -1899,12 +1899,14 @@ class TestHunyuanMeshFormatDetection:
         from datetime import datetime, timezone
         import asyncio
 
-        # Worker that records how many times `.generate()` was invoked
+        # Worker that records how many times `.agenerate()` was invoked
         # and always raises the non-retryable subclass.
+        # Task 5 GREEN: executor 改调 await worker.agenerate(...),
+        # 需覆盖 agenerate(HunyuanMeshWorker 自身有 agenerate 不走 generate)
         call_count = {"n": 0}
 
         class _TrackingWorker(HunyuanMeshWorker):
-            def generate(self, **kwargs):
+            async def agenerate(self, **kwargs):
                 call_count["n"] += 1
                 raise MeshWorkerUnsupportedResponse(
                     "simulated ZIP-only response"
@@ -1958,7 +1960,8 @@ class TestHunyuanMeshFormatDetection:
         )
 
         with pytest.raises(MeshWorkerUnsupportedResponse):
-            executor.execute(ctx)
+            # Task 5 RED: executor.execute 已转为 async def,需 await
+            await executor.execute(ctx)
 
         assert call_count["n"] == 1, (
             f"executor retried the deterministic ZIP response; worker was "

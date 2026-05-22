@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="5" time="0.274" timestamp="2026-05-20T00:58:57.197029+08:00" hostname="mzq920426"><testcase classname="tests.unit.test_orchestrator" name="test_orchestrator_injects_lifecycle_for_managed_comfy" time="0.077"><failure message="AssertionError: 部分 step ctx.lifecycle 为 None&#10;assert False&#10; +  where False = all(&lt;generator object test_orchestrator_injects_lifecycle_for_managed_comfy.&lt;locals&gt;.&lt;genexpr&gt; at 0x000002308F377850&gt;)">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002308F437490&gt;
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1039/test_orchestrator_injects_life0')
+
+    @pytest.mark.asyncio
+    async def test_orchestrator_injects_lifecycle_for_managed_comfy(
+        monkeypatch, tmp_path
+    ):
+        """comfy/local* + comfy_lifecycle != none → arun 构建 ComfyLifecycleManager
+        并将同一实例注入所有 step 的 ctx.lifecycle。"""
+        # patch ComfyLifecycleManager.ensure / release / status 避免真实子进程
+        monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
+        monkeypatch.setattr(ComfyLifecycleManager, "release", AsyncMock())
+        monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
+        # patch FORGEUE_COMFY_SCRIPTS_DIR 以使 ComfyLifecycleManager 能构建
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    
+        seen: list = []
+        executor = _LifecycleRecordingExecutor(seen)
+        orch, _, _ = _build_orch_with_executor(executor, tmp_path)
+    
+        task, workflow, steps = _make_comfy_task_workflow_steps(mode="ensure_release")
+        await orch.arun(
+            task=task, workflow=workflow, steps=steps,
+            run_id="r_lc_inject", skip_dry_run=True,
+        )
+        # 所有 step 应该收到非 None 的 lifecycle 对象
+        assert len(seen) &gt; 0, "executor 未被调用"
+&gt;       assert all(o is not None for o in seen), "部分 step ctx.lifecycle 为 None"
+E       AssertionError: 部分 step ctx.lifecycle 为 None
+E       assert False
+E        +  where False = all(&lt;generator object test_orchestrator_injects_lifecycle_for_managed_comfy.&lt;locals&gt;.&lt;genexpr&gt; at 0x000002308F377850&gt;)
+
+tests\unit\test_orchestrator.py:199: AssertionError</failure></testcase><testcase classname="tests.unit.test_orchestrator" name="test_self_managed_session_released_only_at_aclose" time="0.011"><failure message="AssertionError: assert ('self_managed_session', 'run_end') in []">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002308F1B3890&gt;
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1039/test_self_managed_session_rele0')
+
+    @pytest.mark.asyncio
+    async def test_self_managed_session_released_only_at_aclose(
+        monkeypatch, tmp_path
+    ):
+        """self_managed_session: arun 结束时调用 release(self_managed_session, run_end),
+        但决策表不触发 stop;只有 aclose() 用 orchestrator_close reason 才 stop。"""
+        monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
+        monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    
+        # 追踪 (mode, reason) 调用序列
+        calls: list[tuple[str, str]] = []
+        stopped = {"n": 0}
+    
+        async def _fake_release(self, mode: str, reason: str) -&gt; None:
+            calls.append((mode, reason))
+            # 模拟决策表:self_managed_session + orchestrator_close 才 stop
+            from framework.runtime.lifecycle import _RELEASE_STOPS
+            if self._framework_started and (mode, reason) in _RELEASE_STOPS:
+                stopped["n"] += 1
+                self._framework_started = False
+    
+        async def _fake_spawn_stop(self) -&gt; None:
+            stopped["n"] += 1
+    
+        monkeypatch.setattr(ComfyLifecycleManager, "release", _fake_release)
+        monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _fake_spawn_stop)
+    
+        seen: list = []
+        executor = _LifecycleRecordingExecutor(seen)
+        orch, _, _ = _build_orch_with_executor(executor, tmp_path)
+    
+        task, workflow, steps = _make_comfy_task_workflow_steps(mode="self_managed_session")
+        await orch.arun(
+            task=task, workflow=workflow, steps=steps,
+            run_id="r_sms", skip_dry_run=True,
+        )
+        # arun 结束时应调用 run_end reason
+&gt;       assert ("self_managed_session", "run_end") in calls
+E       AssertionError: assert ('self_managed_session', 'run_end') in []
+
+tests\unit\test_orchestrator.py:242: AssertionError</failure></testcase><testcase classname="tests.unit.test_orchestrator" name="test_ensure_release_released_at_run_end" time="0.010"><failure message="assert 0 == 1">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002308F690160&gt;
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1039/test_ensure_release_released_a0')
+
+    @pytest.mark.asyncio
+    async def test_ensure_release_released_at_run_end(monkeypatch, tmp_path):
+        """ensure_release 模式:arun 正常结束 → release(ensure_release, run_end) 调用,
+        决策表命中 → 触发 stop。"""
+        monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
+        monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    
+        stopped = {"n": 0}
+    
+        async def _fake_spawn_stop(self) -&gt; None:
+            stopped["n"] += 1
+    
+        monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _fake_spawn_stop)
+    
+        seen: list = []
+        executor = _LifecycleRecordingExecutor(seen)
+        orch, _, _ = _build_orch_with_executor(executor, tmp_path)
+    
+        task, workflow, steps = _make_comfy_task_workflow_steps(mode="ensure_release")
+        await orch.arun(
+            task=task, workflow=workflow, steps=steps,
+            run_id="r_er_end", skip_dry_run=True,
+        )
+        # ensure_release + run_end 在决策表中 → _spawn_stop 调用一次
+&gt;       assert stopped["n"] == 1
+E       assert 0 == 1
+
+tests\unit\test_orchestrator.py:279: AssertionError</failure></testcase><testcase classname="tests.unit.test_orchestrator" name="test_ensure_release_released_on_unclassified_exception" time="0.010"><failure message="AssertionError: assert ('ensure_release', 'arun_error') in []">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002308F81D750&gt;
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1039/test_ensure_release_released_o0')
+
+    @pytest.mark.asyncio
+    async def test_ensure_release_released_on_unclassified_exception(
+        monkeypatch, tmp_path
+    ):
+        """arun 遇到未分类异常退出 → finally 以 arun_error reason 调用 release,
+        ensure_release 决策表命中 → stop。原始 RuntimeError 不被遮蔽。"""
+        monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
+        monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    
+        calls: list[tuple[str, str]] = []
+        stopped = {"n": 0}
+    
+        async def _fake_spawn_stop(self) -&gt; None:
+            stopped["n"] += 1
+    
+        # patch release 以记录调用,同时保留真实决策逻辑
+        original_release = ComfyLifecycleManager.release
+    
+        async def _recording_release(self, mode: str, reason: str) -&gt; None:
+            calls.append((mode, reason))
+            await original_release(self, mode, reason)
+    
+        monkeypatch.setattr(ComfyLifecycleManager, "release", _recording_release)
+        monkeypatch.setattr(ComfyLifecycleManager, "_spawn_stop", _fake_spawn_stop)
+    
+        # executor 抛出未分类 RuntimeError
+        exc = RuntimeError("unclassified-boom")
+        executor = _ErrorExecutor(exc)
+        orch, _, _ = _build_orch_with_executor(executor, tmp_path)
+    
+        task, workflow, steps = _make_comfy_task_workflow_steps(mode="ensure_release")
+        with pytest.raises(RuntimeError, match="unclassified-boom"):
+            await orch.arun(
+                task=task, workflow=workflow, steps=steps,
+                run_id="r_er_exc", skip_dry_run=True,
+            )
+        # release 应该以 arun_error reason 被调用
+&gt;       assert ("ensure_release", "arun_error") in calls
+E       AssertionError: assert ('ensure_release', 'arun_error') in []
+
+tests\unit\test_orchestrator.py:320: AssertionError</failure></testcase><testcase classname="tests.unit.test_orchestrator" name="test_aclose_release_failure_is_bounded_and_recorded" time="0.008"><failure message="AttributeError: &lt;module 'framework.runtime.orchestrator' from 'D:\\ClaudeProject\\ForgeUE_claude\\src\\framework\\runtime\\orchestrator.py'&gt; has no attribute '_RELEASE_TIMEOUT_S'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x000002308F8A16D0&gt;
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1039/test_aclose_release_failure_is0')
+
+    @pytest.mark.asyncio
+    async def test_aclose_release_failure_is_bounded_and_recorded(
+        monkeypatch, tmp_path
+    ):
+        """aclose() 的 release 也有超时限制:_spawn_stop 挂起 →
+        aclose 不会无限阻塞,失败记录在 orch._lifecycle_release_failed。"""
+        monkeypatch.setattr(ComfyLifecycleManager, "ensure", AsyncMock())
+        monkeypatch.setattr(ComfyLifecycleManager, "status", AsyncMock(return_value=True))
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+&gt;       monkeypatch.setattr(orchestrator_mod, "_RELEASE_TIMEOUT_S", 0.2)
+E       AttributeError: &lt;module 'framework.runtime.orchestrator' from 'D:\\ClaudeProject\\ForgeUE_claude\\src\\framework\\runtime\\orchestrator.py'&gt; has no attribute '_RELEASE_TIMEOUT_S'
+
+tests\unit\test_orchestrator.py:401: AttributeError</failure></testcase></testsuite></testsuites>

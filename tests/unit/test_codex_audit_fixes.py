@@ -58,8 +58,13 @@ class _AlwaysTimeoutRouter:
     def structured(self, *, policy, call_template, schema):
         raise ProviderTimeout("simulated provider timeout")
 
+    async def astructured(self, *, policy, call_template, schema):
+        # async 版同样 raise ProviderTimeout(适配 executor async 化)
+        raise ProviderTimeout("simulated provider timeout")
 
-def test_generate_structured_reraises_typed_exception_after_retries(tmp_path: Path):
+
+async def test_generate_structured_reraises_typed_exception_after_retries(tmp_path: Path):
+    # RED: executor.execute(ctx) は async 化後 await が必要
     from pydantic import BaseModel
 
     class _S(BaseModel):
@@ -91,7 +96,7 @@ def test_generate_structured_reraises_typed_exception_after_retries(tmp_path: Pa
     ctx = StepContext(run=run, task=task, step=step, repository=repo)
 
     with pytest.raises(ProviderTimeout):
-        executor.execute(ctx)
+        await executor.execute(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +299,7 @@ class _OneShotEditAdapter(ProviderAdapter):
         )
 
 
-def test_image_edit_emits_cost_usd(tmp_path: Path):
+async def test_image_edit_emits_cost_usd(tmp_path: Path):
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
     src_id = "src_img"
@@ -330,7 +335,8 @@ def test_image_edit_emits_cost_usd(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=[src_id])
-    result = GenerateImageEditExecutor(router=router).execute(ctx)
+    # Task 5 RED: executor.execute 已转为 async def,需 await
+    result = await GenerateImageEditExecutor(router=router).execute(ctx)
     assert "cost_usd" in result.metrics
     # 2 images × $0.05 each
     assert result.metrics["cost_usd"] == pytest.approx(0.10)
@@ -382,7 +388,8 @@ def test_orchestrator_uses_fresh_transition_engine_per_arun(tmp_path: Path):
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
+        async def execute(self, ctx):
+            # 空操作 executor,仅返回空 ExecutorResult
             return ExecutorResult(metrics={})
 
     reg = ExecutorRegistry()
@@ -433,12 +440,9 @@ def test_orchestrator_concurrent_arun_does_not_share_counters(tmp_path: Path):
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
-            # We can't peek at the per-run TransitionEngine directly from
-            # an executor; instead, mark the run by mutating a per-run
-            # placeholder counter on the engine that's currently in scope.
-            # Cleaner proxy: assert self.transitions.counters stays empty
-            # for both runs because each arun() got a fresh instance.
+        async def execute(self, ctx):
+            # 并发 arun() 各自持有独立 TransitionEngine 副本;
+            # 此处无需访问 engine,仅验证计数器不泄漏
             return ExecutorResult(metrics={})
 
     reg = ExecutorRegistry()
@@ -479,7 +483,7 @@ def test_orchestrator_concurrent_arun_does_not_share_counters(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):
+async def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):  # Task 5 GREEN: execute 已转 async
     from framework.runtime.executors.generate_image import GenerateImageExecutor
     from framework.providers.workers.comfy_worker import FakeComfyWorker
 
@@ -523,7 +527,8 @@ def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo)
     with pytest.raises(RuntimeError, match="heterogeneous routes"):
-        exec_.execute(ctx)
+        # Task 5 GREEN: execute 已转 async def,需 await
+        await exec_.execute(ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -531,11 +536,12 @@ def test_generate_image_parallel_rejects_heterogeneous_models(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-def test_select_bare_approve_excludes_explicit_rejects(tmp_path: Path):
+async def test_select_bare_approve_excludes_explicit_rejects(tmp_path: Path):
     """Round 2: bare-approve must still drop ids that the verdict
     EXPLICITLY rejected. Previously the bare-approve branch put rejected
     ids into BOTH selected_ids and rejected_ids; downstream consumers
     only read selected_ids, so the rejection was effectively ignored."""
+    # RED: executor.execute(ctx) は async 化後 await が必要
     backend_reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=backend_reg)
     cand_ids: list[str] = []
@@ -575,14 +581,15 @@ def test_select_bare_approve_excludes_explicit_rejects(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=["v_art", *cand_ids])
-    result = SelectExecutor().execute(ctx)
+    result = await SelectExecutor().execute(ctx)
     payload = repo.read_payload(result.artifacts[0].artifact_id)
     assert "c_1" not in payload["selected_ids"]
     assert payload["selected_ids"] == ["c_0", "c_2"]
     assert payload["rejected_ids"] == ["c_1"]
 
 
-def test_select_bare_approve_keeps_whole_pool(tmp_path: Path):
+async def test_select_bare_approve_keeps_whole_pool(tmp_path: Path):
+    # RED: executor.execute(ctx) は async 化後 await が必要
     backend_reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=backend_reg)
     # Seed two upstream candidate artifacts + one verdict (decision=approve,
@@ -624,7 +631,7 @@ def test_select_bare_approve_keeps_whole_pool(tmp_path: Path):
               trace_id="tr")
     ctx = StepContext(run=run, task=task, step=step, repository=repo,
                       upstream_artifact_ids=["v_art", *cand_ids])
-    result = SelectExecutor().execute(ctx)
+    result = await SelectExecutor().execute(ctx)
     payload = repo.read_payload(result.artifacts[0].artifact_id)
     assert payload["selected_ids"] == cand_ids, (
         f"bare-approve dropped candidates: {payload}"
@@ -813,7 +820,7 @@ def test_qwen_unsupported_response_skips_transient_retry(monkeypatch):
     assert attempts["n"] == 1
 
 
-def test_image_executor_does_not_retry_on_unsupported_response():
+async def test_image_executor_does_not_retry_on_unsupported_response():  # Task 5 GREEN: execute 已转 async
     """Round 4: GenerateImageEditExecutor must NOT consume a second paid
     API call when the provider returns a deterministic unsupported
     response. Drive via a router whose first/only call always raises
@@ -824,8 +831,9 @@ def test_image_executor_does_not_retry_on_unsupported_response():
     attempts = {"n": 0}
 
     class _UnsupportedRouter:
-        def image_generation(self, *, policy, prompt, n, size,
-                              timeout_s, extra):
+        async def aimage_generation(self, *, policy, prompt, n, size,
+                                    timeout_s, extra):
+            # Task 5 GREEN: router 已改用 aimage_generation
             attempts["n"] += 1
             raise ProviderUnsupportedResponse("HTML body")
 
@@ -860,7 +868,8 @@ def test_image_executor_does_not_retry_on_unsupported_response():
     exec_ = GenerateImageExecutor(worker=FakeComfyWorker(),
                                    router=_UnsupportedRouter())  # type: ignore[arg-type]
     with pytest.raises(ProviderUnsupportedResponse):
-        exec_.execute(ctx)
+        # Task 5 GREEN: execute 已转 async def,需 await
+        await exec_.execute(ctx)
     assert attempts["n"] == 1, (
         f"unsupported response triggered {attempts['n']} provider call(s); "
         f"executor should fail fast and let FailureModeMap route"
@@ -1000,12 +1009,13 @@ def test_structured_step_persists_cost_for_resume(tmp_path: Path):
     from framework.core.policies import BudgetPolicy
 
     class _UsageOnlyExec(StepExecutor):
-        """Mimics generate_structured: emits model + usage but no
-        cost_usd. Orchestrator must estimate + persist the cost."""
+        """模拟 generate_structured:只上报 model + usage 不含 cost_usd,
+        orchestrator 必须自行估算并持久化 cost_usd。"""
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
+        async def execute(self, ctx):
+            # 原生 async executor — orchestrator 直接 await
             art = ctx.repository.put(
                 artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_a",
                 value={"x": 1},
@@ -1070,7 +1080,8 @@ def test_orchestrator_replays_cached_cost_into_budget_tracker(tmp_path: Path):
         step_type = StepType.generate
         capability_ref = "noop"
 
-        def execute(self, ctx):
+        async def execute(self, ctx):
+            # 每次调用固定花费 $0.5,用于测试 budget_tracker 跨进程 resume 语义
             art = ctx.repository.put(
                 artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_a",
                 value={"x": 1},

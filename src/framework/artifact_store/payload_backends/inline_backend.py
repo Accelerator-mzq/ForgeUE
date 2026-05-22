@@ -5,9 +5,17 @@ Cap: 64 KB per plan.
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
 from typing import Any
 
-from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge
+from framework.artifact_store.hashing import hash_payload
+from framework.artifact_store.payload_backends.base import (
+    PayloadBackend,
+    PayloadTooLarge,
+    WriteResult,
+    _MISSING,
+)
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -25,16 +33,44 @@ def _estimate_size(value: Any) -> int:
 class InlineBackend(PayloadBackend):
     kind = PayloadKind.inline
 
-    def write(self, value: Any, *, run_id: str, artifact_id: str, suffix: str = "") -> PayloadRef:
+    def write(
+        self,
+        value: Any = _MISSING,
+        *,
+        run_id: str,
+        artifact_id: str,
+        suffix: str = "",
+        source_path: str | os.PathLike | None = None,
+    ) -> WriteResult:
+        # D10 守门:InlineBackend 不支持 source_path 零拷贝路径
+        if source_path is not None:
+            raise ValueError(
+                "source_path is only supported by FileBackend, not InlineBackend"
+            )
+        if value is _MISSING:
+            raise ValueError("InlineBackend.write requires value (got _MISSING)")
+        # 既有 inline logic:_estimate_size + INLINE_MAX_BYTES cap + PayloadRef
         size = _estimate_size(value)
         if size > INLINE_MAX_BYTES:
             raise PayloadTooLarge(
                 f"inline payload {size} bytes exceeds cap {INLINE_MAX_BYTES}"
             )
-        return PayloadRef(kind=PayloadKind.inline, inline_value=value, size_bytes=size)
+        return WriteResult(
+            ref=PayloadRef(kind=PayloadKind.inline, inline_value=value, size_bytes=size),
+            content_hash=hash_payload(value),
+        )
 
     def read(self, ref: PayloadRef) -> Any:
         return ref.inline_value
 
     def exists(self, ref: PayloadRef) -> bool:
-        return ref.inline_value is not None
+        # D10 D-NullValueAmbiguity:value=None 是合法 inline JSON null payload。
+        # 用 model_fields_set 区分"显式 None"(在 set 中,payload 存在)
+        # vs "未设字段"(不在 set 中,payload 不存在)。
+        # 旧实现 `ref.inline_value is not None` 会把 value=None 误判为"不存在",
+        # 导致 load_run_metadata resume 时 payload_present guard 静默丢弃 null artifact。
+        return ref.kind == PayloadKind.inline and "inline_value" in ref.model_fields_set
+
+    def absolute_path(self, ref: PayloadRef) -> Path:
+        """Inline payload 没有外部路径,始终 raise ValueError。"""
+        raise ValueError("inline payload has no external path")

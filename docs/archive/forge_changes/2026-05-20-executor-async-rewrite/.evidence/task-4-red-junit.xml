@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.197" timestamp="2026-05-19T22:24:39.918386+08:00" hostname="mzq920426"><testcase classname="tests.unit.test_comfy_subprocess" name="test_comfy_cancel_aborts_server_side_prompt" time="0.028"><failure message="AttributeError: &lt;class 'framework.providers.workers.comfy_worker.ComfyAgentWorker'&gt; has no attribute '_abort_comfy_prompt'">monkeypatch = &lt;_pytest.monkeypatch.MonkeyPatch object at 0x0000015C91A34C30&gt;
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-999/test_comfy_cancel_aborts_serve0')
+
+    @pytest.mark.asyncio
+    async def test_comfy_cancel_aborts_server_side_prompt(monkeypatch, tmp_path):
+        """Task 4 RED fence:cancel 时 _abort_comfy_prompt 必须被调用一次,
+        且 CLI 子进程(proc)被 terminate 后 returncode 不为 None。
+    
+        monkeypatch _abort_comfy_prompt 为 spy coroutine,
+        agenerate 的 communicate 永久挂起以模拟 GPU job 运行中。
+        cancel agenerate task → finally 块需先调 _abort_comfy_prompt 再 terminate。
+        """
+        import asyncio as _aio
+    
+        # --- spy:记录 _abort_comfy_prompt 被调用次数 ---
+        aborted = {"n": 0}
+    
+        async def _spy_abort(self):
+            aborted["n"] += 1
+    
+&gt;       monkeypatch.setattr(ComfyAgentWorker, "_abort_comfy_prompt", _spy_abort)
+E       AttributeError: &lt;class 'framework.providers.workers.comfy_worker.ComfyAgentWorker'&gt; has no attribute '_abort_comfy_prompt'
+
+tests\unit\test_comfy_subprocess.py:1744: AttributeError</failure></testcase></testsuite></testsuites>

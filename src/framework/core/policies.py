@@ -51,6 +51,9 @@ class PreparedRoute(BaseModel):
     api_base: str | None = None
     kind: str = "text"
     pricing: dict[str, float] | None = None
+    provider_name: str | None = None
+    provider_kind: str = "openai_compat"
+    provider_config: dict[str, str | None] | None = None
 
 
 class ProviderPolicy(BaseModel):

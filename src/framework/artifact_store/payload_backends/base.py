@@ -1,7 +1,10 @@
 """Base contract for payload backends (§D.2)."""
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from framework.core.artifact import PayloadRef
@@ -12,14 +15,41 @@ class PayloadTooLarge(Exception):
     """Raised when payload size exceeds backend cap."""
 
 
+@dataclass(frozen=True)
+class WriteResult:
+    """Backend 写入结果:PayloadRef + 已验证落盘内容 hash。"""
+
+    ref: PayloadRef
+    content_hash: str
+
+
+# D10 D-NullValueAmbiguity 私有 sentinel — 用 identity 区分 "未传" vs "显式 None"
+# (`value=None` 是合法 inline JSON null payload,既有 13 处 inline 调用契约保留)
+_MISSING: Any = object()
+
+
 class PayloadBackend(ABC):
     """Backend responsible for writing & reading payload bytes/values."""
 
     kind: PayloadKind
 
     @abstractmethod
-    def write(self, value: Any, *, run_id: str, artifact_id: str, suffix: str = "") -> PayloadRef:
-        """Persist *value* and return a PayloadRef that can later be read back."""
+    def write(
+        self,
+        value: Any = _MISSING,
+        *,
+        run_id: str,
+        artifact_id: str,
+        suffix: str = "",
+        source_path: str | os.PathLike | None = None,
+    ) -> WriteResult:
+        """Persist *value* (or zero-copy from *source_path* on FileBackend) and
+        return a WriteResult carrying PayloadRef + content hash.
+
+        FileBackend and BlobBackend honor *source_path*; InlineBackend raises.
+        `value=_MISSING` is the unset sentinel; `value=None` is a legitimate
+        inline JSON null payload (different identity, D10).
+        """
 
     @abstractmethod
     def read(self, ref: PayloadRef) -> Any:
@@ -27,6 +57,14 @@ class PayloadBackend(ABC):
 
     @abstractmethod
     def exists(self, ref: PayloadRef) -> bool: ...
+
+    @abstractmethod
+    def absolute_path(self, ref: PayloadRef) -> Path:
+        """Return the on-disk absolute path for *ref*.
+
+        Only FileBackend has a meaningful local-path implementation;
+        InlineBackend and BlobBackend SHALL raise ValueError.
+        """
 
 
 class PayloadBackendRegistry:
@@ -43,7 +81,7 @@ class PayloadBackendRegistry:
             raise KeyError(f"No backend registered for kind={kind}")
         return self._backends[kind]
 
-    def write(self, kind: PayloadKind, value: Any, **kwargs: Any) -> PayloadRef:
+    def write(self, kind: PayloadKind, value: Any = _MISSING, **kwargs: Any) -> WriteResult:
         return self.get(kind).write(value, **kwargs)
 
     def read(self, ref: PayloadRef) -> Any:

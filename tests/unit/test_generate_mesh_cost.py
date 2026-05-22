@@ -108,7 +108,7 @@ def _make_ctx(
 # ---- The fence -------------------------------------------------------------
 
 
-def test_mesh_executor_emits_cost_usd_when_policy_has_pricing(tmp_path):
+async def test_mesh_executor_emits_cost_usd_when_policy_has_pricing(tmp_path):
     """With `prepared_routes[0].pricing.per_task_usd=0.14` and 3 candidates,
     `metrics["cost_usd"]` must equal 0.42. This is the fence for 2026-04
     pricing wiring — pre-PR this field didn't exist at all, which meant
@@ -126,7 +126,7 @@ def test_mesh_executor_emits_cost_usd_when_policy_has_pricing(tmp_path):
     ctx, _ = _make_ctx(tmp_path, "run_mesh_priced",
                          provider_policy=policy, num_candidates=3)
 
-    result = GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+    result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
 
     assert result.metrics["mesh_count"] == 3
     assert result.metrics["cost_usd"] == pytest.approx(0.42), (
@@ -135,7 +135,7 @@ def test_mesh_executor_emits_cost_usd_when_policy_has_pricing(tmp_path):
     )
 
 
-def test_mesh_executor_cost_is_zero_when_no_provider_policy(tmp_path):
+async def test_mesh_executor_cost_is_zero_when_no_provider_policy(tmp_path):
     """Back-compat: pre-PR integration tests construct mesh steps without
     any provider_policy (FakeMeshWorker / offline runs). The new
     cost_usd wiring must NOT introduce a non-zero charge in that
@@ -145,13 +145,13 @@ def test_mesh_executor_cost_is_zero_when_no_provider_policy(tmp_path):
     ctx, _ = _make_ctx(tmp_path, "run_mesh_nopolicy",
                          provider_policy=None, num_candidates=2)
 
-    result = GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+    result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
 
     assert result.metrics["mesh_count"] == 2
     assert result.metrics["cost_usd"] == 0.0
 
 
-def test_mesh_executor_cost_is_zero_when_policy_has_no_pricing(tmp_path):
+async def test_mesh_executor_cost_is_zero_when_policy_has_no_pricing(tmp_path):
     """Back-compat: models.yaml entries that don't declare `pricing:`
     produce `PreparedRoute(pricing=None)`. Executor must treat that
     identically to "no policy at all" — charge $0 and fall through
@@ -166,12 +166,12 @@ def test_mesh_executor_cost_is_zero_when_policy_has_no_pricing(tmp_path):
     ctx, _ = _make_ctx(tmp_path, "run_mesh_nopricing",
                          provider_policy=policy, num_candidates=2)
 
-    result = GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+    result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
 
     assert result.metrics["cost_usd"] == 0.0
 
 
-def test_mesh_executor_cost_picks_first_mesh_kind_route(tmp_path):
+async def test_mesh_executor_cost_picks_first_mesh_kind_route(tmp_path):
     """When the policy has mixed-kind routes (a stray image route
     accidentally left over, or a text fallback), the mesh executor
     must pick the first `kind="mesh"` route's pricing — not the
@@ -194,7 +194,7 @@ def test_mesh_executor_cost_picks_first_mesh_kind_route(tmp_path):
     ctx, _ = _make_ctx(tmp_path, "run_mesh_mixed",
                          provider_policy=policy, num_candidates=1)
 
-    result = GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+    result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
 
     # 1 candidate × $0.14 — NOT the gpt-legacy text rate
     assert result.metrics["cost_usd"] == pytest.approx(0.14)

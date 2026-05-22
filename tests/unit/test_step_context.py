@@ -69,3 +69,19 @@ def test_step_context_run_dir_explicit_value_preserved():
     )
     assert ctx.run_dir == target
     assert ctx.run_dir == Path("artifacts/2026-05-02/run_abc")
+
+
+def test_step_context_lifecycle_defaults_to_none():
+    """lifecycle 字段默认为 None。
+    ExternalProcessLifecycle 在 Task 8 的 lifecycle.py 中定义;
+    Task 6 阶段该类型尚不存在,此处仅验证字段存在且默认值正确。
+    """
+    ctx = StepContext(
+        run=_stub_run(),
+        task=_stub_task(),
+        step=_stub_step(),
+        repository=MagicMock(),
+    )
+    # lifecycle 字段必须存在,且默认值为 None
+    assert hasattr(ctx, "lifecycle")
+    assert ctx.lifecycle is None

@@ -139,7 +139,7 @@ def test_p1_gives_up_after_max_attempts(bundle_path: Path, tmp_path: Path):
     assert result.run.metrics.get("last_failure_mode") == "schema_validation_fail"
 
 
-def test_p1_validate_flags_bad_upstream(tmp_path: Path):
+async def test_p1_validate_flags_bad_upstream(tmp_path: Path):
     """Directly feed the validate executor a bad upstream Artifact; expect status=failed."""
     from framework.core.artifact import ArtifactType, ProducerRef
     from framework.core.enums import ArtifactRole, PayloadKind, RiskLevel, StepType, RunMode, RunStatus, TaskType
@@ -169,7 +169,8 @@ def test_p1_validate_flags_bad_upstream(tmp_path: Path):
               started_at=datetime.now(timezone.utc), workflow_id="w", trace_id="tr")
 
     ex = SchemaValidateExecutor(schema_registry=get_schema_registry())
-    res = ex.execute(StepContext(run=run, task=task, step=step, repository=repo,
-                                 upstream_artifact_ids=[src.artifact_id]))
+    # SchemaValidateExecutor.execute 已 async 化
+    res = await ex.execute(StepContext(run=run, task=task, step=step, repository=repo,
+                                       upstream_artifact_ids=[src.artifact_id]))
     assert res.metrics["all_passed"] is False
     assert res.artifacts[0].validation.status == "failed"

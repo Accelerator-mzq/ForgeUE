@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | **848 用例通过 ✅**(2026-04-25 实测;历史基线 549 = 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6;本轮 +299 = Run Comparison 模块,详见 §6.8 与 §8.1) |
+| L0 自动化 | `pytest -q` 全绿 | **1179 用例通过 ✅**(2026-05-20 实测;历史基线 549 → 848 Run Comparison → 1144 forgeue tooling+lazy → 1184 comfy-agent-cli → 1294 audio → 1414 video → 1136 retire-protocol-layer → 1179 executor-async-rewrite;详见 §8.1) |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE commandlet `UnrealEditor-Cmd.exe -ExecutePythonScript=ue_scripts/a1_run.py`(0 GUI 依赖)或 GUI Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 + PythonScriptPlugin |
@@ -115,6 +115,7 @@
 | FR-LC-006 跨进程 `_artifacts.json` 持久化 | test_codex_audit_fixes(`_repository_metadata_dump_and_load_roundtrip` / `_resume_yields_cache_hits_after_reload`) | ✅ |
 | FR-LC-007 load_run_metadata 三道过滤 | test_codex_audit_fixes(`_skips_missing_payload` / `_skips_corrupted_payload`) | ✅ |
 | FR-LC-008 find_hit 长度不一致 miss | test_codex_audit_fixes(`_misses_on_length_mismatch`) | ✅ |
+| FR-LC-009 `_artifacts.json` integrity fail-fast | test_artifact_repository(FOR-14 metadata integrity fences) | ✅ |
 
 ### 4.3 FR-MODEL 多模型编排
 
@@ -157,7 +158,7 @@
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
 | FR-STORE-001 artifact_type 映射 | test_core_schemas | ✅ |
-| FR-STORE-002 PayloadRef 三态 | test_payload_backends | ✅ inline+file / ⏳ blob 接口预留 |
+| FR-STORE-002 PayloadRef 三态 | test_payload_backends + test_artifact_repository | ✅ inline+file+blob MVP |
 | FR-STORE-003 体积上限 | test_payload_backends | ✅ |
 | FR-STORE-004 modality metadata | test_core_schemas | ✅ |
 | FR-STORE-005 Lineage | test_artifact_repository | ✅ |
@@ -180,7 +181,7 @@
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
-| FR-WORKER-001 ComfyUI agent CLI(自 v1.6;v1.5 及之前为 HTTP)| `comfy_worker.py::ComfyAgentWorker` + `test_comfy_subprocess.py`(26 fence)+ `test_step_context.py` + `test_orchestrator.py` + `test_fake_comfy_worker_schema.py` | ✅ |
+| FR-WORKER-001 ComfyUI agent CLI(自 v1.6;v1.5 及之前为 HTTP)| `comfy_worker.py::ComfyAgentWorker` + `test_comfy_subprocess.py`(含 FOR-13 image/mesh source_path fence)+ `test_step_context.py` + `test_orchestrator.py` + `test_fake_comfy_worker_schema.py` | ✅ |
 | FR-WORKER-002 Hunyuan 3D | integration/test_l4 | ✅ |
 | FR-WORKER-003 Tripo3D scaffold | test_tripo3d_unsupported | ⏳ 实装待需求 |
 | FR-WORKER-004 URL ranker + fallthrough | test_cn_image_adapters | ✅ |
@@ -190,8 +191,8 @@
 | FR-WORKER-008 data: URI 大小写 | test_cn_image_adapters | ✅ |
 | FR-WORKER-009 tokenhub poll timeout clamp | test_codex_audit_fixes(`_hunyuan_poll_clamps_timeout` / `_mesh_poll_clamps_timeout`) | ✅ |
 | FR-WORKER-010 200/non-JSON wrap unsupported | test_codex_audit_fixes(`_post_raises_unsupported_on_html_body` × 3) | ✅ |
-| FR-WORKER-011 Audio worker baseline + ComfyUI audio capability(自 v1.7)| `audio_worker.py::AudioWorker/AudioCandidate` + `comfy_worker.py::generate_audio` + `generate_audio.py::GenerateAudioExecutor` + `test_audio_worker.py`(6 fence) + `test_comfy_subprocess_audio.py`(20 fence,含 G11-F3 seed override 1 fence) + `test_generate_audio_comfy.py`(14 fence) + `test_failure_mode_map.py`(audio +6) + `test_probe_framework.py`(audio +2) + `test_model_registry.py`(audio +2) | ✅ Level 0/1/2 全通过;Level 2 evidence FULL PASS(用户授权改 ComfyUI workflow JSON `SaveAudioMP3` → `SaveAudio` 一行后重跑,真实 FLAC 1,227,925 bytes / 1199.1 KB + magic bytes `fLaC` + STREAMINFO 头 PASS / producer `comfy_agent_cli` / model `comfy/local-audio`,evidence `openspec/changes/archive/2026-05-03-comfy-agent-cli-audio-adoption/notes/live_smoke_audio_20260503_full.md`) |
-| FR-WORKER-012 Video worker baseline + ComfyUI video capability + UE bridge file_media_source(自 v1.8)| `video_worker.py::VideoWorker/VideoCandidate` + `comfy_worker.py::generate_video`(BMFF strict 5-tuple)+ `generate_video.py::GenerateVideoExecutor` + `manifest_builder._KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + `domain_video.py`(D12 `Content/Movies/<run_id>/` packaging path 分流)+ `test_artifact.py`(10 fence 含 P12 regression)+ `test_video_worker.py`(7 fence)+ `test_comfy_subprocess_video.py`(27 fence 含 BMFF strict 9)+ `test_generate_video_comfy.py`(14 fence)+ `test_failure_mode_map.py`(video +6)+ `test_ue_bridge.py`(video+F1 sweep +10)+ `test_p4_ue_manifest_only.py`(video stub+F1 +5)+ `test_probe_framework.py`(video +2)+ `test_model_registry.py`(video +2)+ examples bundles auto-discover 3 fence | ✅ Level 0/1 全通过(pytest -q 1414+ passed,4-处 export gate sweep + BMFF strict 5-tuple + D14 priority 全 verify);Level 2 evidence + a2_video UE 真机 P4 commandlet 验收待用户在装 UE 5.x 的本机跑 `examples/comfy_local_smoke_video.json`(沿 a2_mesh 2026-04-23 commandlet 模式;Wan 1.3B 7 分钟 generation + 模型 ~3GB HuggingFace 拉)— evidence 落 OpenSpec change `comfy-agent-cli-video-adoption` notes/ |
+| FR-WORKER-011 Audio worker baseline + ComfyUI audio capability(自 v1.7)| `audio_worker.py::AudioWorker/AudioCandidate(source_path)` + `comfy_worker.py::generate_audio` + `generate_audio.py::GenerateAudioExecutor` + `test_audio_worker.py`(6 fence) + `test_comfy_subprocess_audio.py`(含 FOR-13 source_path 不全读 fence) + `test_generate_audio_comfy.py`(含 source_path 优先落盘 fence) + `test_failure_mode_map.py`(audio +6) + `test_probe_framework.py`(audio +2) + `test_model_registry.py`(audio +2) | ✅ Level 0/1/2 全通过;Level 2 evidence FULL PASS(用户授权改 ComfyUI workflow JSON `SaveAudioMP3` → `SaveAudio` 一行后重跑,真实 FLAC 1,227,925 bytes / 1199.1 KB + magic bytes `fLaC` + STREAMINFO 头 PASS / producer `comfy_agent_cli` / model `comfy/local-audio`,evidence `openspec/changes/archive/2026-05-03-comfy-agent-cli-audio-adoption/notes/live_smoke_audio_20260503_full.md`) |
+| FR-WORKER-012 Video worker baseline + ComfyUI video capability + UE bridge file_media_source(自 v1.8)| `video_worker.py::VideoWorker/VideoCandidate(source_path)` + `comfy_worker.py::generate_video`(BMFF strict 5-tuple header-only validation)+ `generate_video.py::GenerateVideoExecutor` + `manifest_builder._KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + `domain_video.py`(D12 `Content/Movies/<run_id>/` packaging path 分流)+ `test_artifact.py`(10 fence 含 P12 regression)+ `test_video_worker.py`(7 fence)+ `test_comfy_subprocess_video.py`(含 BMFF strict + FOR-13 source_path 不全读 fence)+ `test_generate_video_comfy.py`(含 source_path 优先落盘 fence)+ `test_failure_mode_map.py`(video +6)+ `test_ue_bridge.py`(video+F1 sweep +10)+ `test_p4_ue_manifest_only.py`(video stub+F1 +5)+ `test_probe_framework.py`(video +2)+ `test_model_registry.py`(video +2)+ examples bundles auto-discover 3 fence | ✅ Level 0/1 全通过(pytest -q 1414+ passed,4-处 export gate sweep + BMFF strict 5-tuple + D14 priority 全 verify);Level 2 evidence + a2_video UE 真机 P4 commandlet 验收待用户在装 UE 5.x 的本机跑 `examples/comfy_local_smoke_video.json`(沿 a2_mesh 2026-04-23 commandlet 模式;Wan 1.3B 7 分钟 generation + 模型 ~3GB HuggingFace 拉)— evidence 落 OpenSpec change `comfy-agent-cli-video-adoption` notes/ |
 
 ### 4.9 FR-RUNTIME 工程化
 
@@ -279,7 +280,7 @@
 | NFR-SEC-001 key 不硬编码 | 代码审阅 + `.env.example` | ✅ |
 | NFR-SEC-002 secrets 脱敏 | test_secrets | ✅ |
 | NFR-SEC-003 trace / event 不泄 key | test_secrets + 代码审阅 | ✅ |
-| NFR-SEC-004 Dry-run 校验 secrets | test_dry_run_pass | ✅ |
+| NFR-SEC-004 Dry-run 校验 secrets | test_dry_run_pass | ⚠️ `missing_secrets()`(`secrets.py:57`)存在但未接入 DryRunPass 主流程,缺 key 不阻断 Run |
 | NFR-SEC-005 WS 默认本地 | 代码审阅 `ws_server.py` | ✅ |
 
 ### 5.5 NFR-OBS 可观测
@@ -287,7 +288,7 @@
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
 | NFR-OBS-001 run_id 归档 | integration/test_p0 | ✅ |
-| NFR-OBS-002 step 事件 | test_progress_passthrough | ✅ |
+| NFR-OBS-002 step 事件 | test_progress_passthrough | ⚠️ step_start/step_done 已 emit;失败仅记入 `failure_events`,未 emit `step_failed` 事件 |
 | NFR-OBS-003 budget_summary 汇总 | test_budget_tracker | ✅ |
 | NFR-OBS-004 worker_poll 事件 | test_progress_passthrough | ✅ |
 
@@ -722,7 +723,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 
 | 级别 | 状态 |
 | --- | --- |
-| L0 pytest 全量 | ✅ **1144 通过 / 0 失败**(2026-04-27 OpenSpec change `lazy-artifact-store-package-exports` 完成后实测,~50s;前序基线 1140 = 848 Run Comparison 后 + ~292 来自 archived `fuse-openspec-superpowers-workflow` 等 forgeue tooling fence;本 change +4 = `tests/unit/test_artifact_store_lazy_imports.py` 4 fence)|
+| L0 pytest 全量 | ✅ **1179 通过 / 3 skipped / 0 失败**(2026-05-20 实测;forge change `executor-async-rewrite` TBD-010 closed;~41s;累计 baseline 549 → 848 → 1144 → 1184 → 1294 → 1414 → 1136 retire-protocol-layer → 1179 executor-async-rewrite net +43 fence)|
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
 | L3 UE 真机 | ✅ UE 5.7.4 commandlet 通过(2026-04-23,见 §6.1) |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
@@ -736,7 +737,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | 多 provider | ✅ 6 家已接入,5 家已走过真实调用 |
 | 成本追踪 | ✅ 定价接入 + probe 止血 |
 | 可观测 | ✅ EventBus + WS 端到端 |
-| 测试覆盖 | ✅ 当前 **1144 用例**(2026-04-27 实测,post-`lazy-artifact-store-package-exports`);中间基线 848(2026-04-25 Run Comparison 后)→ 1140(`fuse-openspec-superpowers-workflow` forgeue tooling fence)→ 1144(本 change `tests/unit/test_artifact_store_lazy_imports.py` 4 fence);历史基线 549 = 491 + Codex 5 轮 audit 29 + A2 根因定位 6 + TBD-006 视觉 review 10 + TBD-007 mesh 重试 5 + TBD-008 visual review 2 + A1 + a2_mesh parametrize 6;另有 60+ L3 fence |
+| 测试覆盖 | ✅ 当前 **1179 用例**(2026-05-20 实测,post-`executor-async-rewrite`);累计轨迹 549 → 848 Run Comparison → 1144 forgeue tooling+lazy → 1184 comfy-agent-cli → 1294 audio → 1414 video → 1136 retire-protocol-layer → 1179 executor-async-rewrite;历史基线 549 = 491 + Codex 5 轮 audit 29 + A2 根因定位 6 + TBD-006 视觉 review 10 + TBD-007 mesh 重试 5 + TBD-008 visual review 2 + A1 + a2_mesh parametrize 6;另有 60+ L3 fence |
 
 ### 8.3 整体结论
 
@@ -751,7 +752,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 - A3 pricing probe ✅(2026-04-22)
 - A2 char/image/review/mesh live ✅(2026-04-22)
 - **A1 + a2_ue UE 真机 ✅(2026-04-23,UE 5.7.4 commandlet 全自动化)**
-- L0 自动化 **1144 用例全绿** ✅(2026-04-27 实测;历史基线 549 → 848 Run Comparison → 1140 forgeue tooling → 1144 lazy artifact_store 4 fence)
+- L0 自动化 **1179 用例全绿** ✅(2026-05-20 实测;历史基线 549 → 848 Run Comparison → 1144 forgeue tooling+lazy → 1184 comfy-agent-cli → 1294 audio → 1414 video → 1136 retire-protocol-layer → 1179 executor-async-rewrite TBD-010 closed)
 - 长期 bridge_execute 路径有 TBD-013(RemoteControl HTTP;原 TBD-009 re-indexed 2026-05-05)+ ADR-008 兜底
 
 ---
@@ -780,6 +781,11 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.7 | 2026-05-03 | ComfyUI audio capability adoption(OpenSpec change `comfy-agent-cli-audio-adoption`,SRS TBD-009 Phase 2 + TBD-002 lift):新增 audio worker baseline `audio_worker.py::AudioWorker/AudioCandidate` + 异常树(`AudioWorkerError/Timeout/UnsupportedResponse`);新增 `runtime/executors/generate_audio.py::GenerateAudioExecutor`((StepType.generate, audio.t2a) ExecutorRegistry 注册);ComfyAgentWorker 4-dict capability dispatch 扩 audio(REQUIRED=audio key,REJECTED={images,glb,video},AUXILIARY=空);新虚拟 model id `comfy/local-audio` + alias `audio_local`(SRS FR-MODEL-007 第 11 alias);FailureModeMap 新增 `audio_worker_timeout` / `audio_worker_unsupported`(均 abort_or_fallback,沿 mesh_worker_* 同模式);DryRunPass.`_check_comfy_reachability` gate set 扩入 `comfy/local-audio`;新 example `examples/comfy_local_smoke_audio.json`;新 probe `probes/provider/probe_comfy_audio.py`(opt-in `FORGEUE_PROBE_COMFY_AUDIO=1`)。新增 fence 文件 `test_audio_worker.py`(6)+ `test_comfy_subprocess_audio.py`(20,含 G11-F3 seed override fence)+ `test_generate_audio_comfy.py`(14);delta `test_failure_mode_map.py`(audio +6)+ `test_probe_framework.py`(audio +2)+ `test_model_registry.py`(audio +2)。8 轮 codex review:1 design + 7 plan + S5 G6 `/codex:review --base main` + S6 G11 `/codex:adversarial-review` mixed scope。Apply-stage 13-commit chain。**L2 evidence FULL PASS**(用户授权改 ComfyUI workflow JSON `SaveAudioMP3` → `SaveAudio` 一行后重跑,真实 FLAC 1,227,925 bytes + magic bytes 验证 PASS,evidence `openspec/changes/archive/2026-05-03-comfy-agent-cli-audio-adoption/notes/live_smoke_audio_20260503_full.md`)。G11 finding 处理:F1 closed by L2 actual PASS / F2 disputed-permanent-drift(R7-C 立场维持 + design.md `## Reasoning Notes — G11-F2 round-8` 完整记录 codex 反驳)/ F3 fixed in this change(`comfy_worker.py:912` setdefault → 直接覆盖 + 1 新 fence)。FR-WORKER-011 加入验收;TBD-002 ❌→⚠️ baseline;§8.1 自动化验收基线 1234 → **1294**(+60 fence;实测 `pytest -q`)。Follow-on `comfy-worker-seed-setdefault-bug-fix` 已 scaffold(image:442 + mesh:703 同 setdefault bug 三处一起修)。 | ForgeUE Team |
 | v1.8 | 2026-05-04 | ComfyUI video capability adoption(OpenSpec change `comfy-agent-cli-video-adoption`,SRS TBD-009 Phase 3 close + TBD-012 新增):新增 video worker baseline `video_worker.py::VideoWorker/VideoCandidate` + 异常树(`VideoWorkerError/Timeout/UnsupportedResponse`);新增 `runtime/executors/generate_video.py::GenerateVideoExecutor`((StepType.generate, video.t2v) ExecutorRegistry 注册);ComfyAgentWorker 4-dict capability dispatch 扩 video(REQUIRED=video key,REJECTED={images,glb,audio},AUXILIARY=空)+ BMFF strict 5-tuple header validation(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject `box_size==1` largesize + major_brand non-empty/non-zero/non-spaces);新虚拟 model id `comfy/local-video` + alias `video_local`(SRS FR-MODEL-007 第 12 alias);FailureModeMap 新增 `video_worker_timeout` / `video_worker_unsupported`(均 abort_or_fallback,沿 mesh / audio 同模式 + D14 priority video 先于 audio / mesh / generic worker_*);DryRunPass.`_check_comfy_reachability` gate set 扩入 `comfy/local-video`;新 example `examples/comfy_local_smoke_video.json`(默认 manifest `Vedio/Wan2.1-T2V-1.3B_native_5sec` D5 上游拼写照实跟随,7 分钟 / 6GB VRAM)+ 新 probe `probes/provider/probe_comfy_video.py`(opt-in `FORGEUE_PROBE_COMFY_VIDEO=1`)。**新建 UE bridge video 资产链路**(D1 + D12):`manifest_builder._KIND_MAP[("video","mp4")] = "file_media_source"` + `_PREFIX_BY_KIND` `MS_` + `_default_import_options` 加 video 分支 + `metadata_overrides` 白名单加 video keys + `import_plan_builder._IMPORT_OP_KIND` 加 `import_file_media_source` + `UEImportOperation.kind` Pydantic Literal 加 `import_file_media_source` + `ue_scripts/domain_video.py`(`unreal.FileMediaSourceFactoryNew` + `Content/Movies/<run_id>/` packaging path 分流 D12)+ `run_import.py _OP_HANDLERS` dispatch。**Round-2 F1 export gate 4 处 sweep**(`ExportExecutor._is_importable` whitelist 加 `"video"` + `PermissionPolicy.allow_import_file_media_source: bool = True` + `permission_policy._OP_ALLOW_ATTR["import_file_media_source"]` mapping + `UEImportOperation.kind` Literal — 否则 video Artifact 在 export gate 被静默过滤,P4 真机看不到 .uasset)。**Round-3 PF1 D-Runner-Extension**(用户 2026-05-04 拍板路径 (a) 扩 `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 加 `video` collection block 收集 VHS_VideoCombine 节点 legacy `gifs` UI key 的 video preview dict;沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式)。**Round-2 F2 + round-3 PF3 sweep mp4-only**(VideoCandidate.format `Literal["mp4"]`;webm follow-on `comfy-video-webm-adoption`)。新增 fence 文件 `test_artifact.py`(10 含 P12 regression)+ `test_video_worker.py`(7)+ `test_comfy_subprocess_video.py`(27 含 BMFF strict 9)+ `test_generate_video_comfy.py`(14);delta `test_failure_mode_map.py`(video +6)+ `test_ue_bridge.py`(video+F1 sweep +10)+ `test_p4_ue_manifest_only.py`(video stub+F1 +5)+ `test_probe_framework.py`(video +2)+ `test_model_registry.py`(video +2)+ examples bundles auto-discover 3 fence。**5 轮 codex review**:1 design adversarial(round-2 4 finding F1-F4 全 accepted-codex)+ 1 plan adversarial(round-3 4 finding PF1-PF4 全 accepted-codex)+ 3 implementation review(round-4/5/6 共 2 finding RF1-RF2 全 accepted-codex,round-6 verdict approve)。Apply-stage 16-commit chain。FR-WORKER-012 加入验收;TBD-009 全 phase closed(2026-05-04);新增 TBD-012 `repo-put-streaming-payload`(D4 副作用 follow-on);§8.1 自动化验收基线 1294 → **1414**(+120 fence;实测 `pytest -q`)。a2_video UE 真机 P4 commandlet 验收待用户跑(沿 a2_mesh 2026-04-23 commandlet 模式)。 | ForgeUE Team |
 | v1.9 | 2026-05-05 | TBD-009 编号 doc drift 修复:本表 v1.2 (2026-04-23) 引入 TBD-009 = RemoteControl HTTP bridge 占用编号在前;SRS §7.3 v1.6 (2026-05-02) 引入 TBD-009 = ComfyUI mesh/audio/video 后占同号造成 doc drift。**resolution**:SRS §7.3 是权威基线(`docs/ai_workflow/README.md` §4 主规则定义 docs 五件套含 SRS),保留 SRS TBD-009 = ComfyUI(已 closed);本 acceptance_report 的 RemoteControl HTTP bridge 重新编号 TBD-013(SRS 现有最大 TBD-012 之后第一个可用号)。改动范围:本表 §7 TBD-009 行(L703)+ §6.1 三通道分析行(L375)+ §8 ADR-008 兜底行(L751)三处 active reference 改 TBD-009 → TBD-013;**v1.2 历史 changelog 行(L771)保留原 TBD-009 文字作 historical record 不动**。本 entry 仅文档编号 metadata 变更,不影响代码 / 测试 / 行为契约。 | ForgeUE Team |
+| v1.10 | 2026-05-19 | 验收状态失真修正:§5.4 NFR-SEC-004 与 §5.5 NFR-OBS-002 原标 ✅,代码核实为部分实装,均改 ⚠️ —— NFR-SEC-004 `missing_secrets()`(`secrets.py:57`)存在但未接入 `DryRunPass` 主流程、缺 key 不阻断 Run;NFR-OBS-002 step_start/step_done 已 emit 但失败路径只记 `failure_events`、不 emit `step_failed` 事件。修正缘起 forge legacy-bridge extract backlog 重核(代码级核验暴露 acceptance 矩阵漂移);仅文档状态修正,不影响代码 / 测试。 | ForgeUE Team |
+| v1.11 | 2026-05-20 | forge change `executor-async-rewrite`(TBD-010 close):§2 L0 自动化基线 848 → **1179 passed / 3 skipped / 0 failed**(实测);§8.1 L0 / 测试覆盖行更新 1144 → 1179;§8.3 主线闭合状态 L0 行更新;FR-RUNTIME-005 / FR-WORKER-001 状态刷新(StepExecutor.execute 原生 async / ComfyAgentWorker async-subprocess / 新 lifecycle.py 三模式 / cascade-cancel 真停 / DryRunPass async / `comfy_lifecycle` 四值受理);SRS §7.3 TBD-010 ✅ closed;L2 live evidence `docs/archive/forge_changes/2026-05-20-executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`。 | ForgeUE Team |
+| v1.12 | 2026-05-22 | Linear FOR-13 `worker-candidate-source-path-migration`:FR-WORKER-001 / 011 / 012 验收证据补 source_path migration。Comfy image / mesh / audio / video worker 只读格式校验头并返回 `source_path`;四个 generator executor source_path 优先落盘,bytes 路径保留 fake / 远端兼容回退。对应 source_path fence 见 `docs/testing/test_spec.md` v1.8;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
+| v1.13 | 2026-05-22 | Linear FOR-11 `blob-backend-streaming-implementation`:FR-STORE-002 blob 载体从预留接口升级为 MVP。`BlobBackend` 提供 `BlobClient` protocol + 默认 `InMemoryBlobClient`,支持 value/source_path 写入、read/exists、blob resume drift 校验;`ArtifactRepository.put(source_path=...)` 允许 `PayloadKind.blob`。对应 fence 见 `docs/testing/test_spec.md` v1.9;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
+| v1.14 | 2026-05-23 | Linear FOR-14 `metadata-corruption-detection`:新增 `_artifacts.integrity.json` 伴生 checksum 文件;resume 校验 `_artifacts.json` hash / artifact_count / artifact_ids,metadata 损坏时 fail-fast。对应 fence 见 `docs/testing/test_spec.md` v1.11;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
 
 ### 9.3 签收区
 

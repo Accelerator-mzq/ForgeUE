@@ -73,7 +73,7 @@ def _make_candidate(repo: ArtifactRepository, run_id: str, step_id: str, cid: st
     )
 
 
-def test_review_single_judge_surfaces_cost_usd(tmp_path: Path):
+async def test_review_single_judge_surfaces_cost_usd(tmp_path: Path):
     reg = get_backend_registry(artifact_root=str(tmp_path))
     repo = ArtifactRepository(backend_registry=reg)
 
@@ -120,7 +120,8 @@ def test_review_single_judge_surfaces_cost_usd(tmp_path: Path):
     )
 
     executor = ReviewExecutor(router=router)
-    result = executor.execute(ctx)
+    # RED: executor.execute(ctx) は async 化後 await が必要
+    result = await executor.execute(ctx)
 
     assert "cost_usd" in result.metrics, (
         f"review metrics missing cost_usd: {result.metrics}"
@@ -132,7 +133,7 @@ def test_review_single_judge_surfaces_cost_usd(tmp_path: Path):
     assert result.metrics["cost_usd"] >= 0.0
 
 
-def test_review_chief_judge_accumulates_per_judge_cost(tmp_path: Path):
+async def test_review_chief_judge_accumulates_per_judge_cost(tmp_path: Path):
     """In chief_judge mode, every judge in the panel contributes to cost_usd.
     Previously thread-local usage hand-off raced under asyncio.gather; now
     each SingleJudgeResult carries its own usage and ReviewExecutor sums."""
@@ -188,7 +189,8 @@ def test_review_chief_judge_accumulates_per_judge_cost(tmp_path: Path):
     )
 
     executor = ReviewExecutor(router=router)
-    result = executor.execute(ctx)
+    # RED: executor.execute(ctx) は async 化後 await が必要
+    result = await executor.execute(ctx)
 
     # All three judges consumed tokens; metric presence is the regression
     # guard — previous behaviour had no cost_usd key at all.

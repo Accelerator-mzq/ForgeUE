@@ -42,7 +42,8 @@ class _AlwaysRaisingMeshExecutor(StepExecutor):
     step_type = StepType.generate
     capability_ref = "mesh.generation"
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # 始终抛出 MeshWorkerTimeout,用于测试 orchestrator 失败事件 context 注入
         raise MeshWorkerTimeout(
             "tokenhub 3d job 9999_test_job exceeded 300s",
             job_id="9999_test_job",

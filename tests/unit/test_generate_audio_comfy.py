@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -46,6 +46,18 @@ from framework.runtime.executors.generate_audio import (
 # ---- Fixtures ---------------------------------------------------------------
 
 
+def _comfy_provider_config(tmp_path: Path) -> dict[str, str | None]:
+    """构造测试用 ComfyUI provider_config，与 models.yaml 元数据形状对齐。"""
+    return {
+        "adapter": "comfy_agent_cli",
+        "scripts_dir": str(tmp_path / "yaml_scripts"),
+        "python_exe": None,
+        "default_lifecycle": "none",
+        "input_dir": str(tmp_path / "yaml_input"),
+        "output_root": str(tmp_path),
+    }
+
+
 def _make_audio_ctx(
     tmp_path: Path,
     run_id: str = "run_comfy_audio",
@@ -62,6 +74,9 @@ def _make_audio_ctx(
         routes.append(PreparedRoute(
             model="comfy/local-audio", api_key_env=None, api_base=None,
             kind="audio", pricing=None,
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config=_comfy_provider_config(tmp_path),
         ))
     policy = ProviderPolicy(
         capability_required="audio.t2a",
@@ -102,16 +117,21 @@ def _make_audio_ctx(
     return ctx, repo
 
 
-def _fake_audio_candidate(format_: str = "flac") -> AudioCandidate:
+def _fake_audio_candidate(
+    format_: str = "flac",
+    *,
+    data: bytes | None = None,
+    source_path: str | None = None,
+) -> AudioCandidate:
     """Construct a deterministic AudioCandidate for repo.put fences。"""
-    if format_ == "flac":
+    if data is None and format_ == "flac":
         data = b"fLaC" + b"\x80\x00\x00\x22" + b"\x00" * 50
-    elif format_ == "mp3":
+    elif data is None and format_ == "mp3":
         data = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 50
-    elif format_ == "wav":
+    elif data is None and format_ == "wav":
         data = b"RIFF" + b"\x24\x00\x00\x00" + b"WAVE" + b"\x00" * 50
     else:
-        data = b"\x00" * 64
+        data = data if data is not None else b"\x00" * 64
     return AudioCandidate(
         data=data,
         format=format_,  # type: ignore[arg-type]
@@ -124,6 +144,7 @@ def _fake_audio_candidate(format_: str = "flac") -> AudioCandidate:
         },
         duration_seconds=None,
         sample_rate=None,
+        source_path=source_path,
     )
 
 
@@ -144,7 +165,7 @@ def test_should_use_comfy_worker_path_returns_false_when_no_comfy_local_audio(tm
     assert executor._should_use_comfy_worker_path(ctx) is False
 
 
-def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_path, monkeypatch):
+async def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_path, monkeypatch):
     """End-to-end:executor.execute → ComfyAgentWorker.generate_audio called。
     Mock at `subprocess.run` boundary(沿 mesh test 同款模式)。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -153,35 +174,50 @@ def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_path, 
     fake.write_bytes(b"fLaC" + b"\x80\x00\x00\x22" + b"\x00" * 50)
     ctx, _ = _make_audio_ctx(tmp_path)
     executor = GenerateAudioExecutor()
+    import asyncio
     import json
-    import subprocess
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = subprocess.CompletedProcess(
-            args=["mocked"], returncode=0,
-            stdout=json.dumps({
-                "ok": True,
-                "outputs": {"audio": [str(fake)], "images": [], "glb": [], "video": []},
-            }),
-            stderr="",
-        )
-        result = executor.execute(ctx)
+
+    # TBD-010 Task 3: generate_audio 现在走 asyncio.create_subprocess_exec
+    _stdout = json.dumps({
+        "ok": True,
+        "outputs": {"audio": [str(fake)], "images": [], "glb": [], "video": []},
+    }).encode("utf-8")
+    call_count = []
+
+    class _FakeProc:
+        returncode = 0
+        async def communicate(self): return (_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    _orig = asyncio.create_subprocess_exec
+    async def _fake_create(*a, **kw):
+        call_count.append(1)
+        return _FakeProc()
+    asyncio.create_subprocess_exec = _fake_create  # type: ignore[assignment]
+    try:
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+        result = await executor.execute(ctx)
+    finally:
+        asyncio.create_subprocess_exec = _orig  # type: ignore[assignment]
     assert result.metrics["audio_count"] == 1
     assert result.metrics["model"] == "comfy/local-audio"
-    assert run_mock.call_count == 1
+    assert len(call_count) == 1
 
 
-def test_executor_no_audio_worker_path_resolved_raises(tmp_path):
+async def test_executor_no_audio_worker_path_resolved_raises(tmp_path):
     """无 comfy/local-audio 路由 + 无 injected worker → raise AudioWorkerUnsupportedResponse。"""
     ctx, _ = _make_audio_ctx(tmp_path, use_comfy_local_audio_route=False)
     executor = GenerateAudioExecutor()  # no worker
     with pytest.raises(AudioWorkerUnsupportedResponse, match=r"no audio worker path"):
-        executor.execute(ctx)
+        await executor.execute(ctx)
 
 
 # ---- F2 round-1 三 except 块 + F-Plan-R7-B round-7 _should_retry honor retry_on
 
 
-def test_generate_via_comfy_worker_wraps_worker_timeout_to_audio_worker_timeout_on_exhaustion(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_wraps_worker_timeout_to_audio_worker_timeout_on_exhaustion(tmp_path, monkeypatch):
     """F2 round-1:ComfyWorkerTimeout → AudioWorkerTimeout (with `from exc`) on exhausted attempts。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
     (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
@@ -191,17 +227,18 @@ def test_generate_via_comfy_worker_wraps_worker_timeout_to_audio_worker_timeout_
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.side_effect = _ComfyWorkerTimeout("subprocess hit 300s")
+        # Task 5 GREEN: executor 转 async 后调 agenerate_audio,改用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerTimeout("subprocess hit 300s"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerTimeout) as exc_info:
-            executor.execute(ctx)
+            await executor.execute(ctx)
     # __cause__ chain should preserve original ComfyWorkerTimeout
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerTimeout)
     # max_attempts=2 → 2 calls
-    assert worker_inst.generate_audio.call_count == 2
+    assert worker_inst.agenerate_audio.call_count == 2
 
 
-def test_generate_via_comfy_worker_wraps_worker_unsupported_to_audio_worker_unsupported_immediately(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_wraps_worker_unsupported_to_audio_worker_unsupported_immediately(tmp_path, monkeypatch):
     """F2 round-1:ComfyWorkerUnsupportedResponse → AudioWorkerUnsupportedResponse 立即 raise(deterministic 不 retry)。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
     (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
@@ -210,16 +247,17 @@ def test_generate_via_comfy_worker_wraps_worker_unsupported_to_audio_worker_unsu
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.side_effect = _ComfyWorkerUnsupportedResponse("outputs.audio missing")
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerUnsupportedResponse("outputs.audio missing"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerUnsupportedResponse) as exc_info:
-            executor.execute(ctx)
+            await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerUnsupportedResponse)
     # Deterministic 不 retry — 1 call only
-    assert worker_inst.generate_audio.call_count == 1
+    assert worker_inst.agenerate_audio.call_count == 1
 
 
-def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_path, monkeypatch):
+async def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_path, monkeypatch):
     """F2 round-1:ComfyWorkerError(generic)→ AudioWorkerError 立即 raise。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
     (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
@@ -228,15 +266,16 @@ def test_generate_via_comfy_worker_wraps_generic_worker_error_immediately(tmp_pa
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.side_effect = _ComfyWorkerError("subprocess crashed")
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerError("subprocess crashed"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerError) as exc_info:
-            executor.execute(ctx)
+            await executor.execute(ctx)
     assert isinstance(exc_info.value.__cause__, _ComfyWorkerError)
-    assert worker_inst.generate_audio.call_count == 1
+    assert worker_inst.agenerate_audio.call_count == 1
 
 
-def test_local_comfy_audio_executor_retry_on_excludes_timeout_short_circuits_first_attempt(tmp_path, monkeypatch):
+async def test_local_comfy_audio_executor_retry_on_excludes_timeout_short_circuits_first_attempt(tmp_path, monkeypatch):
     """F-Plan-R7-B round-7:RetryPolicy.retry_on 不含 "timeout" → 即使 timeout exhaust 也 1 call。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
     (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
@@ -246,18 +285,19 @@ def test_local_comfy_audio_executor_retry_on_excludes_timeout_short_circuits_fir
     executor = GenerateAudioExecutor()
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.side_effect = _ComfyWorkerTimeout("first call timeout")
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(side_effect=_ComfyWorkerTimeout("first call timeout"))
         cls_mock.return_value = worker_inst
         with pytest.raises(AudioWorkerTimeout):
-            executor.execute(ctx)
+            await executor.execute(ctx)
     # retry_on 不含 timeout → 1 call only(F-Plan-R7-B short-circuit)
-    assert worker_inst.generate_audio.call_count == 1
+    assert worker_inst.agenerate_audio.call_count == 1
 
 
 # ---- Persistence(F-Plan-R6-A round-6 shape="waveform" + F-Plan-R7-A metadata)
 
 
-def test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_file_suffix(tmp_path, monkeypatch):
+async def test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_file_suffix(tmp_path, monkeypatch):
     """F-Plan-R6-A round-6 critical:Artifact.artifact_type.shape == "waveform"
     (与 UE bridge `_KIND_MAP[("audio", "waveform")] = "sound_wave"` 唯一映射对齐);
     file_suffix=`.{cand.format}` 反映真实 payload 编码。"""
@@ -268,9 +308,10 @@ def test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_f
     cand = _fake_audio_candidate(format_="flac")
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.return_value = [cand]
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(return_value=[cand])
         cls_mock.return_value = worker_inst
-        result = executor.execute(ctx)
+        result = await executor.execute(ctx)
     assert len([a.artifact_id for a in result.artifacts]) == 1
     art = repo.get([a.artifact_id for a in result.artifacts][0])
     assert isinstance(art, Artifact)
@@ -282,7 +323,29 @@ def test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_f
     assert art.payload_ref.file_path.endswith(".flac")
 
 
-def test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate(tmp_path, monkeypatch):
+async def test_executor_persists_audio_candidate_source_path_without_using_data(tmp_path, monkeypatch):
+    """FOR-13:AudioCandidate.source_path 优先落盘,避免大音频 payload 全量驻留。"""
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+    (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+    ctx, repo = _make_audio_ctx(tmp_path)
+    source = tmp_path / "source_audio.flac"
+    source.write_bytes(b"fLaC" + b"\x80\x00\x00\x22" + b"real-audio-payload")
+    executor = GenerateAudioExecutor()
+    cand = _fake_audio_candidate(
+        format_="flac",
+        data=b"fLaC",
+        source_path=str(source),
+    )
+    with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
+        worker_inst = MagicMock()
+        worker_inst.agenerate_audio = AsyncMock(return_value=[cand])
+        cls_mock.return_value = worker_inst
+        result = await executor.execute(ctx)
+    audio_art = next(a for a in result.artifacts if a.artifact_type.modality == "audio")
+    assert repo.read_payload(audio_art.artifact_id) == source.read_bytes()
+
+
+async def test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate(tmp_path, monkeypatch):
     """F-Plan-R7-A round-7 single-source + FR-STORE-004 audio metadata 三件套:
     Artifact.metadata.format=cand.format;duration_seconds/sample_rate=None always。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -292,9 +355,10 @@ def test_executor_artifact_top_level_metadata_includes_format_duration_sample_ra
     cand = _fake_audio_candidate(format_="mp3")
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
-        worker_inst.generate_audio.return_value = [cand]
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock
+        worker_inst.agenerate_audio = AsyncMock(return_value=[cand])
         cls_mock.return_value = worker_inst
-        result = executor.execute(ctx)
+        result = await executor.execute(ctx)
     art = repo.get([a.artifact_id for a in result.artifacts][0])
     # FR-STORE-004 audio metadata triplet on Artifact.metadata
     assert art.metadata["format"] == "mp3"
@@ -313,7 +377,7 @@ def test_executor_artifact_top_level_metadata_includes_format_duration_sample_ra
 # ---- ADR-007 边界(本地 audio non-premium → 内部 retry allowed)
 
 
-def test_local_comfy_audio_pricing_none_treated_as_non_premium(tmp_path, monkeypatch):
+async def test_local_comfy_audio_pricing_none_treated_as_non_premium(tmp_path, monkeypatch):
     """ADR-007 边界:`pricing=None` → `(None or {}).get("per_task_usd", 0) == 0` → non-premium
     → 内部 retry loop 用 `policy.max_attempts` 不受 ADR-007 strict-single-attempt 约束。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
@@ -326,13 +390,14 @@ def test_local_comfy_audio_pricing_none_treated_as_non_premium(tmp_path, monkeyp
     with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
         worker_inst = MagicMock()
         # 第一次 timeout,第二次成功(retry budget 起作用)
-        worker_inst.generate_audio.side_effect = [
+        # Task 5 GREEN: agenerate_audio 用 AsyncMock + side_effect list
+        worker_inst.agenerate_audio = AsyncMock(side_effect=[
             _ComfyWorkerTimeout("first call timeout"),
             [_fake_audio_candidate()],
-        ]
+        ])
         cls_mock.return_value = worker_inst
-        result = executor.execute(ctx)
-    assert worker_inst.generate_audio.call_count == 2  # retry happened
+        result = await executor.execute(ctx)
+    assert worker_inst.agenerate_audio.call_count == 2  # retry happened
     assert len([a.artifact_id for a in result.artifacts]) == 1
 
 

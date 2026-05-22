@@ -1,0 +1,840 @@
+---
+name: subagent-driven-discipline
+description: Subagent task type taxonomy + cheap-model reliability playbook + Trigger Type Matrix retrospect for subagent-driven-development workflows。**重场景轻业务**:按 subagent 任务类型(implementation 5 子类 / spec review 4 子类 / code quality review 5 子类 / test creation / doc / debug / verification)细分 model tier + WHY + 让 cheap model 高质量的具体 prompt patterns。**Design 任务(algorithmic / architectural / arch doc rewrite / complex root cause)绝对原则 Opus only,无 exception**。Cross-scenario discipline(cwd verify / cross-verify / cherry-pick recovery / cost framework)作为 supporting infrastructure。**Living catalog 增长由 §3.4 Trigger Type Matrix retrospect 强制**:4 trigger types(3-stage / standalone / ad-hoc / codex CLI)各自 retrospect intensity;Type 1 Opus mandatory full;Type 3 light;Type 4 skip retrospect 仅 cross-verify;任一 Yes 才加 case study;全 No 不加(避免噪声)。Companion to `superpowers:subagent-driven-development`。
+license: MIT
+compatibility: Codex Agent tool + python -m pytest;sister to superpowers:subagent-driven-development(generic 3-stage process)
+metadata:
+  author: forgeue (initial seed)
+  version: "2.6"
+  scenario_subtype_count: 28
+  case_study_count: 5
+  retrospect_protocol: trigger-type-matrix(4 types × per-type intensity)  # Type 2 parallel retired in retire-parallel-and-worktree-fully (2026-05-06)
+  worktree_consent_policy: superpowers-upstream-using-git-worktrees  # retire ForgeUE-level worktree consent gate;沿 upstream Step 0 consent gate
+---
+
+Universal controller-side discipline for `superpowers:subagent-driven-development` workflows。
+
+**核心立场**:**重场景轻业务**。
+- **重**(§1 § 2 — 主体):subagent 任务类型 taxonomy(per task subtype:用什么 model + WHY + 怎么让 cheap model 高质量)
+- **轻**(§3 § 4 — 支撑):cross-scenario discipline 基础设施(cwd verify / cross-verify / recovery / cost framework)
+- **业务无关**:具体项目用法属于 case studies(§5)增量层,不染入 scenario taxonomy
+
+**何时启用**:任何项目使用 `superpowers:subagent-driven-development` 派 subagent 时,controller 主 session dispatch 前 + return 后 + commit 前全流程参考。
+
+---
+
+## §1 Subagent Scenario Taxonomy(重 — task type 决定 model + 协议)
+
+### §1.1 Implementation Tasks(写代码 / 改代码)
+
+| 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
+|---|---|---|---|---|
+| **§1.1.1 Mechanical(完整代码样例)** | Plan 含完整 code block + 全 fence test 名 + 完整测试模板 + commit message 模板 | `haiku` | implementer 只需 transcribe + 微调;无 design judgment | 1) Plan 内含 inline 完整代码(不让 implementer 自由 design)<br>2) 每个 fence test 给具体 name + assertion 描述<br>3) Commit message 模板 inline<br>4) Pre-condition / Pre-state(git status clean / pytest baseline N)<br>5) Self-review 7 项检查清单 |
+| **§1.1.2 Pattern-matching(用既有模式)** | 改 / 新建文件,需照既有 sister files 风格;Plan 给 file:line 锚点但不全 inline | `haiku` 或 `sonnet`(borderline)| Pattern lookup + 套用是 pattern matching 任务;若需理解 pattern semantic 升 Sonnet | 1) **必给 sister file 路径**(让 implementer Read 参考)<br>2) Pattern 元素 enumerated(e.g. "沿 `tools/forgeue_skill_cascade_check.py` argparse + multi-mode CLI 风格")<br>3) Style constraint(stdlib only / 中文 docstring)<br>4) Anti-pattern 显式列(e.g. "不引入外部 dep") |
+| **§1.1.3 Multi-file integration** | 改既有 module + cross-fence wiring + 多文件 coordinate | `sonnet` | 需保持 cross-file consistency;Haiku 易 miss interaction | 1) 列全部涉及 file paths<br>2) 显式 dependency graph(file A change 影响 file B 哪段)<br>3) Defense-in-depth dispatch logic 描述 |
+| **§1.1.4 Algorithmic design** | Plan 描述需求但不给具体算法 / data structure | **`opus` MANDATORY**(不允许 Sonnet 替代) | **设计任务的判断错误下游修复成本极高** — 错算法 → 全 implementation 重写 + 全 test 重写 + 可能影响 contract;Opus 的 reasoning depth 对设计决策必要;Sonnet 在 design 任务下选 "first reasonable solution" 可能跳过更优 alternative | 1) 显式列**已考虑的方案 alternatives**(让 Opus evaluate)<br>2) Performance / memory / 可维护性约束<br>3) Trade-off priority<br>4) Cross-impact 范围(影响哪些 module / future 演进) |
+| **§1.1.5 Architectural(跨子系统)** | 引入 new ABC / 新子系统 / cross-boundary refactor / new ADR drafting | **`opus` MANDATORY** | 需全局视角 + 长期演进考虑 + adversarial review;**任何 design 任务都不能降级 cheap model** | **首选 controller 自己做(若 controller 是 Opus)— 不外包给 subagent**;若 controller 非 Opus 必须 dispatch Opus subagent;subagent 只 implement 已 finalized design |
+
+### §1.2 Spec / Compliance Review Tasks(检查 implementation 符合 spec)
+
+| 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
+|---|---|---|---|---|
+| **§1.2.1 String matching(检查 N specific strings 在 M files)** | "verify file X contains string Y, doesn't contain Z" 类机械字符串校验 | `haiku` | 纯 grep-style 任务;无 reasoning | 1) 给完整 verification list("Check these 4 specific things")<br>2) Pre-verified data(controller 已跑 grep,reviewer 不必重跑)<br>3) **不**让 reviewer 跑 pytest(避免 binary env mismatch)<br>4) 拒绝 open-ended task(永远不要 "is this spec compliant?",要 "verify these 4 strings") |
+| **§1.2.2 Structural verification(模板 / file 含某 section)** | "template X has section Y at right position" | `haiku` | 静态 markdown / file 结构校验 | 同 §1.2.1 + 显式 file path + section header 准确字符串 |
+| **§1.2.3 Cross-phase reasoning(scenario 跨 phase boundary)** | spec 写端到端 Requirement,但 plan 拆 P1 工具 / P2 fence — reviewer 需理解 phase decomposition | `sonnet`(`haiku` 会 scope-bleed) | 需理解 "本 phase 该做 vs 其他 phase 该做";Haiku 把 spec 全部 missing 当本 phase issue | 同 §1.2.1 + **Phase Scope Boundary 显式段**:"only review P{N} scope;P{N+1}/P{N-1} 的 missing 不算 issue;若看到 cross-phase 问题,note as observation 不 blocker" |
+| **§1.2.4 Acceptance criteria(复杂 business rule)** | "feature meets these 5 acceptance scenarios with WHEN/THEN" | `sonnet` | 涉及 business semantic;Haiku 字面理解可能错 | 列全 acceptance scenarios + 给反例(false claims that should fail) |
+
+### §1.3 Code Quality Review Tasks(代码质量 / 设计)
+
+| 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
+|---|---|---|---|---|
+| **§1.3.1 Style / Lint nits** | 命名 / 缩进 / 注释格式 / dead code 检测 | `haiku` | 静态 pattern recognition | 给 specific style rules + file:line targets |
+| **§1.3.2 Pattern adherence(沿既有模式)** | "code follows existing project pattern X?" | `haiku`(简单)或 `sonnet`(模糊) | 比对模式 | 给 reference pattern file path + 具体 sub-pattern enumeration |
+| **§1.3.3 Maintainability(hard-to-test / tight coupling / sync drift risk)** | 设计判断 — code 是否 future-proof | `sonnet`(必须) | **判断是否会 future bug** 是 reasoning task;Haiku 看不见 | 列具体维护 concern(coupling / drift risk / refactor friction)+ 项目 maintenance 历史 context |
+| **§1.3.4 Runtime correctness(race conditions / silent failures / edge cases)** | 检查 implementation 是否会 silent fail at runtime | `sonnet`(**MANDATORY**;Haiku 不可替代) | **必须 reasoning code semantics** + envision execution flow;Haiku 只看 static structure | 描述 expected runtime behavior + 列已知 edge case + adversarial thinking 提示("how can this fail under concurrent / malformed / partial-state input?") |
+| **§1.3.5 Security review** | 注入 / 敏感信息 / 权限 / 加密 / 边界 | `sonnet` 或 `opus` | 需要 adversarial thinking + 安全 domain 知识 | 显式 threat model + ASVS / OWASP class refs + 项目 security context |
+
+**核心 takeaway**:**Code Quality 阶段 §1.3.4 Runtime correctness 不可 skip + 不可降级 Haiku**。Case 1 实证:Haiku implementer + Haiku spec_reviewer 漏的 2 个 runtime bug(f-string / IMPL_FILES_JSON silent fail)只有 Sonnet code_quality 抓到。
+
+**任何 Design 任务必须 Opus**(§1.1.4 + §1.1.5 + §1.5.4 architecture doc 重写 + §1.6.3 root cause analysis 复杂场景):design 错误的下游 impact 远大于 dispatch cost differential;Opus reasoning depth 对 design 必要。Cheap model 在 design 任务下倾向"选 first reasonable solution"漏 alternative。这是**绝对原则,无 exception**。
+
+### §1.4 Test Creation Tasks(写新 test)
+
+| 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
+|---|---|---|---|---|
+| **§1.4.1 Unit test from spec(spec 清晰)** | spec scenario 已明确 → 翻译为 pytest fence | `haiku` | 模板化;Plan 含 fence name + 期望行为 | 给 fence name list + each fence 一句 expected behavior + 测试 framework 模板 |
+| **§1.4.2 Integration test(跨 module)** | 需协调多 module 状态 | `sonnet` | 跨 module setup / teardown 复杂 | 列涉及 module + 依赖 setup 顺序 + tmp_path / mock 策略 |
+| **§1.4.3 Edge case generation(创造性)** | "find edge cases not in spec" | `sonnet` | 需要创造性 + adversarial | 给已知 edge case + 提示 "what corner cases NOT covered by these?" |
+| **§1.4.4 Regression test(为 bug fix 写 test)** | bug 已识别,写 test 防回归 | `haiku` | 翻译已知 bug 为 test | 给 bug repro steps + expected vs actual + fixture 模板 |
+
+### §1.5 Documentation Tasks
+
+| 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
+|---|---|---|---|---|
+| **§1.5.1 Doc sync(机械替换)** | "update version X to Y in N files" | `haiku` 或 direct(no subagent;沿 §3 skip) | 纯字符串替换 | 给 grep / sed 指令 + 影响 file list |
+| **§1.5.2 Doc rewrite(semantic)** | 重写段落 for new audience | `sonnet` | 需理解原意 + 重表达 | 给 audience profile + 风格示例 |
+| **§1.5.3 API doc(match implementation)** | 从 code generate doc | `haiku` | 模板化 | 给 code path + doc 模板 + cross-ref convention |
+| **§1.5.4 Architecture doc(explain decisions)** | 解释 design choices + alternatives | `sonnet` 或 `opus` | 需要 design reasoning | 给 D-decision list + 选用 vs alternatives + WHY |
+
+### §1.6 Debug / Investigation Tasks
+
+| 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
+|---|---|---|---|---|
+| **§1.6.1 Bisect(机械二分)** | "找出哪个 commit 引入 regression" | `haiku` 或 direct | 机械 git bisect | 给 known good + bad commit + reproduction script |
+| **§1.6.2 Reproduce + identify(根因定位)** | "test failing,find root cause" | `sonnet` | 需 reasoning code + execution flow | 给 test name + failure trace + 涉及 module list |
+| **§1.6.3 Root cause analysis(complex)** | 多 component interaction;非显式 | `sonnet` 或 `opus` | 需 system-level reasoning | 给 system architecture + observed symptoms + 已尝试的 hypotheses |
+
+### §1.7 Verification / Acceptance Tasks
+
+| 子类 | 特征 | model | WHY | 让 cheap model 高质量的必备 prompt 元素 |
+|---|---|---|---|---|
+| **§1.7.1 Run tests + report(机械)** | "run pytest, report pass/fail" | direct(controller;no subagent) | 不值得 subagent dispatch | controller 自己 `python -m pytest -q` |
+| **§1.7.2 Cross-check evidence vs spec(reasoning)** | "verify evidence matches spec scenarios" | `sonnet` | 跨 evidence + spec 比对推理 | 列 spec scenarios + evidence file paths + match criteria;**若验证 fail "pre-existing":dispatch prompt MUST 给 plan stage commit SHA + 明示"baseline 必早于 plan stage commit;用 `git diff <plan-stage-commit>~..<plan-stage-commit>` 区分 introduced-by-plan vs pre-existing-before-plan;`git stash` 不可作 baseline 验证(stash 仅暂存 working-tree,不撤销已 commit drift)"**(沿 Case 4 P3 Pattern G) |
+
+---
+
+## §2 Making Cheap Models Reliable(重 — playbook per scenario)
+
+`haiku` 在合适场景 + 严格 prompt 下 production-quality。**模型不变,prompt 变,质量天差地别**。
+
+### §2.1 Implementation Haiku Reliability Playbook
+
+**Pre-condition**(若不满足 → 升级 Sonnet):
+- ✅ Plan 含**完整 inline code sample**(implementer transcribe + 微调,不自由 design)
+- ✅ 每 fence test 给**具体 name + 1 句 expected behavior**
+- ✅ Commit message 模板 inline
+- ✅ Pre-state 标准(git status clean / pytest baseline N + 1 skipped)
+- ✅ Sister file 风格 reference path 给(implementer Read 参考)
+- ✅ Anti-pattern 显式列(don't add 这个 / don't refactor 那个)
+
+**Prompt 必含元素**(沿 §3.1 STRICT cwd + 7 项 self-review):
+```markdown
+## Working Directory(STRICT)
+[Pattern §3.1 cwd verify section]
+
+## Project Context
+- Sister file path: <e.g. tools/forgeue_skill_cascade_check.py>(read for style reference)
+- Pre-state: pytest baseline N + K skipped
+- Anti-pattern list: ...
+
+## Task Description(full plan text — DO NOT read plan files)
+[Full code sample inline + fence list + commit template]
+
+## Self-Review Checklist(before reporting DONE)
+- [ ] All N fence tests pass
+- [ ] python -m pytest -q shows no regression
+- [ ] File header follows project style
+- [ ] Stdlib only(no external deps)
+- [ ] Commit created and visible in git log -1
+- [ ] Self-review found issues fixed before reporting
+- [ ] Report includes file paths + pytest count + commit SHA
+```
+
+**Failure mode if skipped**:implementer 自由 design / hallucinate self-report / 漏 commit / commit 错 branch(see Pattern §3.1 worktree leak)。
+
+### §2.2 Spec / Compliance Reviewer Haiku Reliability Playbook
+
+**Pre-condition**(若不满足 → 升级 Sonnet):
+- ✅ Task 是 §1.2.1 string matching 或 §1.2.2 structural verification(纯静态 grep)
+- ✅ Spec scenario 不跨 phase boundary(若跨 → §1.2.3 升 Sonnet)
+- ✅ Controller 已 pre-run pytest + given results(reviewer 不必跑 pytest 自己)
+
+**Prompt 必含 4 元素(顺序固定)**:
+```markdown
+## Working Directory(STRICT)
+[Pattern §3.1 cwd verify section]
+
+## Pre-verified Data(controller 已跑,你不必再跑)
+- pytest tests/unit/test_X.py -v → N PASS
+- python -m pytest -q → M PASS + K skipped
+- grep "<key string>" <file> → 命中 / 不命中
+
+## Your Job — Verify These Specific Points(NOT open-ended)
+1. <Specific check 1>
+2. <Specific check 2>
+3. <Specific check 3>
+4. <Specific check 4>
+
+## Phase Scope Boundary
+**Note**: only review P{N} scope。P{N+1} / P{N-1} are different phases — don't flag missing functionality from other phases。If you see something cross-phase,note as observation not blocker。
+```
+
+**Failure mode if skipped**:scope-bleed(报别 phase 的 missing)/ 幻觉 URL / 错 pytest count(走错 binary)/ open-ended task 输出无用 verdict。
+
+### §2.3 Code Quality Reviewer Haiku Acceptable Subset
+
+**Haiku 适合**:§1.3.1 style/lint + §1.3.2 simple pattern adherence + §1.3.3 partial(有 specific concern list 时)
+
+**Haiku 不适合**:§1.3.3 deep maintainability / **§1.3.4 runtime correctness(MANDATORY Sonnet)** / §1.3.5 security
+
+**Haiku-acceptable prompt 必含**:
+- 具体 file:line targets(不要 "review the whole change")
+- Specific style rules / pattern checklist(不要 "is this good code?")
+- Severity 分类约束(Critical / Important / Minor)— 限制 Haiku 不报满 false positive
+
+### §2.4 Test Creation Haiku Reliability Playbook
+
+**Pre-condition**:Plan 含 fence name list + each fence expected behavior + 测试 framework 模板。
+**Prompt**:fence list + assertion 描述 + tmp_path / fixture pattern + commit template。
+**Failure mode if skipped**:implementer 编 test 名 / 漏 fence / fence 实现与 name 不符。
+
+### §2.5 Doc Sync Haiku Reliability Playbook
+
+**Pre-condition**:全 mechanical text replace(grep / sed-like)。
+**Prompt**:具体 grep pattern + 影响 file list + before/after example。
+**Failure mode if skipped**:doc drift(implementer 改 file A 不改 file B)。
+
+### §2.6 跨场景共通 — Cheap Model "高质量" 的核心 3 条
+
+无论何种 cheap model 任务,以下 3 条是 floor:
+
+1. **任务必须是 enumerated 而非 open-ended**:不要 "is this OK?" 要 "verify these N specific things"
+2. **Pre-condition 必须 controller 设好**:不要让 cheap model 探索 environment / 自己 run pytest;controller 跑后给 results
+3. **Output 必须 enumerated**:不要 "share concerns" 要 "report issues with severity Critical/Important/Minor + file:line + fix suggestion"
+
+违任一 → cheap model 易 hallucinate / scope-bleed / 输出 useless verdict(实证见 §5 Case 1)。
+
+---
+
+## §3 Cross-Scenario Discipline(轻 — 支撑基础设施)
+
+### §3.1 STRICT cwd verify(防 worktree-scope leak)
+
+**Worktree usage scope**(v2.4 2026-05-06,沿 retire-parallel-and-worktree-fully retire ADR-013 ForgeUE-level consent gate 后):本 cwd verify 协议**仅在 worktree IS used**(controller 自由 invoke `Skill(superpowers:using-git-worktrees)` 后 user 在 upstream Step 0 consent gate accept 进入 isolation)时 trigger;**default decline 路径**(controller 不 invoke worktree skill 或 user 在 upstream consent gate decline)直接走 main repo cwd,本 cwd verify section 简化为 `pwd` show main repo + `git branch --show-current` 是 dev branch / change branch。
+
+每次 dispatch prompt 必含(when worktree IS used):
+````markdown
+## Working Directory(STRICT — verify before any work)
+
+```bash
+cd <worktree-path>
+pwd  # MUST show <worktree-path>
+git branch --show-current  # MUST be <expected-branch>
+git rev-parse HEAD  # MUST be <expected-SHA>
+git status --short  # SHOULD be clean
+```
+
+If `pwd` 不显示 expected path → **STOP report NEEDS_CONTEXT;不要在错误 directory 工作**。
+````
+
+**Default decline 路径**(when worktree NOT used / main repo cwd):
+````markdown
+## Working Directory(main repo cwd — default decline 路径)
+
+```bash
+cd <repo-root>  # main repo, NOT a worktree
+pwd  # MUST show <repo-root>
+git branch --show-current  # MUST be <change-or-dev-branch>
+```
+
+(默认 decline 路径下 commits 直接落 main repo dev branch;无 worktree-scope leak 风险)
+````
+
+### §3.2 Controller Cross-Verify(防 self-hallucination)
+
+收 subagent return 后,controller 独立验证:
+
+| Subagent claim | Controller verify 命令 |
+|---|---|
+| "X fence 全 PASS" | `python -m pytest <test-file> -v`(不用 `pytest`,用 `python -m pytest` — 防 binary env mismatch)|
+| "全 regress N PASS" | `python -m pytest -q` |
+| "Commit SHA `X`" | `git show <X> --stat` + `git branch --contains <X>`(防 branch leak) |
+| "Spec scenario 全覆盖" | `grep -c "<spec-required-string>" <file>` |
+| "改了 X 不改 Y" | `git diff <base>..HEAD --stat` |
+| "URL / 文件 path 引用" | 实际访问 / `ls` / `git log <path>` |
+
+### §3.3 Inline Fix vs Round 2 Fix Decision
+
+| Issue 类型 | 决策 |
+|---|---|
+| Trivial 文本 fix(docstring / f-string / 注释)| Controller inline edit(~free) |
+| Spec-violating 字符串缺 / Glue code 缺 | Controller inline edit(~free) |
+| Logic 错误(算法 / 数据流 / 控制流)| Round 2 SendMessage 同 implementer subagent(~$0.20-0.50)|
+| Architectural 错误(违 design decision) | 升级 user(controller-only) |
+
+### §3.4 Post-Phase Quality Retrospect Protocol(Opus-only judgment;skill 增长触发)
+
+**核心原则**:任何 subagent dispatch 完成都需 controller-side 质量分析 — 但 dispatch 类型不同,retrospect intensity 不同。本节定义 **5 Trigger Type × 不同 retrospect intensity**。
+
+#### §3.4.0 Trigger Type Matrix(总览)
+
+| Trigger Type | 何时 fires | Retrospect Intensity | Actor | Cost |
+|---|---|---|---|---|
+| **Type 1: 3-stage full**(canonical;§1.1 + §1.2 + §1.3)| per-task implementer + spec_reviewer + code_quality_reviewer 全 ✅/⚠️ + 3 evidence committed | **MANDATORY full Q1-Q6** | **Opus**(MANDATORY)| $0.30-1.00 |
+| **Type 3: Standalone Task**(§1.4/§1.5/§1.6/§1.7 单 subagent dispatch,无 3-stage review)| Single Task return DONE / DONE_WITH_CONCERNS | **Light:Q2 + Q3 + Q4**(skip Q1/Q5/Q6 — 单 task scope 不够 trigger broader pattern) | **Opus or Sonnet** | $0.10-0.30 |
+| **Type 4: Ad-hoc research Task**(无 evidence committed;e.g. "summarize files" / "find X usage")| Task return | **Skip full retrospect;仅 §3.2 cross-verify** | Controller(any tier) | ~$0(cross-verify only) |
+| **Type 5: Codex CLI subprocess**(`/codex:adversarial-review` / `/codex:review`)| Codex CLI return | **本 skill 不 cover**(Codex 自家 protocol — 沿 codex-plugin/codex-companion) | N/A | N/A |
+
+**判定 trigger type**:看 dispatch 用哪 upstream skill / 哪 dispatch pattern,不看 task 内容本身。
+
+#### §3.4.1 Type 1: 3-stage Full Retrospect(canonical)
+
+**3-stage 定义**(沿 `superpowers:subagent-driven-development` upstream;per-task 串行):
+
+| Stage | Subagent 角色 | 任务 | 进入下 stage 条件 |
+|---|---|---|---|
+| Stage 1 | implementer | 写实现 code / fence test / commit | return status DONE / DONE_WITH_CONCERNS;若 BLOCKED / NEEDS_CONTEXT → controller 处理后 retry |
+| Stage 2 | spec_reviewer(spec compliance) | verify implementation 符合 spec(checklist 比对) | reviewer ✅ Spec compliant;若 ❌ Issues → SendMessage round 2 same implementer fix → re-review;直到 ✅ |
+| Stage 3 | code_quality_reviewer | verify code quality(clean / tested / maintainable / runtime correctness) | reviewer ✅ Approved 或 ⚠️ Approved with concerns(non-blocker);若 ❌ Issues → round 2 fix → re-review;直到 ✅/⚠️ |
+
+**Phase complete** = Stage 1 + Stage 2 + Stage 3 全 ✅(或 ⚠️ non-blocker)+ 3 类 evidence 文件落盘 + commit。**此时**触发 Type 1 retrospect。
+
+(注:**final_reviewer** 是 **per-change 末尾**额外 stage — 全 phase 完成后跑一次综合 review,不属于 per-phase 3-stage。final_reviewer 完成后做 change-level retrospect,不是 phase-level。)
+
+#### §3.4.3 Type 3: Standalone Task Retrospect(Light)
+
+**Trigger**:任何 §1.4 / §1.5 / §1.6 / §1.7 单 subagent dispatch(非 3-stage 包装)return DONE / DONE_WITH_CONCERNS。
+
+**例**:
+- §1.4.1 unit test from spec — implementer 写一组 test
+- §1.5.1 doc sync — implementer 跨 N file mechanical 替换
+- §1.5.2 doc rewrite — implementer 重写一段 doc
+- §1.6.1 bisect / §1.6.2 reproduce — debug subagent
+- §1.7.2 cross-check evidence vs spec — verification subagent
+
+**Inputs**:
+1. Task return content(no committed evidence file unless writing one)
+2. 涉及 file diff(若 implementer 写了 commit)
+3. §1.X.Y 对应的 subtype 行(check 是否表现 within expected)
+
+**Question Matrix Light(skip Q1 / Q5 / Q6 — 单 task scope 不够 trigger broader pattern)**:
+
+| Q | 问题 | Yes 后果 |
+|---|---|---|
+| **Q2** | Subagent hallucinate / scope-bleed / 自我汇报错? | 加 §5 case |
+| **Q3** | Controller 需 intervention(re-run / inline fix)? | 加 §5 case |
+| **Q4** | NEW failure mode 不在 §6 catalog? | 加 §6 + §5 case |
+
+**Decision**:
+- 全 No → SKIP skill update
+- 任一 Yes → MUST add §5 case(标记 Trigger Type 3 + scenario §1.X.Y)
+
+#### §3.4.4 Type 4: Ad-hoc Research Task(Skip retrospect)
+
+**Trigger**:Agent tool / Explore subagent / general-purpose research dispatch — **无 committed evidence**(纯 information gathering / one-off lookup)。
+
+**例**:
+- "Summarize these N files for me"
+- "Find where function X is used"
+- "Investigate why test Y fails"(without writing fix)
+- Codebase navigation queries
+
+**Inputs**:Task return(text only,no file changes)。
+
+**Retrospect**:**SKIP full retrospect** — 仅跑 §3.2 cross-verify 关键 claim(若 subagent 引用了 file path / commit SHA / function 名 / URL → controller 验证存在)。
+
+**WHY skip**:
+- Ad-hoc 无 committed evidence — case study 无 anchor
+- One-off 性质 — pattern 难提炼
+- Cost too high vs value(retrospect $0.30+ for $0.05 task)
+
+**Exception**:若 ad-hoc Task return 含明显 hallucination / 错信息 → controller spot-add 一个 light §5 case(Trigger Type 4),记录该 task 的失败模式 + 防后续重蹈。
+
+#### §3.4.5 Type 5: Codex CLI Subprocess(out of scope)
+
+**Trigger**:`/codex:adversarial-review` / `/codex:review` / `/codex:rescue` 等 codex-plugin 派的 CLI subprocess。
+
+**为什么不 cover**:
+- Codex CLI 不是 Codex subagent — 是外部 CLI subprocess(`codex-companion.mjs` broker)
+- Codex 走自家 protocol(Round Counter + Polling Convention + verbatim-first output)
+- Codex 自家有 review 协议(`codex_review_round1.md` / cross-check matrix)
+
+**Controller 责任**(本 skill 不规约,但提醒):
+- Codex return 后仍需 §3.2 cross-verify(测试 count / file path / commit SHA / URL)
+- 若 codex hallucinate → 是 codex-plugin / codex-companion bug,不是本 skill 范围
+
+#### §3.4.6 Trigger Type 共通约束(all types)
+
+无论 Trigger Type N:
+1. **§3.2 controller cross-verify 永远 mandatory**(Type 1-4 都要;Type 5 也建议)
+2. **Opus actor 决定**:Type 1 + Type 2 MANDATORY Opus;Type 3 Opus 或 Sonnet 都可;Type 4 controller 任意 tier;Type 5 N/A
+3. **Skill update 触发条件**:任一 trigger type retrospect 出 Yes → 加 §5 case + 视情况 §6 / §1
+4. **Anti-pattern**:跳过任何 trigger type 的最低 retrospect(即使是 Type 4 的 cross-verify)→ 失去 controller-side 质量防线
+
+**Actor**:**Opus(MANDATORY)**。
+- 若 controller(主 session)是 Opus → controller 直接做
+- 若 controller 是 Sonnet/Haiku → controller MUST dispatch Opus subagent for retrospect
+- **不允许 Sonnet/Haiku 做 retrospect** — retrospect 是 meta-judgment 任务,需:
+  - Adversarial perspective on subagent self-reports(critical thinking)
+  - Pattern recognition across 多 evidence files(broad context)
+  - Evaluate against §1 28 subtypes(scenario knowledge)
+  - 决定是否扩 §1 / §5 / §6(meta-skill update judgment)
+  - 这些都是 Opus-tier 任务
+
+**Inputs**(retrospect actor 必读):
+1. 全 phase 3 类 subagent evidence files(implementer + spec_reviewer + code_quality_reviewer)
+2. Phase commit diff(`git diff <phase-base>..HEAD`)
+3. 任何 controller intervention 记录(inline fix / round 2 / cherry-pick recovery)
+4. 本 skill 当前版本(对照 §1 / §5 / §6)
+
+**Question Matrix**(retrospect actor 逐项问):
+
+| Q | 问题 | Yes 后果 |
+|---|---|---|
+| Q1 | 任一 subagent fail in ways outside §1.X.Y expected behavior? | → 加 §5 case + §6 catalog |
+| Q2 | 任一 subagent hallucinate / scope-bleed / 自我汇报错? | → 加 §5 case |
+| Q3 | Controller 需 intervention(inline fix / round 2 / cherry-pick)? | → 加 §5 case |
+| Q4 | NEW failure mode 不在 §6 catalog? | → 加 §6 catalog row + §5 case |
+| Q5 | NEW scenario subtype 不在 §1 28 子类? | → 加 §1.X.Y row + §2 playbook + §5 case |
+| Q6 | Cheap model 在某 scenario 表现远低于预期(应升 Sonnet)? | → 调 §1 model 列 + §5 case |
+
+**Decision Tree**:
+- **All Q1-Q6 答 No**(subagents 表现 within §1 expectation + 无 controller intervention)→ **SKIP skill update**;phase passes silently
+- **任一 Yes** → **MUST update skill**:
+  - 至少加 §5 Case <NN+1>(retrospect 沿模板;含 retrospect verdict 段)
+  - 视具体 Yes 情况追加 §1 / §6(沿 §8 update 协议)
+- **不允许"觉得没必要就 skip"** — Opus retrospect 找到任何 issue 都必须沉淀 skill 增长
+
+**Cost**:Opus retrospect ~$0.30-1.00 per phase(读 evidence + diff;judgment-heavy reasoning)。看似贵 — 但**这是 skill 增长的唯一 dependable mechanism**。Skip retrospect = skill 不长 = 后续 change 重蹈覆辙。
+
+**Why mandatory**:
+- 若每 phase 不 retrospect → skill 只在 controller 主动 "想到要更新" 时长 → unreliable feedback loop
+- Mandatory retrospect = skill 自动从实证增长(只在真有 issue 时更新,无问题不污染)
+- Opus-only = retrospect verdict 可信(cheap model retrospect 自己就是 unreliable)
+
+## §4 Failure Recovery
+
+### §4.1 Cherry-Pick Recovery(worktree-scope leak)
+
+```bash
+# Detection
+git log <expected-branch> --oneline -3  # MUST 含刚 commit
+git branch --contains <commit-sha>  # 列哪些 branch 含
+
+# Recovery
+cd <expected-worktree>
+git cherry-pick <leaked-commit-sha>
+git update-ref refs/heads/<wrong-branch> <prior-base-sha>
+```
+
+### §4.2 Mid-Phase Model Upgrade Trigger
+
+从 cheap → standard model **mid-phase** 触发:
+- Subagent return BLOCKED / DONE_WITH_CONCERNS 带 substantive 问题
+- spec_reviewer 找到 ≥3 真实 issues round 1
+- code_quality_reviewer 标 Critical
+- pytest 跑 fence test 失败 with 实现明显 misread plan
+
+---
+
+## §5 Case Studies(growing layer — 项目实证)
+
+### Case <NN> 模板
+
+```
+### Case <NN>: <project> / <change> / <phase>
+
+**Date**:<YYYY-MM-DD>
+**Project context**:<1 句>
+**Subagent dispatch**:
+| Subagent | Scenario subtype(§1.X.Y)| Model | $cost | Verdict |
+|---|---|---|---|---|
+
+**Real issues caught / failed**:
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+
+**Lesson**(reinforce / new pattern / scenario 边界 refinement):
+
+**Cost vs all-Opus alternative**:实际 $X vs Opus 估 $Y → 节省 ratio
+```
+
+### Case 5: ForgeUE / centralize-followon-backlog-registry / P2.a-P2.h+P3(Type 1 3-stage retrospect)
+
+**Date**:2026-05-07
+**Project context**:Workflow protocol extension change(集中 follow-on backlog registry + 2 archive-stage blocker fence + 14 helpers + 命令模板更新);9 phase(P2.a-P2.h + P3)× 串行 subagent dispatch + 1 final reviewer。本 change 是 self-referential — 自家 fence 守门 own data file,P5 dogfood 期 fence 在真实 repo 上实测 catch 2 real cross-document drift。
+
+**Subagent dispatch**(Type 1 3-stage,9 phase × ~3 subagent + final reviewer = ~22 dispatch):
+
+| Phase | Subagent role | Scenario subtype | Model | Verdict |
+|---|---|---|---|---|
+| P2.a | implementer + spec_review + code_quality(separate)| §1.1.1 mechanical(完整 code 模板)+ §1.2.1 + §1.3.1 | Sonnet | ✅ all PASS;regex hint bug subagent 自纠 |
+| P2.b | implementer + separate spec/code_quality | §1.1.3 multi-file integration(F1+F1-r2+F2-r2 fix)| Sonnet | ✅ all PASS |
+| P2.c | implementer + **combined spec+code_quality** | §1.1.1 + combined review | Sonnet | ✅ aligned + pass |
+| P2.d | implementer + combined | §1.1.3(cancel ref strict + commit-touches + escape hatch)| Sonnet | ✅ aligned + pass |
+| P2.e | implementer + combined | §1.1.3(archived.md append-only git diff)| Sonnet | ✅ aligned + pass |
+| P2.f | implementer + combined | §1.1.4 algorithmic(orchestrator 4-stage + TDD red→green)| Sonnet | ✅ aligned + pass(1 advisory `dir()` dead-code) |
+| P2.g | implementer + combined | §1.1.3(SRS table parse + consistency fence)| Sonnet | ✅ aligned + pass(architectural note dual parser duplication) |
+| P2.h | implementer + combined | §1.4.2 integration test + production data validation | Sonnet | ✅ aligned + pass(parser bug 暴露) |
+| P3 | implementer + combined | §1.1.3(argparse 子命令)| Sonnet | ✅ aligned + pass(advisory private fn cross-module call) |
+
+**Real issues caught / failed**(Type 1 mandatory Q1-Q6 retrospect 实证):
+
+| Issue | Severity | Caught by | Pattern subtype |
+|---|---|---|---|
+| **P2.h subagent 选 workaround 不 fix root cause**(`_parse_tbd_pointer_entries` body boundary bleed → 选择降 test 阈值 8 + disclose 而非修 parser)| Important(controller 后续必须 inline fix `5427f18`)| controller dogfood pytest + Read code | **Subagent prefers workaround over root-cause-fix when prompt says append-only / 不改既有**;controller prompt 副作用 — append-only 强约束让 subagent constraint-adherence 过度 |
+| **P2.g 创建 dual parser**(`_REGISTRY_ENTRY_HEADING_RE` lowercase 不 match TBD-XXX → 加新 `_parse_tbd_pointer_entries` 而非扩 regex)| Minor architectural duplication(reviewer accepted as design partition,但 flagged `_TBD_POINTER_FIELD_RE` 与 `_REGISTRY_FIELD_RE` 内容相同 alias-able)| Combined reviewer architectural note | 同上 Pattern;但 reviewer 接受 acceptable trade-off 因 partition 语义 OK |
+| **P2.f `"baseline_sha" not in dir()` dead-code 自披露未 fix**(implementer disclose 但不 inline fix)| Minor advisory | Combined reviewer | 同上 Pattern;subagent 沿 prompt scope 只标 advisory 让 controller 后续 cleanup |
+| **P2.a regex hint bug 自纠**(`\(follow-on\)` 强制括号 prompt hint 不 match `## P12 — follow-on tracking` 无括号格式;subagent 改为 `\(?follow-on\)?` optional + disclose)| Resolved(implementer self-correct)| Subagent self-disclosure | Subagent capability validation — 知 hint 与实测冲突主动 fix |
+| **P5 fence dogfood 暴露 GBK encoding crash**(`subprocess.run` 无 `encoding="utf-8"` 在 Windows 中文环境 stdout=None)| Important(controller fix `646989c`)| controller P5 dogfood | **Capability validation** — fence 设计目标(catch real systemic gap)100% 达成 |
+| **P5 fence dogfood 暴露 SRS-acceptance cross-document drift**(`retire-parallel-and-worktree-fully` re-index TBD-009 → TBD-013 时漏 sync SRS;只在 acceptance_report 加)| Important(controller fix `646989c`)| controller P5 dogfood | **Capability validation** — fence 真实 catch retire 期遗留的 cross-document drift |
+
+**Lesson reinforce / new pattern surfaced**:
+
+- **Pattern H new — Subagent prefers workaround over root-cause-fix when prompt says "append-only / 不改既有 helper"**(P2.h / P2.g / P2.f 共 3 处实证):
+  - controller prompt 写"append-only / 不改既有 helper"等强约束时,subagent 严格遵守,代价是错失 root-cause fix 机会
+  - P2.h 案例:遇 `_parse_tbd_pointer_entries` body boundary bleed 真 bug → subagent 选择降 test 阈值(workaround disclose)而非扩 regex 加 H2/H3 boundary(root cause)。controller 必须后续 inline fix
+  - P2.g 案例:遇 `_REGISTRY_ENTRY_HEADING_RE` lowercase 不 match TBD-XXX → subagent 加新 parser 而非扩 regex(创 dual parser duplication)
+  - P2.f 案例:写 `"baseline_sha" not in dir()` dead-code → subagent 自披露但 disclose-only 未 fix(reviewer advisory 标记)
+  - **Mitigation pattern**:dispatch prompt **显式说**"遇 implementation limitation(regex / parser / fence behavior)优先 fix root cause(扩既有 helper / 改 regex)而非 workaround;只有当 root cause fix 超出本 phase scope(影响其他 phase)才 disclose + 留 follow-on"
+  - **Trade-off**:append-only 约束有价值(防 cross-phase regression),但应对"修 vs 不修"决策给 explicit branch logic 而非 hard "不改"
+
+- **Pattern I new — Combined spec_review + code_quality_review acceptable for trivial single-helper phases**(P2.c / P2.e / P2.g / P2.h / P3 5 phases 实证):
+  - SKILL §3.4 default 是 Type 1 三 separate dispatch(implementer + spec_reviewer + code_quality_reviewer)
+  - Trivial single-helper phases(scope < 50 LOC + 单一职责 / formulaic CRUD-like / 复用既有 helper)— combined reviewer subagent 能产 2 evidence files(spec_review + code_quality_review 同 dispatch ID)
+  - 节省 ~$0.6 per phase × 5 phases = ~$3 budget saved without rigor 显著降低
+  - Cost vs separate 比例:combined 约 50% cost,rigor ~75-85%
+  - **Mitigation**:phases with > 50 LOC OR 涉及 design judgment OR cross-file integration → 仍走 separate dispatch;combined 仅适用 single-helper / single-test-file / formulaic phases
+  - 沿 ForgeUE memory `feedback_self_reference_overcaution` 不过度 ceremony 哲学
+
+- **Pattern A reinforced**(沿 Case 1/2/3/4):**Sonnet implementer + reviewer 在 §1.1.3 multi-file integration tasks 上稳定**(本 case P2.b/P2.d 共 31 + 14 = 45 tests + zero regression);Sonnet 是 ForgeUE workflow protocol 改造的合适 default tier
+
+- **Pattern J reinforced — fence dogfood 暴露 real cross-document drift**(本 case validates protocol 设计):本 change 是 self-referential — `_check_srs_registry_consistency` fence 在 P5 dogfood 期实测 catch SRS-acceptance TBD-009/TBD-013 sync gap(retire 期遗留)。**Capability validation** — protocol 设计目标(catch systemic drift)100% 达成。沿 Case 4 同款 fence dogfood 价值 reinforce。
+
+**Cost vs all-Opus alternative**:9 phase × ~22 dispatch ~$8.17 informational + retrospect Opus(~$0.50)= ~$8.67 vs 全 Opus 估 ~$25-35 → 节省 ~$16-26。Pattern I(combined review for trivial)节省 ~$3 in this case。
+
+**§6 catalog new row**(Q4 + Pattern H new):
+
+| Subagent failure mode | Pattern that prevents | Case studies |
+|---|---|---|
+| **Subagent prefers workaround over root-cause-fix when prompt says append-only / 不改既有 helper**(append-only 强约束副作用;workaround 路径包括降阈值 / 加 dup helper / 留 dead-code 仅自披露)| dispatch prompt 显式分支:"遇 implementation limitation 优先 fix root cause(扩既有 helper / 改 regex);只有 root cause fix 超本 phase scope 才 workaround + disclose + 留 follow-on" | Case 5 P2.f / P2.g / P2.h |
+
+**§3.4 Retrospect verdict per phase**:
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P2.a | No | No | No | No | No | No(Sonnet 在 §1.1.1 mechanical 合格)| **SKIP** |
+| P2.b | No | No | No | No | No | No | **SKIP** |
+| P2.c | No | No | No | No | No | No | **SKIP** |
+| P2.d | No | No | No | No | No | No | **SKIP** |
+| P2.e | No | No | No | No | No | No | **SKIP** |
+| P2.f | No | No | Marginal(advisory only,no fix)| **Yes**(Pattern H precursor)| No | No | **Partial trigger**(Pattern H 累积) |
+| P2.g | No | No | No | **Yes**(Pattern H 累积 — dual parser due to append-only)| No | No | **Partial trigger** |
+| P2.h | No | No | **Yes**(controller inline fix `5427f18`)| **Yes**(Pattern H confirmed)| No | No | **Add Case** — Q3+Q4 |
+| P3 | No | No | No | No | No | No(Sonnet 在 §1.1.3 子命令合格)| **SKIP** |
+| (P5 dogfood,non-subagent)| n/a | n/a | controller fix `646989c` | n/a | n/a | n/a | (capability validation,non-failure) |
+
+**Controller self-reflection**(沿 ForgeUE memory `feedback_verify_external_reviews` + `feedback_self_reference_overcaution` reinforce):
+
+- 本 case 22 subagent dispatch 整体工作质量 **B+**(constraint adherence 100% / zero regression / deviation 主动 disclose / 错率 ~3%)
+- 主要 systemic issue 是 controller prompt 副作用(append-only 约束让 subagent 偏向 workaround)— Pattern H 新发现
+- combined reviewer cost optimization(Pattern I)在 trivial phase 验证有效,节省 ~$3 而 rigor 损失可控
+- self-referential dogfood validation(P5 catch real drift)是本 change 独特 capability validation,**Pattern J 沿 Case 4 reinforce** — fence dogfood 是 protocol 设计目标的物理 anchor
+
+---
+
+
+
+**Date**:2026-05-07
+**Project context**:Workflow tooling micro-bugfix change(fix `tools/forgeue_finish_gate.py` regex + per-format threshold + repo-relative archive detection;closes 2 retire-parallel P0 baseline follow-on);4 phase × 3 subagent + S6 final review
+
+**Subagent dispatch**(Type 1 3-stage,P0-P3 共 12 subagent + S6 final reviewer):
+
+| Phase | Subagent | Scenario subtype(§1.X.Y)| Model | $cost | Verdict |
+|---|---|---|---|---|---|
+| P0 | implementer | §1.7.2 cross-check evidence vs spec(baseline measurement)| Haiku | $0.05 | ✅ DONE |
+| P0 | spec_reviewer | §1.2.1 string matching | Haiku | $0.05 | ✅ Spec compliant |
+| P0 | code_quality | §1.3.1 style/lint(no-code task)| Haiku | $0.06 | ✅ Approved |
+| P1 | implementer | §1.4.1 unit test from spec(9 case append)| Sonnet | $0.30 | ✅ DONE(perfect 2 FAIL + 7 PASS prediction) |
+| P1 | spec_reviewer | §1.2.1 string matching(11 scenario mapping)| Haiku | $0.06 | ✅ Spec compliant |
+| P1 | code_quality | §1.3.3 maintainability + §1.3.4 runtime correctness(误用 Haiku)| Haiku | $0.05 | ❌ **4/4 false-positive findings(1 Critical + 3 Important)** |
+| P2 | implementer | §1.1.3 multi-file integration(4 edits to forgeue_finish_gate.py)| Sonnet | $0.30 | ✅ DONE(VERBATIM,9/9 PASS,0 regression) |
+| P2 | spec_reviewer | §1.2.1 string matching | Haiku | $0.05 | ❌ **boundary violation 误判**(P1 vs P2 attribution) |
+| P2 | code_quality | §1.3.3 + §1.3.4 | Haiku | $0.06 | ✅ Approved |
+| P3 | implementer | §1.7.2 cross-check evidence vs spec | Sonnet | $0.12 | ⚠️ DONE_WITH_CONCERNS(误标 self-drift "pre-existing") |
+| P3 | spec/code-quality | (controller-direct,no subagent dispatch)| N/A | $0 | ✅ |
+| S6 | final reviewer | §1.3.3 + cross-phase consistency | Sonnet | included in change-review | ✅ Approve with fixes(2 Important + 2 Minor;Important 全 inline 修复) |
+
+**Real issues caught / failed**(Trigger Type 1 mandatory Q1-Q6 retrospect 实证):
+
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+| **P1 code_quality 4/4 false-positive**(haiku reviewer trace `make_complete_change` fixture + `_common.py` change_path 错;声称 Critical 实际不存在)| **Important** | controller override(沿 ForgeUE memory `feedback_verify_external_reviews`)| **Haiku 在 fixture-cross-module-trace tasks 上 confident-false-positive**;§1.3.3/§1.3.4 表"Sonnet MANDATORY"应明确扩到含 "test fixture 跨文件 trace" 子类 |
+| **P2 spec_reviewer boundary violation 误判**(指控 P2 implementer 改了 test 文件,实是 P1 改动 + controller 没在 phase 之间 commit)| Important | controller override + 补 commit P0+P1+P2 干净 phase | Pattern: **phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**;controller workflow-level 失误,非 reviewer model 问题 |
+| **P3 implementer 误标 self-drift "pre-existing"**(本 change plan stage `design_cross_check.md` frontmatter 缺 `disputed_open: 0` 字段触发的 fail;implementer 用 `git stash` 验证 baseline,但 stash 不能 revert 已 commit plan stage drift)| Important | controller 自检 + 修 frontmatter | Pattern: **`git stash` 不能 revert 已 commit baseline drift**;§1.7.2 verify task 应用 `git diff <plan-stage-commit>~..<plan-stage-commit>` 区分 introduced-by-plan vs pre-existing-before-plan |
+| **S6 final reviewer 真捕获 multi-phase 累积 drift**(design.md 重复 `D-OpenSpecValidateArchiveSkip` section / design_cross_check.md A.2 表头 "3 D-decision" 应为 "4 D-decision" / spec.md Scenario 2 `≥9` 应为 `≥10`)| Important + Minor | Sonnet final reviewer | **Capability validation**(沿 Case 2/3 同款"Sonnet final reviewer 是 multi-evidence consistency 抓手"模式);per-phase reviewer scope 看不到 cross-phase 累积 drift |
+
+**Lesson reinforce / new pattern surfaced**:
+
+- **Pattern A reinforced**(沿 Case 2 + Case 3):**Sonnet code_quality 是 silent failure 抓手** — 本 case 反向 reinforce — P1 用 Haiku code_quality 出现 4/4 false-positive,validating §1.3.3/§1.3.4 mandatory Sonnet。Controller 应严格按 §1.3 model 列 dispatch,不可降级。
+- **Pattern E 新 — Haiku code_quality 在 fixture-cross-module-trace 任务上 confident-false-positive**(P1):reviewer 任务需追踪 fixture(`make_complete_change`)+ helper(`_common.py change_path`)在多文件间的语义,Haiku 给出 confident "Critical" finding 但 trace 错。**Mitigation pattern**:任何 code review 涉及 trace fixture / helper / 跨模块语义 → §1.3.4 Sonnet MANDATORY,不接受 §1.3.1 style nits 误用。Controller 应在 dispatch 前问"reviewer 需 trace 多少文件 / fixture?",超 1 文件即 §1.3.3+。
+- **Pattern F 新 — phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**(P2):controller 没在 P1 phase 完成后 commit,导致 P2 spec_reviewer 看 `git diff` 时误把 P1 改动归给 P2(boundary violation 误判)。**Mitigation pattern**:每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer。Reviewer 看到的 diff 应只含本 phase 改动 + 上 phase commit 之后的 evidence。Sonnet final reviewer 不受影响(全 commit 都在 base),但 per-phase reviewer 受影响。**§7 controller checklist 应加此项**。
+- **Pattern G 新 — `git stash` 不能 revert 已 commit baseline drift**(P3):implementer 用 `git stash && pytest && git stash pop` 验证某 fail "pre-existing",但 stash 仅暂存 working-tree changes,不撤销已 commit 的 plan stage drift(本 case `design_cross_check.md` 缺 frontmatter 字段是 plan stage 引入,early commit `a32b4fb`)。**Mitigation pattern**:§1.7.2 verify task 验证 "pre-existing" claim 应用 `git diff <plan-stage-commit>~..<plan-stage-commit> -- <suspect-file>` 看 plan stage 是否引入,而非 stash。Controller dispatch verify task 时 prompt 应给 plan stage commit SHA + 明示"判定 pre-existing 必须 baseline 早于 plan stage commit"。
+- **Pattern D reinforced**(沿 Case 3):**controller inline fix > round 2 dispatch threshold** — 本 case 共 8 issue 全 controller inline fix(P1 4 false-positive override + P2 boundary override + P3 self-drift fix + S6 2 Important + 1 Minor),无一项 round 2 dispatch。再次实证 inline fix ROI 高于 round 2 dispatch when fix is mechanical(override 决策 + 1-line frontmatter 字段加)。
+
+**Cost vs all-Opus alternative**:P0-P3 实际 ~$1.10 + S6 final reviewer($0 included)+ retrospect Opus(本次 ~$0.50)= ~$1.60 vs 全 Opus 估 $8-12 → 节省 ~$6-10。Pattern E 实证 Haiku in code_quality 误用的 cost-asymmetry — false-positive 看似 $0.05 cheap,但 controller verify + override + retrospect 实际成本远高于初始 dispatch 改 Sonnet($0.20 directly Sonnet vs $0.05 Haiku + $0.50 controller verify time = 总 5x cost)。
+
+**§6 catalog new rows**(Q4 + new pattern surfaced;3 row):
+
+| Subagent failure mode | Pattern that prevents | Case studies reproducing |
+|---|---|---|
+| **Haiku code_quality false-positive on fixture-cross-module-trace tasks**(reviewer 任务需追踪 fixture / helper 跨多文件语义,Haiku confident 但 trace 错;声称 "Critical" 实际不存在)| 任何 review 涉及 trace fixture / helper / 跨模块语义 → §1.3.3/§1.3.4 Sonnet MANDATORY,不可降级 §1.3.1 style nits;controller dispatch 前问"reviewer 需 trace 多少文件 / fixture?"超 1 文件即升 Sonnet | Case 4 P1 |
+| **phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**(controller 没在 phase 完成后 commit,reviewer 看 `git diff` 把上 phase 改动归给本 phase)| 每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer;reviewer prompt 应明示 "diff base = 上 phase commit SHA" | Case 4 P2 |
+| **`git stash` 不能 revert 已 commit baseline drift**(verify task 用 `stash && pytest && stash pop` 验证 "pre-existing",但 stash 仅暂存 working-tree;已 commit 的 plan stage drift 不在 stash scope)| §1.7.2 verify task 验证 "pre-existing" 应用 `git diff <plan-stage-commit>~..<plan-stage-commit> -- <suspect-file>`;controller dispatch verify task prompt 给 plan stage commit SHA + 明示"baseline 必早于 plan stage commit" | Case 4 P3 |
+
+**§3.4 Retrospect verdict per phase**:
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P0 | No | No | No | No | No | No(haiku 在 mechanical baseline 任务合格)| **SKIP** |
+| P1 | **Yes**(haiku code_quality 4/4 confident-false-positive)| **Yes**(reviewer trace `make_complete_change` 错)| **Yes**(controller override 4/4)| **Yes**(Pattern E)| No | **Yes**(haiku 在 fixture-cross-module-trace code review 应升 Sonnet)| **Add Case** — Q1+Q2+Q3+Q4+Q6 |
+| P2 | **Yes**(spec_reviewer boundary attribution 错)| **Yes**(P1 vs P2 attribution confusion)| **Yes**(controller override + 补 commit)| **Yes**(Pattern F)| No | No(controller workflow,非 model)| **Add Case** — Q1+Q2+Q3+Q4 |
+| P3 | **Yes**(implementer 误标 self-drift)| Partial(`git stash` verify logic 错)| **Yes**(controller 自检 + 修 frontmatter)| **Yes**(Pattern G)| No | No(sonnet implementer 实际合格,prompt 缺 baseline SHA)| **Add Case** — Q1+Q3+Q4 |
+| S6 | No | No | No | No(reinforce Pattern A,non-failure)| No | No | **SKIP**(capability validation only) |
+
+**Controller self-reflection**(沿 ForgeUE memory `feedback_verify_external_reviews` reinforce):
+
+- 本 case 关键决定时刻 controller 4 次 override reviewer verdict(P1 code_quality 4 finding reject + P2 spec boundary reject + P3 self-drift catch + S6 final review accept apply)
+- 若机械应用 reviewer verdict 不 override,本次 archive 会带 4 错误 fix(test 反而坏)+ 漏 1 真 self-drift
+- 这正是 §3.2 cross-verify + §3.3 inline fix 决策框架的实战价值
+
+---
+
+### Case 3: ForgeUE / restore-superpowers-worktree-consent-gate / P0+P1(Type 1 3-stage retrospect)
+
+**Date**:2026-05-06
+**Project context**:ADR-013 protocol revert change(命令模板 OPT-IN narrative + finish_gate mode-conditional advisory + 2 new fences);P0 + P1 phase 共 13 inline fix(P0 m-1 + I-1 + I-2;P1 I-1 + I-2 + M-1 + M-2 + M-3 + sister md sync drift fence)
+
+**Subagent dispatch**(Type 1 3-stage,P0 + P1):
+
+| Phase | Subagent | Scenario subtype(§1.X.Y)| Model | $cost | Verdict |
+|---|---|---|---|---|---|
+| P0 | implementer | §1.5.2 doc rewrite + §1.4.1 unit test from spec(混合)| Sonnet | $0.18 | ✅ DONE |
+| P0 | spec_reviewer | §1.2.1 string matching(8 specific checks) | Haiku | $0.014 | ✅ SPEC_COMPLIANT |
+| P0 | code_quality | §1.3.3 maintainability + §1.3.4 runtime correctness | Sonnet | $0.085 | ⚠️ APPROVED_WITH_CONCERNS(I-1+I-2 Important) |
+| P1 | implementer | §1.1.3 multi-file integration(Python fence + fixture + orchestrator wiring)| Sonnet | $0.18 | ✅ DONE |
+| P1 | spec_reviewer | §1.2.1 string matching(9 specific checks) | Haiku | $0.018 | ✅ SPEC_COMPLIANT |
+| P1 | code_quality | §1.3.3 + §1.3.4 + cross-platform path | Sonnet | $0.15 | ⚠️ APPROVED_WITH_CONCERNS(I-1+I-2 Important + 3 Minor) |
+
+**Real issues caught(全 Important + Minor;0 Critical)**:
+
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+| **P0 I-1 sister md sync drift**(2 文件 ## Preflight Worktree section body 无 fence 强 equality → silent protocol divergence)| Important | Sonnet code_quality(§1.3.3 maintainability)| §1.3.3 验证有效 — Haiku 无法看出 multi-file structural 缺陷 |
+| P0 I-2 narrative OR-chain over-broad(`auto-fallback` narrative 检查不限 section 内 → 删 narrative 但留 heading 即 PASS)| Important | Sonnet code_quality(§1.3.4 runtime correctness)| §1.3.4 Sonnet 抓 silent vacuous-PASS 类 bug |
+| P0 m-1 assertion message 不够明确 + m-2 enum cross-ref 无 machine-checked | Minor + defer | Sonnet code_quality | §1.3.1 style/lint nits + cross-doc 协议 maintenance gap |
+| **P1 I-1 fence asymmetry docstring gap**(`_check_worktree_mode_consistency` vs `_check_worktree_consent_outcome` trigger gating asymmetry 无 docstring 解释 → future maintainer 添加 trigger gate 会 silent break direct evidence)| Important | Sonnet code_quality(§1.3.3 maintainability)| §1.3.3 验证有效 — 跨函数 design intent 需 docstring 显式记录 |
+| P1 I-2 enum cross-ref 无 machine-check + M-1 has_path 公式 non-obvious + M-2 already_isolated valid positive test 缺 + M-3 fixture docstring 未更新 | Important + Minor | Sonnet code_quality | §1.3.3 + §1.3.4 + §1.4.1 综合;sync drift / silent failure / test coverage gap |
+
+**Lesson reinforce / new pattern surfaced**:
+
+- **Pattern A reinforced**(沿 Case 2):**Sonnet code_quality 是 silent failure 抓手** — 两 phase 6 issues 全部 Sonnet code_quality 抓出;Haiku spec_reviewer 全 spec compliant(8/9 + 9/9)但完全看不见 maintainability / structural 缺陷
+- **Pattern B 新 — sister-file fence test sync drift**(P0 I-1):多 sister command md 文件含 IDENTICAL section body 时,无 fence 强 equality → maintainer 改一不改另一 silent 协议分裂。**Mitigation pattern**:加 fence 函数 extract 各文件 section + character-level equality assert(15 LOC 即可);本 change inline-fix 加 `test_preflight_worktree_section_bodies_identical` fence 实例
+- **Pattern C 新 — fence design intent docstring gap**(P1 I-1):跨 fence 函数的 trigger gating asymmetry(structural vs semantic)若无 docstring 显式记录,future maintainer "看 fence A 有 trigger gate,fence B 也加一致" 会 silent break original design。**Mitigation pattern**:asymmetric 设计必含 "Asymmetry note" docstring 段说明 why
+- **Pattern D 新 — controller inline fix > round 2 dispatch threshold**:P0 + P1 共 11 issues 全 controller inline fix;无一项 round 2 dispatch — 实证 sister skill §3.3 inline fix 决策框架对 docstring/comment/trivial test 类 issue 100% applicable(round 2 dispatch ~$0.30 + 5min wall-clock + 引入新错误风险 vs inline 30s + ~free)
+
+**Cost vs all-Opus alternative**:P0+P1 实际 $0.63 vs 全 Opus 估 $4-6 → 节省 ~$3-5 same quality(沿 Case 1 验证 9.5x reduction)。
+
+**§6 catalog new row**(Q4 + new pattern surfaced):
+
+| Subagent failure mode | Pattern that prevents | Case studies reproducing |
+|---|---|---|
+| **sister-file fence test sync drift**(多 sister command md 文件 IDENTICAL section body,无 fence 强 equality → silent protocol divergence)| Add fence 函数 extract sister files section + character-level equality assert(15 LOC pattern)| Case 3 P0 |
+| **fence design intent docstring gap**(asymmetric trigger gating 无 docstring 显式记录 → future maintainer 加 trigger gate 一致化 silent break)| Asymmetric 设计必含 "Asymmetry note" docstring 段说明 why | Case 3 P1 |
+
+**§3.4 Retrospect verdict per phase**:
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P0 | No | No(implementer 准确;cross-verify 吻合)| **Yes**(3 inline fix:I-1+I-2+m-1)| **Yes**(sister-md sync drift)| No | No(sonnet 选择正确;Haiku spec compliance 8/8)| **Add case** — Q3 + Q4 |
+| P1 | No | No | **Yes**(5 inline fix:I-1+I-2+M-1+M-2+M-3)| **Yes**(fence design intent docstring gap)| No | No(model 矩阵全正确;Sonnet code_quality 抓有效)| **Add case** — Q3 + Q4 |
+
+### Case 2: ForgeUE / enhance-workflow-automation-executable-enforcement / P5.5
+
+**Date**:2026-05-05
+**Project context**:Workflow tooling change — v2 e2e integration test fixture(`tests/integration/test_v2_e2e_synthetic_change.py` 946 LOC + 11 tests);archive 必过 gate(D-W4-IntegrationGate)
+
+**Subagent dispatch**(Type 1 3-stage,model 矩阵 P5.5 — Sonnet × 3):
+
+| Subagent | Scenario subtype(§1.X.Y)| Model | $cost | Verdict |
+|---|---|---|---|---|
+| implementer | §1.4.2 integration test(cross-module mock + edge case + multi-tool integration)| Sonnet | $0.80 | ✅ DONE |
+| spec_reviewer | §1.2.1 string matching(11 test names + W1/W2/W3/finish_gate coverage matrix)| Sonnet | $0.40 | ✅ Spec compliant |
+| code_quality_reviewer | §1.3.4 runtime correctness + §1.3.3 maintainability | Sonnet | $0.30 | ⚠️ Approved with concerns(2 Important + 3 Minor — 全 controller inline fix) |
+
+**Real issues caught / failed**:
+
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+| **`test_e2e_finish_gate_v2_fences_pass_synthetic_evidence` vacuous PASS**:assertion 用 `assert pattern not in stdout`,但 finish_gate early-abort on missing required evidence(verify_report / doc_sync_report / 14+ blockers),v2 fence 永远不被评估,vacuous PASS | **Important(silent failure pattern)** | Sonnet code_quality(§1.3.4 runtime correctness)| 验证 §1.3.4 Sonnet 不可省 — 抓 silent vacuous 类 bug;Haiku 看不出 |
+| `test_e2e_w2_parallel_actual_overlap_detected` self-fulfilling abort log assertion(test 自己写 file 然后 assert file 存在)| Important(test design anti-pattern)| Sonnet code_quality | 同上 |
+| 3 Minor:13 字段 comment 错(实际 12 顶层)/ test case 番号 skip / `_mock_agent_id` 18→17 chars 自相矛盾 + magic number | Minor | Sonnet code_quality | 沿 §3.3 inline fix |
+
+**Lesson reinforcement / new patterns surfaced**:
+
+- **Pattern 1 + Pattern 4 reinforced**:Sonnet 矩阵 P5.5 model 选择正确(implementer + reviewer 全 Sonnet,§1.4.2 integration test 复杂度匹配);Sonnet code_quality 抓的 vacuous PASS 是 Haiku 看不见的(§1.3.4 必须 Sonnet)。
+- **NEW pattern surfaced — Black-box pipeline test vacuous PASS**:integration test subprocess invoke 完整 pipeline 工具(如 finish_gate),工具 early-abort 时 fence 评估被 skip,导致 negative assertion("pattern absent")vacuous PASS。**Mitigation**:integration test 应用 unit-style import + 直接 call 目标 fence 函数(而非 subprocess 黑盒),或合成 ALL required evidence 让 pipeline 全跑(成本高)。本 case 选 unit-style import recovery;同款 fix 适用任何 pipeline-level integration test design。
+- **Pattern 2 验证有效**:STRICT cwd verify section 在 prompt 中,implementer commit 落 worktree branch ✅(对比 Case 1 P3 leak);说明 prompt cwd verify section + 强语气("STOP report NEEDS_CONTEXT")在 Sonnet implementer 上表现可靠(Haiku P3 leak 是 model 因素,非 prompt 因素)。
+- **Pattern 6 reinforced**:5 issues 全 controller inline fix(2 Important + 3 Minor)— 包括 I-1 的复杂重构(从 subprocess 黑盒 → unit-style import)~30 LOC change cost ~5 min controller token vs round 2 Sonnet dispatch ~$0.50 + ~5 min wall-clock + 风险新错误。**Inline fix ROI 高于 round 2 dispatch when fix is mechanical / well-scoped**。
+
+**Cost vs all-Opus alternative**:P5.5 实际 $1.50(Sonnet × 3 + retrospect Opus $0.50)vs 全 Opus 估 $8-12 → 节省 ~$6-10。
+
+**§6 catalog new row**(沿 Q4 + new pattern surfaced):
+
+| Subagent failure mode | Pattern that prevents | Case studies reproducing |
+|---|---|---|
+| **black-box pipeline test vacuous PASS**(integration test 用 subprocess 黑盒调 pipeline 工具,工具 early-abort 时 fence 评估 skip,negative assertion vacuous PASS) | §1.3.4 mandatory Sonnet code_quality + §3.2 cross-verify(不只看 returncode 也看 stdout 内容)+ test design 优先 unit-style import vs black-box subprocess(若合成全 dependency 不可行) | Case 2 P5.5 |
+
+### Case 1: ForgeUE / enhance-workflow-automation-executable-enforcement / P0-P3
+
+**Date**:2026-05-05
+**Project context**:Workflow tooling change — 4 phases × 不同 task subtype
+
+**Subagent dispatch**:
+
+| Phase | Subagent | Scenario subtype | Model | $ | Verdict |
+|---|---|---|---|---|---|
+| P0 | implementer | §1.1.3 multi-file integration(584 LOC wrapper) | Opus(误)| ~$2.50 | ✅ |
+| P0 | spec_reviewer | §1.2.1 string matching | Opus(误)| ~$2.10 | ✅ |
+| P0 | code_quality | §1.3.4 runtime correctness | Opus(误)| ~$1.30 | ✅ |
+| P1 | implementer | §1.1.1 mechanical(plan 含完整 code) | Haiku | $0.14 | ✅ |
+| P1 | spec_reviewer | §1.2.3 cross-phase reasoning(误用 Haiku)| Haiku | $0.13 | ❌ scope-bleed → controller override |
+| P1 | code_quality | §1.3.4 runtime correctness | Sonnet | $0.25 | ✅ |
+| P2 | implementer | §1.1.3 multi-file integration | Sonnet | $0.83 | ✅ |
+| P2 | spec_reviewer | §1.2.1 string matching | Haiku | $0.15 | ❌ 幻觉 URL + 错 pytest count → controller cross-verify override |
+| P2 | code_quality | §1.3.3 maintainability + §1.3.4 runtime | Sonnet | $0.32 | ✅ caught sync drift risk |
+| P3 | implementer | §1.1.2 pattern-matching(markdown lint) | Haiku | $0.22 | ❌ worktree leak + 自我幻觉 → cherry-pick + cross-verify recovery |
+| P3 | spec_reviewer | §1.2.1 string matching(strict prompt) | Haiku | $0.13 | ✅ |
+| P3 | code_quality | §1.3.4 runtime correctness | Sonnet | $0.27 | ✅ caught 2 bug(f-string + IMPL_FILES_JSON silent fail) |
+
+**Real issues caught / failed**:
+
+| Issue | Severity | Caught by | Scenario subtype 验证 |
+|---|---|---|---|
+| P0 cost 6.7x over budget | High | Cost retrospect | §1.1.3 应是 Sonnet 而非 Opus(over-tier) |
+| P1 spec_reviewer scope-bleed | Important | Controller override | §1.2.3 cross-phase 必须 Sonnet,§1.2.1 strict prompt 不够时 Haiku 失败 |
+| P2 spec_reviewer 幻觉 URL + 错 count | Important | Controller cross-verify(§3.2)| §1.2.1 即使 string matching 也需 §2.6 三条(enumerated / pre-condition / enumerated output) |
+| P3 implementer cwd leak | **Critical** | Controller `git log dev`(§3.2)| §3.1 STRICT cwd verify 即使写在 prompt 也可能被 subagent 跳过 — 无 prevention,只有 detection + §4.1 recovery |
+| P3 implementer 自我幻觉 | High | Controller verify 实际 file 内容(§3.2)| §2.6 三条之外 + §3.2 cross-verify 必跑 |
+| P3 f-string assert message bug | Important | Sonnet code_quality(§1.3.4)| §1.3.4 runtime correctness 不可降级 Haiku |
+| P3 IMPL_FILES_JSON silent fail | **Important** | Sonnet code_quality(§1.3.4)| 同上;Haiku reviewer 看不出 silent failure |
+
+**Lesson**:
+- **§1.3.4 runtime correctness 不可省 + 不可降级**:P3 实证 — Sonnet 抓 2 个 silent fail bug,Haiku implementer + Haiku spec_reviewer 都漏。
+- **§1.2.3 cross-phase reasoning 必 Sonnet**:P1 教训 — 不能用 Haiku 做跨 phase 判断。
+- **§2.6 三条 + §3.2 cross-verify 是 cheap model 高质量的 floor**:P2 教训 — 即使 §1.2.1 string matching 任务,无 §2.6 enumerated 元素 + 无 §3.2 controller 兜底,Haiku 仍幻觉。
+- **§3.1 STRICT cwd verify 是 detection 不是 prevention**:P3 教训 — prompt 写 STOP NEEDS_CONTEXT 不够,subagent 仍可能跳过;controller 必须 §3.2 cross-verify branch + §4.1 cherry-pick 兜底。
+- **Cost framework 验证**:P0 全 Opus $5.90 vs P3 矩阵 $0.62(same task type complexity)→ **9.5x cost reduction**。
+
+**ADR-013 scope-down note**(2026-05-06,sister change `restore-superpowers-worktree-consent-gate` ship 后):本 case P3 implementer worktree leak incident 在 ADR-013 default decline 协议下**不会触发** — implementation 期 default `worktree_consent_outcome: declined` + `worktree_mode: in_place`,直接走 main repo cwd,无 worktree-scope leak 风险物理面。本 case study 留作 historical reference;在 user opt-in worktree(bug-fix iteration / explicit isolation;`accepted + {skill,wrapper}_worktree`)时 §3.1 STRICT cwd verify + §4.1 cherry-pick recovery 仍 relevant。
+
+**Cost vs all-Opus**:P1+P2+P3 实际 $2.44 vs 全 Opus 估 $15-25 → 节省 ~$15-22 same quality。
+
+**New scenario subtype surfaced**:无 — 28 子类(§1)在 P0-P3 实证全覆盖。
+
+**§3.4 Retrospect verdict per phase**(retroactively applied;若当时跑 retrospect 会触发 skill update 哪些):
+
+| Phase | Q1 outside §1.X.Y? | Q2 hallucinate? | Q3 controller intervention? | Q4 new failure mode? | Q5 new subtype? | Q6 model misconfig? | Decision |
+|---|---|---|---|---|---|---|---|
+| P0 | No | No | No | No | No | **Yes**(全 Opus 应 Sonnet)| **Add case** — Q6 触发 |
+| P1 | No | No(implementer 干净)| **Yes**(spec_reviewer override)| No | No | **Yes**(spec_reviewer §1.2.3 误用 Haiku)| **Add case** — Q3 + Q6 |
+| P2 | No | **Yes**(spec_reviewer 幻觉 URL)| **Yes**(controller cross-verify override)| No | No | **Yes**(spec_reviewer §1.2.1 缺 §2.6 floor 元素)| **Add case** — Q2 + Q3 + Q6 |
+| P3 | No | **Yes**(implementer 自我汇报错)| **Yes**(cherry-pick + 2 inline fix)| **Yes**(worktree leak first time observed in this skill's history)| No | **Yes**(implementer §1.1.2 cwd discipline 不够)| **Add case** — Q2 + Q3 + Q4 + Q6 |
+
+**结论**:**4/4 phase 全 trigger skill update**(P0-P3 都有 issue) — 这就是 Case 1 存在的原因。若任一 phase 全干净,该 phase 不需要单独 case 段(只在 lessons 段一笔带过)。
+
+**反例**(若 retrospect 全 No 会怎样):
+- 假设 P3 spec_reviewer 表现完全 within §1.2.1 expectation + 无 hallucination + 无 controller intervention → §3.4 Q1-Q6 全 No → **不加这一行 case study**;只在 lesson 段写 "P3 spec_reviewer 验证 §2.2 strict prompt 有效,无新观察"。这避免 skill 被无 issue 的 phase 噪声充斥。
+
+---
+
+## §6 Pattern Catalog(failure mode → scenario subtype + recovery)
+
+| Subagent failure mode | Root cause(scenario subtype 误配)| Prevention | Recovery |
+|---|---|---|---|
+| over-cost(默认继承 Opus) | §1 model 选择缺 / 全 Opus 默认 | §1 显式 model + dispatch 时传 `model:` 参数 | 无(commit 已发生 cost) |
+| spec_reviewer scope-bleed | §1.2.3 cross-phase 任务用 Haiku | §1.2.3 升 Sonnet OR §2.2 phase boundary 段 | controller override verdict |
+| 幻觉 URL / pytest count | §1.2.x reviewer 任务无 §2.6 三条 | §2.2 pre-verified data + enumerated list | §3.2 cross-verify 命令 |
+| worktree-scope leak | §3.1 STRICT cwd 写 prompt 但被跳过 | §3.1 + §3.2 branch verify | §4.1 cherry-pick recovery |
+| 自我汇报幻觉 | subagent 输出 trust 过度 | §3.2 cross-verify 必跑 | §3.2 5 类 verify 命令 |
+| 静态 review 漏 runtime correctness | §1.3.4 误用 Haiku 替代 Sonnet | §1.3.4 MANDATORY Sonnet | controller catches downstream / Sonnet code_quality 必跑 |
+| **sister-file fence test sync drift**(多 sister command md 文件 IDENTICAL section body,无 fence 强 equality)| §1.3.3 multi-file maintainability 漏 — 缺 cross-file equality fence | Add fence 函数 extract sister files section + character-level equality assert(15 LOC pattern)| controller inline-fix 加 fence(沿 Case 3 P0 实例) |
+| **fence design intent docstring gap**(asymmetric trigger gating 无 docstring 解释)| §1.3.3 maintainability 漏 — design intent 不显式 | Asymmetric 设计必含 "Asymmetry note" docstring 段 | controller inline-fix 加 docstring(沿 Case 3 P1 实例) |
+| **Haiku code_quality false-positive on fixture-cross-module-trace tasks**(reviewer 任务需追踪 fixture / helper 跨多文件语义,Haiku confident 但 trace 错)| §1.3.X model 误用 — Haiku 替代 Sonnet 在 fixture-trace 类任务 | 任何 review 涉及 trace fixture / helper / 跨模块语义 → §1.3.3/§1.3.4 Sonnet MANDATORY;controller dispatch 前问"reviewer 需 trace 多少文件 / fixture?"超 1 文件即升 Sonnet | controller override reviewer verdict + 沿 §3.2 cross-verify(沿 Case 4 P1 实例) |
+| **phase-commit hygiene 缺失 → reviewer working-tree diff misattribution**(controller 没在 phase 完成后 commit,reviewer 看 `git diff` 把上 phase 改动归给本 phase)| §7 controller workflow 漏 — phase 间未 commit | 每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer;reviewer prompt 明示 "diff base = 上 phase commit SHA" | controller override boundary verdict + 补 commit phase boundary(沿 Case 4 P2 实例) |
+| **`git stash` 不能 revert 已 commit baseline drift**(verify task 用 stash 验证 "pre-existing",但 stash 仅暂存 working-tree;已 commit drift 不在 stash scope)| §1.7.2 verify task 缺 baseline 区分协议 | 用 `git diff <plan-stage-commit>~..<plan-stage-commit> -- <suspect-file>`;dispatch prompt 给 plan stage commit SHA + 明示 "baseline 必早于 plan stage commit" | controller 自检 catch self-drift + 修 frontmatter(沿 Case 4 P3 实例) |
+| **Subagent prefers workaround over root-cause-fix when prompt says append-only / 不改既有 helper**(append-only 强约束副作用;workaround 路径包括降阈值 / 加 dup helper / 留 dead-code 仅自披露)| Implementation 任务 § (§1.1.1 / §1.1.2 / §1.1.3)dispatch prompt 显式分支:"遇 implementation limitation(regex 不 match / parser body bleed / fence dead-code)优先 fix root cause(扩既有 helper / 改 regex);只有 root cause fix 超本 phase scope(影响其他 phase / cross-cutting refactor)才 workaround + disclose + 留 follow-on" | controller dogfood + inline fix(沿 Case 5 P2.f/P2.g/P2.h 实例) |
+
+---
+
+## §7 How to Use This Skill
+
+### Controller dispatch 前(每次):
+1. **判定 task subtype**:read §1 找 §1.X.Y 行
+   - **重要**:若 code_quality review 涉及 trace fixture / helper / 跨模块语义 → 视为 §1.3.3/§1.3.4(Sonnet MANDATORY),**不可**降级 §1.3.1 style nits(沿 Case 4 P1 Pattern E)
+2. **选 model**:用 §1 表的 model 列(若 cheap-model row,read §2 playbook 验证 pre-condition 满足)
+3. **写 dispatch prompt**:用 §2 X playbook 的 prompt 模板 + §3.1 STRICT cwd
+4. **显式传 `model:` 参数**(否则 inherit 父 session model — Pattern catalog 第 1 行 failure mode)
+5. **Phase-commit hygiene**(Type 1 3-stage workflow):每 phase 完成后 controller MUST `git commit` phase artifacts,然后再 dispatch 下 phase reviewer;reviewer prompt 明示 "diff base = 上 phase commit SHA"(沿 Case 4 P2 Pattern F);否则 reviewer 看 working-tree 累积 diff 会误归 attribution
+6. **Verify task baseline SHA**(§1.7.2):若 dispatch verify task 验证某 fail "pre-existing",prompt MUST 给 plan stage commit SHA + 明示用 `git diff <plan-stage-commit>~..<plan-stage-commit>` 区分,**不**接受 implementer 用 `git stash` 验证 baseline(沿 Case 4 P3 Pattern G)
+
+### Controller 收 return 后:
+1. **跑 §3.2 cross-verify**(测试 count / commit SHA / branch / spec strings)
+2. **若 reviewer 出 issues** → §3.3 inline fix vs round 2 决策
+3. **若 worktree leak detected** → §4.1 cherry-pick recovery
+
+### Subagent dispatch 完成后(MANDATORY by Trigger Type):
+1. **判定 Trigger Type**(§3.4.0 matrix:1 = 3-stage / 2 = parallel / 3 = standalone Task / 4 = ad-hoc research / 5 = codex CLI)
+2. **跑对应 retrospect**:
+   - Type 1 / 2 → MANDATORY full Q1-Q6(Type 2 加 Q7);Opus actor
+   - Type 3 → Light Q2 + Q3 + Q4;Opus 或 Sonnet
+   - Type 4 → Skip retrospect;仅 §3.2 cross-verify
+   - Type 5 → 不在本 skill scope;沿 codex 自家 protocol + §3.2 cross-verify
+3. **若 retrospect 全 No** → SKIP skill update,silent pass
+4. **若 retrospect 任一 Yes** → §3.4 Decision Tree 触发 skill update:
+   - 加 §5 Case <NN+1>(MANDATORY;标 Trigger Type + scenario §1.X.Y)
+   - 视情况追加 §6 catalog row(若 new failure mode)
+   - 视情况追加 §1.X.Y row + §2 playbook(若 new scenario subtype)
+   - Update frontmatter `case_study_count` / `scenario_subtype_count`
+
+---
+
+## §8 How to Update This Skill(growing 协议)
+
+本 skill 设计为**living document**:§1 scenario taxonomy + §2 playbook 是 stable 上层;§5 case studies + §6 catalog 是 growing 下层。**增长触发由 §3.4 Post-Phase Quality Retrospect 强制**(Opus retrospect 找到 issue 才加;无 issue 不加,避免噪声)。
+
+### 新 case study 添加(MANDATORY 当 §3.4 retrospect 任一 Yes)
+1. Append §5 用 Case <NN+1> 模板
+2. Update frontmatter `case_study_count`(N → N+1)
+3. 若新 failure mode → §6 catalog 加 row
+
+### Case study 不加(SKIP — §3.4 retrospect 全 No)
+1. **不**加 §5 — phase 表现 within §1 expectation,加 case 是噪声
+2. **不**改 frontmatter
+3. Phase silent pass — skill 不变
+
+**Anti-pattern**:看到 phase 完成就反射式加 case study(无论质量)→ 信号噪声 ratio 降低;case studies 失去 "real failure 沉淀" 价值
+
+### 新 scenario subtype 添加(rare;只在 §1 28 子类不覆盖 new task type 时)
+1. 决定加在 §1.X 哪类下(implementation / spec review / code quality / test / doc / debug / verification / 新类)
+2. 加 §1.X.Y row(特征 + model + WHY + 必备 prompt 元素)
+3. 加 §2.X playbook 段(若 cheap-model 适用)
+4. Update frontmatter `scenario_subtype_count`(28 → 29)
+
+### Model tier 调整(model lineup 变化时,~1-2 年一次)
+- §1 表 model 列调整(e.g. Anthropic 出 Codex 5 / 不同 pricing)
+
+### Skill meta-review(每 ~10 case studies 或某 scenario 实证 ≥5 case 强化)
+- 是否某 scenario subtype 提升优先级 / 加边界
+- 是否 case studies 暴露 systemic gap(超出 controller-side 范围;需更新 superpowers 上游 skill)
+- 是否 §1 taxonomy 该重新分组
+
+---
+
+## §9 Relation to superpowers:subagent-driven-development
+
+本 skill 与 `superpowers:subagent-driven-development` 是 **sister skills**:
+
+| superpowers:subagent-driven-development | 本 skill |
+|---|---|
+| **Generic process scaffold**(per-task 3-stage:implementer + spec_reviewer + code_quality_reviewer + final_reviewer)| **Scenario-specific judgment**(§1 taxonomy:每 task subtype → model + WHY + cheap-model playbook) |
+| Generic prompt templates(implementer-prompt.md / spec-reviewer-prompt.md / code-quality-reviewer-prompt.md)| §2 strict prompt elements(per scenario:必含元素 + pre-condition + failure mode if skipped) |
+| Loose 3-tier model selection(cheap / standard / most-capable + "files touched" signal)| §1 28-subtype × model tier matrix(细分 task subtype → 具体 model + WHY) |
+| Status handling(DONE / DONE_WITH_CONCERNS / BLOCKED / NEEDS_CONTEXT)| §3.3 controller decision(inline / round 2 / 升级 user)|
+| Red Flags(don't dispatch parallel implementers / subagent 不读 plan 文件) | §3.1 STRICT cwd verify(防 worktree leak — 红 flag 之外的实证)+ §3.2 cross-verify |
+| Continuous execution discipline | §3.2 cross-verify 5 类 claim(防 self-hallucination)|
+| (无 cost guidance)| §1 model 列每 row 含 cost tier;§4.2 mid-phase upgrade trigger |
+| (无 recovery flow)| §4.1 cherry-pick recovery |
+| (无 skip 边界)| §1.5.1 + §1.7.1 显式列 direct/no-subagent 场景 |
+
+**真源**:`superpowers:subagent-driven-development`。本 skill **不复制不重写** 上游 prompt 模板;只补 controller-side scenario judgment。

@@ -18,10 +18,12 @@ multiple steps at once (DAG fan-out), they're launched concurrently via
 from __future__ import annotations
 
 import asyncio
+import logging
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from framework.artifact_store import ArtifactRepository
 from framework.artifact_store.hashing import hash_inputs
@@ -47,9 +49,28 @@ from framework.runtime.budget_tracker import (
 )
 from framework.runtime.failure_mode_map import classify as classify_failure
 from framework.runtime.failure_mode_map import synthesise_verdict as synth_failure_verdict
+from framework.runtime.lifecycle import ExternalProcessLifecycle
+from framework.runtime.managed_process_registry import (
+    ManagedProcessOwnerKey,
+    ManagedProcessRegistry,
+    ManagedProcessSelection,
+    build_default_managed_process_registry,
+)
 from framework.runtime.scheduler import Scheduler
 from framework.runtime.transition_engine import TransitionEngine
 
+
+# cascade-cancel drain 超时上限(秒)。
+# 原生 async executor 的 CancelledError 通常在微秒内传播;
+# 设为 30s 给含外部 I/O 清理的 executor(如 ComfyUI subprocess)足够时间。
+# 超时视为清理卡死 → 显式失败,不静默丢弃。
+_CASCADE_DRAIN_TIMEOUT_S: float = 30.0
+
+# lifecycle release 超时上限(秒)。
+# _spawn_stop 通过 factory_v3 stop 子命令停止 ComfyUI;
+# 正常情况下几秒完成,设为 30s 给含外部进程通信足够时间。
+# 超时后 _release_lifecycle_bounded 记录失败留痕,不遮蔽调用方原始异常。
+_RELEASE_TIMEOUT_S: float = 30.0
 
 class DryRunFailed(RuntimeError):
     def __init__(self, report: DryRunReport) -> None:
@@ -78,6 +99,7 @@ class Orchestrator:
         scheduler: Scheduler | None = None,
         transition_engine: TransitionEngine | None = None,
         dry_run_pass: DryRunPass | None = None,
+        managed_process_registry: ManagedProcessRegistry | None = None,
         max_loop: int = 64,
     ) -> None:
         self.repository = repository
@@ -86,7 +108,19 @@ class Orchestrator:
         self.scheduler = scheduler or Scheduler()
         self.transitions = transition_engine or TransitionEngine()
         self.dry_run = dry_run_pass or DryRunPass()
+        self.managed_process_registry = (
+            managed_process_registry or build_default_managed_process_registry()
+        )
         self._max_loop = max_loop
+        # self_managed_session 模式下按 provider identity 跨 arun 复用 lifecycle。
+        # 其他模式下不进 map(per-arun lifecycle 仅在 arun 局部变量中存在)。
+        self._self_managed_lifecycles: dict[
+            ManagedProcessOwnerKey, ExternalProcessLifecycle
+        ] = {}
+        # 兼容既有测试 / 调试入口:指向第一个 self_managed_session lifecycle。
+        self._lifecycle: ExternalProcessLifecycle | None = None
+        # aclose() 中 release 失败时的留痕记录(dict 或 None)
+        self._lifecycle_release_failed: dict | None = None
 
     def _compute_run_dir(self, run: Run) -> Path:
         """Resolve the canonical artifact-tree directory for this run.
@@ -123,6 +157,86 @@ class Orchestrator:
             )
         return Path(root) / run.run_id
 
+    # ---- lifecycle 辅助方法 -------------------------------------------------
+
+    def _detect_managed_process(
+        self,
+        steps: list[Step],
+    ) -> ManagedProcessSelection | None:
+        """通过 registry 选择需要托管的外部进程 lifecycle。"""
+        return self.managed_process_registry.select(steps)
+
+    async def _release_lifecycle_bounded(
+        self,
+        manager: ExternalProcessLifecycle,
+        mode: str,
+        reason: str,
+        sink: Callable[[dict], None],
+    ) -> None:
+        """有界且非遮蔽的 lifecycle release。
+
+        参数:
+            manager: 待 release 的 ExternalProcessLifecycle 实例
+            mode:    lifecycle 模式(ensure_running / ensure_release / self_managed_session)
+            reason:  释放原因(run_end / cascade / arun_cancel / arun_error / orchestrator_close)
+            sink:    失败留痕回调;接收 dict,写入 run.metrics 或 self 属性
+
+        使用 asyncio.shield 保护 release coroutine 不被外部 cancellation 中断,
+        再用 asyncio.wait_for 设置超时上限:
+        - 超时(TimeoutError)或其他异常 → 调用 sink 留痕 + 记录 warning 日志,不 re-raise
+        - release 正常完成 → 无额外操作
+        """
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(manager.release(mode, reason)),
+                timeout=_RELEASE_TIMEOUT_S,
+            )
+        except BaseException as exc:
+            payload = {"mode": mode, "reason": reason, "error": repr(exc)}
+            sink(payload)
+            logging.getLogger(__name__).warning(
+                "lifecycle release failed: mode=%s reason=%s error=%r",
+                mode, reason, exc,
+            )
+            # 不 re-raise:保留调用方原始异常 / cancellation 不被遮蔽
+
+    async def aclose(self) -> None:
+        """释放 Orchestrator 持有的 self_managed_session lifecycle manager。
+
+        应在所有 arun 调用完成后调用(例如通过 async with 上下文管理器)。
+        release 超时或失败时不抛出异常,失败留痕写入 self._lifecycle_release_failed。
+        """
+        if self._self_managed_lifecycles:
+            # self_managed_session 的 mode 固定为 "self_managed_session"。
+            mode = "self_managed_session"
+            managers = list(self._self_managed_lifecycles.values())
+            self._self_managed_lifecycles.clear()
+            self._lifecycle = None
+            for manager in managers:
+                await self._release_lifecycle_bounded(
+                    manager, mode, "orchestrator_close",
+                    sink=lambda d: setattr(self, "_lifecycle_release_failed", d),
+                )
+        elif self._lifecycle is not None:
+            # 向后兼容:若外部测试直接塞入 _lifecycle,仍按旧路径释放。
+            manager = self._lifecycle
+            mode = "self_managed_session"
+            self._lifecycle = None
+            await self._release_lifecycle_bounded(
+                manager, mode, "orchestrator_close",
+                sink=lambda d: setattr(self, "_lifecycle_release_failed", d),
+            )
+
+    async def __aenter__(self) -> "Orchestrator":
+        """支持 async with 语法:返回 self。"""
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """退出上下文时调用 aclose() 释放资源。不遮蔽原始异常。"""
+        await self.aclose()
+
+    # ---- 同步/异步入口 -------------------------------------------------------
+
     def run(
         self,
         *,
@@ -157,7 +271,8 @@ class Orchestrator:
         dr_report: DryRunReport | None = None
         if not skip_dry_run:
             with span("dry_run", {"run_id": run_id, "workflow_id": workflow.workflow_id}):
-                dr_report = self.dry_run.run(task=task, workflow=workflow, steps=steps)
+                # Step 6: DryRunPass.run 已改为 async def,必须 await
+                dr_report = await self.dry_run.run(task=task, workflow=workflow, steps=steps)
             if not dr_report.passed:
                 raise DryRunFailed(dr_report)
 
@@ -175,6 +290,34 @@ class Orchestrator:
             trace_id=trace_id or f"trace_{run_id}",
         )
         result = RunResult(run=run, dry_run=dr_report)
+
+        # ── lifecycle 检测与选择 ─────────────────────────────────────────
+        # Orchestrator 只依赖 registry 返回的通用 lifecycle,不关心具体 provider。
+        lc_selection = self._detect_managed_process(steps)
+        lc_mode = lc_selection.mode if lc_selection is not None else None
+        # per_arun_lifecycle:仅对本次 arun 生命周期负责(非 self_managed_session 模式)。
+        per_arun_lifecycle: ExternalProcessLifecycle | None = None
+
+        if lc_selection is not None:
+            if lc_mode == "self_managed_session":
+                # self_managed_session:按 provider identity 跨 arun 复用 lifecycle。
+                owner_key = lc_selection.owner_key()
+                active_manager = self._self_managed_lifecycles.get(owner_key)
+                if active_manager is None:
+                    active_manager = lc_selection.lifecycle
+                    self._self_managed_lifecycles[owner_key] = active_manager
+                    if self._lifecycle is None:
+                        self._lifecycle = active_manager
+            else:
+                # ensure_running / ensure_release:每次 arun 使用本次 selection 的 lifecycle。
+                per_arun_lifecycle = lc_selection.lifecycle
+                active_manager = per_arun_lifecycle
+            # 注意:ensure() 调用移至 try 块内部(see Important-1 fix)
+            # lifecycle 选择在 try 外;ensure() 可能抛出异常
+            # 须由 finally 兜底 release,否则 _spawn_serve() 后泄漏进程
+        else:
+            active_manager = None
+        # ──────────────────────────────────────────────────────────────────
 
         run_span_ctx = span("run", {"run_id": run_id, "workflow_id": workflow.workflow_id,
                                       "task_id": task.task_id, "run_mode": task.run_mode.value})
@@ -200,158 +343,220 @@ class Orchestrator:
         current: str | None = prepared.entry_step_id
         hops = 0
 
-        while current is not None and not terminated:
-            hops += 1
-            if hops > self._max_loop:
-                run.status = RunStatus.failed
-                run.metrics["halt_reason"] = "max_loop_exceeded"
-                break
+        # release reason 变量:在各退出路径中设置,finally 统一读取
+        # 可能取值:"run_end" / "cascade" / "arun_cancel" / "arun_error"
+        release_reason: str = "run_end"
+        try:
+            # ensure() 在 try 内:失败时 except BaseException 设置 arun_error,
+            # finally 统一调用 release(保证进程不泄漏)
+            if active_manager is not None:
+                assert lc_mode is not None
+                await active_manager.ensure(lc_mode)
+            while current is not None and not terminated:
+                hops += 1
+                if hops > self._max_loop:
+                    run.status = RunStatus.failed
+                    run.metrics["halt_reason"] = "max_loop_exceeded"
+                    break
 
-            # Linear fast path (also the default path when dag_mode is off).
-            # Identical semantics to the pre-Plan-C sync orchestrator —
-            # revise loops, checkpoint cache, budget termination all work the
-            # same; difference is `await asyncio.to_thread(executor.execute)`
-            # so the event loop stays free.
-            if not dag_mode:
-                outcome = await self._aexec_one(
-                    step=step_map[current], task_obj=task, workflow=workflow,
-                    run=run, run_id=run_id, result=result,
-                    budget_tracker=budget_tracker,
-                    produced_ids_per_step=produced_ids_per_step,
-                    pending_revision_hints=pending_revision_hints,
-                    transitions=transitions,
-                )
-                if outcome.terminate:
-                    terminated = True
-                    current = None
-                else:
-                    current = outcome.next_step_id
-                continue
-
-            # DAG mode: track which steps are done so runnable_after works,
-            # and skip spine-advancement through already-done steps.
-            if current in pending_revision_hints and current in done:
-                done.discard(current)       # revise target must re-execute
-            if current in done:
-                prev = step_outcomes.get(current)
-                next_id = prev.next_step_id if prev else None
-                if next_id == current:
-                    # TransitionEngine emits `next_step_id == step_id` for
-                    # Decision.retry_same_step (and for step/fallback exits
-                    # without an explicit on_fallback). Linear mode honours
-                    # this by re-entering the execute path with the same
-                    # `current`; DAG mode must do the same — dropping from
-                    # `done` forces re-execution. The outer hops counter
-                    # (`max_loop`) still bounds total retries.
-                    done.discard(current)
-                else:
-                    current = next_id
-                    continue
-
-            ready_ids: set[str] = {current}
-            ready = self.scheduler.runnable_after(
-                completed=done, steps=all_steps_list,
-            )
-            for s in ready:
-                if s.step_id not in done and s.step_id not in ready_ids:
-                    ready_ids.add(s.step_id)
-
-            if len(ready_ids) == 1:
-                outcome = await self._aexec_one(
-                    step=step_map[current], task_obj=task, workflow=workflow,
-                    run=run, run_id=run_id, result=result,
-                    budget_tracker=budget_tracker,
-                    produced_ids_per_step=produced_ids_per_step,
-                    pending_revision_hints=pending_revision_hints,
-                    transitions=transitions,
-                )
-                done.add(current)
-                step_outcomes[current] = outcome
-                if outcome.terminate:
-                    terminated = True
-                    current = None
-                else:
-                    current = outcome.next_step_id
-                continue
-
-            # DAG fan-out — launch all ready concurrently.
-            tasks: dict[str, asyncio.Task] = {}
-            for sid in ready_ids:
-                tasks[sid] = asyncio.create_task(
-                    self._aexec_one(
-                        step=step_map[sid], task_obj=task, workflow=workflow,
+                # Linear fast path (also the default path when dag_mode is off).
+                # Identical semantics to the pre-Plan-C sync orchestrator —
+                # revise loops, checkpoint cache, budget termination all work the
+                # same; executors are now native async coroutines awaited
+                # directly on the event loop (no asyncio.to_thread wrapper).
+                if not dag_mode:
+                    outcome = await self._aexec_one(
+                        step=step_map[current], task_obj=task, workflow=workflow,
                         run=run, run_id=run_id, result=result,
                         budget_tracker=budget_tracker,
                         produced_ids_per_step=produced_ids_per_step,
                         pending_revision_hints=pending_revision_hints,
                         transitions=transitions,
-                    ),
-                    name=sid,
-                )
-
-            # Drain concurrently-running tasks with FIRST_COMPLETED so we
-            # cascade-cancel on EITHER a raised exception (classic) OR a
-            # `_StepOutcome(terminate=True)` — the latter is how
-            # `_aexec_one` reports budget-exceeded, classified provider
-            # failures, and transition-terminated verdicts. FIRST_EXCEPTION
-            # would only catch the first case and let siblings keep
-            # burning external calls after a run was already marked failed.
-            spine_next: str | None = None
-            first_exc: BaseException | None = None
-            cascade_terminate = False
-            pending_tasks: set[asyncio.Task] = set(tasks.values())
-            completed_outcomes: dict[str, _StepOutcome] = {}
-            try:
-                while pending_tasks:
-                    done_set, pending_tasks = await asyncio.wait(
-                        pending_tasks, return_when=asyncio.FIRST_COMPLETED,
+                        lifecycle_manager=active_manager,
                     )
-                    for t in done_set:
-                        sid = t.get_name()
-                        exc = t.exception()
-                        if exc is not None:
-                            if first_exc is None:
-                                first_exc = exc
-                            continue
-                        value = t.result()
-                        completed_outcomes[sid] = value
-                        if sid == current:
-                            spine_next = value.next_step_id
-                        if value.terminate:
-                            cascade_terminate = True
-                    if first_exc is not None or cascade_terminate:
-                        # Cancel siblings still running. We do NOT await the
-                        # cancelled tasks — sync executors in
-                        # `asyncio.to_thread` can't be interrupted, and
-                        # awaiting would block until the thread finishes
-                        # naturally (defeats fail-fast). The cancelled
-                        # futures finish in the background.
-                        for p in pending_tasks:
-                            p.cancel()
-                        pending_tasks = set()
-                        break
-            except asyncio.CancelledError:
-                for t in tasks.values():
-                    if not t.done():
-                        t.cancel()
-                raise
+                    if outcome.terminate:
+                        terminated = True
+                        current = None
+                    else:
+                        current = outcome.next_step_id
+                    continue
 
-            # Commit whatever completed before the cascade.
-            for sid, value in completed_outcomes.items():
-                step_outcomes[sid] = value
-                done.add(sid)
+                # DAG mode: track which steps are done so runnable_after works,
+                # and skip spine-advancement through already-done steps.
+                if current in pending_revision_hints and current in done:
+                    done.discard(current)       # revise target must re-execute
+                if current in done:
+                    prev = step_outcomes.get(current)
+                    next_id = prev.next_step_id if prev else None
+                    if next_id == current:
+                        # TransitionEngine emits `next_step_id == step_id` for
+                        # Decision.retry_same_step (and for step/fallback exits
+                        # without an explicit on_fallback). Linear mode honours
+                        # this by re-entering the execute path with the same
+                        # `current`; DAG mode must do the same — dropping from
+                        # `done` forces re-execution. The outer hops counter
+                        # (`max_loop`) still bounds total retries.
+                        done.discard(current)
+                    else:
+                        current = next_id
+                        continue
 
-            if first_exc is not None:
-                run_span_ctx.__exit__(
-                    type(first_exc), first_exc, first_exc.__traceback__,
+                ready_ids: set[str] = {current}
+                ready = self.scheduler.runnable_after(
+                    completed=done, steps=all_steps_list,
                 )
-                raise first_exc
+                for s in ready:
+                    if s.step_id not in done and s.step_id not in ready_ids:
+                        ready_ids.add(s.step_id)
 
-            if cascade_terminate:
-                terminated = True
-                current = None
-            else:
-                current = spine_next
+                if len(ready_ids) == 1:
+                    outcome = await self._aexec_one(
+                        step=step_map[current], task_obj=task, workflow=workflow,
+                        run=run, run_id=run_id, result=result,
+                        budget_tracker=budget_tracker,
+                        produced_ids_per_step=produced_ids_per_step,
+                        pending_revision_hints=pending_revision_hints,
+                        transitions=transitions,
+                        lifecycle_manager=active_manager,
+                    )
+                    done.add(current)
+                    step_outcomes[current] = outcome
+                    if outcome.terminate:
+                        terminated = True
+                        current = None
+                    else:
+                        current = outcome.next_step_id
+                    continue
+
+                # DAG fan-out — launch all ready concurrently.
+                dag_tasks: dict[str, asyncio.Task] = {}
+                for sid in ready_ids:
+                    dag_tasks[sid] = asyncio.create_task(
+                        self._aexec_one(
+                            step=step_map[sid], task_obj=task, workflow=workflow,
+                            run=run, run_id=run_id, result=result,
+                            budget_tracker=budget_tracker,
+                            produced_ids_per_step=produced_ids_per_step,
+                            pending_revision_hints=pending_revision_hints,
+                            transitions=transitions,
+                            lifecycle_manager=active_manager,
+                        ),
+                        name=sid,
+                    )
+
+                # Drain concurrently-running tasks with FIRST_COMPLETED so we
+                # cascade-cancel on EITHER a raised exception (classic) OR a
+                # `_StepOutcome(terminate=True)` — the latter is how
+                # `_aexec_one` reports budget-exceeded, classified provider
+                # failures, and transition-terminated verdicts. FIRST_EXCEPTION
+                # would only catch the first case and let siblings keep
+                # burning external calls after a run was already marked failed.
+                spine_next: str | None = None
+                first_exc: BaseException | None = None
+                cascade_terminate = False
+                pending_tasks: set[asyncio.Task] = set(dag_tasks.values())
+                completed_outcomes: dict[str, _StepOutcome] = {}
+                try:
+                    while pending_tasks:
+                        done_set, pending_tasks = await asyncio.wait(
+                            pending_tasks, return_when=asyncio.FIRST_COMPLETED,
+                        )
+                        for t in done_set:
+                            sid = t.get_name()
+                            exc = t.exception()
+                            if exc is not None:
+                                if first_exc is None:
+                                    first_exc = exc
+                                continue
+                            value = t.result()
+                            completed_outcomes[sid] = value
+                            if sid == current:
+                                spine_next = value.next_step_id
+                            if value.terminate:
+                                cascade_terminate = True
+                        if first_exc is not None or cascade_terminate:
+                            # 向所有仍在运行的兄弟任务发出取消信号。
+                            for p in pending_tasks:
+                                p.cancel()
+                            # 原生 async 后 CancelledError 打穿到 executor/worker 真正
+                            # 中断在飞工作。await 确认 sibling 真死;drain 超时是异常
+                            # 兜底 → 显式失败,绝不静默丢弃未停的 task。
+                            if pending_tasks:
+                                done_drain, still_pending = await asyncio.wait(
+                                    pending_tasks,
+                                    timeout=_CASCADE_DRAIN_TIMEOUT_S,
+                                )
+                                if still_pending:
+                                    # 清理卡死:记录卡住的 task 名称 + 标记失败。
+                                    # 不再尝试二次 cancel — 由调用方或进程退出清理。
+                                    stuck = sorted(t.get_name() for t in still_pending)
+                                    for t in still_pending:
+                                        t.cancel()
+                                    run.metrics["cancel_drain_timeout"] = stuck
+                                    run.status = RunStatus.failed
+                            pending_tasks = set()
+                            break
+                except asyncio.CancelledError:
+                    for t in dag_tasks.values():
+                        if not t.done():
+                            t.cancel()
+                    raise
+
+                # Commit whatever completed before the cascade.
+                for sid, value in completed_outcomes.items():
+                    step_outcomes[sid] = value
+                    done.add(sid)
+
+                if first_exc is not None:
+                    # F1 Round 2 fix:span exit 已统一移至 finally(沿 sys.exc_info());
+                    # 此处直接 raise,让 finally 路径关闭 span。
+                    raise first_exc
+
+                if cascade_terminate:
+                    # cascade 终止:通知 lifecycle 以 cascade reason release
+                    release_reason = "cascade"
+                    terminated = True
+                    current = None
+                else:
+                    current = spine_next
+
+        except asyncio.CancelledError:
+            # arun 被外部 cancel(如 asyncio.wait_for 超时)
+            release_reason = "arun_cancel"
+            raise
+        except BaseException:
+            # 未分类异常:设置 arun_error reason,finally 统一处理后 re-raise
+            release_reason = "arun_error"
+            raise
+        finally:
+            # ── 全路径 release:无论正常/cascade/cancel/异常都执行 ──────────
+            if per_arun_lifecycle is not None:
+                # per-arun lifecycle:本路径负责 release(恰好调用 1 次)。
+                await self._release_lifecycle_bounded(
+                    per_arun_lifecycle,
+                    lc_mode or "ensure_release",
+                    release_reason,
+                    sink=lambda d: run.metrics.__setitem__("lifecycle_release_failed", d),
+                )
+            elif active_manager is not None and lc_mode == "self_managed_session":
+                # self_managed_session:arun 内 release(run_end / cascade / cancel / error)
+                # 不触发 stop(由决策表控制);aclose() 再以 orchestrator_close 触发 stop
+                await self._release_lifecycle_bounded(
+                    active_manager,
+                    "self_managed_session",
+                    release_reason,
+                    sink=lambda d: run.metrics.__setitem__("lifecycle_release_failed", d),
+                )
+            # ──────────────────────────────────────────────────────────────
+
+            # ── 全路径 span close(F1 Round 2 fix:OTel span 不漏)─────────
+            # sys.exc_info() 在 finally 内拿当前 active exception(re-raise 中);
+            # 正常退出为 (None, None, None)。覆盖三条出口:正常 / CancelledError /
+            # 未分类异常 / DAG first_exc。原 L506-508 + L556 两处显式 __exit__ 已删,
+            # 由本统一出口替代。
+            exc_type, exc_val, exc_tb = sys.exc_info()
+            run_span_ctx.__exit__(exc_type, exc_val, exc_tb)
+            # ──────────────────────────────────────────────────────────────
 
         run.ended_at = datetime.now(timezone.utc)
         if run.status == RunStatus.running:
@@ -361,7 +566,6 @@ class Orchestrator:
             run.metrics["budget_spent_usd"] = round(
                 budget_tracker.spend.total_usd, 6
             )
-        run_span_ctx.__exit__(None, None, None)
         return result
 
     # ---- single-step executor core --------------------------------------
@@ -379,13 +583,14 @@ class Orchestrator:
         produced_ids_per_step: dict[str, list[str]],
         pending_revision_hints: dict[str, dict],
         transitions: TransitionEngine,
+        lifecycle_manager: ExternalProcessLifecycle | None = None,
     ) -> "_StepOutcome":
         """Execute one step in-async. Mirrors v1 run()'s per-iteration body
         but returns a `_StepOutcome` for the caller to apply in aggregate."""
         # Bind (run_id, step_id) into a ContextVar so adapter-level progress
         # emitters (tokenhub poller, mesh poller) can tag their events with
-        # the correct run_id/step_id. The ContextVar is propagated into the
-        # worker thread by asyncio.to_thread.
+        # the correct run_id/step_id. With native-async executors the
+        # ContextVar is naturally task-local — no cross-thread propagation.
         _run_step_token = set_current_run_step(run_id, step.step_id)
         try:
             return await self._aexec_one_body(
@@ -395,6 +600,7 @@ class Orchestrator:
                 produced_ids_per_step=produced_ids_per_step,
                 pending_revision_hints=pending_revision_hints,
                 transitions=transitions,
+                lifecycle_manager=lifecycle_manager,
             )
         finally:
             reset_current_run_step(_run_step_token)
@@ -412,6 +618,7 @@ class Orchestrator:
         produced_ids_per_step: dict[str, list[str]],
         pending_revision_hints: dict[str, dict],
         transitions: TransitionEngine,
+        lifecycle_manager: ExternalProcessLifecycle | None = None,
     ) -> "_StepOutcome":
         run.current_step_id = step.step_id
         result.visited_step_ids.append(step.step_id)
@@ -498,6 +705,8 @@ class Orchestrator:
             run_dir=self._compute_run_dir(run),
             inputs=resolved_inputs,
             upstream_artifact_ids=upstream_ids,
+            # Task 9:将 lifecycle manager 注入 StepContext,executor 可感知 lifecycle 状态
+            lifecycle=lifecycle_manager,
         )
         default_next = self.scheduler.default_next(step=step, workflow=workflow)
         try:
@@ -506,9 +715,8 @@ class Orchestrator:
                 {"run_id": run_id, "step_id": step.step_id, "step_type": step.type.value,
                  "capability_ref": step.capability_ref, "risk_level": step.risk_level.value},
             ):
-                # Run sync executor in a thread so the event loop stays free
-                # (long image/mesh jobs don't block concurrent step tasks).
-                exec_result = await asyncio.to_thread(executor.execute, ctx)
+                # 全部 executor 已转 async def execute,直接 await
+                exec_result = await executor.execute(ctx)
         except asyncio.CancelledError:
             raise
         except BaseException as exc:

@@ -33,7 +33,6 @@ executor SHALL NOT 解构 / 注入 prompt key;**no** `prompt: str` 参数(F-Plan
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from framework.core.artifact import (
@@ -51,6 +50,10 @@ from framework.providers.workers.audio_worker import (
     AudioWorkerError,
     AudioWorkerTimeout,
     AudioWorkerUnsupportedResponse,
+)
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
 )
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
@@ -79,7 +82,7 @@ class GenerateAudioExecutor(StepExecutor):
         # model-id exact-match per pattern c per spec/provider-routing 说明)
         self._worker = worker
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # Task 5: 转 async,worker 调用全用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 1))
         if num < 1:
@@ -98,16 +101,23 @@ class GenerateAudioExecutor(StepExecutor):
         # F-Plan-R7-B round-7 修订:用 `or RetryPolicy()` default 与 generate_mesh.py:146 一致
         policy = ctx.step.retry_policy or RetryPolicy()
 
-        if self._should_use_comfy_worker_path(ctx):
-            candidates = self._generate_via_comfy_worker(
+        use_comfy_worker_path = self._should_use_comfy_worker_path(ctx)
+        pp = ctx.step.provider_policy
+        comfy_route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+
+        if use_comfy_worker_path:
+            assert comfy_route is not None
+            # Task 5: await async helper
+            candidates = await self._generate_via_comfy_worker(
                 ctx=ctx, spec=spec, num=num, seed=seed,
                 timeout_s=timeout_s, policy=policy,
             )
-            chosen_model = "comfy/local-audio"
+            chosen_model = comfy_route.model
         elif self._worker is not None:
             # Future remote AudioCraft path — out of scope this change(本 commit
             # 不实装具体行为;留下入口便于 follow-on `audio-worker-audiocraft-adoption`)
-            candidates = self._worker.generate_audio(
+            # Task 5: 改用 await agenerate_audio(async remote worker 接口)
+            candidates = await self._worker.agenerate_audio(
                 spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
             )
             chosen_model = self._worker.name
@@ -123,9 +133,9 @@ class GenerateAudioExecutor(StepExecutor):
         audio_ids: list[str] = []
         for i, cand in enumerate(candidates):
             aid = f"{ctx.run.run_id}_{ctx.step.step_id}_cand_audio_{i}"
+            payload_kwargs = _candidate_payload_kwargs(cand)
             art = ctx.repository.put(
                 artifact_id=aid,
-                value=cand.data,
                 # F-Plan-R6-A round-6 critical:shape="waveform" 与 UE bridge
                 # _KIND_MAP[("audio", "waveform")] = "sound_wave" 唯一映射对齐;
                 # 若用 shape=cand.format(flac/mp3/wav)UE 静默 skip → import_audio 不触发
@@ -139,7 +149,7 @@ class GenerateAudioExecutor(StepExecutor):
                 payload_kind=PayloadKind.file,
                 producer=ProducerRef(
                     run_id=ctx.run.run_id, step_id=ctx.step.step_id,
-                    provider="comfy_agent_cli" if chosen_model == "comfy/local-audio" else "audio_worker",
+                    provider="comfy_agent_cli" if use_comfy_worker_path else "audio_worker",
                     model=chosen_model,
                 ),
                 lineage=Lineage(
@@ -158,12 +168,13 @@ class GenerateAudioExecutor(StepExecutor):
                 validation=ValidationRecord(
                     status="passed",
                     checks=[ValidationCheck(name="audio.bytes_nonempty",
-                                            result="passed" if cand.data else "failed")],
+                                            result="passed" if _candidate_payload_nonempty(cand) else "failed")],
                 ),
                 # F-Plan-R6-A:`file_suffix=f".{cand.format}"` 反映真实 payload bytes
                 # (与 modality+shape dispatch 不冲突 — payload extension 用于 UE
                 # `unreal.SoundFactory` import 时按扩展名 dispatch)
                 file_suffix=f".{cand.format}",
+                **payload_kwargs,
             )
             audio_arts.append(art)
             audio_ids.append(aid)
@@ -174,18 +185,13 @@ class GenerateAudioExecutor(StepExecutor):
         )
 
     def _should_use_comfy_worker_path(self, ctx: StepContext) -> bool:
-        """OpenSpec change comfy-agent-cli-audio-adoption Phase 2:detect
-        `model == "comfy/local-audio"` in prepared_routes — take inline
-        ComfyAgentWorker dispatch branch(per spec/provider-routing pattern c)。
-        沿 image / mesh `_should_use_*_path` 模式;`ctx.step.provider_policy`
-        是顶层字段(per task.py:36),**不**是 `ctx.step.config.provider_policy`。
-        """
+        """根据 provider metadata 判断是否进入 ComfyAgentWorker 分支。"""
         pp = ctx.step.provider_policy
         if pp is None or not pp.prepared_routes:
             return False
-        return any(getattr(r, "model", None) == "comfy/local-audio" for r in pp.prepared_routes)
+        return first_comfy_agent_route(pp.prepared_routes) is not None
 
-    def _generate_via_comfy_worker(
+    async def _generate_via_comfy_worker(
         self,
         *,
         ctx: StepContext,
@@ -195,7 +201,9 @@ class GenerateAudioExecutor(StepExecutor):
         timeout_s: float | None,
         policy: RetryPolicy,
     ) -> list[AudioCandidate]:
-        """Inline ComfyAgentWorker.generate_audio dispatch with retry/wrap。
+        """Inline ComfyAgentWorker.agenerate_audio dispatch with retry/wrap。
+
+        Task 5: 转 async — 用 await worker.agenerate_audio(...)。
 
         F2 round-1 三 except 块拆分(对照 generate_mesh.py:160-172;不裸 raise):
         - `ComfyWorkerTimeout` → wrap as `AudioWorkerTimeout` + 条件 retry
@@ -203,34 +211,49 @@ class GenerateAudioExecutor(StepExecutor):
         - `ComfyWorkerUnsupportedResponse` → wrap + immediate raise(deterministic)
         - `ComfyWorkerError` → wrap + immediate raise(generic worker error)
 
-        本 helper 不含 outer per-candidate loop — `ComfyAgentWorker.generate_audio`
+        本 helper 不含 outer per-candidate loop — `ComfyAgentWorker.agenerate_audio`
         内部已实现 `for i in range(max(1, num_candidates))`(F-Plan-3 + F-Plan-R5-A
         round-5 修订)。
         """
-        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
-        if not scripts_dir:
+        pp = ctx.step.provider_policy
+        route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        if route is None:
             raise AudioWorkerUnsupportedResponse(
-                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses comfy/local-audio "
-                "route but ComfyUI agent CLI location not configured "
+                "ComfyAgentWorker route not found; prepared_routes must include "
+                "provider_kind='subprocess' and provider_config.adapter='comfy_agent_cli'"
+            )
+        try:
+            config = resolve_comfy_agent_config(route, spec=spec)
+        except ValueError as exc:
+            raise AudioWorkerUnsupportedResponse(str(exc)) from exc
+        if not config.scripts_dir:
+            raise AudioWorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var and provider_config.scripts_dir "
+                "are unset; ComfyUI agent CLI location not configured "
                 "(see CLAUDE.md double-terminal setup)"
             )
-        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
-            scripts_dir=Path(scripts_dir),
-            model_id="comfy/local-audio",
+            scripts_dir=Path(config.scripts_dir),
+            model_id=route.model,
+            capability="audio",
             run_id=ctx.run.run_id,
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
-            python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=lifecycle,
+            python_exe=Path(config.python_exe) if config.python_exe else None,
+            default_lifecycle=config.default_lifecycle,
+            output_root=Path(config.output_root) if config.output_root else None,
         )
+        # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
+        # ComfyLifecycleManager.ensure 幂等,重复调用安全)
+        if ctx.lifecycle is not None:
+            await ctx.lifecycle.ensure(config.default_lifecycle)
 
         attempts = max(1, policy.max_attempts)
         last_exc: AudioWorkerError | None = None
         for attempt in range(attempts):
             try:
-                return worker.generate_audio(
+                # Task 5: await async agenerate_audio,消除 sync generate_audio 调用
+                return await worker.agenerate_audio(
                     spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
                 )
             except WorkerTimeout as exc:
@@ -258,6 +281,20 @@ def _audio_mime_type(fmt: str) -> str:
         "mp3": "audio/mpeg",
         "wav": "audio/wav",
     }.get(fmt, "application/octet-stream")
+
+
+def _candidate_payload_kwargs(cand: AudioCandidate) -> dict[str, object]:
+    """FOR-13:Comfy 本地音频输出用 source_path,远端/fake worker 继续传 bytes。"""
+    if cand.source_path:
+        return {"source_path": cand.source_path}
+    return {"value": cand.data}
+
+
+def _candidate_payload_nonempty(cand: AudioCandidate) -> bool:
+    if cand.source_path:
+        path = Path(cand.source_path)
+        return path.is_file() and path.stat().st_size > 0
+    return bool(cand.data)
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:

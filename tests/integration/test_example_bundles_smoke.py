@@ -87,12 +87,14 @@ def test_bundle_loads(bundle_path: Path):
     )
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bundle_path", _bundle_files(),
                           ids=lambda p: p.name)
-def test_bundle_dry_run_passes(bundle_path: Path):
-    """DryRunPass structural checks must return passed=True for every bundle."""
+async def test_bundle_dry_run_passes(bundle_path: Path):
+    """DryRunPass structural checks must return passed=True for every bundle.
+    Step 6: DryRunPass.run 转为 async def,await 调用。"""
     loaded = load_task_bundle(bundle_path)
-    report = DryRunPass().run(
+    report = await DryRunPass().run(
         task=loaded.task, workflow=loaded.workflow, steps=loaded.steps,
     )
     assert report.passed, (

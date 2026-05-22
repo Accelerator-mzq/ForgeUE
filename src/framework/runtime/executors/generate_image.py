@@ -20,10 +20,9 @@ Other contract pieces unchanged:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import os
-import time
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +37,10 @@ from framework.core.enums import ArtifactRole, PayloadKind, StepType
 from framework.core.policies import RetryPolicy
 from framework.providers.base import ProviderError, ProviderTimeout
 from framework.providers.capability_router import CapabilityRouter
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
+)
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
     ComfyWorker,
@@ -65,7 +68,7 @@ class GenerateImageExecutor(StepExecutor):
         self._worker = worker
         self._router = router
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:  # 已转 async,worker 调用全用 await
         cfg = ctx.step.config or {}
         num = int(cfg.get("num_candidates", 3))
         if num < 1:
@@ -84,11 +87,6 @@ class GenerateImageExecutor(StepExecutor):
         policy = ctx.step.retry_policy or RetryPolicy()
         attempts = max(1, policy.max_attempts)
 
-        # OpenSpec change comfy-agent-cli-adoption (round 2 G2 + post-round-3
-        # plan-stage Q1 sweep): worker-dispatch branch detects model=='comfy/local'
-        # in prepared_routes and constructs ComfyAgentWorker inline from env
-        # config (FORGEUE_COMFY_*) — bypassing the router-dispatch branch which
-        # would otherwise mis-route to LiteLLM wildcard.
         use_worker_path = self._should_use_worker_path(ctx)
         use_api_path = (not use_worker_path) and self._should_use_api_path(ctx)
 
@@ -101,15 +99,16 @@ class GenerateImageExecutor(StepExecutor):
             attempt_count = attempt + 1
             try:
                 if use_worker_path:
-                    candidates, chosen_model, route_pricing = self._generate_via_worker(
+                    candidates, chosen_model, route_pricing = await self._generate_via_worker(
                         ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
                     )
                 elif use_api_path:
-                    candidates, chosen_model, route_pricing = self._generate_via_router(
+                    candidates, chosen_model, route_pricing = await self._generate_via_router(
                         ctx=ctx, spec=spec, num=num, seed=seed, timeout_s=timeout_s,
                     )
                 else:
-                    candidates = self._worker.generate(
+                    # 无 worker path / api path:直接调 agenerate(remote worker async 接口)
+                    candidates = await self._worker.agenerate(
                         spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
                     )
                     chosen_model = cfg.get("model_hint", self._worker.name if self._worker else "comfy")
@@ -119,7 +118,7 @@ class GenerateImageExecutor(StepExecutor):
                 last_exc = exc
                 if attempt + 1 >= attempts or not _should_retry(policy, exc):
                     break
-                _backoff(policy, attempt)
+                await _backoff(policy, attempt)
                 continue
         if candidates is None:
             assert last_exc is not None
@@ -140,9 +139,9 @@ class GenerateImageExecutor(StepExecutor):
         ).hexdigest()[:8]
         for i, cand in enumerate(candidates):
             aid = f"{ctx.run.run_id}_{ctx.step.step_id}_cand_{spec_fp}_{i}"
+            payload_kwargs = _candidate_payload_kwargs(cand)
             art = ctx.repository.put(
                 artifact_id=aid,
-                value=cand.data,
                 artifact_type=ArtifactType(
                     modality="image", shape="raster", display_name="concept_image",
                 ),
@@ -184,9 +183,10 @@ class GenerateImageExecutor(StepExecutor):
                 validation=ValidationRecord(
                     status="passed",
                     checks=[ValidationCheck(name="image.bytes_nonempty",
-                                            result="passed" if cand.data else "failed")],
+                                            result="passed" if _candidate_payload_nonempty(cand) else "failed")],
                 ),
                 file_suffix=f".{cand.format}",
+                **payload_kwargs,
             )
             image_arts.append(art)
             image_ids.append(aid)
@@ -262,50 +262,60 @@ class GenerateImageExecutor(StepExecutor):
     # ---- path selection + API routing ----------------------------------------
 
     def _should_use_worker_path(self, ctx: StepContext) -> bool:
-        """OpenSpec change comfy-agent-cli-adoption (round 2 G2): detect
-        `model == "comfy/local"` in prepared_routes — take inline
-        ComfyAgentWorker dispatch branch instead of router/api path.
-        Without this branch, the router-dispatch path would forward
-        `comfy/local` to LiteLLMAdapter wildcard which would fail (HTTP
-        OpenAI call with non-OpenAI model id).
-        """
+        """根据 provider metadata 判断是否进入 ComfyAgentWorker 分支。"""
         pp = ctx.step.provider_policy
         if pp is None or not pp.prepared_routes:
             return False
-        return any(getattr(r, "model", None) == "comfy/local" for r in pp.prepared_routes)
+        return first_comfy_agent_route(pp.prepared_routes) is not None
 
-    def _generate_via_worker(
+    async def _generate_via_worker(
         self, *, ctx: StepContext, spec: dict, num: int,
         seed: int | None, timeout_s: float | None,
     ) -> tuple[list[ImageCandidate], str, dict[str, float] | None]:
-        """OpenSpec change comfy-agent-cli-adoption (round 2 OQ-6 = F-B):
-        construct ComfyAgentWorker inline from env config + StepContext
-        and call sync `generate()`. Bypasses CapabilityRouter — analogous
-        to mesh worker injection pattern but with executor-side model-id
-        branch (NEW pattern). G4 commit 3 drift writeback documented:
-        ABC `generate` is sync, no asyncio.run bridge needed."""
-        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
-        if not scripts_dir:
+        """Task 5:转 async — 构造 ComfyAgentWorker 并调 async agenerate。
+
+        OpenSpec change comfy-agent-cli-adoption (round 2 OQ-6 = F-B):
+        construct ComfyAgentWorker inline from env config + StepContext,
+        bypassing CapabilityRouter。Task 5 改用 `await worker.agenerate()`
+        而非原 sync `generate()`,消除 asyncio.run bridge。"""
+        pp = ctx.step.provider_policy
+        route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        if route is None:
             raise WorkerUnsupportedResponse(
-                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses comfy/local "
-                "route but ComfyUI agent CLI location not configured "
+                "ComfyAgentWorker route not found; prepared_routes must include "
+                "provider_kind='subprocess' and provider_config.adapter='comfy_agent_cli'"
+            )
+        try:
+            config = resolve_comfy_agent_config(route, spec=spec)
+        except ValueError as exc:
+            raise WorkerUnsupportedResponse(str(exc)) from exc
+        if not config.scripts_dir:
+            raise WorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var and provider_config.scripts_dir "
+                "are unset; ComfyUI agent CLI location not configured "
                 "(see CLAUDE.md double-terminal setup)"
             )
-        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        lifecycle = os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
-            scripts_dir=Path(scripts_dir),
-            model_id="comfy/local",                 # P-F1 修订:capability dispatch 必填(image)
+            scripts_dir=Path(config.scripts_dir),
+            model_id=route.model,
+            capability="image",
             run_id=ctx.run.run_id,
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
-            python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=lifecycle,
+            python_exe=Path(config.python_exe) if config.python_exe else None,
+            default_lifecycle=config.default_lifecycle,
+            output_root=Path(config.output_root) if config.output_root else None,
         )
-        candidates = worker.generate(
+        # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
+        # None 表示 lifecycle="none",orchestrator 未注入 manager,无需 ensure。
+        # ComfyLifecycleManager.ensure 幂等,重复调用安全)
+        if ctx.lifecycle is not None:
+            await ctx.lifecycle.ensure(config.default_lifecycle)
+        # Task 5: 直接 await async 主面 agenerate,不走 sync generate
+        candidates = await worker.agenerate(
             spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
         )
-        return candidates, "comfy/local", None
+        return candidates, route.model, None
 
     def _should_use_api_path(self, ctx: StepContext) -> bool:
         pp = ctx.step.provider_policy
@@ -322,16 +332,15 @@ class GenerateImageExecutor(StepExecutor):
                 return True
         return False
 
-    def _generate_via_router(
+    async def _generate_via_router(
         self, *, ctx: StepContext, spec: dict, num: int,
         seed: int | None, timeout_s: float | None,
     ) -> tuple[list[ImageCandidate], str, dict[str, float] | None]:
-        """Call CapabilityRouter.image_generation; wrap results as ImageCandidate.
+        """Task 5:转 async — 调 CapabilityRouter.aimage_generation;删除 asyncio.run shim。
 
         Plan C Phase 6 — when *num > 1* we fan out N parallel `n=1` calls via
-        `asyncio.gather` under a single `asyncio.run`. Many image providers
-        (Hunyuan tokenhub, Qwen async jobs) submit one job at a time, so the
-        old `n=3` sync path secretly serialized candidates; parallel now.
+        `asyncio.gather`。Task 5 将 `asyncio.run(_fan_out())` shim 删除,
+        `_fan_out` 在 async 上下文中直接 await;单路径改用 await aimage_generation。
 
         2026-04 pricing wiring: returns a 3-tuple where the last element is
         the selected route's yaml pricing dict (or None when the route
@@ -339,7 +348,6 @@ class GenerateImageExecutor(StepExecutor):
         ImageCandidate.metadata so downstream artifacts don't carry
         framework-internal bookkeeping into persistent metadata.
         """
-        import asyncio
         assert self._router is not None
         prompt = str(spec.get("prompt_summary") or "")
         if not prompt:
@@ -360,6 +368,8 @@ class GenerateImageExecutor(StepExecutor):
         # Default keeps legacy behaviour (one `n=N` call).
         parallel = bool((ctx.step.config or {}).get("parallel_candidates"))
         if num > 1 and parallel:
+            # Task 5: _fan_out 已是 async def,直接 await asyncio.gather;
+            # 删除原 asyncio.run(_fan_out()) shim — 现在在 async 上下文中运行
             async def _fan_out():
                 tasks = [
                     self._router.aimage_generation(        # type: ignore[union-attr]
@@ -370,7 +380,7 @@ class GenerateImageExecutor(StepExecutor):
                     for _ in range(num)
                 ]
                 return await asyncio.gather(*tasks)
-            per_call = asyncio.run(_fan_out())
+            per_call = await _fan_out()
             results = []
             models_seen: list[str] = []
             for per_call_results, per_call_model in per_call:
@@ -394,7 +404,8 @@ class GenerateImageExecutor(StepExecutor):
                 )
             chosen_model = models_seen[0] if models_seen else ""
         else:
-            results, chosen_model = self._router.image_generation(
+            # Task 5: 单路径改用 await aimage_generation(async),删除 sync image_generation 调用
+            results, chosen_model = await self._router.aimage_generation(
                 policy=ctx.step.provider_policy,    # type: ignore[arg-type]
                 prompt=prompt, n=num, size=size_arg,
                 timeout_s=timeout_s, extra=extra,
@@ -493,6 +504,20 @@ def _apply_revision_hint(spec: dict[str, Any], hint: dict[str, Any]) -> dict[str
     return merged
 
 
+def _candidate_payload_kwargs(cand: ImageCandidate) -> dict[str, Any]:
+    """FOR-13:本地 Comfy 输出优先传 source_path,API/fake 候选保持 bytes 路径。"""
+    if cand.source_path:
+        return {"source_path": cand.source_path}
+    return {"value": cand.data}
+
+
+def _candidate_payload_nonempty(cand: ImageCandidate) -> bool:
+    if cand.source_path:
+        path = Path(cand.source_path)
+        return path.is_file() and path.stat().st_size > 0
+    return bool(cand.data)
+
+
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     # Deterministic unsupported-response shapes (200 + non-JSON, empty
     # choices, etc.) MUST NOT retry — the provider returns the same
@@ -509,6 +534,7 @@ def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
     return False
 
 
-def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
+async def _backoff(policy: RetryPolicy, attempt_zero_based: int) -> None:
     if policy.backoff == "exponential":
-        time.sleep(min(2 ** attempt_zero_based, 8) * 0.01)
+        # executor 已 async 化,用 await asyncio.sleep 不阻塞事件循环
+        await asyncio.sleep(min(2 ** attempt_zero_based, 8) * 0.01)

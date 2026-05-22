@@ -20,6 +20,7 @@ Flow:
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 
@@ -54,7 +55,8 @@ class ExportExecutor(StepExecutor):
     ) -> None:
         self._permission = permission_policy or PermissionPolicy()
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
+        # shutil.copy2 是 blocking IO,用 asyncio.to_thread 包装
         if ctx.task.ue_target is None:
             raise RuntimeError(
                 f"export step {ctx.step.step_id} requires task.ue_target (UEOutputTarget)"
@@ -123,7 +125,8 @@ class ExportExecutor(StepExecutor):
                 )
                 drop_dir.mkdir(parents=True, exist_ok=True)
                 target_fs = drop_dir / target_filename
-                shutil.copy2(src_fs, target_fs)
+                # 把 blocking 文件拷贝委托到线程池,不阻塞事件循环
+                await asyncio.to_thread(shutil.copy2, src_fs, target_fs)
                 copied_manifest_entries_ids.add(art.artifact_id)
                 file_drop_evidence.append(Evidence(
                     evidence_item_id=new_evidence_id("ev"),

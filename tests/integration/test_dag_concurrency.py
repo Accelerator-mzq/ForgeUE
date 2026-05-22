@@ -45,10 +45,11 @@ class _SlowMockExecutor(StepExecutor):
     def __init__(self, delay_s: float) -> None:
         self._delay_s = delay_s
 
-    def execute(self, ctx: StepContext) -> ExecutorResult:
+    async def execute(self, ctx: StepContext) -> ExecutorResult:
         from framework.core.artifact import ArtifactType, Lineage, ProducerRef
         from framework.core.enums import ArtifactRole, PayloadKind
-        time.sleep(self._delay_s)       # sync sleep — arun wraps in to_thread
+        # 使用 asyncio.sleep 实现原生 async 等待,支持 CancelledError 打入
+        await asyncio.sleep(self._delay_s)
         art = ctx.repository.put(
             artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_out",
             value={"done": ctx.step.step_id},

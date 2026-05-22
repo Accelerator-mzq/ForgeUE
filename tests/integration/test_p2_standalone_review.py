@@ -136,11 +136,13 @@ def test_p2_bundle_single_judge_emits_report_and_verdict(bundle_path: Path, tmp_
     assert review_cp.metrics["review_mode"] == "single_judge"
 
 
-def test_p2_bundle_dry_run_passes(bundle_path: Path, tmp_path: Path):
-    """Dry-run must accept the canonical P2 bundle (no unresolved bindings)."""
+@pytest.mark.asyncio
+async def test_p2_bundle_dry_run_passes(bundle_path: Path, tmp_path: Path):
+    """Dry-run must accept the canonical P2 bundle (no unresolved bindings).
+    Step 6: DryRunPass.run 转为 async def,await 调用。"""
     from framework.runtime.dry_run_pass import DryRunPass
     bundle = load_task_bundle(bundle_path)
-    report = DryRunPass().run(task=bundle.task, workflow=bundle.workflow, steps=bundle.steps)
+    report = await DryRunPass().run(task=bundle.task, workflow=bundle.workflow, steps=bundle.steps)
     assert report.passed, report.errors
 
 
@@ -200,7 +202,7 @@ def test_p2_chief_judge_records_dissent(bundle_path: Path, tmp_path: Path):
 
 # ---- T2.5: visual-mode review (L3) ------------------------------------------
 
-def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
+async def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
     """TBD-008 (2026-04-22): use REAL Qwen PNG fixtures (1024×1024, ~1.4MB each)
     instead of the previous `b"\\x89PNG\\r\\n\\x1a\\nVISUAL_A" * 4` byte markers.
 
@@ -308,7 +310,8 @@ def test_p2_visual_mode_attaches_image_bytes_to_judge_prompt(tmp_path: Path):
         run=run, task=task, step=step, repository=repo,
         upstream_artifact_ids=image_ids,
     )
-    result = ex.execute(ctx)
+    # ReviewExecutor.execute 已 async 化
+    result = await ex.execute(ctx)
     assert result.metrics["visual_mode"] is True
     assert result.metrics["candidate_count"] == 3
 

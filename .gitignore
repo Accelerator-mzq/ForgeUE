@@ -21,3 +21,18 @@ build/
 htmlcov/
 coverage.xml
 .claude/scheduled_tasks.lock
+
+# ---------------------------------------------------------------------------
+# 2026-05-17 forge 迁移追加:forge 运行时缓存不入 git（沿 forge 插件自带 .gitignore）
+# ---------------------------------------------------------------------------
+forge/.cache/
+forge/.monitor/
+.forge-staging-*/
+.forge-backup-*/
+
+# 本地 worktree 目录，避免隔离工作区内容被误扫进仓库
+.worktrees/
+worktrees/
+
+# legacy-bridge extract 的 finalize 前 transient draft(finalize 后由 legacy-requirements.yaml 取代)
+forge/legacy-requirements-draft.*

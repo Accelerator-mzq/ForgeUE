@@ -64,6 +64,89 @@ def _make_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subpr
     )
 
 
+class _AsyncFakeProcess:
+    """模拟 asyncio.subprocess.Process,供 patch asyncio.create_subprocess_exec 使用。
+    TBD-010 Task 3 async-subprocess 改造后,所有 comfy worker 路径经 asyncio.create_subprocess_exec。
+    """
+
+    def __init__(self, stdout: str, returncode: int = 0, stderr: str = "") -> None:
+        self._stdout_bytes = stdout.encode("utf-8") if isinstance(stdout, str) else stdout
+        self._stderr_bytes = stderr.encode("utf-8") if isinstance(stderr, str) else stderr
+        self.returncode = returncode
+
+    async def communicate(self):
+        return (self._stdout_bytes, self._stderr_bytes)
+
+    async def wait(self):
+        return self.returncode
+
+    def terminate(self):
+        pass
+
+    def kill(self):
+        pass
+
+
+def _make_async_completed(stdout: str, returncode: int = 0, stderr: str = "") -> _AsyncFakeProcess:
+    """_make_completed 的 async 版本,返回 _AsyncFakeProcess 实例。"""
+    return _AsyncFakeProcess(stdout=stdout, returncode=returncode, stderr=stderr)
+
+
+def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, *, side_effect=None):
+    """返回 asyncio.create_subprocess_exec 的 patch context manager。
+
+    用法:
+        with _patch_create_subprocess_exec(_make_async_completed(stdout)) as mock:
+            worker.generate_audio(...)
+            cmd = list(mock.call_args)  # create_subprocess_exec 的位置参数 tuple
+
+    side_effect: callable(*a, **kw) → _AsyncFakeProcess 或 iter 返回 _AsyncFakeProcess。
+    """
+    import asyncio as _aio
+
+    calls = []
+
+    if side_effect is not None:
+        _effects = list(side_effect) if not callable(side_effect) else None
+        _effect_fn = side_effect if callable(side_effect) else None
+        _effect_iter = iter(_effects) if _effects else None
+
+        async def _factory(*a, **kw):
+            calls.append(a)
+            if _effect_fn:
+                return _effect_fn(*a, **kw)
+            return next(_effect_iter)
+    else:
+        async def _factory(*a, **kw):
+            calls.append(a)
+            return fake_proc
+
+    class _Ctx:
+        """create_subprocess_exec patch context manager。call_args / call_count / call_args_list 支持。"""
+        def __init__(self):
+            self._orig = None
+            self.call_args_list = calls
+
+        @property
+        def call_args(self):
+            return self.call_args_list[-1] if self.call_args_list else None
+
+        @property
+        def call_count(self):
+            return len(self.call_args_list)
+
+        def __enter__(self):
+            self._orig = _aio.create_subprocess_exec
+            _aio.create_subprocess_exec = _factory  # type: ignore[assignment]
+            return self
+
+        def __exit__(self, *_):
+            _aio.create_subprocess_exec = self._orig  # type: ignore[assignment]
+
+    return _Ctx()
+
+
+
 def _ok_audio_stdout(audio_paths: list[str], extra_outputs: dict | None = None) -> str:
     outputs = {"audio": audio_paths, "images": [], "glb": [], "video": []}
     if extra_outputs:
@@ -127,11 +210,12 @@ def test_unknown_model_id_raises_at_init_lists_audio_in_supported(tmp_path):
 def test_audio_mode_raises_on_missing_outputs_audio(tmp_path):
     """audio capability REQUIRED `outputs.audio` non-empty;missing key → raise。"""
     worker = _make_audio_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(json.dumps({
+    with _patch_create_subprocess_exec(_make_async_completed(
+json.dumps({
             "ok": True,
             "outputs": {"images": [], "glb": [], "video": []},
-        }))
+        })
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"audio"):
             worker.generate_audio(
                 spec={"comfy_workflow": "Audio_Workflows/test", "comfy_params": {"text": "x"}},
@@ -142,8 +226,7 @@ def test_audio_mode_raises_on_missing_outputs_audio(tmp_path):
 def test_audio_mode_raises_on_empty_outputs_audio(tmp_path):
     """audio capability REQUIRED `outputs.audio` non-empty;empty list → raise。"""
     worker = _make_audio_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"audio"):
             worker.generate_audio(
                 spec={"comfy_workflow": "Audio_Workflows/test", "comfy_params": {"text": "x"}},
@@ -156,10 +239,11 @@ def test_audio_mode_rejects_outputs_images(tmp_path):
     worker = _make_audio_worker(tmp_path)
     fake_audio = tmp_path / "audio.flac"
     _make_flac_file(fake_audio)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(
+_ok_audio_stdout(
             [str(fake_audio)], extra_outputs={"images": ["spectrogram.png"]},
-        ))
+        )
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"images"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -172,10 +256,11 @@ def test_audio_mode_rejects_outputs_glb(tmp_path):
     worker = _make_audio_worker(tmp_path)
     fake_audio = tmp_path / "audio.flac"
     _make_flac_file(fake_audio)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(
+_ok_audio_stdout(
             [str(fake_audio)], extra_outputs={"glb": ["unexpected.glb"]},
-        ))
+        )
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"glb"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -188,10 +273,11 @@ def test_audio_mode_rejects_outputs_video(tmp_path):
     worker = _make_audio_worker(tmp_path)
     fake_audio = tmp_path / "audio.flac"
     _make_flac_file(fake_audio)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(
+_ok_audio_stdout(
             [str(fake_audio)], extra_outputs={"video": ["unexpected.mp4"]},
-        ))
+        )
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"video"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -202,13 +288,13 @@ def test_audio_mode_rejects_outputs_video(tmp_path):
 # ---- generate_audio path:format detection + magic bytes(D10 + F5)------------
 
 
-def test_generate_audio_flac_extension_detection_reads_bytes(tmp_path):
-    """flac 扩展名 + `fLaC` magic 接受 → AudioCandidate(format="flac")。"""
+def test_generate_audio_flac_extension_detection_records_source_path_without_full_read(tmp_path):
+    """flac 扩展名 + `fLaC` magic 接受 → AudioCandidate(format="flac", source_path=...)。"""
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.flac"
     _make_flac_file(fake, payload=b"hello")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy audio worker must not full-read output")):
         cands = worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -216,6 +302,7 @@ def test_generate_audio_flac_extension_detection_reads_bytes(tmp_path):
     assert len(cands) == 1
     assert isinstance(cands[0], AudioCandidate)
     assert cands[0].format == "flac"
+    assert cands[0].source_path == str(fake)
     assert cands[0].data[:4] == b"fLaC"
 
 
@@ -224,8 +311,7 @@ def test_generate_audio_mp3_id3_magic_match_accepts(tmp_path):
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.mp3"
     _make_mp3_file(fake, with_id3=True)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
         cands = worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -239,8 +325,7 @@ def test_generate_audio_mp3_mpeg_frame_sync_magic_match_accepts(tmp_path):
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.mp3"
     _make_mp3_file(fake, with_id3=False)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
         cands = worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -254,8 +339,7 @@ def test_generate_audio_wav_riff_wave_magic_match_accepts(tmp_path):
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.wav"
     _make_wav_file(fake)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
         cands = worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -269,8 +353,7 @@ def test_generate_audio_unsupported_extension_ogg_raises_unsupported_response(tm
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.ogg"
     fake.write_bytes(b"OggS\x00" + b"\x00" * 100)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"ogg|unsupported audio format"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -284,8 +367,7 @@ def test_generate_audio_flac_magic_bytes_mismatch_raises_unsupported_response(tm
     fake = tmp_path / "out.flac"
     fake.parent.mkdir(parents=True, exist_ok=True)
     fake.write_bytes(b"<html>not flac</html>" + b"\x00" * 50)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"format mismatch|magic"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -299,10 +381,11 @@ def test_generate_audio_flac_magic_bytes_mismatch_raises_unsupported_response(tm
 def test_generate_audio_missing_path_raises_unsupported_response(tmp_path):
     """F-Plan-4 round-2:outputs.audio 路径不存在 → raise。"""
     worker = _make_audio_worker(tmp_path)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout(
+    with _patch_create_subprocess_exec(_make_async_completed(
+_ok_audio_stdout(
             [str(tmp_path / "does_not_exist.flac")],
-        ))
+        )
+    )) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"does not exist"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -320,8 +403,7 @@ def test_generate_audio_symlink_path_raises_unsupported_response(tmp_path):
         sym.symlink_to(real)
     except (OSError, NotImplementedError):
         pytest.skip("symlink creation not supported on this platform")
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(sym)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(sym)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match=r"symlink"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},
@@ -339,10 +421,9 @@ def test_generate_audio_runs_subprocess_num_candidates_times_when_num_gt_one(tmp
     fakes = [tmp_path / f"out_{i}.flac" for i in range(3)]
     for f in fakes:
         _make_flac_file(f, payload=f.name.encode())
-    with patch("subprocess.run") as run_mock:
-        run_mock.side_effect = [
-            _make_completed(_ok_audio_stdout([str(f)])) for f in fakes
-        ]
+    _fake_procs_audio = [_make_async_completed(_ok_audio_stdout([str(f)])) for f in fakes]
+    _fake_iter_audio = iter(_fake_procs_audio)
+    with _patch_create_subprocess_exec(side_effect=lambda *a, **kw: next(_fake_iter_audio)) as run_mock:
         cands = worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=3,
@@ -360,19 +441,19 @@ def test_generate_audio_per_candidate_seed_overrides_comfy_params_seed(tmp_path)
     fakes = [tmp_path / f"out_{i}.flac" for i in range(3)]
     for f in fakes:
         _make_flac_file(f, payload=f.name.encode())
-    with patch("subprocess.run") as run_mock:
-        run_mock.side_effect = [
-            _make_completed(_ok_audio_stdout([str(f)])) for f in fakes
-        ]
+    _fake_procs_seed = [_make_async_completed(_ok_audio_stdout([str(f)])) for f in fakes]
+    _fake_iter_seed = iter(_fake_procs_seed)
+    with _patch_create_subprocess_exec(side_effect=lambda *a, **kw: next(_fake_iter_seed)) as run_mock:
         worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
             num_candidates=3,
             seed=100,  # base seed
         )
-    # 提取每个 subprocess.run 调用的 --params JSON 里的 seed 字段
+    # 提取每个 create_subprocess_exec 调用的 --params JSON 里的 seed 字段
     seeds_seen: list[int] = []
     for call in run_mock.call_args_list:
-        argv = call.args[0]
+        # call 是 tuple-of-args(create_subprocess_exec 的位置参数)
+        argv = list(call)
         idx = argv.index("--params")
         params = json.loads(argv[idx + 1])
         seeds_seen.append(params["seed"])
@@ -391,8 +472,7 @@ def test_generate_audio_metadata_records_comfy_provenance(tmp_path):
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.flac"
     _make_flac_file(fake)
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
         cands = worker.generate_audio(
             spec={
                 "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
@@ -425,8 +505,7 @@ def test_generate_audio_metadata_snapshot_is_independent_copy(tmp_path):
         "comfy_workflow": "x",
         "comfy_params": {"text": "before", "seed": 1},
     }
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(fake)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
         cands = worker.generate_audio(spec=spec, num_candidates=1, seed=1)
     spec["comfy_params"]["text"] = "AFTER"
     spec["comfy_params"]["new_key"] = "leaked"
@@ -438,11 +517,12 @@ def test_generate_audio_metadata_snapshot_is_independent_copy(tmp_path):
 # ---- DryRunPass(commit 6:gate set 扩 audio)----------------------------------
 
 
-def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypatch):
-    """commit 6: dry-run probe gate set 扩 `comfy/local-audio`;route 含 audio 触发 probe。
-    沿 mesh test_dry_run_probe_runs_when_comfy_local_mesh_in_routes 模式。"""
+@pytest.mark.asyncio
+async def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypatch):
+    """audio 的 Comfy subprocess provider metadata route 会触发 aprobe。
+    Step 6: async _check_comfy_reachability + aprobe 转换。"""
     from unittest.mock import MagicMock
-    from framework.providers.model_registry import ResolvedRoute
+    from framework.core.policies import PreparedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
     scripts_dir = tmp_path / "scripts"
@@ -455,18 +535,28 @@ def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypat
 
     step = MagicMock()
     step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local-audio", api_key_env=None, api_base=None,
-                      kind="audio", pricing=None),
+        PreparedRoute(
+            model="comfy/local-audio",
+            kind="audio",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        ),
     ]
 
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed("ok", returncode=0)
-        dry_run._check_comfy_reachability(report, steps=[step])
-        # comfy/local-audio 也触发 probe(commit 6 audio gate 扩)
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+        # audio route 通过 provider metadata 命中 ComfyAgentWorker aprobe。
         assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0][0]
-        assert "-m" in cmd
-        assert "comfyui_api" in cmd
+        call_args = run_mock.call_args
+        assert "comfyui_api" in call_args
 
 
 # ---- G11-F2 follow-on: path containment for outputs.audio --------------------
@@ -484,8 +574,7 @@ def test_audio_outputs_path_outside_comfy_output_root_raises_unsupported_respons
         f"Test setup error: bad_flac {bad_flac.resolve()} unexpectedly under "
         f"comfy_output_root {worker.comfy_output_root}"
     )
-    with patch("subprocess.run") as run_mock:
-        run_mock.return_value = _make_completed(_ok_audio_stdout([str(bad_flac)]))
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(bad_flac)]))) as run_mock:
         with pytest.raises(WorkerUnsupportedResponse, match="outside comfy_output_root"):
             worker.generate_audio(
                 spec={"comfy_workflow": "x", "comfy_params": {}},

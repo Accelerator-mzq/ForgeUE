@@ -1,0 +1,42 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\mzq\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: D:\ClaudeProject\ForgeUE_claude
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 1 item
+
+tests/unit/test_comfy_subprocess.py::test_comfy_cancel_aborts_server_side_prompt FAILED [100%]
+
+================================== FAILURES ===================================
+_________________ test_comfy_cancel_aborts_server_side_prompt _________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000015C91A34C30>
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-999/test_comfy_cancel_aborts_serve0')
+
+    @pytest.mark.asyncio
+    async def test_comfy_cancel_aborts_server_side_prompt(monkeypatch, tmp_path):
+        """Task 4 RED fence:cancel 时 _abort_comfy_prompt 必须被调用一次,
+        且 CLI 子进程(proc)被 terminate 后 returncode 不为 None。
+    
+        monkeypatch _abort_comfy_prompt 为 spy coroutine,
+        agenerate 的 communicate 永久挂起以模拟 GPU job 运行中。
+        cancel agenerate task → finally 块需先调 _abort_comfy_prompt 再 terminate。
+        """
+        import asyncio as _aio
+    
+        # --- spy:记录 _abort_comfy_prompt 被调用次数 ---
+        aborted = {"n": 0}
+    
+        async def _spy_abort(self):
+            aborted["n"] += 1
+    
+>       monkeypatch.setattr(ComfyAgentWorker, "_abort_comfy_prompt", _spy_abort)
+E       AttributeError: <class 'framework.providers.workers.comfy_worker.ComfyAgentWorker'> has no attribute '_abort_comfy_prompt'
+
+tests\unit\test_comfy_subprocess.py:1744: AttributeError
+- generated xml file: D:\ClaudeProject\ForgeUE_claude\forge\changes\executor-async-rewrite\.evidence\task-4-red-junit.xml -
+=========================== short test summary info ===========================
+FAILED tests/unit/test_comfy_subprocess.py::test_comfy_cancel_aborts_server_side_prompt
+============================== 1 failed in 0.27s ==============================
