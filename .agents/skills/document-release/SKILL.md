@@ -1,15 +1,20 @@
 ---
 name: document-release
-description: Use when ForgeUE documentation must be synchronized after shipped changes, including README, AGENTS, CLAUDE, docs five-pack, docs/contracts, docs/backlog, CHANGELOG, archive references, documentation coverage, and post-ship doc health checks.
+description: Use when ForgeUE documentation must be synchronized as the mandatory release gate before merge/push, including README, AGENTS, CLAUDE, docs five-pack, docs/contracts, docs/backlog, CHANGELOG, archive references, documentation coverage, and Linear status evidence in Codex environments.
 ---
 
 # Document Release
 
 ## Overview
 
-This is ForgeUE's project-local post-ship documentation sync skill. It adapts the core idea of gstack's `document-release` skill to ForgeUE's current Superpowers-first workflow.
+This is ForgeUE's project-local release-gate documentation sync skill. It adapts the core idea of gstack's `document-release` skill to ForgeUE's current Superpowers-first workflow.
 
 Core principle: update current documentation from verified shipped facts, keep historical archives as evidence, and surface uncertain doc debt instead of guessing.
+
+`document-release` is the final mandatory Superpowers gate **before**
+`superpowers:finishing-a-development-branch` performs merge / push. Documentation,
+contracts, backlog tombstones, and release evidence are part of the change, so
+they must be complete before the branch is integrated.
 
 ## Hard Boundaries
 
@@ -30,6 +35,8 @@ Use this skill when the user asks to:
 - change requirements, architecture, testing, acceptance, provider, worker, UE bridge, probe, workflow, or agent guidance
 - verify whether documentation still matches code, examples, tests, or current workflow
 - prepare documentation evidence after implementing a feature or migration
+- finish any non-trivial ForgeUE task that changes behavior, backlog, Linear state,
+  current docs, contracts, tests, examples, or acceptance evidence
 
 Skip this skill for tiny typo-only edits that do not affect behavior, workflow, or documentation relationships.
 
@@ -53,6 +60,25 @@ Treat these as current documentation surfaces:
 | Archive | `docs/archive/**` | historical evidence; read-only by default |
 
 ## Workflow
+
+### Mandatory Placement In The Main Flow
+
+For non-trivial ForgeUE work, the order is:
+
+```text
+implementation / fixes
+→ superpowers:verification-before-completion
+→ document-release
+→ superpowers:verification-before-completion for the changed release docs/checks
+→ superpowers:finishing-a-development-branch (merge / push)
+→ Codex Linear final status sync, when a Linear issue is in scope
+→ final response
+```
+
+Do not merge, push, or mark Linear `Done` before this skill has completed the
+documentation/backlog/coverage gate. In Codex environments with Linear access,
+prepare the Linear evidence during this skill and apply the final `Done` update
+only after merge / push succeeds.
 
 ### Step 1: Preflight
 
@@ -130,6 +156,23 @@ Backlog is in scope.
 - Do not regenerate backlog from `docs/archive/**`.
 - Do not silently remove an active item. Use an explicit user-approved edit and leave a tombstone in `archived.md`.
 - Keep item text concise: title, why it remains, trigger/priority if known, and source evidence link if available.
+- A backlog-derived Linear issue cannot be marked `Done` while its slug still
+  appears in `docs/backlog/active.md` without an archived tombstone.
+
+### Step 4.5: Codex Linear Sync Rules
+
+When running in Codex and Linear tools are available:
+
+- If a Linear issue is in scope, read its current status before changing it.
+- During `document-release`, collect the exact evidence paths that will be
+  posted to Linear after merge / push.
+- Do not set Linear to `Done` during this skill unless the target branch has
+  already been merged and pushed.
+- After `superpowers:finishing-a-development-branch` succeeds, update Linear
+  status and add an evidence comment that includes merge target, pushed branch,
+  verification logs, and backlog/archive evidence.
+- If Linear is unavailable, record that in the evidence note instead of silently
+  skipping issue sync.
 
 ### Step 5: Apply Safe Updates
 

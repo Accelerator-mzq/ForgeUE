@@ -189,7 +189,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ### Superpowers 用法
 
-非平凡需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先用 `superpowers:brainstorming` 明确目标、约束和方案,用户确认后用 `superpowers:writing-plans` 拆实施计划。实现阶段按任务性质使用 `superpowers:test-driven-development` / `superpowers:systematic-debugging` / `superpowers:executing-plans` / `superpowers:subagent-driven-development`。完成前使用 `superpowers:verification-before-completion` 做证据化验证。涉及文档发布、归档、backlog 或五件套同步时,使用项目级 skill `document-release`。小 bugfix / typo / logic 微调可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式。
+非平凡需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先用 `superpowers:brainstorming` 明确目标、约束和方案,用户确认后用 `superpowers:writing-plans` 拆实施计划。实现阶段按任务性质使用 `superpowers:test-driven-development` / `superpowers:systematic-debugging` / `superpowers:executing-plans` / `superpowers:subagent-driven-development`。发布门顺序固定:先用 `superpowers:verification-before-completion` 做证据化验证,再用项目级 skill `document-release` 同步五件套、contracts、backlog、CHANGELOG 和 archive 引用;`document-release` 完成并再次按范围验证后,才使用 `superpowers:finishing-a-development-branch` 做 merge / push。Codex 环境若关联 Linear issue,`document-release` 阶段准备 evidence,只有目标分支 merge / push 成功后才把 Linear 标 Done 并评论证据。小 bugfix / typo / logic 微调可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式。
 
 禁令:`artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径 不提交;测试总数不硬编码(`python -m pytest -q` 实测);provider model id 不硬编码;贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);Codex 不执行删除文件操作。
 

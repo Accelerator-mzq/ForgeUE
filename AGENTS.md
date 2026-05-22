@@ -184,8 +184,9 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 - **非平凡**需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先用 `superpowers:brainstorming` 明确目标、约束和方案,用户确认后用 `superpowers:writing-plans` 拆实施计划。
 - **实现阶段** → 按任务性质使用 `superpowers:test-driven-development` / `superpowers:systematic-debugging` / `superpowers:executing-plans` / `superpowers:subagent-driven-development`。
-- **完成前** → 使用 `superpowers:verification-before-completion` 做证据化验证;需要收尾时使用 `superpowers:finishing-a-development-branch`。
-- **文档发布 / 归档 / backlog 同步** → 使用项目级 skill `document-release`,覆盖五件套、`docs/contracts/`、`docs/backlog/`、`CHANGELOG.md` 和 archive 引用。
+- **发布门** → 非平凡 work 在 merge / push / Linear Done 前必须先用 `superpowers:verification-before-completion` 做证据化验证,再用项目级 skill `document-release` 同步五件套、`docs/contracts/`、`docs/backlog/`、`CHANGELOG.md` 和 archive 引用。
+- **分支收尾** → `document-release` 完成并再次按范围验证后,才使用 `superpowers:finishing-a-development-branch` 做 merge / push。
+- **Linear 同步(Codex 环境)** → 若任务关联 Linear issue,`document-release` 阶段准备 evidence;只有目标分支 merge / push 成功后,才把 Linear 标为 Done 并评论证据。
 - **小 bugfix / typo / logic 微调** → 可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式。
 - 实现只围绕当前任务范围;**禁止**顺手重构无关模块。
 
