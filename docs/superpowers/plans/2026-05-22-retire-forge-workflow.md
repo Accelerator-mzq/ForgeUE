@@ -1,74 +1,74 @@
-# Retire forge Workflow Implementation Plan
+# 退役 forge 工作流迁移实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **实施代理必读:** 必须使用 `superpowers:subagent-driven-development`(推荐)或 `superpowers:executing-plans` 按任务逐项实施。本计划使用复选框(`- [ ]`)跟踪执行状态。
 
-**Goal:** Migrate ForgeUE_codex from the project-local forge workflow to a Superpowers-first workflow while preserving backlog, contracts, and historical evidence inside `docs/`.
+**目标:** 将 ForgeUE_codex 从项目内 forge 工作流迁移到 Superpowers-first 工作流,同时把 backlog、contracts 和历史证据保留在 `docs/` 下。
 
-**Architecture:** Use a copy-first migration: create new `docs/` destinations, copy retained forge content there, rewrite live documentation to point at the new locations, then provide a manual deletion list for the user. Codex must not delete project files and must not touch global Claude or Codex plugin configuration.
+**架构:** 采用先复制、后切引用的迁移方式:先创建新的 `docs/` 目标目录,复制需要保留的 forge 内容,再把当前文档引用改到新位置,最后只输出人工删除清单。Codex 不删除项目文件,也不触碰全局 Claude / Codex 插件配置。
 
-**Tech Stack:** Markdown, PowerShell filesystem copy commands, `rg`, `git`, `pytest`.
+**技术栈:** Markdown、PowerShell 复制命令、`rg`、`git`、`pytest`。
 
 ---
 
-## Guardrails
+## 护栏
 
-- Codex must not run `Remove-Item`, `rm`, `git rm`, `git mv`, or any command whose effect removes files.
-- Codex must not edit files outside `D:\ClaudeProject\ForgeUE_codex`.
-- Codex must not modify `C:\Users\mzq\.claude`, `C:\Users\mzq\.claude-max`, or `C:\Users\mzq\.codex`.
-- The existing project `forge/` directory remains until the user manually deletes it.
-- Use `apply_patch` for manual Markdown edits. Use PowerShell only for directory creation, copying, inventory, and verification.
+- Codex 不得运行 `Remove-Item`、`rm`、`git rm`、`git mv`,也不得运行任何会删除文件的命令。
+- Codex 不得编辑 `D:\ClaudeProject\ForgeUE_codex` 之外的文件。
+- Codex 不得修改 `C:\Users\mzq\.claude`、`C:\Users\mzq\.claude-max` 或 `C:\Users\mzq\.codex`。
+- 项目现有 `forge/` 目录保留到用户手动删除为止。
+- 手工 Markdown 编辑使用 `apply_patch`。PowerShell 只用于建目录、复制、盘点和验证。
 
-## File Structure
+## 文件结构
 
-**Create by copying retained content:**
+**通过复制创建:**
 
-- `docs/backlog/README.md`: project-maintained backlog instructions.
-- `docs/backlog/active.md`: active backlog, copied from `forge/backlog/active.md`.
-- `docs/backlog/archived.md`: backlog tombstones, copied from `forge/backlog/archived.md`.
-- `docs/contracts/**`: capability contracts copied from `forge/specs/**`.
-- `docs/archive/forge_changes/**`: historical change archives copied from `forge/changes/archive/**`.
-- `docs/archive/forge_migration/**`: migration reports and legacy requirement snapshots copied from `forge/migrate-*` and `forge/legacy-requirements*`.
+- `docs/backlog/README.md`: 项目维护的 backlog 说明。
+- `docs/backlog/active.md`: active backlog,从 `forge/backlog/active.md` 复制。
+- `docs/backlog/archived.md`: backlog tombstone,从 `forge/backlog/archived.md` 复制。
+- `docs/contracts/**`: capability contract,从 `forge/specs/**` 复制。
+- `docs/archive/forge_changes/**`: 历史 change archive,从 `forge/changes/archive/**` 复制。
+- `docs/archive/forge_migration/**`: 迁移报告和 legacy requirement 快照,从 `forge/migrate-*` 与 `forge/legacy-requirements*` 复制。
 
-**Create manually:**
+**通过手工编辑创建:**
 
-- `docs/archive/forge_migration/manual_delete_forge_dir.md`: user-only deletion checklist.
-- `demo_artifacts/2026-05-22/adhoc/retire_forge_workflow_evidence.txt`: verification evidence.
+- `docs/archive/forge_migration/manual_delete_forge_dir.md`: 仅供用户执行的删除清单。
+- `demo_artifacts/2026-05-22/adhoc/retire_forge_workflow_evidence.txt`: 验证证据。
 
-**Modify:**
+**修改:**
 
-- `README.md`: workflow entry becomes Superpowers-first.
-- `AGENTS.md`: project agent workflow becomes Superpowers-first.
-- `CLAUDE.md`: Claude workflow section mirrors `AGENTS.md`.
-- `docs/INDEX.md`: backlog entry points to `docs/backlog`.
-- `docs/ai_workflow/validation_matrix.md`: contract references point to `docs/contracts`.
-- `docs/requirements/SRS.md`: backlog cross-link points to `docs/backlog` and no longer describes retired forge fences as current.
-- `docs/contracts/examples-and-acceptance/spec.md`: copied contract references point to `docs/backlog`.
-- `CHANGELOG.md`: add current migration note and update the current evidence path for the latest lifecycle entry.
+- `README.md`: 工作流入口改为 Superpowers-first。
+- `AGENTS.md`: 项目 agent 工作流改为 Superpowers-first。
+- `CLAUDE.md`: Claude 工作流段落与 `AGENTS.md` 同步。
+- `docs/INDEX.md`: backlog 入口指向 `docs/backlog`。
+- `docs/ai_workflow/validation_matrix.md`: contract 引用指向 `docs/contracts`。
+- `docs/requirements/SRS.md`: backlog cross-link 指向 `docs/backlog`,不再把已退役 forge fence 描述为当前机制。
+- `docs/contracts/examples-and-acceptance/spec.md`: 复制后的 contract 引用指向 `docs/backlog`。
+- `CHANGELOG.md`: 增加当前迁移说明,并更新最新 lifecycle evidence 路径。
 
-### Task 1: Copy Backlog And Normalize It
+### 任务 1: 复制 backlog 并规范说明
 
-**Files:**
-- Create: `docs/backlog/README.md`
-- Create: `docs/backlog/active.md`
-- Create: `docs/backlog/archived.md`
-- Modify: `docs/backlog/README.md`
-- Modify: `docs/backlog/active.md`
-- Modify: `docs/backlog/archived.md`
+**文件:**
+- 创建: `docs/backlog/README.md`
+- 创建: `docs/backlog/active.md`
+- 创建: `docs/backlog/archived.md`
+- 修改: `docs/backlog/README.md`
+- 修改: `docs/backlog/active.md`
+- 修改: `docs/backlog/archived.md`
 
-- [ ] **Step 1: Create the backlog destination**
+- [ ] **步骤 1: 创建 backlog 目标目录**
 
-Run:
+运行:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path 'docs\backlog' | Out-Null
 Test-Path 'docs\backlog'
 ```
 
-Expected: `True`.
+期望输出: `True`。
 
-- [ ] **Step 2: Copy the existing backlog files**
+- [ ] **步骤 2: 复制现有 backlog 文件**
 
-Run:
+运行:
 
 ```powershell
 Copy-Item -Path 'forge\backlog\*' -Destination 'docs\backlog' -Recurse -Force
@@ -77,14 +77,14 @@ Test-Path 'docs\backlog\archived.md'
 Test-Path 'docs\backlog\README.md'
 ```
 
-Expected: three `True` lines.
+期望输出: 三行 `True`。
 
-- [ ] **Step 3: Replace `docs/backlog/README.md` with project-maintained wording**
+- [ ] **步骤 3: 用项目维护说明替换 `docs/backlog/README.md`**
 
-Use `apply_patch` to replace the full file with:
+使用 `apply_patch` 将整个文件替换为:
 
 ```markdown
-# Backlog Registry
+# Backlog 登记表
 
 `active.md` / `archived.md` 是项目当前 backlog,已从原 `forge/backlog/` 迁移到 `docs/backlog/`。从本迁移完成后,本目录由项目维护,不再由 forge 命令生成。
 
@@ -101,57 +101,57 @@ Use `apply_patch` to replace the full file with:
 
 - 不硬编码测试总数;测试事实以实际命令输出为准。
 - 变更 backlog 时同步更新相关 `docs/requirements/SRS.md` 或验收文档引用。
-- 历史 archive 不重写原始叙述;只在 live 文档中指向新路径。
+- 历史 archive 不重写原始叙述;只在当前文档中指向新路径。
 ```
 
-- [ ] **Step 4: Update generated-header wording in copied backlog files**
+- [ ] **步骤 4: 更新复制后 backlog 文件的生成产物头部说明**
 
-Use `apply_patch` on `docs/backlog/active.md`:
+对 `docs/backlog/active.md` 使用 `apply_patch`:
 
 ```diff
 - > 生成产物 —— 由 `/forge:archive` 自动重生成,**勿手编**。Schema 见 README.md。
 + > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
 ```
 
-Use `apply_patch` on `docs/backlog/archived.md`:
+对 `docs/backlog/archived.md` 使用 `apply_patch`:
 
 ```diff
 - > 生成产物 —— 由 `/forge:archive` 自动重生成。每条记录一个 backlog 项的退役。Schema 见 README.md。
 + > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 ```
 
-- [ ] **Step 5: Verify backlog migration**
+- [ ] **步骤 5: 验证 backlog 迁移**
 
-Run:
+运行:
 
 ```powershell
 rg -n "/forge:archive|forge backlog|勿手编|生成产物" docs\backlog -S
 ```
 
-Expected: no output.
+期望输出: 无输出。
 
-- [ ] **Step 6: Commit backlog migration**
+- [ ] **步骤 6: 提交 backlog 迁移**
 
-Run:
+运行:
 
 ```powershell
 git add docs/backlog
 git commit -m "docs(backlog): migrate backlog out of forge"
 ```
 
-Expected: commit succeeds and does not mention deleted files.
+期望结果: 提交成功,输出中不出现 deleted files。
 
-### Task 2: Copy Contracts And Historical Evidence
+### 任务 2: 复制 contracts 和历史证据
 
-**Files:**
-- Create: `docs/contracts/**`
-- Create: `docs/archive/forge_changes/**`
-- Create: `docs/archive/forge_migration/**`
-- Modify: `docs/contracts/examples-and-acceptance/spec.md`
+**文件:**
+- 创建: `docs/contracts/**`
+- 创建: `docs/archive/forge_changes/**`
+- 创建: `docs/archive/forge_migration/**`
+- 修改: `docs/contracts/examples-and-acceptance/spec.md`
 
-- [ ] **Step 1: Create destination directories**
+- [ ] **步骤 1: 创建目标目录**
 
-Run:
+运行:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path 'docs\contracts','docs\archive\forge_changes','docs\archive\forge_migration' | Out-Null
@@ -160,11 +160,11 @@ Test-Path 'docs\archive\forge_changes'
 Test-Path 'docs\archive\forge_migration'
 ```
 
-Expected: three `True` lines.
+期望输出: 三行 `True`。
 
-- [ ] **Step 2: Copy retained contracts and historical evidence**
+- [ ] **步骤 2: 复制保留的 contracts 和历史证据**
 
-Run:
+运行:
 
 ```powershell
 Copy-Item -Path 'forge\specs\*' -Destination 'docs\contracts' -Recurse -Force
@@ -172,11 +172,11 @@ Copy-Item -Path 'forge\changes\archive\*' -Destination 'docs\archive\forge_chang
 Copy-Item -Path 'forge\migrate-*','forge\legacy-requirements*' -Destination 'docs\archive\forge_migration' -Force
 ```
 
-Expected: command exits with code 0.
+期望结果: 命令退出码为 0。
 
-- [ ] **Step 3: Verify copied content counts**
+- [ ] **步骤 3: 验证复制数量**
 
-Run:
+运行:
 
 ```powershell
 $sourceChanges = (Get-ChildItem -Directory 'forge\changes\archive').Count
@@ -188,7 +188,7 @@ $destContracts = (Get-ChildItem 'docs\contracts').Count
 Test-Path 'docs\archive\forge_migration\legacy-requirements.yaml'
 ```
 
-Expected:
+期望输出:
 
 ```text
 changes_equal=True
@@ -196,16 +196,9 @@ contracts_equal=True
 True
 ```
 
-- [ ] **Step 4: Update copied contract backlog paths**
+- [ ] **步骤 4: 更新复制后 contract 的 backlog 路径**
 
-Use `apply_patch` on `docs/contracts/examples-and-acceptance/spec.md`:
-
-```diff
-- The system SHALL maintain a centralized follow-on backlog registry at `openspec/backlog/active.md` (active items) and `openspec/backlog/archived.md` (cancelled / completed items).
-+ The system SHALL maintain a centralized follow-on backlog registry at `docs/backlog/active.md` (active items) and `docs/backlog/archived.md` (cancelled / completed items).
-```
-
-Then replace remaining path tokens in the same file:
+对 `docs/contracts/examples-and-acceptance/spec.md` 使用 `apply_patch`,把集中 backlog registry 的路径从旧 `openspec/backlog/*` 改到新 `docs/backlog/*`。同一文件内替换这些路径 token:
 
 ```text
 openspec/backlog/active.md -> docs/backlog/active.md
@@ -213,40 +206,40 @@ openspec/backlog/archived.md -> docs/backlog/archived.md
 openspec/backlog/README.md -> docs/backlog/README.md
 ```
 
-- [ ] **Step 5: Verify contract path cleanup**
+- [ ] **步骤 5: 验证 contract 路径清理**
 
-Run:
+运行:
 
 ```powershell
 rg -n "openspec/backlog|forge/backlog|forge/specs" docs\contracts -S
 ```
 
-Expected: no output.
+期望输出: 无输出。
 
-- [ ] **Step 6: Commit copied contracts and archive**
+- [ ] **步骤 6: 提交复制后的 contracts 和 archive**
 
-Run:
+运行:
 
 ```powershell
 git add docs/contracts docs/archive/forge_changes docs/archive/forge_migration
 git commit -m "docs(archive): copy forge contracts and change history"
 ```
 
-Expected: commit succeeds and does not mention deleted files.
+期望结果: 提交成功,输出中不出现 deleted files。
 
-### Task 3: Rewrite Main Workflow Entrypoints
+### 任务 3: 改写主工作流入口
 
-**Files:**
-- Modify: `README.md`
-- Modify: `AGENTS.md`
-- Modify: `CLAUDE.md`
+**文件:**
+- 修改: `README.md`
+- 修改: `AGENTS.md`
+- 修改: `CLAUDE.md`
 
-- [ ] **Step 1: Replace README workflow section**
+- [ ] **步骤 1: 替换 README 工作流段落**
 
-Use `apply_patch` to replace `README.md` section `## AI Workflow / forge` through the paragraph ending with `不替代。` with:
+使用 `apply_patch` 替换 `README.md` 从 `## AI Workflow / forge` 到以 `不替代。` 结尾的段落:
 
 ```markdown
-## AI Workflow / Superpowers
+## AI 工作流 / Superpowers
 
 ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求先用 `superpowers:brainstorming` 明确目标、约束和方案;方案确认后用 `superpowers:writing-plans` 生成实施计划;实现阶段按任务性质使用 TDD、systematic debugging、executing-plans 或 subagent-driven-development;完成前用 verification-before-completion 做证据化验证。Codex review 保留为可选辅助(`/codex:adversarial-review` design hook + `/codex:review --base main` final hook),但外部 review 结论必须独立核验。
 
@@ -260,9 +253,9 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 `docs/` 五件套仍是长期权威;`docs/contracts/` 是从原 forge contract 迁移来的精简契约层,不替代五件套。
 ```
 
-- [ ] **Step 2: Replace AGENTS workflow section**
+- [ ] **步骤 2: 替换 AGENTS 工作流段落**
 
-Use `apply_patch` to replace `AGENTS.md` from `## forge 工作流` through the Codex review paragraph with:
+使用 `apply_patch` 替换 `AGENTS.md` 从 `## forge 工作流` 到 Codex review 段落:
 
 ```markdown
 ## Superpowers 工作流
@@ -309,9 +302,9 @@ Use `apply_patch` to replace `AGENTS.md` from `## forge 工作流` through the C
 重要 design 阶段可跑 `/codex:adversarial-review`(catch latent design smell);final review 可跑 `/codex:review --base main`(catch cross-archive mixed-scope)。Codex review 意见必须**独立对照代码验证**,不把 claim 当结论。
 ```
 
-- [ ] **Step 3: Replace CLAUDE workflow section**
+- [ ] **步骤 3: 替换 CLAUDE 工作流段落**
 
-Use `apply_patch` to replace `CLAUDE.md` from `## 工作流` through the backlog paragraph with:
+使用 `apply_patch` 替换 `CLAUDE.md` 从 `## 工作流` 到 backlog 段落:
 
 ```markdown
 ## 工作流
@@ -343,38 +336,38 @@ Use `apply_patch` to replace `CLAUDE.md` from `## 工作流` through the backlog
 项目当前 backlog = `docs/backlog/`。`active.md` 列未决待办、`archived.md` 列 tombstone。原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入 backlog;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。
 ```
 
-- [ ] **Step 4: Verify main workflow docs no longer advertise forge entrypoints**
+- [ ] **步骤 4: 验证主工作流文档不再宣传 forge 入口**
 
-Run:
+运行:
 
 ```powershell
 rg -n "AI Workflow / forge|## forge 工作流|### forge 用法|forge 插件自带|/forge:" README.md AGENTS.md CLAUDE.md -S
 ```
 
-Expected: no output.
+期望输出: 无输出。
 
-- [ ] **Step 5: Commit main workflow docs**
+- [ ] **步骤 5: 提交主工作流文档**
 
-Run:
+运行:
 
 ```powershell
 git add README.md AGENTS.md CLAUDE.md
 git commit -m "docs(workflow): switch project guidance to superpowers"
 ```
 
-Expected: commit succeeds.
+期望结果: 提交成功。
 
-### Task 4: Update Live Cross-References
+### 任务 4: 更新当前交叉引用
 
-**Files:**
-- Modify: `docs/INDEX.md`
-- Modify: `docs/ai_workflow/validation_matrix.md`
-- Modify: `docs/requirements/SRS.md`
-- Modify: `CHANGELOG.md`
+**文件:**
+- 修改: `docs/INDEX.md`
+- 修改: `docs/ai_workflow/validation_matrix.md`
+- 修改: `docs/requirements/SRS.md`
+- 修改: `CHANGELOG.md`
 
-- [ ] **Step 1: Update `docs/INDEX.md` backlog references**
+- [ ] **步骤 1: 更新 `docs/INDEX.md` backlog 引用**
 
-Use `apply_patch`:
+使用 `apply_patch`:
 
 ```diff
 - | 评估做某个新功能 | `requirements/SRS.md` §7 未决 + `acceptance/acceptance_report.md` §6-§7 + `../forge/backlog/active.md` |
@@ -384,9 +377,9 @@ Use `apply_patch`:
 + | [`backlog/`](backlog/) | Backlog —— 项目当前待办集合 |
 ```
 
-- [ ] **Step 2: Update validation matrix contract references**
+- [ ] **步骤 2: 更新 validation matrix 的 contract 引用**
 
-Use `apply_patch`:
+使用 `apply_patch`:
 
 ```diff
 - | 某 bundle 的用途 | `docs/acceptance/acceptance_report.md` §3 + `forge/specs/examples-and-acceptance/spec.md` |
@@ -395,65 +388,65 @@ Use `apply_patch`:
 + | probe 约定 | `probes/README.md` §5 + `docs/contracts/probe-and-validation/spec.md` |
 ```
 
-- [ ] **Step 3: Update SRS backlog cross-link**
+- [ ] **步骤 3: 更新 SRS backlog cross-link**
 
-Use `apply_patch` to replace the cross-link paragraph in `docs/requirements/SRS.md` with:
+使用 `apply_patch` 将 `docs/requirements/SRS.md` 的 cross-link 段落替换为:
 
 ```markdown
 > **Cross-link**:本表是 requirements backlog;workflow-protocol + capability-boundary 类 follow-on backlog 见 [`docs/backlog/active.md`](../backlog/active.md)。SRS §7.3 的 active entries 与 `docs/backlog/active.md` 的 requirements pointer entries 应保持人工同步。
 ```
 
-- [ ] **Step 4: Update current changelog migration note**
+- [ ] **步骤 4: 更新当前 changelog 迁移说明**
 
-Use `apply_patch` to insert this section after line `## [Unreleased]` in `CHANGELOG.md`:
+使用 `apply_patch` 在 `CHANGELOG.md` 的 `## [Unreleased]` 后插入:
 
 ```markdown
 ### Changed
 
-- **Project workflow migration**:ForgeUE_codex 主工作流从 project-local forge 切换为 Superpowers-first。`forge/backlog` / `forge/specs` / `forge/changes/archive` 的长期内容复制到 `docs/backlog` / `docs/contracts` / `docs/archive/forge_changes`;旧 `forge/` 目录不由 Codex 删除,由用户按人工清单处理。
+- **项目工作流迁移**:ForgeUE_codex 主工作流从项目内 forge 切换为 Superpowers-first。`forge/backlog` / `forge/specs` / `forge/changes/archive` 的长期内容复制到 `docs/backlog` / `docs/contracts` / `docs/archive/forge_changes`;旧 `forge/` 目录不由 Codex 删除,由用户按人工清单处理。
 ```
 
-Also replace the current lifecycle evidence path:
+同时替换当前 lifecycle evidence 路径:
 
 ```diff
 - - L2 live evidence:`forge/changes/executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`
 + - L2 live evidence:`docs/archive/forge_changes/2026-05-20-executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`
 ```
 
-- [ ] **Step 5: Verify live cross-reference cleanup**
+- [ ] **步骤 5: 验证当前交叉引用清理**
 
-Run:
+运行:
 
 ```powershell
 rg -n "forge/backlog|forge/specs|/forge:" README.md AGENTS.md CLAUDE.md docs\INDEX.md docs\ai_workflow docs\requirements docs\contracts -S
 rg -n "forge/changes" README.md AGENTS.md CLAUDE.md CHANGELOG.md docs\INDEX.md docs\ai_workflow docs\requirements docs\testing docs\acceptance -S
 ```
 
-Expected: no output from both commands.
+期望输出: 两个命令都无输出。
 
-- [ ] **Step 6: Commit cross-reference updates**
+- [ ] **步骤 6: 提交交叉引用更新**
 
-Run:
+运行:
 
 ```powershell
 git add docs/INDEX.md docs/ai_workflow/validation_matrix.md docs/requirements/SRS.md docs/contracts/examples-and-acceptance/spec.md CHANGELOG.md
 git commit -m "docs(workflow): update forge migration references"
 ```
 
-Expected: commit succeeds.
+期望结果: 提交成功。
 
-### Task 5: Produce Manual Deletion Packet And Evidence
+### 任务 5: 产出人工删除包和证据
 
-**Files:**
-- Create: `docs/archive/forge_migration/manual_delete_forge_dir.md`
-- Create: `demo_artifacts/2026-05-22/adhoc/retire_forge_workflow_evidence.txt`
+**文件:**
+- 创建: `docs/archive/forge_migration/manual_delete_forge_dir.md`
+- 创建: `demo_artifacts/2026-05-22/adhoc/retire_forge_workflow_evidence.txt`
 
-- [ ] **Step 1: Create the manual deletion checklist**
+- [ ] **步骤 1: 创建人工删除清单**
 
-Use `apply_patch` to create `docs/archive/forge_migration/manual_delete_forge_dir.md`:
+使用 `apply_patch` 创建 `docs/archive/forge_migration/manual_delete_forge_dir.md`:
 
 ```markdown
-# Manual Deletion Checklist For Retired forge Directory
+# 退役 forge 目录人工删除清单
 
 日期: 2026-05-22
 范围: `D:\ClaudeProject\ForgeUE_codex`
@@ -485,12 +478,12 @@ rg -n "forge/backlog|forge/specs|forge/changes|/forge:" README.md AGENTS.md CLAU
 期望:
 
 - `Test-Path forge` 输出 `False`。
-- `rg` 不输出 live 引用。
+- `rg` 不输出当前引用。
 ```
 
-- [ ] **Step 2: Run full migration verification**
+- [ ] **步骤 2: 运行完整迁移验证**
 
-Run:
+运行:
 
 ```powershell
 Test-Path forge
@@ -502,16 +495,16 @@ rg -n "forge/backlog|forge/specs|forge/changes|/forge:" README.md AGENTS.md CLAU
 python -m pytest -q
 ```
 
-Expected:
+期望:
 
-- `Test-Path forge` outputs `True`, because user has not manually deleted it yet.
-- The new destination path checks output `True`.
-- `rg` has no output.
-- `pytest` exits 0. Do not hardcode the test count in docs; copy the actual summary to the evidence file.
+- `Test-Path forge` 输出 `True`,因为用户尚未手动删除它。
+- 新目标路径检查输出 `True`。
+- `rg` 无输出。
+- `pytest` 退出码为 0。不要在文档中硬编码测试总数;把实际摘要复制到证据文件。
 
-- [ ] **Step 3: Write the evidence file**
+- [ ] **步骤 3: 写入证据文件**
 
-Create `demo_artifacts/2026-05-22/adhoc/retire_forge_workflow_evidence.txt` with these fields populated from actual command output:
+创建 `demo_artifacts/2026-05-22/adhoc/retire_forge_workflow_evidence.txt`,并用真实命令输出填充这些字段:
 
 ```text
 retire forge workflow migration evidence
@@ -526,32 +519,32 @@ contracts_path_exists: True
 archive_path_exists: True
 manual_delete_checklist: docs/archive/forge_migration/manual_delete_forge_dir.md
 live_reference_scan: <no matches | paste matches>
-pytest: <actual pytest summary or blocked reason>
+pytest: <实际 pytest 摘要或阻塞原因>
 ```
 
-- [ ] **Step 4: Commit evidence packet**
+- [ ] **步骤 4: 提交证据包**
 
-Run:
+运行:
 
 ```powershell
 git add docs/archive/forge_migration/manual_delete_forge_dir.md demo_artifacts/2026-05-22/adhoc/retire_forge_workflow_evidence.txt
 git commit -m "docs(workflow): add forge retirement evidence"
 ```
 
-Expected: commit succeeds. If `demo_artifacts/` is ignored and cannot be committed, keep the evidence file untracked and mention that in the final response with a Markdown link.
+期望结果: 提交成功。若 `demo_artifacts/` 被 ignore 导致无法提交,保留证据文件为未跟踪文件,并在最终回复中给出 Markdown 链接。
 
-- [ ] **Step 5: Final status check**
+- [ ] **步骤 5: 最终状态检查**
 
-Run:
+运行:
 
 ```powershell
 git status --short --branch
 ```
 
-Expected: branch is ahead by the new migration commits; unrelated untracked `.agents/` and `.claude/settings.local.json` remain untouched unless the user explicitly asks otherwise.
+期望结果: 当前分支领先新迁移提交;无关未跟踪项 `.agents/` 和 `.claude/settings.local.json` 保持不动,除非用户明确要求处理。
 
-## Self-Review
+## 自检
 
-- Spec coverage: The plan covers copy migration, live documentation switch, project-only scope, no global plugin mutation, no Codex deletion operation, manual deletion packet, and verification evidence.
-- Placeholder scan: The plan contains no placeholder implementation steps; all commands and replacement snippets are explicit.
-- Type consistency: All paths use the agreed project-local layout from the approved design.
+- 设计覆盖:计划覆盖复制迁移、当前文档切换、仅项目路径范围、无全局插件变更、Codex 不删除文件、人工删除包和验证证据。
+- 占位符扫描:计划没有占位实现步骤;所有命令和替换片段都已明确写出。
+- 路径一致性:所有路径均使用已确认的项目内迁移布局。
