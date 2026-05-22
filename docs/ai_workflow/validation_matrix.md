@@ -222,13 +222,13 @@ python -m framework.pricing_probe --apply
 
 ### 3.1 ComfyUI agent CLI pipeline(image / mesh / audio / video,真实出图)
 
-ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。双终端工作流:
+ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。默认 `config/models.yaml` `providers.comfy_api.subprocess.default_lifecycle` 仍是 `none`,所以 L2 live smoke 默认按手工双终端跑;也可显式设 `ensure_running` / `ensure_release` / `self_managed_session` 让框架托管 lifecycle。
 
 ```bash
-# 终端 1:启 ComfyUI(detached,~30-90s 冷启动;用户自管,`python -m factory_v3 stop` 停)
+# 默认手工 smoke(lifecycle=none)终端 1:启 ComfyUI(detached,~30-90s 冷启动;用户自管,`python -m factory_v3 stop` 停)
 python -m factory_v3 serve
 
-# 终端 2:export env + 跑 ForgeUE 四 capability 冒烟
+# 默认手工 smoke 终端 2:export env + 跑 ForgeUE 四 capability 冒烟
 export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
 export FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input   # 仅 mesh 需要
 python -m framework.run --task examples/comfy_local_smoke.json       --live-llm --run-id r_comfy_image
