@@ -59,6 +59,19 @@ _AUTOGEN_FIELDS = (
 )
 _AUTOGEN_STATUSES = ("fresh", "stale", "manual")
 
+_PROVIDER_KINDS = ("openai_compat", "http", "subprocess")
+_SUBPROCESS_ADAPTERS = ("comfy_agent_cli",)
+_COMFY_LIFECYCLES = ("none", "ensure_running", "ensure_release", "self_managed_session")
+_PROVIDER_FIELDS = ("api_key_env", "api_base", "kind", "subprocess")
+_SUBPROCESS_FIELDS = (
+    "adapter",
+    "scripts_dir",
+    "python_exe",
+    "default_lifecycle",
+    "input_dir",
+    "output_root",
+)
+
 
 @dataclass(frozen=True)
 class PricingAutogen:
@@ -115,10 +128,34 @@ class ModelPricing:
 
 
 @dataclass(frozen=True)
+class ProviderSubprocessConfig:
+    """provider subprocess 运行配置的 registry 内部表示。"""
+
+    adapter: str
+    scripts_dir: str | None = None
+    python_exe: str | None = None
+    default_lifecycle: str = "none"
+    input_dir: str | None = None
+    output_root: str | None = None
+
+    def to_dict(self) -> dict[str, str | None]:
+        return {
+            "adapter": self.adapter,
+            "scripts_dir": self.scripts_dir,
+            "python_exe": self.python_exe,
+            "default_lifecycle": self.default_lifecycle,
+            "input_dir": self.input_dir,
+            "output_root": self.output_root,
+        }
+
+
+@dataclass(frozen=True)
 class ProviderDef:
     name: str
     api_key_env: str | None = None
     api_base: str | None = None
+    kind: str = "openai_compat"
+    subprocess: ProviderSubprocessConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +177,9 @@ class ResolvedRoute:
     api_base: str | None
     kind: str = "text"
     pricing: ModelPricing | None = None
+    provider_name: str | None = None
+    provider_kind: str = "openai_compat"
+    provider_config: dict[str, str | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +222,9 @@ class ModelAlias:
                     "api_base": r.api_base,
                     "kind": r.kind,
                     "pricing": r.pricing.to_dict() if r.pricing else None,
+                    "provider_name": r.provider_name,
+                    "provider_kind": r.provider_kind,
+                    "provider_config": dict(r.provider_config) if r.provider_config else None,
                 }
                 for r in self.routes()
             ],
@@ -259,6 +302,41 @@ class ModelRegistry:
 
 # ---- YAML section parsers --------------------------------------------------
 
+def _parse_provider_subprocess_config(
+    raw: Any, *, provider: str, path: Any,
+) -> ProviderSubprocessConfig:
+    """解析 subprocess provider 配置，并在 registry 入口处拒绝未知适配器。"""
+    if not isinstance(raw, dict):
+        raise RegistryReferenceError(
+            f"provider {provider!r} subprocess in {path} must be a mapping"
+        )
+    unknown = sorted(set(raw) - set(_SUBPROCESS_FIELDS))
+    if unknown:
+        raise RegistryReferenceError(
+            f"provider {provider!r} subprocess has unknown fields {unknown} in {path}"
+        )
+    adapter = raw.get("adapter")
+    if adapter not in _SUBPROCESS_ADAPTERS:
+        raise RegistryReferenceError(
+            f"provider {provider!r} subprocess adapter {adapter!r} is unsupported "
+            f"in {path}; expected one of {list(_SUBPROCESS_ADAPTERS)}"
+        )
+    lifecycle = raw.get("default_lifecycle") or "none"
+    if lifecycle not in _COMFY_LIFECYCLES:
+        raise RegistryReferenceError(
+            f"provider {provider!r} default_lifecycle {lifecycle!r} is unsupported "
+            f"in {path}; expected one of {list(_COMFY_LIFECYCLES)}"
+        )
+    return ProviderSubprocessConfig(
+        adapter=str(adapter),
+        scripts_dir=str(raw["scripts_dir"]) if raw.get("scripts_dir") else None,
+        python_exe=str(raw["python_exe"]) if raw.get("python_exe") else None,
+        default_lifecycle=str(lifecycle),
+        input_dir=str(raw["input_dir"]) if raw.get("input_dir") else None,
+        output_root=str(raw["output_root"]) if raw.get("output_root") else None,
+    )
+
+
 def _parse_providers(raw: Any, *, path: Any) -> dict[str, ProviderDef]:
     if not isinstance(raw, dict):
         raise ValueError(f"'providers' must be a mapping in {path}")
@@ -268,12 +346,35 @@ def _parse_providers(raw: Any, *, path: Any) -> dict[str, ProviderDef]:
             cfg = {}
         if not isinstance(cfg, dict):
             raise ValueError(f"provider {name!r} in {path} must be a mapping")
+        unknown = sorted(set(cfg) - set(_PROVIDER_FIELDS))
+        if unknown:
+            raise RegistryReferenceError(
+                f"provider {name!r} has unknown fields {unknown} in {path}"
+            )
+        provider_kind = cfg.get("kind") or "openai_compat"
+        if provider_kind not in _PROVIDER_KINDS:
+            raise RegistryReferenceError(
+                f"provider kind {provider_kind!r} for {name!r} is unsupported "
+                f"in {path}; expected one of {list(_PROVIDER_KINDS)}"
+            )
+        subprocess_cfg = None
+        if provider_kind == "subprocess":
+            subprocess_cfg = _parse_provider_subprocess_config(
+                cfg.get("subprocess"), provider=str(name), path=path,
+            )
+        elif cfg.get("subprocess") is not None:
+            raise RegistryReferenceError(
+                f"provider {name!r} declares subprocess config but kind is "
+                f"{provider_kind!r} in {path}"
+            )
         key_env = cfg.get("api_key_env")
         base = cfg.get("api_base")
         out[str(name)] = ProviderDef(
             name=str(name),
             api_key_env=str(key_env) if key_env else None,
             api_base=str(base) if base else None,
+            kind=str(provider_kind),
+            subprocess=subprocess_cfg,
         )
     return out
 
@@ -441,12 +542,20 @@ def _resolve_alias_models(
                 f"(known models: {sorted(models) or 'none'})"
             )
         m = models[n]
+        provider = m.provider
         out.append(ResolvedRoute(
             model=m.id,
-            api_key_env=m.provider.api_key_env,
-            api_base=m.provider.api_base,
+            api_key_env=provider.api_key_env,
+            api_base=provider.api_base,
             kind=m.kind,
             pricing=m.pricing,
+            provider_name=provider.name,
+            provider_kind=provider.kind,
+            provider_config=(
+                provider.subprocess.to_dict()
+                if provider.subprocess is not None
+                else None
+            ),
         ))
     return out
 

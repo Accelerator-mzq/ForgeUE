@@ -87,6 +87,93 @@ aliases:
     assert p.api_base is None
 
 
+def test_provider_kind_subprocess_config_propagates_to_route(tmp_path):
+    path = _write_yaml(tmp_path, """
+providers:
+  comfy_api:
+    kind: subprocess
+    subprocess:
+      adapter: comfy_agent_cli
+      scripts_dir: D:/AI/ComfyUI/scripts
+      python_exe: D:/Python/python.exe
+      default_lifecycle: ensure_running
+      input_dir: D:/AI/ComfyUI/input
+      output_root: D:/AI/ComfyUI
+models:
+  comfy_local:
+    id: comfy/local
+    provider: comfy_api
+    kind: image
+aliases:
+  image_local:
+    preferred: [comfy_local]
+""")
+    reg = ModelRegistry.from_yaml(path)
+    provider = reg.provider("comfy_api")
+    assert provider.kind == "subprocess"
+    assert provider.subprocess is not None
+    assert provider.subprocess.adapter == "comfy_agent_cli"
+
+    route = reg.resolve("image_local").preferred[0]
+    assert route.provider_name == "comfy_api"
+    assert route.provider_kind == "subprocess"
+    assert route.provider_config == {
+        "adapter": "comfy_agent_cli",
+        "scripts_dir": "D:/AI/ComfyUI/scripts",
+        "python_exe": "D:/Python/python.exe",
+        "default_lifecycle": "ensure_running",
+        "input_dir": "D:/AI/ComfyUI/input",
+        "output_root": "D:/AI/ComfyUI",
+    }
+
+    fields = reg.resolve("image_local").as_policy_fields()
+    prepared = fields["prepared_routes"][0]
+    assert prepared["provider_name"] == "comfy_api"
+    assert prepared["provider_kind"] == "subprocess"
+    assert prepared["provider_config"]["adapter"] == "comfy_agent_cli"
+
+
+def test_provider_kind_unknown_rejected(tmp_path):
+    path = _write_yaml(tmp_path, """
+providers:
+  bad:
+    kind: magic
+models: {}
+aliases: {}
+""")
+    with pytest.raises(RegistryReferenceError, match="provider kind"):
+        ModelRegistry.from_yaml(path)
+
+
+def test_subprocess_provider_requires_known_adapter(tmp_path):
+    path = _write_yaml(tmp_path, """
+providers:
+  bad:
+    kind: subprocess
+    subprocess:
+      adapter: imaginary_cli
+models: {}
+aliases: {}
+""")
+    with pytest.raises(RegistryReferenceError, match="imaginary_cli"):
+        ModelRegistry.from_yaml(path)
+
+
+def test_prepared_route_accepts_provider_metadata():
+    from framework.core.policies import PreparedRoute
+
+    route = PreparedRoute(
+        model="comfy/local",
+        kind="image",
+        provider_name="comfy_api",
+        provider_kind="subprocess",
+        provider_config={"adapter": "comfy_agent_cli"},
+    )
+    assert route.provider_name == "comfy_api"
+    assert route.provider_kind == "subprocess"
+    assert route.provider_config == {"adapter": "comfy_agent_cli"}
+
+
 # ---- cross-reference validation --------------------------------------------
 
 def test_unknown_provider_reference_rejected(tmp_path):
