@@ -1,0 +1,474 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\mzq\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: D:\ClaudeProject\ForgeUE_claude
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 65 items / 55 deselected / 10 selected
+
+tests/unit/test_comfy_subprocess.py::test_lifecycle_other_than_none_raises_unsupported_response PASSED [ 10%]
+tests/unit/test_comfy_subprocess.py::test_subprocess_invocation_passes_workflow_params_lifecycle_timeout PASSED [ 20%]
+tests/unit/test_comfy_subprocess.py::test_comfy_agenerate_uses_create_subprocess_exec PASSED [ 30%]
+tests/unit/test_comfy_subprocess.py::test_comfy_submit_lock_serializes_concurrent_agenerate PASSED [ 40%]
+tests/unit/test_comfy_subprocess.py::test_comfy_accepts_four_lifecycle_modes PASSED [ 50%]
+tests/unit/test_comfy_subprocess.py::test_comfy_rejects_unknown_lifecycle PASSED [ 60%]
+tests/unit/test_comfy_subprocess.py::test_agenerate_accepts_ensure_running_lifecycle FAILED [ 70%]
+tests/unit/test_comfy_subprocess.py::test_agenerate_mesh_accepts_ensure_running_lifecycle FAILED [ 80%]
+tests/unit/test_comfy_subprocess.py::test_agenerate_audio_accepts_ensure_running_lifecycle FAILED [ 90%]
+tests/unit/test_comfy_subprocess.py::test_agenerate_video_accepts_ensure_running_lifecycle FAILED [100%]
+
+================================== FAILURES ===================================
+_______________ test_agenerate_accepts_ensure_running_lifecycle _______________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1059/test_agenerate_accepts_ensure_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000027E1616D7B0>
+
+    @pytest.mark.asyncio
+    async def test_agenerate_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+        """agenerate: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+    
+        旧 D6 gate 在 agenerate 内残存时,传入 ensure_running 会 raise
+        WorkerUnsupportedResponse("must be 'none' in this change scope")。
+        修复后 gate 替换为集合检查(四合法值),ensure_running 通过,
+        进入 subprocess 路径。此处 mock subprocess 返回合法图片输出以隔离副作用。
+        """
+        import asyncio as _aio
+    
+        fake_png = tmp_path / "comfy_out.png"
+        _make_png_file(fake_png)
+    
+        # 构造 image-mode worker(comfy/local)
+        worker = _make_worker(tmp_path)
+    
+        fake_stdout = json.dumps({
+            "ok": True,
+            "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
+        }).encode("utf-8")
+    
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self): return (fake_stdout, b"")
+            async def wait(self): return 0
+            def terminate(self): pass
+            def kill(self): pass
+    
+        async def _fake_exec(*a, **kw):
+            return _FakeProc()
+    
+        monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+    
+        # ensure_running 是合法值 — 修复前旧 gate 会 raise WorkerUnsupportedResponse
+        # pytest.raises 捕获不到 → 测试通过;旧 gate 存在 → raise → RED FAIL
+>       result = await worker.agenerate(
+            spec={
+                "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+                "comfy_lifecycle": "ensure_running",
+            },
+            num_candidates=1,
+            seed=0,
+            timeout_s=30.0,
+        )
+
+tests\unit\test_comfy_subprocess.py:1930: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <framework.providers.workers.comfy_worker.ComfyAgentWorker object at 0x0000027E160A8D70>
+
+    async def agenerate(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[ImageCandidate]:
+        """image capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+    
+        每个 candidate 通过 asyncio.create_subprocess_exec 异步启动子进程,
+        整个 submit→poll 段在 async with _comfy_submit_lock(): 内运行,
+        确保同一 loop 内最多 1 个 comfy subprocess 同时运行。
+        per-call timeout 是 timeout_s(默认 300s);total wall-clock = num_candidates × per-call。
+        """
+        # capability 守门
+        if self._capability != "image":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local' 的 worker 可调 agenerate(image-mode);"
+                f"mesh-mode worker 应调 agenerate_mesh"
+            )
+        # 拒绝 legacy v1 spec shape
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate: spec.workflow_graph is deprecated "
+                "since OpenSpec change comfy-agent-cli-adoption; use "
+                "spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like "
+                "'GameAssets/01b_singleview_sdxl')"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate: spec.comfy_params must be a dict"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+>           raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); "
+                f"see SRS TBD-010 for executor-async-rewrite"
+            )
+E           framework.providers.workers.comfy_worker.WorkerUnsupportedResponse: ComfyAgentWorker.agenerate: spec.comfy_lifecycle must be 'none' in this change scope (got 'ensure_running'); see SRS TBD-010 for executor-async-rewrite
+
+src\framework\providers\workers\comfy_worker.py:548: WorkerUnsupportedResponse
+____________ test_agenerate_mesh_accepts_ensure_running_lifecycle _____________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1059/test_agenerate_mesh_accepts_en0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000027E16147650>
+
+    @pytest.mark.asyncio
+    async def test_agenerate_mesh_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+        """agenerate_mesh: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+    
+        旧 D6 gate 在 agenerate_mesh 内残存时 raise;修复后 ensure_running 通过。
+        mock subprocess 返回合法 GLB 输出以隔离副作用。
+        """
+        import asyncio as _aio
+    
+        fake_glb = tmp_path / "out.glb"
+        _make_glb_file(fake_glb)
+    
+        worker = _make_mesh_worker(tmp_path)
+    
+        fake_stdout = json.dumps({
+            "ok": True,
+            "outputs": {"glb": [str(fake_glb)], "images": [], "audio": [], "video": []},
+        }).encode("utf-8")
+    
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self): return (fake_stdout, b"")
+            async def wait(self): return 0
+            def terminate(self): pass
+            def kill(self): pass
+    
+        async def _fake_exec(*a, **kw):
+            return _FakeProc()
+    
+        monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+    
+>       result = await worker.agenerate_mesh(
+            spec={
+                "comfy_workflow": "GameAssets/03_mini_image_to_3d_hunyuan_loadimage",
+                "comfy_lifecycle": "ensure_running",
+            },
+            source_image_filename="forgeue_abcdef.png",
+            num_candidates=1,
+            seed=0,
+            timeout_s=30.0,
+        )
+
+tests\unit\test_comfy_subprocess.py:1973: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <framework.providers.workers.comfy_worker.ComfyAgentWorker object at 0x0000027E16284500>
+
+    async def agenerate_mesh(
+        self,
+        *,
+        spec: dict[str, Any],
+        source_image_filename: str,
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """Mesh capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+    
+        与 image-mode agenerate() 平行,但:
+        - 仅在 _capability == "mesh" 时可调(否则 raise)
+        - 接 source_image_filename: filename only(round 5 D10)
+        - 返 MeshCandidate(data=GLB bytes, metadata={comfy provenance})
+        - 通过 _run_once_mesh_async 使用 asyncio.create_subprocess_exec
+        """
+        if self._capability != "mesh":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_mesh: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-mesh' 的 worker 可调 agenerate_mesh"
+            )
+        # bundle spec 校验
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_mesh: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_mesh: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like 'Mesh/02_mini_textured_3d_hunyuan')"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_mesh: spec.comfy_params must be a dict"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+>           raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_mesh: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+E           framework.providers.workers.comfy_worker.WorkerUnsupportedResponse: ComfyAgentWorker.agenerate_mesh: spec.comfy_lifecycle must be 'none' in this change scope (got 'ensure_running'); see SRS TBD-010
+
+src\framework\providers\workers\comfy_worker.py:912: WorkerUnsupportedResponse
+____________ test_agenerate_audio_accepts_ensure_running_lifecycle ____________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1059/test_agenerate_audio_accepts_e0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000027E162854F0>
+
+    @pytest.mark.asyncio
+    async def test_agenerate_audio_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+        """agenerate_audio: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+    
+        旧 D6 gate 在 agenerate_audio 内残存时 raise;修复后 ensure_running 通过。
+        mock subprocess 返回合法 FLAC 输出以隔离副作用。
+        """
+        import asyncio as _aio
+    
+        # 构造合法 FLAC magic bytes 文件
+        fake_flac = tmp_path / "out.flac"
+        fake_flac.parent.mkdir(parents=True, exist_ok=True)
+        fake_flac.write_bytes(b"fLaC" + b"\x00" * 20)
+    
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir(exist_ok=True)
+        (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+        artifacts_dir = tmp_path / "artifacts"
+        artifacts_dir.mkdir(exist_ok=True)
+        worker = ComfyAgentWorker(
+            scripts_dir=scripts_dir,
+            model_id="comfy/local-audio",
+            run_id="run_test",
+            project_id="proj_test",
+            artifacts_dir=artifacts_dir,
+        )
+    
+        fake_stdout = json.dumps({
+            "ok": True,
+            "outputs": {
+                "audio": [{"filename": str(fake_flac), "format": "flac"}],
+                "images": [], "glb": [], "video": [],
+            },
+        }).encode("utf-8")
+    
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self): return (fake_stdout, b"")
+            async def wait(self): return 0
+            def terminate(self): pass
+            def kill(self): pass
+    
+        async def _fake_exec(*a, **kw):
+            return _FakeProc()
+    
+        monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+    
+>       result = await worker.agenerate_audio(
+            spec={
+                "comfy_workflow": "Audio_Workflows/audio_stable_audio_example",
+                "comfy_lifecycle": "ensure_running",
+            },
+            num_candidates=1,
+            seed=0,
+            timeout_s=30.0,
+        )
+
+tests\unit\test_comfy_subprocess.py:2033: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <framework.providers.workers.comfy_worker.ComfyAgentWorker object at 0x0000027E160D8830>
+
+    async def agenerate_audio(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[AudioCandidate]:
+        """Audio capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+    
+        - 仅在 _capability == "audio" 时可调(否则 raise)
+        - audio capability 是 text-to-audio,无 source bytes 输入
+        - 通过 _run_once_audio_async 使用 asyncio.create_subprocess_exec
+        """
+        # Capability 守门
+        if self._capability != "audio":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_audio: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-audio' 的 worker 可调 agenerate_audio(audio-mode);"
+                f"image-mode worker 应调 agenerate(),mesh-mode worker 应调 agenerate_mesh()"
+            )
+        # Reject legacy v1 spec shape
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_audio: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_audio: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like "
+                "'Audio_Workflows/audio_stable_audio_example')"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_audio: spec.comfy_params must be dict "
+                f"(got {type(comfy_params).__name__})"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+>           raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_audio: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+E           framework.providers.workers.comfy_worker.WorkerUnsupportedResponse: ComfyAgentWorker.agenerate_audio: spec.comfy_lifecycle must be 'none' in this change scope (got 'ensure_running'); see SRS TBD-010
+
+src\framework\providers\workers\comfy_worker.py:1155: WorkerUnsupportedResponse
+____________ test_agenerate_video_accepts_ensure_running_lifecycle ____________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1059/test_agenerate_video_accepts_e0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000027E160DA7B0>
+
+    @pytest.mark.asyncio
+    async def test_agenerate_video_accepts_ensure_running_lifecycle(tmp_path, monkeypatch):
+        """agenerate_video: spec.comfy_lifecycle="ensure_running" 不应触发 lifecycle gate。
+    
+        旧 D6 gate 在 agenerate_video 内残存时 raise;修复后 ensure_running 通过。
+        mock subprocess 返回合法 MP4 输出以隔离副作用。
+        """
+        import asyncio as _aio
+    
+        # 构造合法 MP4 BMFF 5-tuple header(ftyp box)
+        fake_mp4 = tmp_path / "out.mp4"
+        fake_mp4.parent.mkdir(parents=True, exist_ok=True)
+        box_size = 16
+        ftyp_box = (
+            box_size.to_bytes(4, "big")   # box_size
+            + b"ftyp"                       # box_type
+            + b"mp42"                       # major_brand
+            + b"\x00\x00\x00\x00"           # minor_version
+        )
+        fake_mp4.write_bytes(ftyp_box + b"\x00" * 256)
+    
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir(exist_ok=True)
+        (scripts_dir / "comfyui_api").mkdir(exist_ok=True)
+        artifacts_dir = tmp_path / "artifacts"
+        artifacts_dir.mkdir(exist_ok=True)
+        worker = ComfyAgentWorker(
+            scripts_dir=scripts_dir,
+            model_id="comfy/local-video",
+            run_id="run_test",
+            project_id="proj_test",
+            artifacts_dir=artifacts_dir,
+        )
+    
+        fake_stdout = json.dumps({
+            "ok": True,
+            "outputs": {
+                "video": [{"filename": str(fake_mp4), "format": "mp4"}],
+                "images": [], "glb": [], "audio": [],
+            },
+        }).encode("utf-8")
+    
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self): return (fake_stdout, b"")
+            async def wait(self): return 0
+            def terminate(self): pass
+            def kill(self): pass
+    
+        async def _fake_exec(*a, **kw):
+            return _FakeProc()
+    
+        monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
+    
+>       result = await worker.agenerate_video(
+            spec={
+                "comfy_workflow": "Vedio/Wan2.1-T2V-1.3B_native_5sec",
+                "comfy_lifecycle": "ensure_running",
+            },
+            num_candidates=1,
+            seed=0,
+            timeout_s=30.0,
+        )
+
+tests\unit\test_comfy_subprocess.py:2099: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <framework.providers.workers.comfy_worker.ComfyAgentWorker object at 0x0000027E160D9710>
+
+    async def agenerate_video(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[VideoCandidate]:
+        """Video capability async 主面(TBD-010 executor-async-rewrite Task 3)。
+    
+        - 仅在 _capability == "video" 时可调(否则 raise)
+        - video capability 是 text-to-video,无 source bytes 输入
+        - 通过 _run_once_video_async 使用 asyncio.create_subprocess_exec
+        """
+        # Capability 守门
+        if self._capability != "video":
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_video: called on _capability={self._capability!r} "
+                f"worker;只有 model_id='comfy/local-video' 的 worker 可调 agenerate_video(video-mode);"
+                f"image-mode 应调 agenerate(),mesh-mode 应调 agenerate_mesh(),audio-mode 应调 agenerate_audio()"
+            )
+        # Reject legacy v1 spec shape
+        if "workflow_graph" in spec:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_video: spec.workflow_graph is deprecated; "
+                "use spec.comfy_workflow + spec.comfy_params instead"
+            )
+        comfy_workflow = spec.get("comfy_workflow")
+        if not isinstance(comfy_workflow, str) or not comfy_workflow:
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_video: spec.comfy_workflow REQUIRED, "
+                "must be non-empty string (manifest name like "
+                "'Vedio/Wan2.1-T2V-1.3B_native_5sec' — D5 上游 'Vedio/' 拼写照实跟随,不做翻译)"
+            )
+        comfy_params = spec.get("comfy_params", {})
+        if not isinstance(comfy_params, dict):
+            raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_video: spec.comfy_params must be dict "
+                f"(got {type(comfy_params).__name__})"
+            )
+        lifecycle = spec.get("comfy_lifecycle", "none")
+        if lifecycle != "none":
+>           raise WorkerUnsupportedResponse(
+                f"ComfyAgentWorker.agenerate_video: spec.comfy_lifecycle must be "
+                f"'none' in this change scope (got {lifecycle!r}); see SRS TBD-010"
+            )
+E           framework.providers.workers.comfy_worker.WorkerUnsupportedResponse: ComfyAgentWorker.agenerate_video: spec.comfy_lifecycle must be 'none' in this change scope (got 'ensure_running'); see SRS TBD-010
+
+src\framework\providers\workers\comfy_worker.py:1413: WorkerUnsupportedResponse
+- generated xml file: D:\ClaudeProject\ForgeUE_claude\forge\changes\executor-async-rewrite\.evidence\task-10r2-red-junit.xml -
+=========================== short test summary info ===========================
+FAILED tests/unit/test_comfy_subprocess.py::test_agenerate_accepts_ensure_running_lifecycle
+FAILED tests/unit/test_comfy_subprocess.py::test_agenerate_mesh_accepts_ensure_running_lifecycle
+FAILED tests/unit/test_comfy_subprocess.py::test_agenerate_audio_accepts_ensure_running_lifecycle
+FAILED tests/unit/test_comfy_subprocess.py::test_agenerate_video_accepts_ensure_running_lifecycle
+================= 4 failed, 6 passed, 55 deselected in 0.75s ==================

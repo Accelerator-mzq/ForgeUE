@@ -1,0 +1,89 @@
+# Target
+
+OpenSpec change comfy-agent-cli-adoption Round 2 design contract review (S2 to S3 design hook, second pass).
+
+# Context
+
+This is the second review pass. Round 1 surfaced 6 findings, all accepted-codex and written back to contract via commit a45d30b on branch chore/openspec-superpowers. Round 2 validates whether the writeback ACTUALLY fixed the 6 findings + whether it introduced new contract holes (per ForgeUE memory feedback_verify_external_reviews — never assume one's own fix is correct).
+
+Round 1 evidence to read first:
+
+- review/codex_design_review.md — round 1 codex output verbatim, 6 findings (1 critical + 4 high + 1 medium)
+- review/design_cross_check.md — round 1 cross-check with frozen ## A (Claude's pre-codex stance), Cross-check Matrix B (resolutions), Verification Note D (file:line independent check + 6/6 verified=true), D.2 Writeback Completeness table (post-commit a45d30b)
+
+Writeback diff for adversarial inspection:
+
+- git show a45d30b — full diff of the round 1 writeback (5 files +243/-82)
+- git log a45d30b..HEAD — additional cross-check evidence (40a60c9) + execution plan (79ec6c7)
+
+Current post-writeback contract:
+
+- proposal.md (revised What Changes + Modified Capabilities)
+- design.md (added D6 lifecycle=none rationale + D7 virtual model id + D-FutureScope + revised Risks A/C + Resolved OQ-4/5)
+- tasks.md (revised §1.2 + §2 expanded + §3 lifecycle=none assert + §4.2 project_id + §4.3 prepared_routes gate + §6.5 measured baseline + §7.1 image_local alias + §9.6 acceptance §8.1 measured + §9.11 TBD-010 + §10.5 manual main spec line 25 update)
+- specs/provider-routing/spec.md (rewritten — ADDED 7 requirements + MODIFIED 1 requirement upgrading 4 to 5 protocol families)
+- specs/probe-and-validation/spec.md (fence list extended, test_cancel_terminates_subprocess replaced)
+
+Contract integrity check post-writeback:
+
+- openspec validate comfy-agent-cli-adoption --strict — PASS
+- python tools/forgeue_change_state.py --change comfy-agent-cli-adoption --writeback-check --json — state S3, drifts [], frontmatter_issues [], structural_issues []
+
+# Round 2 adversarial focus
+
+Two questions to answer:
+
+QUESTION 1 — Is each round 1 finding ACTUALLY fixed by the writeback, or did the fix mis-target?
+
+Specifically interrogate:
+
+- F1 critical (cancel unreachable): writeback added D6 (lifecycle=none only) + new spec Requirement "ComfyAgentWorker cancel is best-effort under orchestrator to_thread wrapping" + assert in worker init + executor + bundle spec rejection. Did this REALLY fix cancel reachability, or did it just narrow the lifecycle scope and acknowledge the cancel hole as best-effort? If the latter, is that an acceptable framing under D6=A user decision (since lifecycle=none means no spawned ComfyUI server child = no orphan)? Are there any cancel paths not covered (e.g. user Ctrl-C during shutil.copy2 in submit, where copy2 is sync IO inside the to_thread thread)?
+
+- F2 high (alias missing model entry): writeback added providers.comfy_api + models["comfy/local"] virtual id + aliases.image_local. Does the bundle path actually resolve via this chain? The model id "comfy/local" uses slash but "comfy" is NOT the provider name (provider is "comfy_api"). Existing model ids (qwen/..., hunyuan/...) all use provider/model format with consistent prefix. Will CapabilityRouter prefix matching or ModelRegistry parsing trip on this naming inconsistency? Should the model id be "comfy_api/local" instead?
+
+- F3 high (ADDED only): writeback added MODIFIED Requirements section updating "Non-OpenAI protocols ship dedicated adapters" (4 to 5 protocol families). Does the MODIFIED section copy the FULL original requirement block per OpenSpec instruction ("MODIFIED requirements MUST include full updated content")? Or did Claude rewrite the requirement text and add only ONE new scenario, leaving the original requirement structurally incomplete? Also: tasks §10.5 marks main spec line 25 Current Behavior for manual edit at archive time. Is "manual edit at archive" an acceptable workaround for OpenSpec MODIFIED's inability to modify Current Behavior / Invariants / Non-Goals sections, or is this a contract debt?
+
+- F4 high (--project semantic split): writeback unified all 4 sites to task.project_id. But ComfyAgentWorker.__init__ signature in micro_tasks Step 3.2 has project_id: str | None = None (optional, defaults to None). If executor fails to pass it, worker constructs --project None which is meaningless. Should project_id be required (no default) or assert is not None?
+
+- F5 high (dry-run 10s timeout): writeback gated probe by prepared_routes containing comfy_api + bumped timeout 10s to 30s. But where exactly is the prepared_routes hook point in DryRunPass? framework.workflows.loader expands models_ref into prepared_routes; does DryRunPass.run() see the expanded prepared_routes attribute or the raw bundle dict? tasks §4.3 says "DryRunPass detects" but provides no API surface confirmation. Verify that DryRunPass actually has access to prepared_routes at the right hook point.
+
+- F6 medium (test baseline 549): writeback removed hardcoded arithmetic, switched to "measured" wording in tasks §6.5 + §9.6. Sufficient as a fix?
+
+QUESTION 2 — Did the writeback introduce new contract holes?
+
+Beyond Claude's self-identified weaknesses listed in design_cross_check_round_2.md ## A (W-AssertVsRaise / W-ModelIdSlash / W-NewAliasNotInSrs / W-ModifiedNotFullCopy / W-ProjectIdRequired / W-DryRunHookPoint / W-ManifestWorkflowFreeText / W-CapRouterRouteKindCheck / W-FakeWorkerStrictGate / W-Tbd010Tooprescriptive / W-TimeoutSignature), look for issues Claude missed. Especially check:
+
+- New alias image_local: SRS FR-MODEL-007 (visible in docs/requirements/SRS.md) lists capability aliases with a fixed enumeration (text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image). image_local is NEW. Does tasks §9.2 doc-sync include updating SRS FR-MODEL-007 alias list? If not, we have a new contract drift between code and SRS.
+
+- design.md Risks section third row "shutil.copy2 in async context" — Claude added this acknowledging W-CopyAsyncBlocking but explicitly defers to TBD-010 as a "medium open question, does not block S3". Is deferring async IO blocking acknowledgement to a future TBD really safe, or is it itself a contract hole that should require asyncio.to_thread(shutil.copy2, ...) wrapping in this change?
+
+- D6 Decision in design.md says: "lifecycle 4 模式只允许 none". But the spec ADDED Requirement "ComfyUI worker invokes the agent CLI via subprocess" top text says default_lifecycle is "one of none / ensure_running / ensure_release / self_managed_session" then narrows it. Is this dual-statement (open the door then close it) a confusing design pattern, or a deliberate "preserve future-extension shape" choice (per D6 last paragraph "lifecycle 4 模式但本 change scope 只接 none — 措辞预留, TBD-010 加 ensure_running 时只需 MODIFIED 同 requirement, 不必新增")?
+
+- Migration Plan in design.md still lists 7-commit chain. After writeback (which added registry config + virtual model id + alias + capability_router branch + 3 model_registry fences + 18 subprocess fences), is the 7-commit chain still atomic? Does each intermediate commit leave the test suite green? Particularly: commit 3 (executor reads new fields) before commit 4 (FakeComfyWorker schema gate) — if test_p3 / a2_image / examples_smoke uses FakeComfyWorker without new spec fields, will commit 3 leave them red until commit 4?
+
+- Round 1 self-identified weakness W-CapRouterRouteKindCheck (now restated in round 2 ## A): the existing CapabilityRouter is adapter.supports(model)-based, NOT provider.kind-based. tasks §4.4 says add subprocess_cli branch with "prepared_route.kind == image AND provider.kind == subprocess_cli", but micro_tasks Step 4.4 sketches a ComfyAgentRouter class with supports() method. Verify that CapabilityRouter actually accepts this dispatch model, or if it requires a different integration shape (e.g. ComfyAgentWorker as an adapter implementing supports(model) returning model == "comfy/local").
+
+- TBD-010 description in tasks §9.11: extremely specific ("GenerateImageExecutor / GenerateMeshExecutor / generate_structured ALL change to native async, ComfyUI lifecycle extends to ensure_running, main spec lines 211 + 229 MODIFIED"). SRS §7.3 existing TBD-001 to TBD-005 are open-question style ("when X happens, evaluate Y"). Is this prescriptive style misaligned with the SRS §7.3 schema, locking in implementation choices that should remain open at decision time?
+
+# What to return
+
+For QUESTION 1, give a per-finding verdict:
+
+- F1: fixed-correctly / fixed-with-caveat (explain) / not-actually-fixed (explain)
+- ... same for F2-F6
+End with a counter "FIXED-CORRECTLY: N/6"
+
+For QUESTION 2, return new findings in standard adversarial-review style:
+
+- finding id (G1, G2, ... — use G prefix to distinguish from round 1 F prefix)
+- severity (blocker / high / medium / low)
+- claim (file:line)
+- evidence (why this is a problem)
+- suggested fix (if applicable)
+
+End with finding count + severity distribution.
+
+Claude will independently file:line verify each new G-finding (per ForgeUE memory feedback_verify_external_reviews) + decide accepted-codex (writeback) or disputed (with verdict in section D.1 Round 2 Verification Note).
+
+Do NOT propose new features or refactors (this change scope is locked).
+Do NOT re-raise round 1 findings — only Q1 verdicts on existing F1-F6 plus Q2 new G-findings.

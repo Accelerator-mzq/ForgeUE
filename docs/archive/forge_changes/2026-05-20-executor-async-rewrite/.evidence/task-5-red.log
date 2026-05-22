@@ -1,0 +1,982 @@
+..F.....FFF.....F.....FFF...................FFFFFFFF....F...F..FF....... [ 30%]
+..F..................................................................... [ 60%]
+...F.................................................................... [ 91%]
+.....................                                                    [100%]
+================================== FAILURES ===================================
+______ test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch ______
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_dispatches_comfy0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000248A02B3A80>
+
+    async def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_path, monkeypatch):
+        """End-to-end:executor.execute → ComfyAgentWorker.generate_audio called。
+        Mock at `subprocess.run` boundary(沿 mesh test 同款模式)。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        fake = tmp_path / "out.flac"
+        fake.write_bytes(b"fLaC" + b"\x80\x00\x00\x22" + b"\x00" * 50)
+        ctx, _ = _make_audio_ctx(tmp_path)
+        executor = GenerateAudioExecutor()
+        import asyncio
+        import json
+    
+        # TBD-010 Task 3: generate_audio 现在走 asyncio.create_subprocess_exec
+        _stdout = json.dumps({
+            "ok": True,
+            "outputs": {"audio": [str(fake)], "images": [], "glb": [], "video": []},
+        }).encode("utf-8")
+        call_count = []
+    
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self): return (_stdout, b"")
+            async def wait(self): return 0
+            def terminate(self): pass
+            def kill(self): pass
+    
+        _orig = asyncio.create_subprocess_exec
+        async def _fake_create(*a, **kw):
+            call_count.append(1)
+            return _FakeProc()
+        asyncio.create_subprocess_exec = _fake_create  # type: ignore[assignment]
+        try:
+            # Task 5 RED: executor.execute 已转为 async def,需 await
+>           result = await executor.execute(ctx)
+                           ^^^^^^^^^^^^^^^^^^^^^
+
+tests\unit\test_generate_audio_comfy.py:180: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\framework\runtime\executors\generate_audio.py:102: in execute
+    candidates = self._generate_via_comfy_worker(
+src\framework\runtime\executors\generate_audio.py:233: in _generate_via_comfy_worker
+    return worker.generate_audio(
+src\framework\providers\workers\comfy_worker.py:1188: in generate_audio
+    return asyncio.run(self.agenerate_audio(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+main = <coroutine object ComfyAgentWorker.agenerate_audio at 0x00000248A04CCB40>
+
+    def run(main, *, debug=None, loop_factory=None):
+        """Execute the coroutine and return the result.
+    
+        This function runs the passed coroutine, taking care of
+        managing the asyncio event loop, finalizing asynchronous
+        generators and closing the default executor.
+    
+        This function cannot be called when another asyncio event loop is
+        running in the same thread.
+    
+        If debug is True, the event loop will be run in debug mode.
+        If loop_factory is passed, it is used for new event loop creation.
+    
+        This function always creates a new event loop and closes it at the end.
+        It should be used as a main entry point for asyncio programs, and should
+        ideally only be called once.
+    
+        The executor is given a timeout duration of 5 minutes to shutdown.
+        If the executor hasn't finished within that duration, a warning is
+        emitted and the executor is closed.
+    
+        Example:
+    
+            async def main():
+                await asyncio.sleep(1)
+                print('hello')
+    
+            asyncio.run(main())
+        """
+        if events._get_running_loop() is not None:
+            # fail fast with short traceback
+>           raise RuntimeError(
+                "asyncio.run() cannot be called from a running event loop")
+E           RuntimeError: asyncio.run() cannot be called from a running event loop
+
+C:\Users\mzq\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py:191: RuntimeError
+_ test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_file_suffix _
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_persists_audio_a0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002489F02CAE0>
+
+    async def test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_file_suffix(tmp_path, monkeypatch):
+        """F-Plan-R6-A round-6 critical:Artifact.artifact_type.shape == "waveform"
+        (与 UE bridge `_KIND_MAP[("audio", "waveform")] = "sound_wave"` 唯一映射对齐);
+        file_suffix=`.{cand.format}` 反映真实 payload 编码。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        ctx, repo = _make_audio_ctx(tmp_path)
+        executor = GenerateAudioExecutor()
+        cand = _fake_audio_candidate(format_="flac")
+        with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
+            worker_inst = MagicMock()
+            worker_inst.generate_audio.return_value = [cand]
+            cls_mock.return_value = worker_inst
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_audio_comfy.py:289: TypeError
+_ test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate _
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_artifact_top_lev0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000248A02BF890>
+
+    async def test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate(tmp_path, monkeypatch):
+        """F-Plan-R7-A round-7 single-source + FR-STORE-004 audio metadata 三件套:
+        Artifact.metadata.format=cand.format;duration_seconds/sample_rate=None always。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        ctx, repo = _make_audio_ctx(tmp_path)
+        executor = GenerateAudioExecutor()
+        cand = _fake_audio_candidate(format_="mp3")
+        with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
+            worker_inst = MagicMock()
+            worker_inst.generate_audio.return_value = [cand]
+            cls_mock.return_value = worker_inst
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_audio_comfy.py:313: TypeError
+_________ test_local_comfy_audio_pricing_none_treated_as_non_premium __________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_local_comfy_audio_pricing0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000248A067BEE0>
+
+    async def test_local_comfy_audio_pricing_none_treated_as_non_premium(tmp_path, monkeypatch):
+        """ADR-007 边界:`pricing=None` → `(None or {}).get("per_task_usd", 0) == 0` → non-premium
+        → 内部 retry loop 用 `policy.max_attempts` 不受 ADR-007 strict-single-attempt 约束。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        policy = RetryPolicy(max_attempts=3, retry_on=["timeout"])
+        ctx, _ = _make_audio_ctx(tmp_path, retry_policy=policy)
+        # Confirm route pricing=None
+        assert ctx.step.provider_policy.prepared_routes[0].pricing is None
+        executor = GenerateAudioExecutor()
+        with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
+            worker_inst = MagicMock()
+            # 第一次 timeout,第二次成功(retry budget 起作用)
+            worker_inst.generate_audio.side_effect = [
+                _ComfyWorkerTimeout("first call timeout"),
+                [_fake_audio_candidate()],
+            ]
+            cls_mock.return_value = worker_inst
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_audio_comfy.py:350: TypeError
+______ test_executor_dispatches_comfy_local_video_to_comfy_worker_branch ______
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_dispatches_comfy1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000248A0251950>
+
+    async def test_executor_dispatches_comfy_local_video_to_comfy_worker_branch(tmp_path, monkeypatch):
+        """End-to-end:executor.execute → ComfyAgentWorker.generate_video called。
+        Mock at `subprocess.run` boundary(沿 audio test 同款模式)。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        fake = tmp_path / "out.mp4"
+        fake.write_bytes(
+            b"\x00\x00\x00\x20" + b"ftyp" + b"isom" + b"\x00\x00\x02\x00"
+            + b"isom" + b"iso2" + b"mp41" + b"mp42"
+        )
+        ctx, _ = _make_video_ctx(tmp_path)
+        executor = GenerateVideoExecutor()
+        import asyncio
+        import json
+    
+        # TBD-010 Task 3: generate_video 现在走 asyncio.create_subprocess_exec
+        _stdout = json.dumps({
+            "ok": True,
+            "outputs": {"images": [], "audio": [], "glb": [], "video": [str(fake)]},
+        }).encode("utf-8")
+        call_count = []
+    
+        class _FakeProc:
+            returncode = 0
+            async def communicate(self): return (_stdout, b"")
+            async def wait(self): return 0
+            def terminate(self): pass
+            def kill(self): pass
+    
+        _orig = asyncio.create_subprocess_exec
+        async def _fake_create(*a, **kw):
+            call_count.append(1)
+            return _FakeProc()
+        asyncio.create_subprocess_exec = _fake_create  # type: ignore[assignment]
+        try:
+            # Task 5 RED: executor.execute 已转为 async def,需 await
+>           result = await executor.execute(ctx)
+                           ^^^^^^^^^^^^^^^^^^^^^
+
+tests\unit\test_generate_video_comfy.py:188: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\framework\runtime\executors\generate_video.py:105: in execute
+    candidates = self._generate_via_comfy_worker(
+src\framework\runtime\executors\generate_video.py:245: in _generate_via_comfy_worker
+    return worker.generate_video(
+src\framework\providers\workers\comfy_worker.py:1447: in generate_video
+    return asyncio.run(self.agenerate_video(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+main = <coroutine object ComfyAgentWorker.agenerate_video at 0x00000248A04CCE00>
+
+    def run(main, *, debug=None, loop_factory=None):
+        """Execute the coroutine and return the result.
+    
+        This function runs the passed coroutine, taking care of
+        managing the asyncio event loop, finalizing asynchronous
+        generators and closing the default executor.
+    
+        This function cannot be called when another asyncio event loop is
+        running in the same thread.
+    
+        If debug is True, the event loop will be run in debug mode.
+        If loop_factory is passed, it is used for new event loop creation.
+    
+        This function always creates a new event loop and closes it at the end.
+        It should be used as a main entry point for asyncio programs, and should
+        ideally only be called once.
+    
+        The executor is given a timeout duration of 5 minutes to shutdown.
+        If the executor hasn't finished within that duration, a warning is
+        emitted and the executor is closed.
+    
+        Example:
+    
+            async def main():
+                await asyncio.sleep(1)
+                print('hello')
+    
+            asyncio.run(main())
+        """
+        if events._get_running_loop() is not None:
+            # fail fast with short traceback
+>           raise RuntimeError(
+                "asyncio.run() cannot be called from a running event loop")
+E           RuntimeError: asyncio.run() cannot be called from a running event loop
+
+C:\Users\mzq\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py:191: RuntimeError
+_ test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_suffix _
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_persists_video_a0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002489EBA1BE0>
+
+    async def test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_suffix(tmp_path, monkeypatch):
+        """D1 + D8 critical:Artifact.artifact_type.shape == "mp4"(与 UE bridge
+        `_KIND_MAP[("video", "mp4")] = "file_media_source"` 唯一映射对齐);
+        file_suffix=`.{cand.format}` 反映真实 payload 编码(post-F2 sweep mp4-only =`.mp4`)。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        ctx, repo = _make_video_ctx(tmp_path)
+        executor = GenerateVideoExecutor()
+        cand = _fake_video_candidate()
+        with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
+            worker_inst = MagicMock()
+            worker_inst.generate_video.return_value = [cand]
+            cls_mock.return_value = worker_inst
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_video_comfy.py:300: TypeError
+_ test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields _
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_artifact_top_lev1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002489F073E00>
+
+    async def test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields(tmp_path, monkeypatch):
+        """D8 single-source + FR-STORE-004 video metadata 6 件套(format + 5 video fields):
+        Artifact.metadata.format=cand.format("mp4");5 video metadata 顶层全 None always
+        (本 change scope ComfyUI agent CLI 不暴露 video metadata,follow-on `video-metadata-parser` 加 ffprobe / mutagen 解析)。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        ctx, repo = _make_video_ctx(tmp_path)
+        executor = GenerateVideoExecutor()
+        cand = _fake_video_candidate()
+        with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
+            worker_inst = MagicMock()
+            worker_inst.generate_video.return_value = [cand]
+            cls_mock.return_value = worker_inst
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_video_comfy.py:325: TypeError
+_________ test_local_comfy_video_pricing_none_treated_as_non_premium __________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_local_comfy_video_pricing0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002489EBA1E10>
+
+    async def test_local_comfy_video_pricing_none_treated_as_non_premium(tmp_path, monkeypatch):
+        """ADR-007 边界:`pricing=None` → `(None or {}).get("per_task_usd", 0) == 0` → non-premium
+        → 内部 retry loop 用 `policy.max_attempts` 不受 ADR-007 strict-single-attempt 约束。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+        policy = RetryPolicy(max_attempts=3, retry_on=["timeout"])
+        ctx, _ = _make_video_ctx(tmp_path, retry_policy=policy)
+        # Confirm route pricing=None
+        assert ctx.step.provider_policy.prepared_routes[0].pricing is None
+        executor = GenerateVideoExecutor()
+        with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
+            worker_inst = MagicMock()
+            # 第一次 timeout,第二次成功(retry budget 起作用)
+            worker_inst.generate_video.side_effect = [
+                _ComfyWorkerTimeout("first call timeout"),
+                [_fake_video_candidate()],
+            ]
+            cls_mock.return_value = worker_inst
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_video_comfy.py:365: TypeError
+_ test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch _
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_execute_dispatch0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002489F073BD0>
+
+    async def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch(tmp_path, monkeypatch):
+        """End-to-end:execute() 检测 comfy/local-mesh route → _generate_via_comfy_worker
+        (NOT 现有 self._worker.generate)→ 持久化为 in-tree GLB Artifact。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+        monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
+        ctx, repo, src_bytes = _make_comfy_mesh_ctx(tmp_path, num_candidates=1)
+    
+        # injected worker:不应被调用(comfy 分支接管)
+        injected_worker = MagicMock(spec=MeshWorker)
+        injected_worker.name = "injected_test_worker"
+        executor = GenerateMeshExecutor(worker=injected_worker)
+    
+        fake_cand = _fake_mesh_candidate()
+        with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
+            W.return_value.generate_mesh.return_value = [fake_cand]
+            # Task 5 RED: executor.execute 已转为 async def,需 await
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_comfy.py:449: TypeError
+_ test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch _
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_execute_remote_h0')
+
+    async def test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch(tmp_path):
+        """regression:no comfy/local-mesh route → 走原 self._worker.generate 路径
+        (远端 mesh attempts=1 enforcement 不受本 change 影响)。"""
+        extra = [PreparedRoute(model="hunyuan/hy-3d-3.1", api_key_env="HUNYUAN_3D_KEY",
+                               kind="mesh", pricing={"per_task_usd": 0.25})]
+        ctx, _, _ = _make_comfy_mesh_ctx(tmp_path,
+                                          use_comfy_local_mesh_route=False,
+                                          extra_routes=extra,
+                                          num_candidates=1)
+        executor = GenerateMeshExecutor(worker=FakeMeshWorker())
+        with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_comfy.py:470: TypeError
+_ test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cli _
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_dispatches_comfy2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002489F1C3620>
+
+    async def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
+        """G6-F3 follow-on:comfy/local-mesh 路径活跃时,Artifact.producer.provider
+        == "comfy_agent_cli",NOT injected worker name(框架 self._worker.name 注入的
+        HunyuanMeshWorker / FakeMeshWorker 名会污染 audit / comparison report)。"""
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+        monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))
+        ctx, repo, src_bytes = _make_comfy_mesh_ctx(tmp_path, num_candidates=1)
+    
+        # injected worker:其 name 是 "injected_test_worker",但本 change 后该字段
+        # 不应出现在 Artifact.producer 里
+        injected_worker = MagicMock(spec=MeshWorker)
+        injected_worker.name = "injected_test_worker"
+        executor = GenerateMeshExecutor(worker=injected_worker)
+    
+        fake_cand = _fake_mesh_candidate()
+        with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
+            W.return_value.generate_mesh.return_value = [fake_cand]
+>           result = await executor.execute(ctx)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_comfy.py:500: TypeError
+______ test_executor_remote_hunyuan_path_records_provider_as_worker_name ______
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_remote_hunyuan_p0')
+
+    async def test_executor_remote_hunyuan_path_records_provider_as_worker_name(tmp_path):
+        """regression:non-comfy 路径(远端 Hunyuan / Tripo)producer.provider == self._worker.name,
+        保留原行为(本 change 只改 comfy 分支 attribution,不改远端 mesh 分支)。"""
+        extra = [PreparedRoute(model="hunyuan/hy-3d-3.1", api_key_env="HUNYUAN_3D_KEY",
+                               kind="mesh", pricing={"per_task_usd": 0.25})]
+        ctx, _, _ = _make_comfy_mesh_ctx(tmp_path,
+                                          use_comfy_local_mesh_route=False,
+                                          extra_routes=extra,
+                                          num_candidates=1)
+        fake_worker = FakeMeshWorker()
+        executor = GenerateMeshExecutor(worker=fake_worker)
+>       result = await executor.execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_comfy.py:528: TypeError
+__________ test_mesh_executor_emits_cost_usd_when_policy_has_pricing __________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_mesh_executor_emits_cost_0')
+
+    async def test_mesh_executor_emits_cost_usd_when_policy_has_pricing(tmp_path):
+        """With `prepared_routes[0].pricing.per_task_usd=0.14` and 3 candidates,
+        `metrics["cost_usd"]` must equal 0.42. This is the fence for 2026-04
+        pricing wiring — pre-PR this field didn't exist at all, which meant
+        BudgetTracker saw $0 for every mesh step no matter how many paid
+        Hunyuan 3D / Tripo3D tasks ran."""
+        policy = ProviderPolicy(
+            capability_required="mesh.generation",
+            prepared_routes=[PreparedRoute(
+                model="hunyuan/hy-3d-3.1",
+                api_key_env="HUNYUAN_3D_KEY",
+                kind="mesh",
+                pricing={"per_task_usd": 0.14},
+            )],
+        )
+        ctx, _ = _make_ctx(tmp_path, "run_mesh_priced",
+                             provider_policy=policy, num_candidates=3)
+    
+>       result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_cost.py:129: TypeError
+___________ test_mesh_executor_cost_is_zero_when_no_provider_policy ___________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_mesh_executor_cost_is_zer0')
+
+    async def test_mesh_executor_cost_is_zero_when_no_provider_policy(tmp_path):
+        """Back-compat: pre-PR integration tests construct mesh steps without
+        any provider_policy (FakeMeshWorker / offline runs). The new
+        cost_usd wiring must NOT introduce a non-zero charge in that
+        scenario — pre-PR tests expected `cost_usd = 0.0` (or no key at
+        all); changing that would cascade through `test_l4_image_to_3d`
+        and every mesh integration fence."""
+        ctx, _ = _make_ctx(tmp_path, "run_mesh_nopolicy",
+                             provider_policy=None, num_candidates=2)
+    
+>       result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_cost.py:148: TypeError
+_________ test_mesh_executor_cost_is_zero_when_policy_has_no_pricing __________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_mesh_executor_cost_is_zer1')
+
+    async def test_mesh_executor_cost_is_zero_when_policy_has_no_pricing(tmp_path):
+        """Back-compat: models.yaml entries that don't declare `pricing:`
+        produce `PreparedRoute(pricing=None)`. Executor must treat that
+        identically to "no policy at all" — charge $0 and fall through
+        silently rather than attempting to use a fallback scalar (which
+        would silently introduce a non-zero floor for every mesh run)."""
+        policy = ProviderPolicy(
+            capability_required="mesh.generation",
+            prepared_routes=[PreparedRoute(
+                model="hunyuan/hy-3d-3.1", kind="mesh",   # pricing=None by default
+            )],
+        )
+        ctx, _ = _make_ctx(tmp_path, "run_mesh_nopricing",
+                             provider_policy=policy, num_candidates=2)
+    
+>       result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_cost.py:169: TypeError
+_____________ test_mesh_executor_cost_picks_first_mesh_kind_route _____________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_mesh_executor_cost_picks_0')
+
+    async def test_mesh_executor_cost_picks_first_mesh_kind_route(tmp_path):
+        """When the policy has mixed-kind routes (a stray image route
+        accidentally left over, or a text fallback), the mesh executor
+        must pick the first `kind="mesh"` route's pricing — not the
+        textual first-route's. Fence against accidentally charging mesh
+        runs at text rates."""
+        policy = ProviderPolicy(
+            capability_required="mesh.generation",
+            prepared_routes=[
+                # A non-mesh route first — pricing wrong for mesh
+                PreparedRoute(
+                    model="openai/gpt-legacy", kind="text",
+                    pricing={"input_per_1k_usd": 0.001, "output_per_1k_usd": 0.002},
+                ),
+                PreparedRoute(
+                    model="hunyuan/hy-3d-3.1", kind="mesh",
+                    pricing={"per_task_usd": 0.14},
+                ),
+            ],
+        )
+        ctx, _ = _make_ctx(tmp_path, "run_mesh_mixed",
+                             provider_policy=policy, num_candidates=1)
+    
+>       result = await GenerateMeshExecutor(worker=FakeMeshWorker()).execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\unit\test_generate_mesh_cost.py:197: TypeError
+_________________________ test_image_edit_happy_path __________________________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_image_edit_happy_path0')
+
+    async def test_image_edit_happy_path(tmp_path: Path):
+        run_id = "run_edit_happy"
+        reg = get_backend_registry(artifact_root=str(tmp_path))
+        repo = ArtifactRepository(backend_registry=reg)
+        src_id = _seed_image(repo, run_id)
+    
+        fake = FakeAdapter()
+        fake._supported.add("qwen-edit-fake")
+        fake.program("qwen-edit-fake", outputs=[FakeModelProgram(
+            image_bytes_list=[b"\x89PNG\r\n\x1a\nEDITED_1", b"\x89PNG\r\n\x1a\nEDITED_2"],
+        )])
+        router = CapabilityRouter()
+        router.register(fake)
+    
+        step = Step(
+            step_id="step_edit", type=StepType.generate, name="edit",
+            risk_level=RiskLevel.medium, capability_ref="image.edit",
+            provider_policy=ProviderPolicy(
+                capability_required="image.edit",
+                prepared_routes=[PreparedRoute(
+                    model="qwen-edit-fake", api_key_env=None, api_base=None,
+                    kind="image_edit",
+                )],
+            ),
+            config={"num_candidates": 2, "prompt": "night scene + torches",
+                    "size": "1024x1024"},
+        )
+        task = Task(
+            task_id="t", task_type=TaskType.asset_generation,
+            run_mode=RunMode.production, title="edit",
+            input_payload={}, expected_output={}, project_id="p",
+        )
+        run = Run(run_id=run_id, task_id="t", project_id="p", status=RunStatus.running,
+                  started_at=datetime.now(timezone.utc), workflow_id="w", trace_id="tr")
+        ctx = StepContext(run=run, task=task, step=step, repository=repo,
+                          upstream_artifact_ids=[src_id])
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+>       result = await GenerateImageEditExecutor(router=router).execute(ctx)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\integration\test_image_edit.py:98: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\framework\runtime\executors\generate_image_edit.py:78: in execute
+    results, chosen_model = self._router.image_edit(
+src\framework\providers\capability_router.py:243: in image_edit
+    return _run_sync(self.aimage_edit(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+coro = <coroutine object CapabilityRouter.aimage_edit at 0x000002489F03B560>
+
+    def _run_sync(coro: Awaitable[T]) -> T:
+        """Run an async coroutine from a sync context.
+    
+        Uses `asyncio.run` when no loop is running. If called from within an
+        already-running event loop we raise a clear error — callers should use
+        the async method directly in that case, not the sync shim.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        # Close the coroutine so we don't leak an "un-awaited coroutine" warning.
+        if hasattr(coro, "close"):
+            coro.close()
+>       raise RuntimeError(
+            "Sync ProviderAdapter shim called from inside a running event loop. "
+            "Use the async method (acompletion/astructured/aimage_*) directly."
+        )
+E       RuntimeError: Sync ProviderAdapter shim called from inside a running event loop. Use the async method (acompletion/astructured/aimage_*) directly.
+
+src\framework\providers\base.py:99: RuntimeError
+________________________ test_mesh_executor_happy_path ________________________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_mesh_executor_happy_path0')
+
+    async def test_mesh_executor_happy_path(tmp_path: Path):
+        run_id = "run_l4_happy"
+        reg = get_backend_registry(artifact_root=str(tmp_path))
+        repo = ArtifactRepository(backend_registry=reg)
+        img_id = _seed_image_artifact(repo, run_id)
+        spec_id = _seed_spec_artifact(repo, run_id)
+    
+        worker = FakeMeshWorker()  # synthesise minimal GLB
+        step = Step(
+            step_id="step_mesh", type=StepType.generate, name="mesh",
+            risk_level=RiskLevel.high, capability_ref="mesh.generation",
+            config={"num_candidates": 1},
+        )
+        task = Task(
+            task_id="t", task_type=TaskType.asset_generation,
+            run_mode=RunMode.production, title="m",
+            input_payload={}, expected_output={}, project_id="p",
+        )
+        run = Run(run_id=run_id, task_id="t", project_id="p", status=RunStatus.running,
+                  started_at=datetime.now(timezone.utc), workflow_id="w", trace_id="tr")
+        ctx = StepContext(
+            run=run, task=task, step=step, repository=repo,
+            upstream_artifact_ids=[spec_id, img_id],
+        )
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+>       result = await GenerateMeshExecutor(worker=worker).execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\integration\test_l4_image_to_3d.py:139: TypeError
+__________ test_l4_mesh_reads_selected_candidate_from_review_verdict __________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_l4_mesh_reads_selected_ca0')
+
+    async def test_l4_mesh_reads_selected_candidate_from_review_verdict(tmp_path: Path):
+        """TBD-008 (2026-04-22) Phase B3 — **real production path** fence.
+    
+        Validates: in the shape of `examples/image_to_3d_pipeline.json`, where
+        step_mesh.depends_on = [step_mesh_spec, step_review_image, step_image]
+        and step_review_image emits `report.verdict` (NOT a `bundle.selected_set`
+        — there is no SelectExecutor in that workflow), mesh executor's
+        `_resolve_source_image` must read `verdict.selected_candidate_ids[0]`
+        and look up that image — NOT fall through to "first flat cand found"
+        (which would silently pick cand_0 regardless of review outcome).
+    
+        Codex review Phase G Round 2 (2026-04-22) caught this: Round 1 fix
+        prioritised `bundle.selected_set`, which is never present in the real
+        image_to_3d workflow. Round 2 fix adds verdict as Pass 1 priority.
+    
+        Strategy: seed 3 distinct-size PNGs; seed a `report.verdict` artifact
+        selecting the MIDDLE one (cand_1); upstream includes flat cands BEFORE
+        the verdict (matching real orchestrator ordering); assert FakeMeshWorker
+        received bytes matching cand_1."""
+        from framework.core.artifact import ArtifactType, ProducerRef
+        from framework.core.enums import ArtifactRole, PayloadKind
+    
+        run_id = "run_l4_verdict"
+        reg = get_backend_registry(artifact_root=str(tmp_path))
+        repo = ArtifactRepository(backend_registry=reg)
+    
+        cand_ids, fixture_bytes = _seed_candidate_trio(repo, run_id)
+    
+        # Seed verdict artifact — shape matches `review.py:_persist_verdict`.
+        verdict_id = f"{run_id}_verdict"
+        repo.put(
+            artifact_id=verdict_id,
+            value={
+                "decision": "approve_one",
+                "selected_candidate_ids": [cand_ids[1]],  # pick cand_1 (v2)
+                "rejected_candidate_ids": [cand_ids[0], cand_ids[2]],
+                "confidence": 0.85,
+                "reasons": ["v2 best"],
+            },
+            artifact_type=ArtifactType(
+                modality="report", shape="verdict", display_name="verdict"),
+            role=ArtifactRole.intermediate, format="json",
+            mime_type="application/json", payload_kind=PayloadKind.inline,
+            producer=ProducerRef(run_id=run_id, step_id="step_review_image",
+                                   provider="review_engine"),
+        )
+    
+        spec_id = _seed_spec_artifact(repo, run_id)
+        step, task, run = _build_mesh_step_and_task(run_id, "verdict_priority")
+    
+        # Real production upstream shape: spec + flat cands + verdict.
+        # Orchestrator._resolve_upstream_ids() orders by depends_on sequence,
+        # typically [spec, cands..., verdict] since step_image produces cands
+        # first and step_review_image produces verdict. The fence puts flat
+        # cands BEFORE verdict to prove pass 1 (verdict) now wins.
+        ctx = StepContext(
+            run=run, task=task, step=step, repository=repo,
+            upstream_artifact_ids=[spec_id, *cand_ids, verdict_id],
+        )
+    
+        worker = FakeMeshWorker()
+>       result = await GenerateMeshExecutor(worker=worker).execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\integration\test_l4_image_to_3d.py:339: TypeError
+________ test_l4_mesh_resolves_selected_image_from_selected_set_bundle ________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_l4_mesh_resolves_selected0')
+
+    async def test_l4_mesh_resolves_selected_image_from_selected_set_bundle(tmp_path: Path):
+        """TBD-008 (2026-04-22) forward-compat fence: workflows that DO run a
+        SelectExecutor (emitting `bundle.selected_set`) must still be honoured
+        by `_resolve_source_image`'s pass 2. This covers future / other bundles
+        even though `image_to_3d_pipeline.json` today goes straight from review
+        to mesh without select."""
+        from framework.core.artifact import ArtifactType, ProducerRef
+        from framework.core.enums import ArtifactRole, PayloadKind
+    
+        run_id = "run_l4_selected_set"
+        reg = get_backend_registry(artifact_root=str(tmp_path))
+        repo = ArtifactRepository(backend_registry=reg)
+    
+        cand_ids, fixture_bytes = _seed_candidate_trio(repo, run_id)
+    
+        # Seed selected_set bundle — shape matches `select.py:82-92`.
+        selected_bundle_id = f"{run_id}_selected_set"
+        repo.put(
+            artifact_id=selected_bundle_id,
+            value={
+                "selected_ids": [cand_ids[1]],
+                "rejected_ids": [cand_ids[0], cand_ids[2]],
+                "source_verdict_id": "v_fake",
+            },
+            artifact_type=ArtifactType(
+                modality="bundle", shape="selected_set", display_name="selected_set"),
+            role=ArtifactRole.intermediate, format="json",
+            mime_type="application/json", payload_kind=PayloadKind.inline,
+            producer=ProducerRef(run_id=run_id, step_id="step_select", provider="select"),
+        )
+    
+        spec_id = _seed_spec_artifact(repo, run_id)
+        step, task, run = _build_mesh_step_and_task(run_id, "selected_set_path")
+    
+        ctx = StepContext(
+            run=run, task=task, step=step, repository=repo,
+            upstream_artifact_ids=[spec_id, *cand_ids, selected_bundle_id],
+        )
+    
+        worker = FakeMeshWorker()
+>       result = await GenerateMeshExecutor(worker=worker).execute(ctx)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: object ExecutorResult can't be used in 'await' expression
+
+tests\integration\test_l4_image_to_3d.py:395: TypeError
+_______________________ test_image_edit_emits_cost_usd ________________________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_image_edit_emits_cost_usd0')
+
+    async def test_image_edit_emits_cost_usd(tmp_path: Path):
+        reg = get_backend_registry(artifact_root=str(tmp_path))
+        repo = ArtifactRepository(backend_registry=reg)
+        src_id = "src_img"
+        repo.put(
+            artifact_id=src_id, value=b"\x89PNG\r\n\x1a\nSRC",
+            artifact_type=ArtifactType(modality="image", shape="raster",
+                                        display_name="img"),
+            role=ArtifactRole.intermediate, format="png", mime_type="image/png",
+            payload_kind=PayloadKind.file,
+            producer=ProducerRef(run_id="r", step_id="up"),
+            file_suffix=".png",
+        )
+        router = CapabilityRouter()
+        router.register(_OneShotEditAdapter())
+    
+        step = Step(
+            step_id="edit", type=StepType.generate, name="e",
+            risk_level=RiskLevel.medium, capability_ref="image.edit",
+            provider_policy=ProviderPolicy(
+                capability_required="image.edit",
+                prepared_routes=[PreparedRoute(
+                    model="edit-x", kind="image_edit",
+                    pricing={"per_image_usd": 0.05},
+                )],
+            ),
+            config={"num_candidates": 2, "prompt": "x", "size": "1024x1024"},
+        )
+        task = Task(task_id="t", task_type=TaskType.asset_generation,
+                    run_mode=RunMode.production, title="t", input_payload={},
+                    expected_output={}, project_id="p")
+        run = Run(run_id="r", task_id="t", project_id="p", status=RunStatus.running,
+                  started_at=datetime.now(timezone.utc), workflow_id="w",
+                  trace_id="tr")
+        ctx = StepContext(run=run, task=task, step=step, repository=repo,
+                          upstream_artifact_ids=[src_id])
+        # Task 5 RED: executor.execute 已转为 async def,需 await
+>       result = await GenerateImageEditExecutor(router=router).execute(ctx)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\unit\test_codex_audit_fixes.py:339: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\framework\runtime\executors\generate_image_edit.py:78: in execute
+    results, chosen_model = self._router.image_edit(
+src\framework\providers\capability_router.py:243: in image_edit
+    return _run_sync(self.aimage_edit(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+coro = <coroutine object CapabilityRouter.aimage_edit at 0x000002489F03B880>
+
+    def _run_sync(coro: Awaitable[T]) -> T:
+        """Run an async coroutine from a sync context.
+    
+        Uses `asyncio.run` when no loop is running. If called from within an
+        already-running event loop we raise a clear error — callers should use
+        the async method directly in that case, not the sync shim.
+        """
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(coro)
+        # Close the coroutine so we don't leak an "un-awaited coroutine" warning.
+        if hasattr(coro, "close"):
+            coro.close()
+>       raise RuntimeError(
+            "Sync ProviderAdapter shim called from inside a running event loop. "
+            "Use the async method (acompletion/astructured/aimage_*) directly."
+        )
+E       RuntimeError: Sync ProviderAdapter shim called from inside a running event loop. Use the async method (acompletion/astructured/aimage_*) directly.
+
+src\framework\providers\base.py:99: RuntimeError
+__ test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli ___
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1005/test_executor_dispatches_comfy4')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002489F191710>
+
+    async def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli(tmp_path, monkeypatch):
+        """G6-F2 follow-on:comfy/local 路径活跃时,Artifact.producer.provider
+        == "comfy_agent_cli",NOT injected worker name(framework.run 注入的
+        FakeComfyWorker name 会污染 audit / comparison report)。"""
+        from datetime import datetime, timezone
+        from unittest.mock import MagicMock
+        from framework.artifact_store import ArtifactRepository, get_backend_registry
+        from framework.core.enums import RiskLevel, RunMode, RunStatus, StepType, TaskType
+        from framework.core.policies import PreparedRoute, ProviderPolicy
+        from framework.core.task import Run, Step, Task
+        from framework.providers.model_registry import ResolvedRoute
+        from framework.runtime.executors.base import StepContext
+        from framework.runtime.executors.generate_image import GenerateImageExecutor
+    
+        monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+        (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+    
+        fake_png = tmp_path / "out.png"
+        _make_png_file(fake_png)
+    
+        reg = get_backend_registry(artifact_root=str(tmp_path / "artifacts"))
+        repo = ArtifactRepository(backend_registry=reg)
+        policy = ProviderPolicy(
+            capability_required="image.generation",
+            prepared_routes=[PreparedRoute(
+                model="comfy/local", api_key_env=None, api_base=None,
+                kind="image", pricing=None,
+            )],
+        )
+        step = Step(
+            step_id="step_image", type=StepType.generate, name="img",
+            risk_level=RiskLevel.medium, capability_ref="image.generation",
+            config={
+                "num_candidates": 1,
+                "seed": 0,
+                "worker_timeout_s": 60,
+                "spec": {
+                    "comfy_workflow": "GameAssets/01b_singleview_sdxl",
+                    "comfy_params": {"prompt": "test"},
+                    "comfy_lifecycle": "none",
+                },
+            },
+            provider_policy=policy,
+        )
+        task = Task(
+            task_id="t", task_type=TaskType.asset_generation,
+            run_mode=RunMode.basic_llm, title="img",
+            input_payload={}, expected_output={}, project_id="proj_img",
+        )
+        run = Run(
+            run_id="run_img", task_id="t", project_id="proj_img",
+            status=RunStatus.running,
+            started_at=datetime.now(timezone.utc),
+            workflow_id="w", trace_id="tr",
+        )
+        ctx = StepContext(
+            run=run, task=task, step=step, repository=repo,
+            upstream_artifact_ids=[], run_dir=tmp_path / "run_dir",
+        )
+        (tmp_path / "run_dir").mkdir()
+    
+        # injected worker(FakeComfyWorker-like)— 其 name 不应 leak 到 producer
+        injected_worker = MagicMock()
+        injected_worker.name = "fake_comfy_injected"
+        executor = GenerateImageExecutor(worker=injected_worker)
+    
+        with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(fake_png)]))) as run_mock:
+            # Task 5 RED: executor.execute 已转为 async def,需 await
+>           result = await executor.execute(ctx)
+                           ^^^^^^^^^^^^^^^^^^^^^
+
+tests\unit\test_comfy_subprocess.py:1299: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+src\framework\runtime\executors\generate_image.py:104: in execute
+    candidates, chosen_model, route_pricing = self._generate_via_worker(
+src\framework\runtime\executors\generate_image.py:305: in _generate_via_worker
+    candidates = worker.generate(
+src\framework\providers\workers\comfy_worker.py:589: in generate
+    return asyncio.run(self.agenerate(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+main = <coroutine object ComfyAgentWorker.agenerate at 0x00000248A0520040>
+
+    def run(main, *, debug=None, loop_factory=None):
+        """Execute the coroutine and return the result.
+    
+        This function runs the passed coroutine, taking care of
+        managing the asyncio event loop, finalizing asynchronous
+        generators and closing the default executor.
+    
+        This function cannot be called when another asyncio event loop is
+        running in the same thread.
+    
+        If debug is True, the event loop will be run in debug mode.
+        If loop_factory is passed, it is used for new event loop creation.
+    
+        This function always creates a new event loop and closes it at the end.
+        It should be used as a main entry point for asyncio programs, and should
+        ideally only be called once.C:\Users\mzq\AppData\Local\Programs\Python\Python313\Lib\site-packages\_pytest\unraisableexception.py:33: RuntimeWarning: coroutine 'ComfyAgentWorker.agenerate' was never awaited
+  gc.collect()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+
+    
+        The executor is given a timeout duration of 5 minutes to shutdown.
+        If the executor hasn't finished within that duration, a warning is
+        emitted and the executor is closed.
+    
+        Example:
+    
+            async def main():
+                await asyncio.sleep(1)
+                print('hello')
+    
+            asyncio.run(main())
+        """
+        if events._get_running_loop() is not None:
+            # fail fast with short traceback
+>           raise RuntimeError(
+                "asyncio.run() cannot be called from a running event loop")
+E           RuntimeError: asyncio.run() cannot be called from a running event loop
+
+C:\Users\mzq\AppData\Local\Programs\Python\Python313\Lib\asyncio\runners.py:191: RuntimeError
+=========================== short test summary info ===========================
+FAILED tests/unit/test_generate_audio_comfy.py::test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch
+FAILED tests/unit/test_generate_audio_comfy.py::test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_file_suffix
+FAILED tests/unit/test_generate_audio_comfy.py::test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate
+FAILED tests/unit/test_generate_audio_comfy.py::test_local_comfy_audio_pricing_none_treated_as_non_premium
+FAILED tests/unit/test_generate_video_comfy.py::test_executor_dispatches_comfy_local_video_to_comfy_worker_branch
+FAILED tests/unit/test_generate_video_comfy.py::test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_suffix
+FAILED tests/unit/test_generate_video_comfy.py::test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields
+FAILED tests/unit/test_generate_video_comfy.py::test_local_comfy_video_pricing_none_treated_as_non_premium
+FAILED tests/unit/test_generate_mesh_comfy.py::test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch
+FAILED tests/unit/test_generate_mesh_comfy.py::test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch
+FAILED tests/unit/test_generate_mesh_comfy.py::test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cli
+FAILED tests/unit/test_generate_mesh_comfy.py::test_executor_remote_hunyuan_path_records_provider_as_worker_name
+FAILED tests/unit/test_generate_mesh_cost.py::test_mesh_executor_emits_cost_usd_when_policy_has_pricing
+FAILED tests/unit/test_generate_mesh_cost.py::test_mesh_executor_cost_is_zero_when_no_provider_policy
+FAILED tests/unit/test_generate_mesh_cost.py::test_mesh_executor_cost_is_zero_when_policy_has_no_pricing
+FAILED tests/unit/test_generate_mesh_cost.py::test_mesh_executor_cost_picks_first_mesh_kind_route
+FAILED tests/integration/test_image_edit.py::test_image_edit_happy_path - Run...
+FAILED tests/integration/test_l4_image_to_3d.py::test_mesh_executor_happy_path
+FAILED tests/integration/test_l4_image_to_3d.py::test_l4_mesh_reads_selected_candidate_from_review_verdict
+FAILED tests/integration/test_l4_image_to_3d.py::test_l4_mesh_resolves_selected_image_from_selected_set_bundle
+FAILED tests/unit/test_codex_audit_fixes.py::test_image_edit_emits_cost_usd
+FAILED tests/unit/test_comfy_subprocess.py::test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli
+22 failed, 215 passed in 10.23s

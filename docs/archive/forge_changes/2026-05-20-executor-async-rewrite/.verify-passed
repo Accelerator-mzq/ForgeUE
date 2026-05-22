@@ -1,0 +1,424 @@
+schema: forge-verify/v1
+verified_at: 2026-05-20T09:41:31Z
+verified_by: ai-agent
+tasks_hash: sha256:09c6d56f2dee7945327d279d0c060b006175258a4c2ff81f5178bb3ceab046b0
+content_hash: sha256:f56f63a342a0d6710f641d28de6dde1c67c46c8d12db7d00f17f3637c399b651
+git:
+  is_git_repo: true
+  head: 59f965799983db93e765a98ce02cdc914ad1a2b7
+  diff_hash: sha256:53100db9a66000f13751982c61cb559fcc1e64580a027a979764fccb3d1b4219
+evidence:
+  - scenario_id: project-tests
+    test_command: python -m pytest -q
+    test_file: tests/
+    log_path: ./.evidence/test-output.log
+    log_hash: sha256:2f6486a07bffd82dd16cf5a1219e0cbbf242744e2cc2e18ed2c8498f54f6b5af
+    pass: true
+verify_findings:
+  - id: 7
+    resolved: false
+    finding_hash: 8c7839932c4ce0f081b3bc2fe81913dff8f901779eda2ffbdeae4aff1cb8ef49
+    content_hash: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    git_head: db83a0b7a3b7b0f995db6af65da3d19030d1f853
+    dimension: process_evidence
+    check_type: invariant-7-verify-count
+    severity: WARNING
+    automated: true
+    evidence: verify_invocations.length=1; tasks count=64
+    recommendation: subagent 实施完每 task 必须调 forge evidence record-verify;若主代理已统一跑
+      change-level verify 视为可接受 → forge ack propose --action ack-warning
+pause_decisions:
+  - id: 1
+    paused_at: 2026-05-19T22:50:00Z
+    task_ref: tasks.md#task-3
+    issue_summary: dry-run probe 转 create_subprocess_exec 但 DryRunPass.run 是 sync 无法
+      await — 扩 scope 补全 DryRunPass.run async 化(_check_comfy_reachability +
+      ComfyAgentWorker.aprobe + Orchestrator.arun 内 await dry_run.run)
+    severity: WARNING
+    severity_acked_by: mzq
+    severity_acked_at: 2026-05-19T22:51:00Z
+    chosen_option: 1
+    target_artifact: proposal.md
+    target_anchor: "## What Changes"
+    capture_id: null
+    added_task_ref: null
+    non_blocking_rationale: null
+    other_rationale: null
+    other_acked_by: null
+  - id: 2
+    paused_at: 2026-05-19T23:08:09Z
+    task_ref: tasks.md#task-11
+    issue_summary: _spawn_serve detached + DEVNULL 观测性不足 → 根因诊断发现 status() JSON
+      parse 缺失,误判 ComfyUI off 为 online,跳过 _spawn_serve;扩本 change scope 修复
+      status() + 加 _spawn_serve FORGEUE_COMFY_LIFECYCLE_LOG env-conditional log
+      capture
+    severity: WARNING
+    severity_acked_by: mzq
+    severity_acked_at: 2026-05-19T23:10:00Z
+    chosen_option: 1
+    target_artifact: proposal.md
+    target_anchor: "## What Changes"
+    capture_id: e71681f2-8cba-43e5-b1e9-de18610da40c
+    added_task_ref: null
+    non_blocking_rationale: null
+    other_rationale: null
+    other_acked_by: null
+process_evidence:
+  schema: forge-process-evidence/v1
+  process_verification_mode: full
+  process_verification_mode_acked_by: null
+  process_verification_mode_acked_at: null
+  env_hash:
+    lockfile_hash: none
+    node_version: 26.1.0
+    os_platform: win32
+  tdd_event_chain:
+    - task_ref: tasks.md#task-1
+      red_commit: null
+      green_commit:
+        sha: 9e101723bfac197069bbb9842bd1f48ee9b3b85e
+        timestamp: 2026-05-19T11:57:40Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-1-green.log
+        green_log_hash: sha256:c6f1dbdb0b2b8306242cdb776b0516ae2f117092487299a867214eed4a53b9e1
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-1-green-junit.xml
+        runner_report_hash: sha256:18c637658be3fa4b359db5e8bc07df75f605734b54f53415b48f954b3ed158a6
+      tdd_exemption:
+        kind: light-mode-trivial
+      tdd_exemption_acked_by: mzq
+    - task_ref: tasks.md#task-2
+      red_commit:
+        sha: 162a2c284813fc30df2b46bc695dd7efbd89012a
+        timestamp: 2026-05-19T12:14:36Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-2-red.log
+        red_log_hash: sha256:ede134e6a4bc9875c387acfa7aa77e5eb1ea0a98a0e1222ce587b891472bc904
+        exit_code: 1
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-2-red-junit.xml
+        runner_report_hash: sha256:3b93eccf5dab94927de6b4d4b0174f07e8ff9b2becb4c128375c51e493be80f1
+        expected_failures:
+          - test_file: tests/unit/test_codex_audit_fixes.py
+            test_name: test_select_bare_approve_excludes_explicit_rejects
+            failure_type: TypeError
+          - test_file: tests/unit/test_codex_audit_fixes.py
+            test_name: test_select_bare_approve_keeps_whole_pool
+            failure_type: TypeError
+          - test_file: tests/unit/test_review_budget.py
+            test_name: test_review_single_judge_surfaces_cost_usd
+            failure_type: RuntimeError
+          - test_file: tests/unit/test_review_budget.py
+            test_name: test_review_chief_judge_accumulates_per_judge_cost
+            failure_type: RuntimeError
+      green_commit:
+        sha: 5bc1f2ded12d1f2d80e2838355b7fae6e9d9e4e6
+        timestamp: 2026-05-19T12:39:22Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-2-green.log
+        green_log_hash: sha256:8548f3f4e14ec14ff52ab24a4bfdaccb15f3a0a4570ceb351e9db15505e6f64b
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-2-green-junit.xml
+        runner_report_hash: sha256:76c16e06a102a3316655f79508dce87195378a95a2b0510a57a8f2081e30d6c6
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-3
+      red_commit:
+        sha: f5036426816a6a1b9c9bf626bc29428349fdefd6
+        timestamp: 2026-05-19T12:49:58Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-3-red.log
+        red_log_hash: sha256:6463dcaf3ba6d03760ca071a1a7da88b8758f113e0bcb8a6ee2f7d51703399cb
+        exit_code: 1
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-3-red-junit.xml
+        runner_report_hash: sha256:0b2cab1660f0f1217efb733f6014d9c0dc50415383745b90e12413be6a3cac91
+        expected_failures:
+          - test_file: tests/unit/test_comfy_subprocess.py
+            test_name: test_comfy_agenerate_uses_create_subprocess_exec
+            failure_type: AttributeError
+          - test_file: tests/unit/test_comfy_subprocess.py
+            test_name: test_comfy_submit_lock_serializes_concurrent_agenerate
+            failure_type: AttributeError
+          - test_file: tests/unit/test_comfy_subprocess.py
+            test_name: test_comfy_submit_lock_safe_across_asyncio_run_loops
+            failure_type: AttributeError
+      green_commit:
+        sha: 4bff9080db530e13655bec7f078b87c73b236e82
+        timestamp: 2026-05-19T14:16:51Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-3-green.log
+        green_log_hash: sha256:85cbb749d237c5f181f361c3d7ed5cb50c1b5d7a77d21bf821338c26502e7516
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-3-green-junit.xml
+        runner_report_hash: sha256:08c789b2a40239c6eb3ec8ad13a92e6640827ad61f97fbd857d7988bcb74ea16
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-4
+      red_commit:
+        sha: 7bfa0b77cf8c068db0bae6ef498016ce9349527a
+        timestamp: 2026-05-19T14:24:47Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-4-red.log
+        red_log_hash: sha256:2878af6f67a147a74786199adeb0ee993f85cc453d27f10ea0791e60c2615a8b
+        exit_code: 1
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-4-red-junit.xml
+        runner_report_hash: sha256:62cc5e6691d14f4405e9515a5064d1886ad5c29e2195f1ccc8a1e4e8e0e33e5d
+        expected_failures:
+          - test_file: tests/unit/test_comfy_subprocess.py
+            test_name: test_comfy_cancel_aborts_server_side_prompt
+            failure_type: AttributeError
+      green_commit:
+        sha: 205cc5ffc5bd6d79c31cdc45c79c84461d579828
+        timestamp: 2026-05-19T14:36:04Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-4-green.log
+        green_log_hash: sha256:ebab3ff45c461da41866f5e2bbd139e1fe2faead4d47dff979db497a84a4484e
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-4-green-junit.xml
+        runner_report_hash: sha256:6c7b89b2d0a1a893f6fb6da96c49bd12e3b7122302cff438875a3630f1cc90b3
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-5
+      red_commit:
+        sha: e00368c392c53ae66250891619385315156db8ea
+        timestamp: 2026-05-19T14:53:23Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-5-red.log
+        red_log_hash: sha256:a4524622b356c771fe46ac124b8e864ce005400390174a056c32823b5c76473c
+        exit_code: 1
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-5-red-junit.xml
+        runner_report_hash: sha256:e35c87b562dfafd1b199c1fd4595a7813eb3473513b9d19f8c7377bea60699da
+        expected_failures:
+          - test_file: tests/unit/test_generate_audio_comfy.py
+            test_name: test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_audio_comfy.py
+            test_name: test_executor_persists_audio_artifact_with_shape_waveform_and_format_aware_file_suffix
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_audio_comfy.py
+            test_name: test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_audio_comfy.py
+            test_name: test_local_comfy_audio_pricing_none_treated_as_non_premium
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_video_comfy.py
+            test_name: test_executor_dispatches_comfy_local_video_to_comfy_worker_branch
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_video_comfy.py
+            test_name: test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_file_suffix
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_video_comfy.py
+            test_name: test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_video_comfy.py
+            test_name: test_local_comfy_video_pricing_none_treated_as_non_premium
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_comfy.py
+            test_name: test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_branch
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_comfy.py
+            test_name: test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_comfy.py
+            test_name: test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_agent_cli
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_comfy.py
+            test_name: test_executor_remote_hunyuan_path_records_provider_as_worker_name
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_cost.py
+            test_name: test_mesh_executor_emits_cost_usd_when_policy_has_pricing
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_cost.py
+            test_name: test_mesh_executor_cost_is_zero_when_no_provider_policy
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_cost.py
+            test_name: test_mesh_executor_cost_is_zero_when_policy_has_no_pricing
+            failure_type: TypeError
+          - test_file: tests/unit/test_generate_mesh_cost.py
+            test_name: test_mesh_executor_cost_picks_first_mesh_kind_route
+            failure_type: TypeError
+          - test_file: tests/integration/test_image_edit.py
+            test_name: test_image_edit_happy_path
+            failure_type: TypeError
+          - test_file: tests/integration/test_l4_image_to_3d.py
+            test_name: test_mesh_executor_happy_path
+            failure_type: TypeError
+          - test_file: tests/integration/test_l4_image_to_3d.py
+            test_name: test_l4_mesh_reads_selected_candidate_from_review_verdict
+            failure_type: TypeError
+          - test_file: tests/integration/test_l4_image_to_3d.py
+            test_name: test_l4_mesh_resolves_selected_image_from_selected_set_bundle
+            failure_type: TypeError
+          - test_file: tests/unit/test_codex_audit_fixes.py
+            test_name: test_image_edit_emits_cost_usd
+            failure_type: TypeError
+          - test_file: tests/unit/test_comfy_subprocess.py
+            test_name: test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_cli
+            failure_type: TypeError
+      green_commit:
+        sha: cf1d6e8490b92a41f61b5d0610ac4547326ef519
+        timestamp: 2026-05-19T15:36:14Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-5-green.log
+        green_log_hash: sha256:f14affb5545d5185a1609926a00d2058885d8393e61dd0e4827626ab67538b6d
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-5-green-junit.xml
+        runner_report_hash: sha256:f4a87812f4ee0e16b55b6d3989c52796add6c237e674cbcf39f5cd42a946d2bb
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-6
+      red_commit: null
+      green_commit:
+        sha: 408492cbaa8ba9a852714f1467206dbc2a15ce06
+        timestamp: 2026-05-19T15:52:25Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-6-green.log
+        green_log_hash: sha256:2d733e8f17bb4c9a109fda2b8820559035b123c859376997bb65b36bda875204
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-6-green-junit.xml
+        runner_report_hash: sha256:a472a91a245d1bcc231e98ed6391bd36fd74786712ff1489ad8c6c34e82f0b15
+      tdd_exemption:
+        kind: light-mode-trivial
+      tdd_exemption_acked_by: mzq
+    - task_ref: tasks.md#task-7
+      red_commit:
+        sha: 485c7ab63b0b5850b1270c336b99d89948685d8f
+        timestamp: 2026-05-19T16:18:58Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-7-red.log
+        red_log_hash: sha256:3e42cb4b537bd27be234b2645346a1fe28d87462088fbc25cc6e371fda716d29
+        exit_code: 1
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-7-red-junit.xml
+        runner_report_hash: sha256:999002f9f53f256fe82bcfdfd512425e9f72e22a5febe3ebeb1ff68e8f6af54c
+        expected_failures:
+          - test_file: tests/unit/test_cascade_cancel.py
+            test_name: test_cascade_drain_timeout_is_explicit_failure
+            failure_type: AttributeError
+      green_commit:
+        sha: c5a16c2b283ce7be62d554a8c74cc9a7ceecc8da
+        timestamp: 2026-05-19T16:26:29Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-7-green.log
+        green_log_hash: sha256:c6790ee805664b66692899c238b689b9759ab53aa416694efc64ebd1e29db8cd
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-7-green-junit.xml
+        runner_report_hash: sha256:29e9c2c5aae1018091a81061d0b41f5ff7aed4a274d10ea4b0b0b6d1d07a9d0c
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-8
+      red_commit:
+        sha: b2bdc8163df95503bdf3fb625d987162e6a5527a
+        timestamp: 2026-05-19T16:31:56Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-8-red.log
+        red_log_hash: sha256:453519ae50295f7f19a27e15f083f5fbaaa87cdf86b9d924f5008da5e29c94ed
+        exit_code: 2
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-8-red-junit.xml
+        runner_report_hash: sha256:3ff737a2a1ffafa6fafba74940f10881a55ed22793e3e1afbb380a39f096103f
+        expected_failures:
+          - test_file: tests/unit/test_comfy_lifecycle.py
+            test_name: ALL
+            failure_type: ModuleNotFoundError
+      green_commit:
+        sha: 8c53054c3c1e1633a7526a1e2a36a323b95dd690
+        timestamp: 2026-05-19T16:48:59Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-8-green.log
+        green_log_hash: sha256:9dc56b260e2aa70904ff3939872bab4809ad3c6dd7e15d289fc19f40a8d71bc5
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-8-green-junit.xml
+        runner_report_hash: sha256:52224abcfd8ccf42b3d7d9afa19dc7041e7e5210de696bc3177599a87def74bc
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-9
+      red_commit:
+        sha: ed5285df108bdcd55a3f2f29b98e1b843bdd8edc
+        timestamp: 2026-05-19T16:59:06Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-9-red.log
+        red_log_hash: sha256:7013a76c7dfa41d6bf299cdb3156faceab338cd5eb034dcdbfc91209e29031fd
+        exit_code: 1
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-9-red-junit.xml
+        runner_report_hash: sha256:873680f040435e4ffccf5027af51d2d48102c93109491836c06a7eb212bee625
+        expected_failures:
+          - test_file: tests/unit/test_orchestrator.py
+            test_name: test_orchestrator_injects_lifecycle_for_managed_comfy
+            failure_type: AssertionError
+          - test_file: tests/unit/test_orchestrator.py
+            test_name: test_self_managed_session_released_only_at_aclose
+            failure_type: AssertionError
+          - test_file: tests/unit/test_orchestrator.py
+            test_name: test_ensure_release_released_at_run_end
+            failure_type: AssertionError
+          - test_file: tests/unit/test_orchestrator.py
+            test_name: test_ensure_release_released_on_unclassified_exception
+            failure_type: AssertionError
+          - test_file: tests/unit/test_orchestrator.py
+            test_name: test_aclose_release_failure_is_bounded_and_recorded
+            failure_type: AttributeError
+      green_commit:
+        sha: 63012a71a7a579c670d223014da0d512c80d9e3e
+        timestamp: 2026-05-19T17:25:09Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-9-green.log
+        green_log_hash: sha256:5d7a6b8edcbeef6e4e1516cb5ac9c7a3e92608f3e5ace2e875e14900515e1f55
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-9-green-junit.xml
+        runner_report_hash: sha256:855a5599f1485f1f35bebef01bd5f15b70750ea74b9a9ed77dc79edfe07351ad
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-10
+      red_commit:
+        sha: 3499a7b22e16284cca8cb77344564522044b8d18
+        timestamp: 2026-05-19T17:34:29Z
+        red_log_path: forge/changes/executor-async-rewrite/.evidence/task-10-red.log
+        red_log_hash: sha256:327c63f5e74f1fc3260df5c8a26c2d9224f997f3427209c2843e2814baa1449b
+        exit_code: 1
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-10-red-junit.xml
+        runner_report_hash: sha256:1fbceebb6124d6287dbb29adabcf7592f74dc9dad3494c1c15ae22c371ccb3a9
+        expected_failures:
+          - test_file: tests/unit/test_comfy_subprocess.py
+            test_name: test_comfy_accepts_four_lifecycle_modes
+            failure_type: WorkerUnsupportedResponse
+      green_commit:
+        sha: 17fb716016b4d5e7e0175c0e1337ace7c98fed8f
+        timestamp: 2026-05-19T17:55:19Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-10-green.log
+        green_log_hash: sha256:de5fa08ab63eca5dc93d21dfe77ed59c220610fc8ae6082dc0098d3c262efe2d
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-10-green-junit.xml
+        runner_report_hash: sha256:ca77a717655659efa8905b4ed7ff2166fdc33a4324a7d0ae8a04550069b83675
+      tdd_exemption: null
+      tdd_exemption_acked_by: null
+    - task_ref: tasks.md#task-11
+      red_commit: null
+      green_commit:
+        sha: 97a3343069dffede7e702643c6027306a7cf2741
+        timestamp: 2026-05-20T07:15:59Z
+        green_log_path: forge/changes/executor-async-rewrite/.evidence/task-11-green.log
+        green_log_hash: sha256:d916a16b2cba799d68666218117e2a4e033b6965fff70025340d49b800fccdd2
+        exit_code: 0
+        runner_report_path: forge/changes/executor-async-rewrite/.evidence/task-11-green-junit.xml
+        runner_report_hash: sha256:bd0ffd49923ed05421eb00f2afe2ba6f81f1aebdbcb70094afcbc5024e0e128f
+      tdd_exemption:
+        kind: light-mode-trivial
+      tdd_exemption_acked_by: mzq
+  verify_invocations:
+    - invoked_at: 2026-05-20T09:41:31Z
+      task_refs:
+        - tasks.md#task-1
+        - tasks.md#task-2
+        - tasks.md#task-3
+        - tasks.md#task-4
+        - tasks.md#task-5
+        - tasks.md#task-6
+        - tasks.md#task-7
+        - tasks.md#task-8
+        - tasks.md#task-9
+        - tasks.md#task-10
+        - tasks.md#task-11
+      verify_scope: change-level
+      result: pass
+      exit_code: 0
+      log_path: forge/changes/executor-async-rewrite/.evidence/test-output.log
+      log_hash: sha256:2f6486a07bffd82dd16cf5a1219e0cbbf242744e2cc2e18ed2c8498f54f6b5af
+      runner_report_path: forge/changes/executor-async-rewrite/.evidence/test-output.log
+      runner_report_hash: sha256:2f6486a07bffd82dd16cf5a1219e0cbbf242744e2cc2e18ed2c8498f54f6b5af
+  subagent_review_chain:
+    - task_ref: tasks.md#task-11
+      implementer_commit: a7c6cc2b69ffb2001311c7f4c66c66422698c20f
+      spec_reviewer_iterations: []
+      quality_reviewer_iterations:
+        - reviewer_commit: 4294b6e25c699af2a9658c9e4f324e31f8c320a3
+          outcome: approved-with-concerns
+          notes_log_path: forge/changes/executor-async-rewrite/.evidence/review-round-1.md
+        - reviewer_commit: 7c30816c39400c4e47d3cc2f7edb2aee1e4e35e9
+          outcome: approved
+          notes_log_path: forge/changes/executor-async-rewrite/.evidence/review-round-2.md
+      main_agent_check_off_at: 2026-05-20T08:43:44Z
+process_evidence_staging_hash: 35fd8f28caf21e4dd6ca42c1346b229ee07373e4fed59256756c2ebb251af164
+ack_log_entry_count: 17
+ack_log_tail_hash: cda31581a969a9a8e649234c6d2f0897604d7801f0f91fc2a53185e83e5ac181

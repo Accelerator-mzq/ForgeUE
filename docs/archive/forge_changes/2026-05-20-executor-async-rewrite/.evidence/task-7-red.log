@@ -1,0 +1,75 @@
+============================= test session starts =============================
+platform win32 -- Python 3.13.13, pytest-9.0.3, pluggy-1.6.0 -- C:\Users\mzq\AppData\Local\Programs\Python\Python313\python.exe
+cachedir: .pytest_cache
+rootdir: D:\ClaudeProject\ForgeUE_claude
+configfile: pyproject.toml
+plugins: anyio-4.13.0, asyncio-1.3.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 5 items / 3 deselected / 2 selected
+
+tests/unit/test_cascade_cancel.py::test_cascade_cancelled_sibling_work_actually_stops PASSED [ 50%]
+tests/unit/test_cascade_cancel.py::test_cascade_drain_timeout_is_explicit_failure FAILED [100%]
+
+================================== FAILURES ===================================
+_______________ test_cascade_drain_timeout_is_explicit_failure ________________
+
+tmp_path = WindowsPath('C:/Users/mzq/AppData/Local/Temp/pytest-of-mzq/pytest-1025/test_cascade_drain_timeout_is_0')
+
+    @pytest.mark.asyncio
+    async def test_cascade_drain_timeout_is_explicit_failure(tmp_path):
+        """sibling cancel 后清理卡死 > drain timeout → 显式失败,不静默吞。
+    
+        Task 7:drain 超时时须在 run.metrics 中记录 "cancel_drain_timeout",
+        并将 run.status 置为 RunStatus.failed。静默丢弃 still_pending task
+        是不可接受的:用户必须能从 metrics 感知清理异常。
+        """
+        import framework.runtime.orchestrator as _orch_mod
+    
+        fail_exec = _ImmediateFailExecutor()
+        unclean_exec = _UncleanableExecutor()
+    
+        orch, task, workflow, steps = _make_two_step_dag_fixture(
+            tmp_path, fail_exec, unclean_exec,
+        )
+    
+        # 把 drain timeout 压到 0.2s,避免测试等待 30s
+>       with unittest.mock.patch.object(_orch_mod, "_CASCADE_DRAIN_TIMEOUT_S", 0.2):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\unit\test_cascade_cancel.py:468: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+C:\Users\mzq\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py:1503: in __enter__
+    original, local = self.get_original()
+                      ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <unittest.mock._patch object at 0x000002E793ED5940>
+
+    def get_original(self):
+        target = self.getter()
+        name = self.attribute
+    
+        original = DEFAULT
+        local = False
+    
+        try:
+            original = target.__dict__[name]
+        except (AttributeError, KeyError):
+            original = getattr(target, name, DEFAULT)
+        else:
+            local = True
+    
+        if name in _builtins and isinstance(target, ModuleType):
+            self.create = True
+    
+        if not self.create and original is DEFAULT:
+>           raise AttributeError(
+                "%s does not have the attribute %r" % (target, name)
+            )
+E           AttributeError: <module 'framework.runtime.orchestrator' from 'D:\\ClaudeProject\\ForgeUE_claude\\src\\framework\\runtime\\orchestrator.py'> does not have the attribute '_CASCADE_DRAIN_TIMEOUT_S'
+
+C:\Users\mzq\AppData\Local\Programs\Python\Python313\Lib\unittest\mock.py:1473: AttributeError
+- generated xml file: D:\ClaudeProject\ForgeUE_claude\forge\changes\executor-async-rewrite\.evidence\task-7-red-junit.xml -
+=========================== short test summary info ===========================
+FAILED tests/unit/test_cascade_cancel.py::test_cascade_drain_timeout_is_explicit_failure
+================== 1 failed, 1 passed, 3 deselected in 0.61s ==================
