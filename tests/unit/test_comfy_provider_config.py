@@ -172,3 +172,37 @@ def test_default_managed_process_registry_builds_comfy_adapter():
     assert selection is not None
     assert selection.adapter_name == "comfy_agent_cli"
     assert selection.mode == "ensure_release"
+
+
+def test_default_managed_process_registry_rejects_conflicting_comfy_lifecycle_modes():
+    """FOR-8:同一 run 的多个 Comfy step lifecycle mode 不一致时必须 fail-fast。"""
+    route = _route()
+    step_ensure_running = Step(
+        step_id="step_ensure_running",
+        type=StepType.generate,
+        name="registry",
+        risk_level=RiskLevel.low,
+        capability_ref="image.generation",
+        provider_policy=ProviderPolicy(
+            capability_required="image.generation",
+            prepared_routes=[route],
+        ),
+        config={"spec": {"comfy_lifecycle": "ensure_running"}},
+    )
+    step_ensure_release = Step(
+        step_id="step_ensure_release",
+        type=StepType.generate,
+        name="registry",
+        risk_level=RiskLevel.low,
+        capability_ref="image.generation",
+        provider_policy=ProviderPolicy(
+            capability_required="image.generation",
+            prepared_routes=[route],
+        ),
+        config={"spec": {"comfy_lifecycle": "ensure_release"}},
+    )
+
+    registry = build_default_managed_process_registry()
+
+    with pytest.raises(ValueError, match="conflicting managed process lifecycle modes"):
+        registry.select([step_ensure_running, step_ensure_release], env={})

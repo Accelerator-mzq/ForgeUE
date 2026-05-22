@@ -1,25 +1,16 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 2 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 待办计 1 项(Future Work + Out of Scope;Non-Goals 不计入)。
 > 另有 15 项 legacy requirements 待办(不计入上面 2)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (1)
+## Future Work (0)
 
-### `2026-05-20-executor-async-rewrite::multi-mode-comfy-dag-warning`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: _detect_comfy_lifecycle 只取第一个 comfy/local* step 的 lifecycle mode; 若 DAG 含多个 comfy step 且 mode 不一致(如 step_1 ensure_running、step_2 ensure_release),应 emit warning(user error 提示),或 raise 拒绝执行。
-
-- **reason**: Round 2 review F8 reject:当前 bundle 全是单 comfy step,multi-comfy-step DAG 暂无实例;留 follow-on 待真实需求出现再处理。
-
-- **priority**: low
-- **related change**: null
-- **triggered_by**: undefined#undefined
+(无)
 
 ## Out of Scope (1)
 

@@ -50,6 +50,26 @@
   Linear FOR-7 状态为 `Done`。
 - **archived_by**: FOR-7 managed-process-registry-generalization 2026-05-22
 
+## 2026-05-22 FOR-8 completion
+
+### `2026-05-20-executor-async-rewrite::multi-mode-comfy-dag-warning`
+
+- **new_status**: completed
+- **reason**: `ManagedProcessRegistry.select` 现在会继续扫描同一 run 内后续
+  managed subprocess selections;若多个 Comfy step 解析出的 lifecycle mode 不一致
+  (如 `ensure_running` vs `ensure_release`),立即 `ValueError` fail-fast,不再静默采用第一个 mode。
+- **evidence**: `src/framework/runtime/managed_process_registry.py`,
+  `tests/unit/test_comfy_provider_config.py`;
+  `python -m pytest tests/unit/test_comfy_provider_config.py::test_default_managed_process_registry_rejects_conflicting_comfy_lifecycle_modes -q`
+  → `1 passed`;
+  `python -m pytest tests/unit/test_comfy_provider_config.py tests/unit/test_managed_process_registry.py tests/unit/test_orchestrator.py tests/unit/test_comfy_lifecycle.py -q`
+  → `64 passed`;
+  `python -m pytest tests/unit/test_dry_run_pass.py tests/unit/test_comfy_subprocess.py -q`
+  → `78 passed`;
+  `python -m pytest -q` → `1274 passed, 4 skipped`;
+  evidence note: `demo_artifacts/2026-05-22/adhoc/for8_multi_mode_comfy_dag_warning/evidence.md`。
+- **archived_by**: FOR-8 multi-mode-comfy-dag-warning 2026-05-22
+
 ## 2026-05-22 FOR-12 completion
 
 ### `2026-05-21-repo-put-streaming-payload::repo-put-staging-hash-atomicity`

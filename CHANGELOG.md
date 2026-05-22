@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Backlog closeout rule**: `AGENTS.md` / `CLAUDE.md` / `docs/backlog/README.md` 现在要求凡是源自 `docs/backlog/active.md` 的任务,收尾时必须显式处理 active→archived 状态,小 bugfix 也不例外,避免只改代码不结账。
+- **FOR-8 multi-mode comfy DAG warning**:`ManagedProcessRegistry.select` 不再只采用第一个
+  managed subprocess lifecycle selection;同一 run 内多个 Comfy step 解析出不同 lifecycle mode
+  时直接 `ValueError` fail-fast,避免 `ensure_running` / `ensure_release` 混用导致释放语义含糊。
+  同步 retired active backlog `multi-mode-comfy-dag-warning`。
 - **FOR-10 wait-ready-monotonic-time**:`ComfyLifecycleManager._wait_ready` 改用 `time.monotonic()` 绝对 deadline,新增 oversleep 回归测试;对应 active backlog `wait-ready-monotonic-time` 已归档。
 - **FOR-11 blob backend streaming implementation**:`BlobBackend` 从
   `NotImplementedError` stub 升级为 MVP object-store backend,提供可注入

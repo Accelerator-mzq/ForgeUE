@@ -71,7 +71,14 @@ class ManagedProcessRegistry:
         steps: Sequence[object],
         env: Mapping[str, str] | None = None,
     ) -> ManagedProcessSelection | None:
-        """返回第一个 subprocess route 的 adapter 命中结果。"""
+        """返回第一个 subprocess route 的 adapter 命中结果。
+
+        当前 Orchestrator 只持有一个 lifecycle manager。若同一次 run 里多个
+        managed subprocess step 要求不同 lifecycle mode,继续执行会让释放语义含糊,
+        因此在 registry 层 fail-fast。
+        """
+        first_selection: ManagedProcessSelection | None = None
+        first_step_id: str | None = None
         for step in steps:
             spec = _step_spec(step)
             policy = getattr(step, "provider_policy", None)
@@ -83,8 +90,20 @@ class ManagedProcessRegistry:
                 for adapter in self._adapters:
                     selection = adapter.select(route, spec=spec, env=env)
                     if selection is not None:
-                        return selection
-        return None
+                        if first_selection is None:
+                            first_selection = selection
+                            first_step_id = str(getattr(step, "step_id", "<unknown>"))
+                            continue
+                        if selection.mode != first_selection.mode:
+                            current_step_id = str(
+                                getattr(step, "step_id", "<unknown>")
+                            )
+                            raise ValueError(
+                                "conflicting managed process lifecycle modes: "
+                                f"{first_step_id} uses {first_selection.mode!r}, "
+                                f"{current_step_id} uses {selection.mode!r}"
+                            )
+        return first_selection
 
 
 def _step_spec(step: object) -> Mapping[str, object]:
