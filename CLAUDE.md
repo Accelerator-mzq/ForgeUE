@@ -182,26 +182,28 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ## 工作流
 
-### forge 用法
+### Superpowers 用法
 
-非平凡需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 走 `/forge:propose <name>` 产 4 件套(proposal + specs + design + tasks),再 `/forge:apply` → `/forge:review` → `/forge:verify` → `/forge:archive`。模糊想法先 `/forge:brainstorm` 或 `/forge:explore`。小 bugfix / typo / logic 微调可直接改代码,但必须补回归测试或说明验证方式。实施只在 active change scope;**禁止**顺手重构无关模块。
+非平凡需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先用 `superpowers:brainstorming` 明确目标、约束和方案,用户确认后用 `superpowers:writing-plans` 拆实施计划。实现阶段按任务性质使用 `superpowers:test-driven-development` / `superpowers:systematic-debugging` / `superpowers:executing-plans` / `superpowers:subagent-driven-development`。完成前使用 `superpowers:verification-before-completion` 做证据化验证。小 bugfix / typo / logic 微调可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式。
 
-禁令:`artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径 不提交;测试总数不硬编码(`python -m pytest -q` 实测);provider model id 不硬编码;贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007)。
+禁令:`artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径 不提交;测试总数不硬编码(`python -m pytest -q` 实测);provider model id 不硬编码;贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);Codex 不执行删除文件操作。
 
-### forge 行为塑造 skill
+### Superpowers skill
 
-forge 插件自带全套行为塑造 skill(走 `Skill` tool invoke):
-- `forge:brainstorming` — 创意 / requirements 阶段
-- `forge:writing-plans` — 把 forge artifacts 转 implementation plan
-- `forge:subagent-driven-development` — 派 fresh implementer / spec_reviewer / code_quality_reviewer / final_reviewer per task
-- `forge:requesting-code-review` — final review at branch completion
-- `forge:verification-before-completion` — verify claims before declaring done
-- `forge:systematic-debugging` — bug encountered
+- `superpowers:brainstorming` — 创意 / requirements 阶段
+- `superpowers:writing-plans` — 把确认后的方案拆成实施计划
+- `superpowers:test-driven-development` — 功能 / bugfix 实现前建立红绿回归
+- `superpowers:systematic-debugging` — 遇到 bug / 测试失败 / 意外行为
+- `superpowers:executing-plans` — 在当前会话按计划执行
+- `superpowers:subagent-driven-development` — 用户明确允许子代理时按任务派发
+- `superpowers:requesting-code-review` — 完成较大任务后的 review
+- `superpowers:verification-before-completion` — 宣称完成前验证
+- `superpowers:finishing-a-development-branch` — 分支收尾
 
 ### Codex CLI Convention
 
-**Convention**:重要 design 阶段先跑 `/codex:adversarial-review`(catch latent design smell);final review 跑 `/codex:review --base main`(catch cross-archive mixed-scope)。Opt-in 不强制,但 audit 数据(retire-forgeue-protocol-layer-fully 2026-05-10)显示这层 catch ~30-40% 业务 bug,user 自律调用以保留独有 leverage。
+重要 design 阶段可跑 `/codex:adversarial-review`(catch latent design smell);final review 可跑 `/codex:review --base main`(catch cross-archive mixed-scope)。Opt-in 不强制;Codex review 意见必须独立对照代码验证,不把 claim 当结论。
 
 ### Backlog
 
-项目唯一 backlog = `forge/backlog/`,forge 原生生成产物(`/forge:archive` 或 `forge backlog` 从各 change 的 `forge-scope-entries` + `forge/legacy-requirements.yaml` 生成;`forge backlog --check` 守门)。`active.md` 列未决待办、`archived.md` 列 tombstone,**勿手编**。原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。
+项目当前 backlog = `docs/backlog/`。`active.md` 列未决待办、`archived.md` 列 tombstone。原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入 backlog;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。

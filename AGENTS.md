@@ -171,27 +171,29 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 - 决策风格:先给论证 + 选项 + 代价,用户拍板后(如"全改"/"方案 A")一次执行到位,不中途 micro-confirm
 - `python -c` / heredoc 等 ad-hoc 脚本用 ASCII 标记(`[OK]` / `[FAIL]`),避免 Windows GBK stdout 吞 emoji
 
-## forge 工作流
+## Superpowers 工作流
 
 > 本节与 `CLAUDE.md` § 工作流 段保持语义同步。
 
-### 什么时候走 change,什么时候直接改代码
+### 什么时候走 Superpowers,什么时候直接改代码
 
-- **非平凡**需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 走 `/forge:propose "<name>"` 一次产 proposal / specs / design / tasks 4 件套,再 `/forge:apply` 派子代理实施。
-- **小 bugfix / typo / logic 微调** → 可直接改代码,但必须补回归测试或说明验证方式。
-- 实现只围绕 active change 范围;**禁止**顺手重构无关模块。
+- **非平凡**需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先用 `superpowers:brainstorming` 明确目标、约束和方案,用户确认后用 `superpowers:writing-plans` 拆实施计划。
+- **实现阶段** → 按任务性质使用 `superpowers:test-driven-development` / `superpowers:systematic-debugging` / `superpowers:executing-plans` / `superpowers:subagent-driven-development`。
+- **完成前** → 使用 `superpowers:verification-before-completion` 做证据化验证;需要收尾时使用 `superpowers:finishing-a-development-branch`。
+- **小 bugfix / typo / logic 微调** → 可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式。
+- 实现只围绕当前任务范围;**禁止**顺手重构无关模块。
 
 ### 与 docs 五件套的关系
 
 - `docs/` 五件套仍是长期权威(需求 / 设计 / 测试 / 验收)。
-- `forge/specs/` 是精简当前行为契约层,8 个 capability:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`。
-- `forge/changes/` 是未来变更入口,不用于重写历史。
-- **禁止**把 docs 整篇搬入 forge,只做契约抽取。
+- `docs/contracts/` 是从原 forge specs 迁移来的精简当前行为契约层,8 个 capability:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`。
+- `docs/archive/forge_changes/` 是历史 forge change evidence,只读参考,不作为新变更入口。
+- **禁止**把 docs 整篇搬入 contracts,只做契约抽取。
 
 ### 事实来源
 
-- 做任何 change 前读 `CHANGELOG.md` 了解近期变更事实(TBD-006 / 007 / 008 等)。
-- `tests/` + `examples/` + `probes/` 是验收事实来源;bundle 里 Artifact 流是端到端真实对象,不 mock 关键边界。
+- 做任何非平凡 change 前读 `CHANGELOG.md` 了解近期变更事实。
+- `tests/` + `examples/` + `probes/` 是验收事实来源;bundle 里 Artifact 流是端到端的真实对象,不 mock 关键边界。
 - 验证命令矩阵见 `docs/ai_workflow/validation_matrix.md`(Level 0 / 1 / 2 分级)。
 
 ### 禁令摘要
@@ -200,15 +202,14 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 - 不硬编码测试总数;以 `python -m pytest -q` 实测为准。
 - 不硬编码 provider model id(除非 bundle 显式允许)。
 - 贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);失败时 surface job_id 给用户,先 `probe_hunyuan_3d_query` 再决定 `--resume`。
+- Codex 不执行删除文件操作;需要移除旧路径时只输出人工删除清单,由用户执行。
 
 ### Backlog
 
-项目唯一 backlog = `forge/backlog/`,forge 原生生成产物 —— `/forge:archive` 或 `forge backlog` 从各 change 的 `forge-scope-entries` + `forge/legacy-requirements.yaml` 生成,`forge backlog --check` 守门。`active.md` 列未决待办、`archived.md` 列 tombstone,**勿手编**。状态查询:`forge backlog list` 或读 `forge/backlog/active.md`。
+项目当前 backlog = `docs/backlog/`。`active.md` 列未决待办、`archived.md` 列 tombstone。状态查询:读 `docs/backlog/active.md`。
 
-原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入 `forge/backlog/`;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。
+原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入 backlog;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。
 
 ### Codex Convention
 
-**Convention**:重要 design 阶段先跑 `/codex:adversarial-review`(catch latent design smell);final review 跑 `/codex:review --base main`(catch cross-archive mixed-scope)。沿 forge change `retire-forgeue-protocol-layer-fully`(2026-05-10)。
-
-Codex review 意见必须**独立对照代码验证**,不把 claim 当结论。`/codex:review` / `/codex:adversarial-review` 输出作为参考,由 Claude Code 端验证 file:line 真实性后决策。`review-gate hook` 默认禁用(与 forge 工作流自带的 review / verify 阶段重复且常冲突)。
+重要 design 阶段可跑 `/codex:adversarial-review`(catch latent design smell);final review 可跑 `/codex:review --base main`(catch cross-archive mixed-scope)。Codex review 意见必须**独立对照代码验证**,不把 claim 当结论。
