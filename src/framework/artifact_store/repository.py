@@ -237,7 +237,7 @@ class ArtifactRepository:
         run_dir: Path,
         artifacts: list[Artifact],
     ) -> None:
-        """Write checksum metadata that binds the final `_artifacts.json` bytes."""
+        """写入绑定最终 `_artifacts.json` 字节的 checksum metadata。"""
         artifacts_path = run_dir / _ARTIFACTS_FILENAME
         integrity_path = run_dir / _ARTIFACTS_INTEGRITY_FILENAME
         data = {
@@ -254,7 +254,7 @@ class ArtifactRepository:
         )
 
     def _verify_metadata_integrity(self, *, run_dir: Path) -> None:
-        """Fail fast when `_artifacts.json` no longer matches its integrity file."""
+        """发现 `_artifacts.json` 与 integrity 文件不一致时立即失败。"""
         integrity_path = run_dir / _ARTIFACTS_INTEGRITY_FILENAME
         if not integrity_path.is_file():
             return

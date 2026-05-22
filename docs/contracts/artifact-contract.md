@@ -268,12 +268,15 @@ art.hash` 则 skip。Blob payload 没有本地 `absolute_path`;真实云 adapter
 `read_bytes` 内部用 SDK 下载 object bytes,更高级的 etag / Last-Modified 优化留
 后续 adapter 层演进。
 
-**`inline` kind 既有行为完全保留:SHALL 不做 payload drift 校验**(R4-F2
-D-InlineDriftNonGoal,与 proposal §What 5 + design §5.6 一致):inline payload 跟
-元数据一起 JSON 序列化到 `_artifacts.json`,**无外部 bytes 可漂移**;若 metadata
-file 自身被改但 hash 未更新,这是 metadata corruption 范畴,**留 follow-on
-`metadata-corruption-detection`,本 change scope 不覆盖**。inline kind SHALL
-直接 `register_existing`(无 hash 比对),与本 change 引入前的既有逻辑等价。
+**`inline` kind 既有 payload drift 行为完全保留:SHALL 不做单条 payload drift 校验**
+(R4-F2 D-InlineDriftNonGoal,与 proposal §What 5 + design §5.6 一致):inline
+payload 跟元数据一起 JSON 序列化到 `_artifacts.json`,**无外部 bytes 可漂移**。FOR-14
+之后,metadata file 自身的 corruption 由伴生 `_artifacts.integrity.json` 覆盖:
+新 run SHALL 写 integrity 文件;resume 若发现 integrity 文件,SHALL 先校验
+`_artifacts.json` sha256 / artifact_count / artifact_ids,失败抛
+`ArtifactMetadataIntegrityError` fail-fast。legacy 无 integrity 文件时仍按既有路径
+兼容加载;inline kind 在 metadata integrity 通过后 SHALL 直接 `register_existing`
+(无单条 payload hash 比对),与 FOR-11 的 payload drift 责任划分保持一致。
 
 drift 判定语义对 `file` / `blob` 保持:hash 不一致 → entry skipped;hash 一致 →
 register。对 `inline` 直接 register(无判定步骤)。

@@ -136,6 +136,12 @@ The Requirement title `Four-layer validation on store entry` is preserved as a h
 
 The system SHALL dump Artifact metadata to `<run_dir>/_artifacts.json` after each Step and SHALL reload it via `ArtifactRepository.load_run_metadata` on cross-process resume.
 
+## Requirement: Artifact metadata integrity fails fast on resume
+
+系统 SHALL 在每次新写 `{run_dir}/_artifacts.json` dump 后,同步写 `{run_dir}/_artifacts.integrity.json`。integrity 文件 SHALL 记录 `schema_version="1.0"`、`artifacts_file="_artifacts.json"`、`algorithm="sha256"`、`artifacts_sha256`、`artifact_count` 和有序 `artifact_ids`。
+
+`ArtifactRepository.load_run_metadata` 发现 `_artifacts.integrity.json` 时,SHALL 在 Artifact registration 前校验 `_artifacts.json`。hash mismatch、unsupported schema version、unexpected target file、unsupported algorithm、artifact count mismatch、artifact id list mismatch 和 invalid integrity JSON 都 SHALL 抛 `ArtifactMetadataIntegrityError`。没有 `_artifacts.integrity.json` 的 legacy run 目录 SHALL 保持既有兼容 load path,并且 resume read SHALL NOT backfill integrity 文件。
+
 ## Scenario: Corrupted payload bytes cause a skip
 
 - GIVEN a persisted `_artifacts.json` entry whose on-disk byte hash differs from the recorded hash

@@ -1,8 +1,8 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 1 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 15 项 legacy requirements 待办(不计入上面 2)。
+> 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 15 项 legacy requirements 待办(不计入上面待办计数)。
 
 ## Warnings (0)
 
@@ -12,23 +12,9 @@
 
 (无)
 
-## Out of Scope (1)
+## Out of Scope (0)
 
-### `2026-05-21-repo-put-streaming-payload::metadata-corruption-detection`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: `_artifacts.json` metadata file 本身被改(inline payload bytes 与 hash
-漂移、artifact_id 重命名、payload_ref schema downgrade 等)的检测与恢复。
-
-- **reason**: 本 change 仅做 file kind 外部 payload bytes 的 drift 校验(stream
-改造),inline payload 跟 metadata 一起序列化,无外部 bytes 可漂移
-(R4-F2 D-InlineDriftNonGoal)。metadata 自身完整性(JSON 签名 / hash
-chain / Pydantic schema_version 兼容)是独立子问题,需配合 LiveMarker /
-SignedManifest 等,scope 远超本 change。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
+(无)
 
 ## Non-Goals (4) — 原则不做,不计入待办
 

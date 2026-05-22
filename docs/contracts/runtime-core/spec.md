@@ -36,6 +36,10 @@ The system SHALL execute every Run through the nine stages defined in SRS §3.2 
 
 The system SHALL dump artifact metadata to `<run_dir>/_artifacts.json` after each Step and SHALL reload it via `ArtifactRepository.load_run_metadata` on `--resume`; without this reload `find_hit` would miss and silently re-execute steps.
 
+## Requirement: Resume fails fast when artifact metadata integrity fails
+
+系统 SHALL 把 `_artifacts.json` 视为 resume cache 可信根。若 `_artifacts.integrity.json` 存在,`ArtifactRepository.load_run_metadata` SHALL 在 `CheckpointStore.find_hit` 能观察到任何 rehydrated Artifact 前完成校验。metadata integrity failure SHALL 抛 `ArtifactMetadataIntegrityError` 并停止 resume;它 SHALL NOT 退化为 cache miss 或静默 step re-execution。
+
 ## Scenario: Resume reloads artifact metadata and hits cache
 
 - GIVEN a Run completed two Steps and was interrupted (process exited)

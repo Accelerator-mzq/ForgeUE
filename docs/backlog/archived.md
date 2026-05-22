@@ -3,6 +3,19 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-23 FOR-14 completion
+
+### `2026-05-21-repo-put-streaming-payload::metadata-corruption-detection`
+
+- **new_status**: completed
+- **reason**: `ArtifactRepository.dump_run_metadata` 现在为 `_artifacts.json` 写伴生 `_artifacts.integrity.json`;`load_run_metadata` 在发现 integrity 文件时先校验 metadata hash / artifact_count / artifact_ids,损坏时抛 `ArtifactMetadataIntegrityError` fail-fast。legacy 无 integrity 文件 run 仍兼容加载。
+- **evidence**: `src/framework/artifact_store/repository.py`,
+  `tests/unit/test_artifact_repository.py`,
+  `docs/superpowers/specs/2026-05-23-for-14-metadata-integrity-design.md`,
+  `docs/superpowers/plans/2026-05-23-for-14-metadata-integrity.md`,
+  `demo_artifacts/2026-05-23/adhoc/for14_metadata_integrity/evidence.md`。
+- **archived_by**: FOR-14 metadata-corruption-detection 2026-05-23
+
 ## 2026-05-22 FOR-5 + FOR-6 completion
 
 ### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`

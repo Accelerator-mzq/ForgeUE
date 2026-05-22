@@ -115,6 +115,7 @@
 | FR-LC-006 跨进程 `_artifacts.json` 持久化 | test_codex_audit_fixes(`_repository_metadata_dump_and_load_roundtrip` / `_resume_yields_cache_hits_after_reload`) | ✅ |
 | FR-LC-007 load_run_metadata 三道过滤 | test_codex_audit_fixes(`_skips_missing_payload` / `_skips_corrupted_payload`) | ✅ |
 | FR-LC-008 find_hit 长度不一致 miss | test_codex_audit_fixes(`_misses_on_length_mismatch`) | ✅ |
+| FR-LC-009 `_artifacts.json` integrity fail-fast | test_artifact_repository(FOR-14 metadata integrity fences) | ✅ |
 
 ### 4.3 FR-MODEL 多模型编排
 
@@ -784,6 +785,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.11 | 2026-05-20 | forge change `executor-async-rewrite`(TBD-010 close):§2 L0 自动化基线 848 → **1179 passed / 3 skipped / 0 failed**(实测);§8.1 L0 / 测试覆盖行更新 1144 → 1179;§8.3 主线闭合状态 L0 行更新;FR-RUNTIME-005 / FR-WORKER-001 状态刷新(StepExecutor.execute 原生 async / ComfyAgentWorker async-subprocess / 新 lifecycle.py 三模式 / cascade-cancel 真停 / DryRunPass async / `comfy_lifecycle` 四值受理);SRS §7.3 TBD-010 ✅ closed;L2 live evidence `docs/archive/forge_changes/2026-05-20-executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`。 | ForgeUE Team |
 | v1.12 | 2026-05-22 | Linear FOR-13 `worker-candidate-source-path-migration`:FR-WORKER-001 / 011 / 012 验收证据补 source_path migration。Comfy image / mesh / audio / video worker 只读格式校验头并返回 `source_path`;四个 generator executor source_path 优先落盘,bytes 路径保留 fake / 远端兼容回退。对应 source_path fence 见 `docs/testing/test_spec.md` v1.8;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
 | v1.13 | 2026-05-22 | Linear FOR-11 `blob-backend-streaming-implementation`:FR-STORE-002 blob 载体从预留接口升级为 MVP。`BlobBackend` 提供 `BlobClient` protocol + 默认 `InMemoryBlobClient`,支持 value/source_path 写入、read/exists、blob resume drift 校验;`ArtifactRepository.put(source_path=...)` 允许 `PayloadKind.blob`。对应 fence 见 `docs/testing/test_spec.md` v1.9;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
+| v1.14 | 2026-05-23 | Linear FOR-14 `metadata-corruption-detection`:新增 `_artifacts.integrity.json` 伴生 checksum 文件;resume 校验 `_artifacts.json` hash / artifact_count / artifact_ids,metadata 损坏时 fail-fast。对应 fence 见 `docs/testing/test_spec.md` v1.11;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
 
 ### 9.3 签收区
 

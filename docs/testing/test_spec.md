@@ -112,7 +112,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_model_registry.py` | `providers/model_registry.py` | FR-MODEL-001 | L1,L2 | 三段式解析、alias resolve、未知字段 raise |
 | `test_registry_pricing.py` | `providers/model_registry.py` pricing 扩展 | FR-COST-001, FR-COST-002 | L1,L2 | `pricing:` block 解析、`pricing_autogen` 审计块、typo raise |
 | `test_payload_backends.py` | `artifact_store/payload_backends/*` | FR-STORE-002, FR-STORE-003 | L1 | inline 64KB 上限、file 落盘、BlobBackend MVP(value/source_path/write/read/exists/guard) |
-| `test_artifact_repository.py` | `artifact_store/repository.py` | FR-STORE-001, FR-STORE-002 | L1 | put / get / by_run / by_lineage + blob resume / blob drift skip / repo.put blob source_path |
+| `test_artifact_repository.py` | `artifact_store/repository.py` | FR-STORE-001, FR-STORE-002, FR-LC-009 | L1 | put / get / by_run / by_lineage + blob resume / blob drift skip / repo.put blob source_path / FOR-14 `_artifacts.integrity.json` metadata integrity fail-fast |
 | `test_checkpoint_store.py` | `runtime/checkpoint_store.py` | FR-LC-004, FR-LC-005 | L1,L2 | save/load/hash verify on resume |
 
 ### 3.2 Runtime
@@ -410,7 +410,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | SRS 需求族 | 覆盖测试文件 | 状态 |
 | --- | --- | --- |
 | FR-WF(工作流) | integration/test_p0~p4, test_dag_concurrency, test_scheduler_risk_ordering, test_cascade_cancel | ✅ |
-| FR-LC(生命周期) | test_dry_run_pass, test_checkpoint_store, integration/test_p0 | ✅ |
+| FR-LC(生命周期) | test_dry_run_pass, test_checkpoint_store, test_artifact_repository(FOR-14 metadata integrity), integration/test_p0 | ✅ |
 | FR-MODEL(编排) | test_model_registry, test_providers(_async), test_cn_image_adapters | ✅ |
 | FR-STRUCT(结构化) | integration/test_p1 | ✅ |
 | FR-REVIEW(评审) | integration/test_p2, test_chief_judge_parallel, test_review_budget | ✅ |
@@ -551,6 +551,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | v1.8 | 2026-05-22 | 加 Linear FOR-13 `worker-candidate-source-path-migration`:Comfy image / mesh / audio / video worker 只读格式校验头并返回 `source_path`;四个 generator executor source_path 优先落盘,无 source_path 时保留 bytes 回退。新增 / 扩展 source_path fence 覆盖 `test_comfy_subprocess.py`、`test_comfy_subprocess_audio.py`、`test_comfy_subprocess_video.py`、`test_generate_mesh_comfy.py`、`test_generate_audio_comfy.py`、`test_generate_video_comfy.py`;总数以本地 `python -m pytest -q` 实测为准。 |
 | v1.9 | 2026-05-22 | 加 Linear FOR-11 `blob-backend-streaming-implementation`:BlobBackend MVP 从 stub 升级为可注入 `BlobClient` protocol + 默认 `InMemoryBlobClient`;支持 value 与 source_path 写入、read/exists、blob resume drift 校验,并放开 `repo.put(source_path=..., payload_kind=blob)`。新增 / 更新 fence 覆盖 `test_payload_backends.py` 与 `test_artifact_repository.py`;总数以本地 `python -m pytest -q` 实测为准。 |
 | v1.10 | 2026-05-22 | 加 Linear FOR-8 `multi-mode-comfy-dag-warning`:ManagedProcessRegistry 扫描同一 run 内所有 managed subprocess selections,多个 Comfy step lifecycle mode 不一致时 fail-fast,不再静默采用第一个 mode。新增 `test_comfy_provider_config.py::test_default_managed_process_registry_rejects_conflicting_comfy_lifecycle_modes`;总数以本地 `python -m pytest -q` 实测为准。 |
+| v1.11 | 2026-05-23 | 加 Linear FOR-14 `metadata-corruption-detection`:ArtifactRepository 写 `_artifacts.integrity.json` 绑定 `_artifacts.json` sha256 / artifact_count / artifact_ids;resume 发现 integrity mismatch 时 `ArtifactMetadataIntegrityError` fail-fast,legacy 无 integrity 文件保持兼容。新增 fence 覆盖 `test_artifact_repository.py`;总数以本地 `python -m pytest -q` 实测为准。 |
 
 ### 10.3 未决事项
 

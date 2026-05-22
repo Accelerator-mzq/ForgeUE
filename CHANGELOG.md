@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read/exists、blob resume drift 校验,并允许
   `ArtifactRepository.put(source_path=..., payload_kind=PayloadKind.blob)`。同步
   retired active backlog `blob-backend-streaming-implementation`。
+- **FOR-14 metadata corruption detection**:`ArtifactRepository.dump_run_metadata`
+  现在在 `_artifacts.json` 旁写 `_artifacts.integrity.json`,记录 sha256 /
+  artifact_count / artifact_ids;`load_run_metadata` 发现 integrity 文件时先校验,
+  mismatch 抛 `ArtifactMetadataIntegrityError` fail-fast。legacy 无 integrity 文件
+  run 保持兼容。同步 retired active backlog `metadata-corruption-detection`。
 - **FOR-13 worker candidate source_path migration**:`ImageCandidate` / `MeshCandidate`
   / `AudioCandidate` / `VideoCandidate` 扩 `source_path`;本地 ComfyUI worker 只读格式校验所需
   文件头,由 generator executor 优先调用 `repo.put(source_path=...)` 落盘,`data`
