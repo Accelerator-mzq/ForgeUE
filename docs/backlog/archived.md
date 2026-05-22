@@ -3,6 +3,33 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-22 FOR-5 + FOR-6 completion
+
+### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
+
+- **new_status**: completed
+- **reason**: `FakeComfyWorker.agenerate` 现在先 `await asyncio.sleep(0)` 让出 event loop,
+  再走 image fake 生成;避免并发 fence 被 fake worker 的同步语义污染。
+- **evidence**: `src/framework/providers/workers/comfy_worker.py`,
+  `tests/unit/test_fake_comfy_worker_schema.py`;
+  `python -m pytest tests/unit/test_fake_comfy_worker_schema.py -q`
+  → `8 passed`;
+  `python -m pytest -q` → `1273 passed, 4 skipped`
+- **archived_by**: FOR-5 fake-comfy-worker-agenerate-yield-point 2026-05-22
+
+### `2026-05-20-executor-async-rewrite::fake-comfy-worker-mesh-audio-video-stub`
+
+- **new_status**: completed
+- **reason**: `FakeComfyWorker` 已补 `agenerate_mesh` / `agenerate_audio` /
+  `agenerate_video` deterministic async stub;同时兼容 mesh executor 远端注入路径的
+  `agenerate(source_image_bytes=...)` 调用面。
+- **evidence**: `src/framework/providers/workers/comfy_worker.py`,
+  `tests/unit/test_fake_comfy_worker_schema.py`;
+  `python -m pytest tests/unit/test_fake_comfy_worker_schema.py -q`
+  → `8 passed`;
+  `python -m pytest -q` → `1273 passed, 4 skipped`
+- **archived_by**: FOR-6 fake-comfy-worker-mesh-audio-video-stub 2026-05-22
+
 ## 2026-05-22 FOR-7 completion
 
 ### `2026-05-20-executor-async-rewrite::managed-process-registry-generalization`

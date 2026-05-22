@@ -1,36 +1,14 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 5 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 15 项 legacy requirements 待办(不计入上面 5)。
+> 待办计 2 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 15 项 legacy requirements 待办(不计入上面 2)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (4)
-
-### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: FakeComfyWorker.agenerate 当前直接 return self.generate(...), 虽然标 async def 但无实际让出点;加 await asyncio.sleep(0) 或 内联 generate 逻辑到 async def,让并发 fence 测试结果不被「fake 实际串行」干扰。
-
-- **reason**: Round 2 review F5 reject:实际单测多用 monkeypatch _run_once_*_async 而非依赖 fake worker 的并发语义;影响低。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: undefined#undefined
-
-### `2026-05-20-executor-async-rewrite::fake-comfy-worker-mesh-audio-video-stub`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: FakeComfyWorker 当前只实现 ComfyWorker(image) ABC;加 stub agenerate_mesh / agenerate_audio / agenerate_video 或重构为 multi-capability fake, 让 test fixture 在 mesh / audio / video executor 单测里也能直接注入。
-
-- **reason**: Round 2 review F3 reject:当前 mesh / audio / video executor 构建 ComfyAgentWorker(非 Fake),没有触发路径,但 test fixture API 不对等。 未来若想加 mesh / audio / video executor 的 fake-injection 单测, 会撞 AttributeError。低优先,无即时风险。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: undefined#undefined
+## Future Work (1)
 
 ### `2026-05-20-executor-async-rewrite::multi-mode-comfy-dag-warning`
 

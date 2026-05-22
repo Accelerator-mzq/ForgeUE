@@ -221,11 +221,25 @@ class FakeComfyWorker(ComfyWorker):
         *,
         spec: dict[str, Any],
         num_candidates: int,
+        source_image_bytes: bytes | None = None,
         seed: int | None = None,
         timeout_s: float | None = None,
-    ) -> list[ImageCandidate]:
-        """异步主面(TBD-010 Task 3):FakeComfyWorker 的 async 版本直接委托给 generate 逻辑。
-        Fake worker 不真正启动子进程,无需 asyncio.create_subprocess_exec。"""
+    ) -> list[ImageCandidate] | list[MeshCandidate]:
+        """异步主面(TBD-010 Task 3):Fake worker 也真实让出一次 event loop。
+
+        `source_image_bytes` 是 FOR-6 兼容层:mesh executor 的远端注入路径调
+        `worker.agenerate(source_image_bytes=...)`,这里返回 MeshCandidate。
+        """
+        await asyncio.sleep(0)
+        if source_image_bytes is not None:
+            return self._generate_mesh_candidates(
+                spec=spec,
+                num_candidates=num_candidates,
+                seed=seed,
+                timeout_s=timeout_s,
+                source_image_bytes=source_image_bytes,
+                source_image_filename=None,
+            )
         return self.generate(
             spec=spec, num_candidates=num_candidates, seed=seed, timeout_s=timeout_s,
         )
@@ -241,26 +255,7 @@ class FakeComfyWorker(ComfyWorker):
         # v2 schema gate (OpenSpec change Task 6): only enforced if spec
         # uses the new `comfy_workflow` field; legacy `prompt_summary`
         # specs pass through unchanged for back-compat.
-        if "comfy_workflow" in spec:
-            if not isinstance(spec["comfy_workflow"], str) or not spec["comfy_workflow"]:
-                raise WorkerUnsupportedResponse(
-                    "FakeComfyWorker.generate: spec.comfy_workflow must be a "
-                    "non-empty string"
-                )
-            if "comfy_params" in spec and not isinstance(spec["comfy_params"], dict):
-                raise WorkerUnsupportedResponse(
-                    "FakeComfyWorker.generate: spec.comfy_params must be a dict"
-                )
-            lifecycle = spec.get("comfy_lifecycle", "none")
-            # Task 10:FakeComfyWorker 同步解锁 — 接受四个合法值,集合外才 raise。
-            _FAKE_VALID_LIFECYCLES = {
-                "none", "ensure_running", "ensure_release", "self_managed_session",
-            }
-            if lifecycle not in _FAKE_VALID_LIFECYCLES:
-                raise WorkerUnsupportedResponse(
-                    f"FakeComfyWorker.generate: spec.comfy_lifecycle={lifecycle!r} 不合法; "
-                    f"合法值为 {sorted(_FAKE_VALID_LIFECYCLES)}。"
-                )
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.generate")
         self.calls.append({
             "spec": dict(spec),
             "num_candidates": num_candidates,
@@ -277,6 +272,127 @@ class FakeComfyWorker(ComfyWorker):
             _synth_candidate(spec=spec, index=i, seed=seed)
             for i in range(num_candidates)
         ]
+
+    async def agenerate_mesh(
+        self,
+        *,
+        spec: dict[str, Any],
+        source_image_filename: str,
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """FOR-6:Comfy mesh async stub,供 executor 单测直接注入 fake worker。"""
+        await asyncio.sleep(0)
+        return self._generate_mesh_candidates(
+            spec=spec,
+            num_candidates=num_candidates,
+            seed=seed,
+            timeout_s=timeout_s,
+            source_image_bytes=None,
+            source_image_filename=source_image_filename,
+        )
+
+    async def agenerate_audio(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[AudioCandidate]:
+        """FOR-6:Comfy audio async stub,返回 deterministic minimal FLAC。"""
+        await asyncio.sleep(0)
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.agenerate_audio")
+        self.calls.append({
+            "kind": "audio",
+            "spec": dict(spec),
+            "num_candidates": num_candidates,
+            "seed": seed,
+            "timeout_s": timeout_s,
+        })
+        return [
+            _synth_audio_candidate(spec=spec, index=i, seed=seed)
+            for i in range(max(1, num_candidates))
+        ]
+
+    async def agenerate_video(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[VideoCandidate]:
+        """FOR-6:Comfy video async stub,返回 deterministic minimal BMFF mp4。"""
+        await asyncio.sleep(0)
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.agenerate_video")
+        self.calls.append({
+            "kind": "video",
+            "spec": dict(spec),
+            "num_candidates": num_candidates,
+            "seed": seed,
+            "timeout_s": timeout_s,
+        })
+        return [
+            _synth_video_candidate(spec=spec, index=i, seed=seed)
+            for i in range(max(1, num_candidates))
+        ]
+
+    def _generate_mesh_candidates(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int,
+        seed: int | None,
+        timeout_s: float | None,
+        source_image_bytes: bytes | None,
+        source_image_filename: str | None,
+    ) -> list[MeshCandidate]:
+        """FOR-6:mesh 两种调用面共享同一 deterministic fake 输出。"""
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.agenerate_mesh")
+        source_token = (
+            source_image_bytes
+            if source_image_bytes is not None
+            else (source_image_filename or "").encode("utf-8")
+        )
+        self.calls.append({
+            "kind": "mesh",
+            "spec": dict(spec),
+            "num_candidates": num_candidates,
+            "seed": seed,
+            "timeout_s": timeout_s,
+            "source_size": len(source_image_bytes or b""),
+            "source_image_filename": source_image_filename,
+        })
+        return [
+            _synth_mesh_candidate(
+                source_token=source_token, spec=spec, index=i, seed=seed,
+            )
+            for i in range(max(1, num_candidates))
+        ]
+
+
+def _validate_fake_comfy_spec(spec: dict[str, Any], *, surface: str) -> None:
+    """FakeComfyWorker v2 schema gate;只在 spec 使用 comfy_workflow 时启用。"""
+    if "comfy_workflow" not in spec:
+        return
+    if not isinstance(spec["comfy_workflow"], str) or not spec["comfy_workflow"]:
+        raise WorkerUnsupportedResponse(
+            f"{surface}: spec.comfy_workflow must be a non-empty string"
+        )
+    if "comfy_params" in spec and not isinstance(spec["comfy_params"], dict):
+        raise WorkerUnsupportedResponse(f"{surface}: spec.comfy_params must be a dict")
+    lifecycle = spec.get("comfy_lifecycle", "none")
+    # Task 10:FakeComfyWorker 同步解锁 — 接受四个合法值,集合外才 raise。
+    valid_lifecycles = {
+        "none", "ensure_running", "ensure_release", "self_managed_session",
+    }
+    if lifecycle not in valid_lifecycles:
+        raise WorkerUnsupportedResponse(
+            f"{surface}: spec.comfy_lifecycle={lifecycle!r} 不合法; "
+            f"合法值为 {sorted(valid_lifecycles)}。"
+        )
 
 
 def _synth_candidate(*, spec: dict[str, Any], index: int, seed: int | None) -> ImageCandidate:
@@ -318,6 +434,116 @@ def _make_solid_png(*, width: int, height: int, rgb: tuple[int, int, int]) -> by
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)   # 8-bit RGB
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", compressed) + chunk(b"IEND", b"")
     return bytes(png)
+
+
+def _synth_mesh_candidate(
+    *,
+    source_token: bytes,
+    spec: dict[str, Any],
+    index: int,
+    seed: int | None,
+) -> MeshCandidate:
+    """生成最小 GLB 容器,足够 executor 当 file-backed mesh 使用。"""
+    json_chunk = json.dumps({
+        "asset": {"version": "2.0", "generator": "forgeue-fake-comfy-mesh"},
+        "meshes": [{"name": f"fake_comfy_{index}", "primitives": [{"attributes": {}}]}],
+        "scenes": [{"nodes": []}],
+        "scene": 0,
+        "nodes": [],
+    }).encode("utf-8")
+    json_chunk += b" " * ((4 - len(json_chunk) % 4) % 4)
+    total_length = 12 + 8 + len(json_chunk) + 8
+    data = (
+        struct.pack("<4sII", b"glTF", 2, total_length)
+        + struct.pack("<II", len(json_chunk), 0x4E4F534A)
+        + json_chunk
+        + struct.pack("<II", 0, 0x004E4942)
+    )
+    return MeshCandidate(
+        data=data,
+        format="glb",
+        mime_type="model/gltf-binary",
+        poly_count=0,
+        has_uv=False,
+        has_rig=False,
+        metadata={
+            "synthetic": True,
+            "source": "fake_comfy",
+            "index": index,
+            "seed": (seed or 0) + index,
+            "source_image_hash": hashlib.sha1(source_token).hexdigest()[:12],
+            "spec": dict(spec),
+        },
+    )
+
+
+def _synth_audio_candidate(
+    *, spec: dict[str, Any], index: int, seed: int | None,
+) -> AudioCandidate:
+    """生成最小 FLAC bytes,保持 FakeAudioWorker 同类测试语义。"""
+    return AudioCandidate(
+        data=_make_minimal_flac(payload=f"fake-comfy-{index}".encode("utf-8")),
+        format="flac",
+        metadata={
+            "synthetic": True,
+            "source": "fake_comfy",
+            "index": index,
+            "seed": (seed or 0) + index,
+            "spec": dict(spec),
+        },
+        duration_seconds=None,
+        sample_rate=None,
+    )
+
+
+def _make_minimal_flac(*, payload: bytes) -> bytes:
+    """最小 FLAC 头:magic + STREAMINFO,不依赖外部 codec。"""
+    out = bytearray(b"fLaC")
+    out.extend(b"\x80\x00\x00\x22")
+    streaminfo = bytearray()
+    streaminfo.extend(struct.pack(">H", 4096))
+    streaminfo.extend(struct.pack(">H", 4096))
+    streaminfo.extend(b"\x00\x00\x00")
+    streaminfo.extend(b"\x00\x00\x00")
+    sr = 44100
+    streaminfo.append((sr >> 12) & 0xFF)
+    streaminfo.append((sr >> 4) & 0xFF)
+    streaminfo.append(((sr & 0x0F) << 4) | (1 << 1))
+    streaminfo.append(0xF0)
+    streaminfo.extend(b"\x00\x00\x00\x00")
+    streaminfo.extend(b"\x00" * 16)
+    out.extend(streaminfo)
+    out.extend(b"\xff\xf8")
+    out.extend(payload[:8])
+    return bytes(out)
+
+
+def _synth_video_candidate(
+    *, spec: dict[str, Any], index: int, seed: int | None,
+) -> VideoCandidate:
+    """生成最小 BMFF mp4 ftyp box,匹配 video worker 的 mp4-only contract。"""
+    return VideoCandidate(
+        data=_make_minimal_mp4(),
+        format="mp4",
+        metadata={
+            "synthetic": True,
+            "source": "fake_comfy",
+            "index": index,
+            "seed": (seed or 0) + index,
+            "spec": dict(spec),
+        },
+    )
+
+
+def _make_minimal_mp4() -> bytes:
+    """最小 ftyp box:len + b'ftyp' + major_brand + compatible brands。"""
+    return (
+        b"\x00\x00\x00\x20"
+        b"ftyp"
+        b"isom"
+        b"\x00\x00\x02\x00"
+        b"isomiso2mp41mp42"
+    )
 
 
 # ----------------------------------------------------------------------------

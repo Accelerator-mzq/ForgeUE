@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   staging `tmp_dest` 完成 size + `hash_path(tmp_dest)` 验证,再 `os.replace` 到 final
   dest,消除 replace 后 hash 失败导致 payload / metadata 半提交窗口。同步 retired
   active backlog `repo-put-staging-hash-atomicity`。
+- **FOR-5 + FOR-6 FakeComfyWorker async/multimodal test fixture**:
+  `FakeComfyWorker.agenerate` 现在真实让出 event loop;同一 fake worker 补
+  `agenerate_mesh` / `agenerate_audio` / `agenerate_video` stub,并兼容 mesh executor
+  远端注入路径的 `agenerate(source_image_bytes=...)`。同步 retired active backlog
+  `fake-comfy-worker-agenerate-yield-point` 与 `fake-comfy-worker-mesh-audio-video-stub`。
 - **项目工作流迁移**:ForgeUE_codex 主工作流从项目内 forge 切换为 Superpowers-first。长期 backlog / contracts / change archive 内容已复制到 `docs/backlog` / `docs/contracts` / `docs/archive/forge_changes`;旧 `forge/` 目录不由 Codex 删除,由用户按人工清单处理。
 
 ### Removed
