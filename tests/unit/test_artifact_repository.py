@@ -123,6 +123,7 @@ def test_find_by_tag_and_producer(repo: ArtifactRepository):
 
 import pytest  # noqa: E402 — 追加在文件末尾,import 跟随测试块
 
+import framework.artifact_store.hashing as hashing  # noqa: E402
 from framework.artifact_store.hashing import hash_path, hash_payload  # noqa: E402
 
 
@@ -143,6 +144,28 @@ def test_hash_path_chunk_size_does_not_affect_output(tmp_path):
     h2 = hash_path(p, chunk_size=8 * 1024 * 1024)
     h3 = hash_payload(p.read_bytes())
     assert h1 == h2 == h3
+
+
+@pytest.mark.asyncio
+async def test_ahash_path_equivalent_to_sync_hash_path(tmp_path):
+    # async 变体只负责把同步 stream hash 挪到线程,输出契约必须完全一致。
+    p = tmp_path / "async_blob.bin"
+    p.write_bytes(b"forge-ue-async-hash" * 8192)
+
+    async_hash = await hashing.ahash_path(p, chunk_size=1024)
+
+    assert async_hash == hash_path(p, chunk_size=1024)
+    assert async_hash == hash_payload(p.read_bytes())
+
+
+@pytest.mark.asyncio
+async def test_ahash_path_rejects_non_positive_chunk_size(tmp_path):
+    # bad chunk_size 由 hash_path 原样校验,async wrapper 不吞异常。
+    p = tmp_path / "async_nonempty.bin"
+    p.write_bytes(b"some-content-that-must-be-hashed")
+
+    with pytest.raises(ValueError, match="chunk_size must be positive"):
+        await hashing.ahash_path(p, chunk_size=0)
 
 
 @pytest.mark.parametrize("bad_chunk_size", [0, -1, -8 * 1024])

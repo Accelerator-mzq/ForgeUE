@@ -49,6 +49,16 @@ The system SHALL support three PayloadRef states — `inline` (bytes held in-mem
 
 BlobBackend SHALL support both value writes and `source_path` writes. The `source_path` branch SHALL validate that the source is a regular file, compute `content_hash` with `hash_path(source_path)`, and call `BlobClient.upload_path(...)` so future S3 / MinIO / Azure adapters can stream or multipart upload without changing `ArtifactRepository.put`. Blob payloads have no local filesystem path; `absolute_path(ref)` SHALL raise `ValueError("blob payload has no local path")`.
 
+## Requirement: Stream hashing helpers expose sync and async entrypoints
+
+`framework.artifact_store.hashing` SHALL expose `hash_path(path, *, chunk_size=8 * 1024 * 1024)` for bounded-RSS file SHA-256 and `ahash_path(path, *, chunk_size=8 * 1024 * 1024)` for async executor chains. `ahash_path` SHALL be a thin `asyncio.to_thread(hash_path, path, chunk_size=...)` wrapper, so its output and `ValueError` behavior match `hash_path`; it SHALL NOT require converting `ArtifactRepository.put` or `FileBackend.write` to async APIs.
+
+## Scenario: Async stream hash matches sync stream hash
+
+**Given** a local file `async_blob.bin`
+**When** callers execute `await ahash_path(async_blob.bin, chunk_size=1024)`
+**Then** the returned SHA-256 hex equals `hash_path(async_blob.bin, chunk_size=1024)` and `hash_payload(async_blob.bin.read_bytes())`; `chunk_size <= 0` propagates `ValueError`.
+
 ## Scenario: BlobBackend source_path writes through repo.put
 
 **Given** an `ArtifactRepository` whose registry contains `BlobBackend(bucket="bucket")` and a source file `blob-source.bin`
@@ -441,3 +451,4 @@ The `repo.put` call site SHALL use `file_suffix=f".{cand.format}"` (which post-F
 - Real S3 / MinIO / Azure SDK adapters for BlobBackend (the core package exposes the protocol but does not depend on SDKs).
 - Content-semantic quality judgment — that belongs to `review-engine`.
 - Artifact versioning / schema evolution registry (SRS TBD, future change).
+- Converting `ArtifactRepository.put` / `FileBackend.write` into async APIs; `ahash_path` is only an optional hashing helper for async callers.

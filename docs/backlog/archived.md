@@ -161,3 +161,21 @@
 - **reason**: 同名真实 follow-on 已在 Future Work 保留一条,此 Out of Scope 版本内容重复,仅作为 tombstone 记录去重。
 - **evidence**: backlog audit 时 `docs/backlog/active.md` Future Work 仍保留同名真实 follow-on;该 duplicate tombstone 只记录去重事实。真实 follow-on 已由上方 FOR-13 completion tombstone 关闭。
 - **archived_by**: backlog audit 2026-05-22
+
+## 2026-05-22 FOR-15 completion
+
+### `2026-05-21-repo-put-streaming-payload::hash-path-async-variant`
+
+- **new_status**: completed
+- **reason**: `framework.artifact_store.hashing` 已新增 `ahash_path(path, *, chunk_size=...)`
+  async helper,通过 `asyncio.to_thread(hash_path, ...)` 复用同步 stream hash
+  语义;`FileBackend.write` / `ArtifactRepository.put` 保持同步 API,不引入
+  `aiofiles`。
+- **evidence**: `src/framework/artifact_store/hashing.py`,
+  `tests/unit/test_artifact_repository.py`,
+  `docs/contracts/artifact-contract.md`,
+  `docs/contracts/artifact-contract/spec.md`;
+  `python -m pytest tests/unit/test_artifact_repository.py tests/unit/test_repo_put_streaming.py -q`
+  → `31 passed, 1 skipped`;
+  Linear sync note: `demo_artifacts/2026-05-22/adhoc/for15_hash_path_async_variant/linear_sync_note.md`
+- **archived_by**: FOR-15 hash-path-async-variant 2026-05-22

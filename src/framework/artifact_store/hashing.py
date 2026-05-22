@@ -1,6 +1,7 @@
 """Content hashing helpers for Artifact + Checkpoint (§B.6, F0-6)."""
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -28,6 +29,15 @@ def hash_inputs(*parts: Any) -> str:
         h.update(_canonicalize(p))
         h.update(b"\x1f")  # separator
     return h.hexdigest()
+
+
+async def ahash_path(
+    path: str | os.PathLike,
+    *,
+    chunk_size: int = 8 * 1024 * 1024,
+) -> str:
+    """hash_path 的 asyncio 变体,用于 executor 链路避免阻塞 event loop。"""
+    return await asyncio.to_thread(hash_path, path, chunk_size=chunk_size)
 
 
 def hash_path(

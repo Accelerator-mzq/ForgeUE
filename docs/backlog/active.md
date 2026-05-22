@@ -1,14 +1,14 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 7 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 15 项 legacy requirements 待办(不计入上面 8)。
+> 待办计 5 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 15 项 legacy requirements 待办(不计入上面 5)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (6)
+## Future Work (4)
 
 ### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
 
@@ -42,21 +42,6 @@
 - **priority**: low
 - **related change**: null
 - **triggered_by**: undefined#undefined
-
-### `2026-05-21-repo-put-streaming-payload::hash-path-async-variant`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: `hash_path` 的 async 变体 `ahash_path(path)` 走
-`await asyncio.to_thread(hash_path, path)` 或 `aiofiles`,供未来 executor
-在不阻塞 event loop 的前提下 hash 超大文件。
-
-- **reason**: 本 change `hash_path` 同步实现在 50 MB 以内文件上耗时 < 200 ms,executor
-await 链中可以接受。未来若引入 GB 级 video 或长片场景,可加 async 变体
-但当前无收益。
-
-- **priority**: low
-- **related change**: (无)
-- **triggered_by**: (无)
 
 ## Out of Scope (1)
 

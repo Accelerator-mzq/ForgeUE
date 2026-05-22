@@ -121,11 +121,24 @@ overhead`。
 `hash_path` 与 `hash_payload(read_bytes(path))` 在所有合法 file payload 上 SHALL 输出
 完全一致的 hex 字符串(stream / value 等价性)。
 
+`framework.artifact_store.hashing` SHALL 额外暴露
+`ahash_path(path: str | os.PathLike, *, chunk_size: int = 8 * 1024 * 1024) -> str`
+async helper。`ahash_path` SHALL 通过 `asyncio.to_thread(hash_path, path, ...)`
+复用同步 stream hash 语义,输出与 `hash_path(path, chunk_size=...)` 完全一致,
+并原样透传 `hash_path` 的 `chunk_size <= 0` `ValueError`。
+
 ## Scenario: stream hash 与全读 hash 等价
 
 **Given** 任意一个 1 字节到 50 MB 之间的本地文件 `p`
 **When** 同时计算 `hash_path(p)` 与 `hash_payload(p.read_bytes())`
 **Then** 两者输出完全相等
+
+## Scenario: async stream hash 与 sync stream hash 等价
+
+**Given** 任意一个本地文件 `p`
+**When** 执行 `await ahash_path(p, chunk_size=...)`
+**Then** 输出 SHALL 等于 `hash_path(p, chunk_size=...)`
+**And** `chunk_size <= 0` SHALL 透传 `ValueError`
 
 ## Scenario: stream hash 在 200 MB 文件上内存增量受限
 
@@ -278,8 +291,8 @@ register。对 `inline` 直接 register(无判定步骤)。
 - 不改 `PayloadRef` Pydantic schema(字段、类型、validator 保持不变;`_artifacts.json`
   跨 change 兼容)
 - 不改 `FILE_MAX_BYTES = 500 * 1024 * 1024` 上限值
-- 不引入 async IO(`aiofiles` / `asyncio.to_thread`)—— `hash_path` 与
-  `FileBackend.write` 保持同步实现
+- 不把 `FileBackend.write` / `ArtifactRepository.put` 改成 async API;`ahash_path`
+  仅作为 executor 链路可选 helper,不引入 `aiofiles`
 - 不引入真实 S3/MinIO/Azure SDK adapter;FOR-11 仅实现 `BlobClient` protocol +
   默认内存 client,真实云 SDK adapter 后续按同一协议接入
 - Phase 1 曾不迁移既有 `repo.put` 调用站点;FOR-13 已迁移 image / mesh /
