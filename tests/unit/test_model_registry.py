@@ -159,6 +159,39 @@ aliases: {}
         ModelRegistry.from_yaml(path)
 
 
+def test_subprocess_provider_unknown_field_rejected(tmp_path):
+    path = _write_yaml(tmp_path, """
+providers:
+  bad:
+    kind: subprocess
+    subprocess:
+      adapter: comfy_agent_cli
+      scripts_dir_typo: D:/AI/ComfyUI/scripts
+models: {}
+aliases: {}
+""")
+    with pytest.raises(RegistryReferenceError, match="scripts_dir_typo"):
+        ModelRegistry.from_yaml(path)
+
+
+def test_subprocess_provider_invalid_default_lifecycle_rejected(tmp_path):
+    path = _write_yaml(tmp_path, """
+providers:
+  bad:
+    kind: subprocess
+    subprocess:
+      adapter: comfy_agent_cli
+      default_lifecycle: warp_drive
+models: {}
+aliases: {}
+""")
+    with pytest.raises(
+        RegistryReferenceError,
+        match="bad.*default_lifecycle.*warp_drive",
+    ):
+        ModelRegistry.from_yaml(path)
+
+
 def test_prepared_route_accepts_provider_metadata():
     from framework.core.policies import PreparedRoute
 
