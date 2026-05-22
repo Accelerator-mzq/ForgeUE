@@ -25,12 +25,14 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from framework.core.policies import PreparedRoute
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
+    ImageCandidate,
     WorkerError,
     WorkerTimeout,
     WorkerUnsupportedResponse,
@@ -40,6 +42,32 @@ from framework.providers.workers.comfy_worker import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _comfy_provider_config(tmp_path: Path) -> dict[str, str | None]:
+    """构造测试用 ComfyUI provider_config，与 models.yaml 元数据形状对齐。"""
+    return {
+        "adapter": "comfy_agent_cli",
+        "scripts_dir": str(tmp_path / "yaml_scripts"),
+        "python_exe": None,
+        "default_lifecycle": "none",
+        "input_dir": str(tmp_path / "yaml_input"),
+        "output_root": str(tmp_path),
+    }
+
+
+def _comfy_image_route(tmp_path: Path, *, model: str = "comfy/local") -> PreparedRoute:
+    """构造 executor 测试用 ComfyUI image route。"""
+    return PreparedRoute(
+        model=model,
+        api_key_env=None,
+        api_base=None,
+        kind="image",
+        pricing=None,
+        provider_name="comfy_api",
+        provider_kind="subprocess",
+        provider_config=_comfy_provider_config(tmp_path),
+    )
 
 
 def _make_worker(tmp_path: Path) -> ComfyAgentWorker:
@@ -477,19 +505,93 @@ def test_subprocess_invocation_passes_task_project_id_as_dash_dash_project(tmp_p
 
 
 def test_outputs_paths_are_copied_into_run_artifact_tree(tmp_path):
-    """outputs.images paths are copy2'd into <artifacts_dir>/comfy/."""
+    """outputs.images paths are copy2'd into <artifacts_dir>/comfy/ 并以 source_path 交给 repo。"""
     worker = _make_worker(tmp_path)
     src = tmp_path / "external" / "out.png"
     _make_png_file(src)
-    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(src)]))) as run_mock:
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(src)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy image worker must not full-read output")):
         candidates = worker.generate(
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
         )
     in_tree = worker.artifacts_dir / "comfy" / "out.png"
     assert in_tree.is_file()
+    assert candidates[0].source_path == str(in_tree)
     assert candidates[0].metadata["in_tree_path"] == str(in_tree)
     assert candidates[0].metadata["comfy_outputs_orig"] == str(src)
+
+
+async def test_generate_image_executor_persists_source_path_candidate_without_using_data(tmp_path, monkeypatch):
+    """FOR-13:ImageCandidate.source_path 优先持久化,不再把 cand.data 当最终 payload。"""
+    from datetime import datetime, timezone
+
+    from framework.artifact_store import ArtifactRepository, get_backend_registry
+    from framework.core.artifact import ArtifactType
+    from framework.core.enums import RiskLevel, RunMode, RunStatus, StepType, TaskType
+    from framework.core.policies import ProviderPolicy
+    from framework.core.task import Run, Step, Task
+    from framework.runtime.executors.base import StepContext
+    from framework.runtime.executors.generate_image import GenerateImageExecutor
+
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+    (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+    source = tmp_path / "comfy_out.png"
+    _make_png_file(source)
+
+    repo = ArtifactRepository(backend_registry=get_backend_registry(artifact_root=str(tmp_path / "store")))
+    step = Step(
+        step_id="step_image",
+        type=StepType.generate,
+        name="image",
+        risk_level=RiskLevel.medium,
+        capability_ref="image.generation",
+        config={"num_candidates": 1, "spec": {"prompt_summary": "x"}},
+        provider_policy=ProviderPolicy(
+            capability_required="image.generation",
+            prepared_routes=[_comfy_image_route(tmp_path)],
+        ),
+    )
+    task = Task(
+        task_id="t",
+        task_type=TaskType.asset_generation,
+        run_mode=RunMode.production,
+        title="image",
+        input_payload={},
+        expected_output={},
+        project_id="proj_image",
+    )
+    run = Run(
+        run_id="run_image_source_path",
+        task_id="t",
+        project_id="proj_image",
+        status=RunStatus.running,
+        started_at=datetime.now(timezone.utc),
+        workflow_id="w",
+        trace_id="tr",
+    )
+    ctx = StepContext(
+        run=run,
+        task=task,
+        step=step,
+        repository=repo,
+        upstream_artifact_ids=[],
+        run_dir=tmp_path,
+        lifecycle=None,
+    )
+    candidate = ImageCandidate(
+        data=b"not-the-file-payload",
+        width=64,
+        height=64,
+        seed=7,
+        source_path=str(source),
+    )
+    with patch("framework.runtime.executors.generate_image.ComfyAgentWorker") as worker_cls:
+        worker_cls.return_value.agenerate = AsyncMock(return_value=[candidate])
+        result = await GenerateImageExecutor().execute(ctx)
+
+    image_art = next(a for a in result.artifacts if a.artifact_type.modality == "image")
+    assert repo.read_payload(image_art.artifact_id) == source.read_bytes()
 
 
 def test_outputs_glb_non_empty_raises_unsupported_response(tmp_path):
@@ -566,26 +668,44 @@ def test_cancel_under_to_thread_does_not_orphan_processes(tmp_path):
 
 
 def test_executor_dispatches_comfy_local_to_worker_not_router(tmp_path, monkeypatch):
-    """GenerateImageExecutor._should_use_worker_path detects model='comfy/local'
-    in prepared_routes — takes worker dispatch branch instead of router branch."""
-    from framework.providers.model_registry import ResolvedRoute
+    """GenerateImageExecutor 依据 provider metadata 进入 worker branch。"""
+    from framework.core.policies import PreparedRoute
     from framework.runtime.executors.generate_image import GenerateImageExecutor
 
     executor = GenerateImageExecutor()
     ctx = MagicMock()
     ctx.step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local", api_key_env=None, api_base=None,
-                      kind="image", pricing=None),
+        _comfy_image_route(tmp_path),
     ]
     assert executor._should_use_worker_path(ctx) is True
 
     # Non-comfy route should NOT trigger worker path.
     ctx2 = MagicMock()
     ctx2.step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="qwen/qwen-image-2.0", api_key_env="QWEN", api_base=None,
+        PreparedRoute(model="qwen/qwen-image-2.0", api_key_env="QWEN", api_base=None,
                       kind="image", pricing=None),
     ]
     assert executor._should_use_worker_path(ctx2) is False
+
+
+def test_executor_dispatches_comfy_provider_metadata_even_with_custom_model_id(tmp_path):
+    from framework.core.policies import PreparedRoute
+    from framework.runtime.executors.generate_image import GenerateImageExecutor
+
+    executor = GenerateImageExecutor()
+    ctx = MagicMock()
+    ctx.step.provider_policy.prepared_routes = [
+        PreparedRoute(
+            model="local/custom-image",
+            api_key_env=None,
+            api_base=None,
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={"adapter": "comfy_agent_cli"},
+        )
+    ]
+    assert executor._should_use_worker_path(ctx) is True
 
 
 async def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
@@ -608,6 +728,7 @@ async def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     ctx.run.run_id = "run_test"
     ctx.task.project_id = "proj_test"
     ctx.run_dir = tmp_path / "run_dir"
+    ctx.step.provider_policy.prepared_routes = [_comfy_image_route(tmp_path)]
     # Task 10:lifecycle=None 表示 lifecycle="none",不注入 manager;
     # 测试验证 _generate_via_worker env 读取逻辑,不测 lifecycle.ensure 路径
     ctx.lifecycle = None
@@ -637,6 +758,17 @@ async def test_env_unset_raises_unsupported_response(tmp_path, monkeypatch):
     ctx.run_dir = tmp_path
     ctx.run.run_id = "run_x"
     ctx.task.project_id = "proj_x"
+    ctx.step.provider_policy.prepared_routes = [
+        PreparedRoute(
+            model="comfy/local",
+            api_key_env=None,
+            api_base=None,
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={"adapter": "comfy_agent_cli"},
+        )
+    ]
 
     with pytest.raises(WorkerUnsupportedResponse, match="FORGEUE_COMFY_SCRIPTS_DIR"):
         # Task 5 GREEN: _generate_via_worker 已转 async def,需 await
@@ -672,7 +804,6 @@ async def test_dry_run_skips_probe_when_no_comfy_local_in_routes(tmp_path, monke
 async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypatch):
     """DryRunPass._check_comfy_reachability(async): comfy/local route 触发 aprobe subprocess。
     Step 6: async _check_comfy_reachability + aprobe 转换(原 sync probe_sync 路径已 async 化)。"""
-    from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
     scripts_dir = tmp_path / "scripts"
@@ -685,8 +816,20 @@ async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypat
 
     step = MagicMock()
     step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local", api_key_env=None, api_base=None,
-                      kind="image", pricing=None),
+        PreparedRoute(
+            model="comfy/local",
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        ),
     ]
 
     with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
@@ -698,6 +841,40 @@ async def test_dry_run_probe_runs_when_comfy_local_in_routes(tmp_path, monkeypat
         assert "comfyui_api" in call_args
         assert "status" in call_args
     assert report.checks.get("comfy.cli_reachable") is True
+
+
+@pytest.mark.asyncio
+async def test_dry_run_probe_uses_comfy_provider_metadata_not_model_id(tmp_path, monkeypatch):
+    from framework.core.policies import PreparedRoute
+    from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
+
+    scripts_dir = tmp_path / "scripts"
+    (scripts_dir / "comfyui_api").mkdir(parents=True)
+    monkeypatch.delenv("FORGEUE_COMFY_SCRIPTS_DIR", raising=False)
+
+    step = MagicMock()
+    step.provider_policy.prepared_routes = [
+        PreparedRoute(
+            model="local/custom-image",
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        )
+    ]
+
+    dry_run = DryRunPass()
+    report = DryRunReport(passed=True)
+    with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
+        await dry_run._check_comfy_reachability(report, steps=[step])
+    assert run_mock.call_count == 1
 
 
 # ===========================================================================
@@ -761,6 +938,21 @@ def test_capability_inferred_mesh_for_comfy_local_mesh(tmp_path):
     worker = _make_mesh_worker(tmp_path)
     assert worker._capability == "mesh"
     assert worker.model_id == "comfy/local-mesh"
+
+
+def test_comfy_agent_worker_accepts_explicit_capability_for_custom_model_id(tmp_path):
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    worker = ComfyAgentWorker(
+        scripts_dir=scripts_dir,
+        model_id="local/custom-image",
+        capability="image",
+        run_id="run_custom",
+        project_id="proj_custom",
+        artifacts_dir=tmp_path,
+    )
+    assert worker.model_id == "local/custom-image"
+    assert worker._capability == "image"
 
 
 def test_unknown_model_id_raises_at_init(tmp_path):
@@ -920,23 +1112,22 @@ def test_image_mode_still_rejects_outputs_video(tmp_path):
 # ---- Mesh artifact (data + metadata + GLB magic) (D5 + R2-F3) ----------------
 
 
-def test_comfy_mesh_candidate_data_is_glb_bytes_read_from_outputs_glb_path(tmp_path):
-    """D5: MeshCandidate.data == Path(outputs.glb[0]).read_bytes()(无 worker 内部 copy,
-    bytes 直接进 candidate;ArtifactRepository.put 后续负责 in-tree copy)。"""
+def test_comfy_mesh_candidate_records_source_path_without_full_reading_outputs_glb(tmp_path):
+    """FOR-13:MeshCandidate 记录 source_path,worker 不再把 GLB 全量读进 data。"""
     worker = _make_mesh_worker(tmp_path)
     fake_input = tmp_path / "input.png"
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb, extra_bytes=b"some-payload-bytes")
-    expected_bytes = fake_glb.read_bytes()
-    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock:
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy mesh worker must not full-read output")):
         cands = worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_filename=fake_input.name,
             num_candidates=1,
         )
     assert len(cands) == 1
-    assert cands[0].data == expected_bytes
+    assert cands[0].source_path == str(fake_glb)
     assert cands[0].data.startswith(b"glTF")
 
 
@@ -1120,7 +1311,6 @@ def test_generate_mesh_does_not_mutate_caller_spec_comfy_params(tmp_path):
 async def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monkeypatch):
     """P-F4: dry-run probe gate 扩为 set membership;comfy/local-mesh route 也触发 aprobe。
     Step 6: async _check_comfy_reachability 转换。"""
-    from framework.providers.model_registry import ResolvedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
     scripts_dir = tmp_path / "scripts"
@@ -1133,8 +1323,20 @@ async def test_dry_run_probe_runs_when_comfy_local_mesh_in_routes(tmp_path, monk
 
     step = MagicMock()
     step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local-mesh", api_key_env=None, api_base=None,
-                      kind="mesh", pricing=None),
+        PreparedRoute(
+            model="comfy/local-mesh",
+            kind="mesh",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        ),
     ]
 
     with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
@@ -1268,6 +1470,9 @@ async def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_c
         prepared_routes=[PreparedRoute(
             model="comfy/local", api_key_env=None, api_base=None,
             kind="image", pricing=None,
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config=_comfy_provider_config(tmp_path),
         )],
     )
     step = Step(

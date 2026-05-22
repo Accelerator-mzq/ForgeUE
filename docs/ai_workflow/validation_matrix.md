@@ -344,8 +344,8 @@ exec(open('<repo>/ue_scripts/run_import.py').read())
 |---|---|
 | 真正的测试数量 | Git Bash: `python -m pytest --collect-only -q \| tail -5` · PowerShell: `python -m pytest --collect-only -q \| Select-Object -Last 5` |
 | 某 FR 对应测试 | `docs/acceptance/acceptance_report.md` §4 |
-| 某 bundle 的用途 | `docs/acceptance/acceptance_report.md` §3 + `forge/specs/examples-and-acceptance/spec.md` |
-| probe 约定 | `probes/README.md` §5 + `forge/specs/probe-and-validation/spec.md` |
+| 某 bundle 的用途 | `docs/acceptance/acceptance_report.md` §3 + `docs/contracts/examples-and-acceptance/spec.md` |
+| probe 约定 | `probes/README.md` §5 + `docs/contracts/probe-and-validation/spec.md` |
 | failure mode 映射 | `src/framework/runtime/failure_mode_map.py` + `docs/design/LLD.md` §5.7 |
 | 定价事实 | `config/models.yaml`(`pricing_autogen.sourced_on` + `source_url`) |
 | 贵族 API 策略 | `docs/requirements/SRS.md` ADR-007 + `CHANGELOG.md` TBD-007 |

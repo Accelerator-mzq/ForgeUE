@@ -31,6 +31,7 @@ _PUBLIC_ALL_NAMES = (
     "PayloadBackendRegistry",
     "PayloadTooLarge",
     "VariantTracker",
+    "WriteResult",
     "get_backend_registry",
     "hash_inputs",
     "hash_payload",
@@ -124,9 +125,17 @@ def test_no_callsite_uses_submodule_path() -> None:
     #   (c) openspec/changes/lazy-artifact-store-package-exports/ — design.md
     #       quotes the forbidden form as documentation example
     #   (d) any *.pyc / __pycache__/ paths — bytecode artifacts
+    #   (e) tests/unit/test_repo_put_streaming.py — TBD-012 step-5 zero-copy fence
+    #       uses patch.object on repo_mod / file_backend internals for mock intercept;
+    #       direct submodule import is the only way to patch object references
+    #   (f) tests/unit/test_artifact_repository.py — TBD-012 step-6 stream drift fence
+    #       uses patch.object on repo_mod to spy on hash_payload / hash_path;
+    #       direct submodule import is the only way to intercept module-level functions
     excluded_prefixes = (
         _REPO_ROOT / "src" / "framework" / "artifact_store",
         _REPO_ROOT / "tests" / "unit" / "test_payload_backends.py",
+        _REPO_ROOT / "tests" / "unit" / "test_repo_put_streaming.py",
+        _REPO_ROOT / "tests" / "unit" / "test_artifact_repository.py",
         _REPO_ROOT / "openspec" / "changes" / "lazy-artifact-store-package-exports",
     )
     violations: list[str] = []

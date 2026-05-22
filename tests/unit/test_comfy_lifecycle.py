@@ -243,6 +243,47 @@ async def test_status_subprocess_timeout_returns_false(monkeypatch):
     assert result is False, "subprocess 挂起时 status() 应返回 False"
 
 
+@pytest.mark.asyncio
+async def test_wait_ready_timeout_uses_monotonic_deadline(monkeypatch):
+    """FOR-10 回归:实际 sleep 晚醒时,_wait_ready 应按真实单调时间超时。"""
+    import framework.runtime.lifecycle as lc_mod
+
+    monkeypatch.setattr(lc_mod, "_READY_TIMEOUT_S", 1.0)
+
+    now = {"value": 100.0}
+
+    class _FakeClock:
+        def monotonic(self):
+            return now["value"]
+
+    # 当前生产代码尚未使用 time;raising=False 让 RED 阶段能暴露行为差异。
+    monkeypatch.setattr(lc_mod, "time", _FakeClock(), raising=False)
+
+    status_calls = {"n": 0}
+
+    async def _always_down(self):
+        status_calls["n"] += 1
+        return False
+
+    sleep_calls = []
+
+    async def _oversleep(delay):
+        sleep_calls.append(delay)
+        now["value"] += 1.5
+        if len(sleep_calls) > 1:
+            pytest.fail("_wait_ready 超过 monotonic deadline 后不应继续 sleep")
+
+    monkeypatch.setattr(ComfyLifecycleManager, "status", _always_down)
+    monkeypatch.setattr(lc_mod.asyncio, "sleep", _oversleep)
+
+    mgr = ComfyLifecycleManager(scripts_dir="/fake", poll_interval_s=0.1)
+    with pytest.raises(TimeoutError, match="ComfyUI 未能在 1.0s 内就绪"):
+        await mgr._wait_ready()
+
+    assert sleep_calls == [0.1]
+    assert status_calls["n"] == 2
+
+
 # ── Fluid Pause #2 根因修复回归 fence(2026-05-20)─────────────────────────────
 # 根因:`comfyui_api status` 即使 ComfyUI off 也 exit 0 + JSON `{"online": false}`,
 # 旧实现 `return proc.returncode == 0` 误判为 online → `ensure()` 跳过 `_spawn_serve`,

@@ -214,5 +214,8 @@ aliases:
     routes = policy_fields["prepared_routes"]
     assert len(routes) == 1
     assert routes[0]["pricing"] == {"per_image_usd": 0.014}
+    assert routes[0]["provider_name"] == "zhipu"
+    assert routes[0]["provider_kind"] == "openai_compat"
+    assert routes[0]["provider_config"] is None
     # Null-only fields pruned (not {"input_per_1k_usd": None, ...})
     assert "input_per_1k_usd" not in routes[0]["pricing"]

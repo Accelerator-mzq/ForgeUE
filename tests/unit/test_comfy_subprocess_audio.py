@@ -288,12 +288,13 @@ _ok_audio_stdout(
 # ---- generate_audio path:format detection + magic bytes(D10 + F5)------------
 
 
-def test_generate_audio_flac_extension_detection_reads_bytes(tmp_path):
-    """flac 扩展名 + `fLaC` magic 接受 → AudioCandidate(format="flac")。"""
+def test_generate_audio_flac_extension_detection_records_source_path_without_full_read(tmp_path):
+    """flac 扩展名 + `fLaC` magic 接受 → AudioCandidate(format="flac", source_path=...)。"""
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.flac"
     _make_flac_file(fake, payload=b"hello")
-    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy audio worker must not full-read output")):
         cands = worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -301,6 +302,7 @@ def test_generate_audio_flac_extension_detection_reads_bytes(tmp_path):
     assert len(cands) == 1
     assert isinstance(cands[0], AudioCandidate)
     assert cands[0].format == "flac"
+    assert cands[0].source_path == str(fake)
     assert cands[0].data[:4] == b"fLaC"
 
 
@@ -517,10 +519,10 @@ def test_generate_audio_metadata_snapshot_is_independent_copy(tmp_path):
 
 @pytest.mark.asyncio
 async def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, monkeypatch):
-    """commit 6: dry-run probe gate set 扩 `comfy/local-audio`;route 含 audio 触发 aprobe。
+    """audio 的 Comfy subprocess provider metadata route 会触发 aprobe。
     Step 6: async _check_comfy_reachability + aprobe 转换。"""
     from unittest.mock import MagicMock
-    from framework.providers.model_registry import ResolvedRoute
+    from framework.core.policies import PreparedRoute
     from framework.runtime.dry_run_pass import DryRunPass, DryRunReport
 
     scripts_dir = tmp_path / "scripts"
@@ -533,13 +535,25 @@ async def test_dry_run_probe_runs_when_comfy_local_audio_in_routes(tmp_path, mon
 
     step = MagicMock()
     step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local-audio", api_key_env=None, api_base=None,
-                      kind="audio", pricing=None),
+        PreparedRoute(
+            model="comfy/local-audio",
+            kind="audio",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={
+                "adapter": "comfy_agent_cli",
+                "scripts_dir": str(scripts_dir),
+                "python_exe": None,
+                "default_lifecycle": "none",
+                "input_dir": None,
+                "output_root": str(tmp_path),
+            },
+        ),
     ]
 
     with _patch_create_subprocess_exec(_make_async_completed("ok", returncode=0)) as run_mock:
         await dry_run._check_comfy_reachability(report, steps=[step])
-        # comfy/local-audio 也触发 aprobe(commit 6 audio gate 扩 + Step 6 async 化)
+        # audio route 通过 provider metadata 命中 ComfyAgentWorker aprobe。
         assert run_mock.call_count == 1
         call_args = run_mock.call_args
         assert "comfyui_api" in call_args

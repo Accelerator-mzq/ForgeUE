@@ -3,6 +3,11 @@
 项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
 
+**ComfyUI 项目级配置主入口**:`config/models.yaml` 里的 `providers.comfy_api.subprocess`。
+`FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` /
+`FORGEUE_COMFY_LIFECYCLE` / `FORGEUE_COMFY_INPUT_DIR` /
+`FORGEUE_COMFY_OUTPUT_ROOT` 仍保留为本机覆盖层。
+
 ## ComfyUI 接入(自 SRS v1.6 + v1.7 + v1.8,forge change `comfy-agent-cli-adoption` + Phase 1 mesh `comfy-agent-cli-mesh-audio-video-adoption` + Phase 2 audio `comfy-agent-cli-audio-adoption` + Phase 3 video `comfy-agent-cli-video-adoption` — TBD-009 全 phase closed)
 
 ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**。
@@ -12,7 +17,7 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 - **Video** capability(自 v1.8):bundle 用 `video_local` alias + text-to-video 单 step(NOT DAG;无 source bytes,沿 audio 模式),video manifest 例 `Vedio/Wan2.1-T2V-1.3B_native_5sec`(Wan 2.1 1.3B T2V ~3GB,7 分钟生成 / 6GB VRAM,默认 manifest)或 `Vedio/Wan2.2-T2V-A14B_GGUF`(Wan 2.2 A14B GGUF 量化 ~14GB+,advanced manifest 不进 examples)。**`Vedio/` 是上游 user-authored 拼写,ForgeUE 不做翻译**(改名破坏 ComfyUI 自家既有 workflow + custom node 索引;ForgeUE 端 alias 翻译会引入隐式 magic 不利审计;D5 决策);**不需要** `FORGEUE_COMFY_INPUT_DIR`(video 路径无 source image,沿 audio D7);format mp4-only(round-2 F2 + round-3 PF3 sweep,webm follow-on `comfy-video-webm-adoption`)+ BMFF strict 5-tuple header validation(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject `box_size==1` largesize + major_brand non-empty);**L2 evidence 单次约 7 分钟**,iteration 成本远高于 audio Phase 2 单次 1 分钟,首次跑 Wan 1.3B 模型 ~3GB HuggingFace 拉(用户负责预先暖启 ComfyUI;A14B / 14B 30+ 分钟 + 14-24+GB VRAM 不推荐 default smoke)
 
 **双终端工作流(本 change scope 唯一支持模式)**:
-- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(image L2 live smoke evidence:`forge/changes/archive/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`;mesh L2 live smoke evidence:`forge/changes/archive/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/notes/live_smoke_mesh_20260503_full.md`,GLB 真实生成 3.5MB)
+- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)。**注**:`comfyui_api` CLI 子命令只有 `{list, params, run, batch, status, cancel}`,不含 `serve`;启服务用同 `scripts/` 下的姐妹 CLI `factory_v3`(image L2 live smoke evidence:`docs/archive/forge_changes/2026-05-02-comfy-agent-cli-adoption/notes/live_smoke_20260503.md`;mesh L2 live smoke evidence:`docs/archive/forge_changes/2026-05-03-comfy-agent-cli-mesh-audio-video-adoption/notes/live_smoke_mesh_20260503_full.md`,GLB 真实生成 3.5MB)
 - **ComfyUI 共享目录新增 ForgeUE 依赖**(round 5 user-authored mini-LoadImage 变体,本 change 必须):
   - `D:/AI/ComfyUI/workflows/official_main_validated_api/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(API workflow,LoadImage 变体)
   - `D:/AI/ComfyUI/scripts/comfyui_api/manifests/GameAssets/03_mini_image_to_3d_hunyuan_loadimage.json`(manifest,暴露 input_image patches)
@@ -32,7 +37,7 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 - mesh source image 副本:executor 写到 `$FORGEUE_COMFY_INPUT_DIR/forgeue_<sha1>.png`(`forgeue_` prefix 防与 ComfyUI 自家 input 文件冲突;非 ForgeUE 产物,cleanup 由用户管:`find $FORGEUE_COMFY_INPUT_DIR -name "forgeue_*.png" -mtime +7 -delete`)
 
 **关键限制(round 2 OQ-6 + D6 + round 5 D10)**:
-- worker 配置走 env vars `FORGEUE_COMFY_*`,**不**进 `config/models.yaml`(F-A schema 扩展登记 SRS TBD-011 后续 change)
+- worker 项目级默认配置走 `config/models.yaml` 的 `providers.comfy_api.subprocess`,`FORGEUE_COMFY_*` 作为兼容覆盖层保留
 - `comfy_lifecycle: "none"` only(`ensure_running` / `ensure_release` / `self_managed_session` 留 SRS TBD-010 `executor-async-rewrite` 后续 change 解锁)
 - Mesh capability:仅 image-to-mesh 路径(沿用 mesh worker ABC `source_image_bytes` 模式),不支持 standalone text-to-mesh manifest;ComfyUI LoadImage 节点要求 source bytes 在 `FORGEUE_COMFY_INPUT_DIR` 指向的 ComfyUI 自家 input/ 目录(round 5 D10)
 - Audio capability(自 v1.7):仅 text-to-audio 路径(`AudioWorker` ABC + `AudioCandidate(data, format, duration_seconds=None, sample_rate=None, metadata)`,无 audio-to-audio / image-to-audio source bytes 模式与 mesh image-to-mesh 不同);`AudioCandidate.duration_seconds` / `sample_rate` 永远 `None`(本 change scope 不引入 audio metadata parser,留 follow-on `audio-metadata-parser` change);magic bytes 二次校验强制(`fLaC` / `ID3`+MPEG sync / `RIFF`+`WAVE`)
@@ -182,26 +187,29 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 
 ## 工作流
 
-### forge 用法
+### Superpowers 用法
 
-非平凡需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 走 `/forge:propose <name>` 产 4 件套(proposal + specs + design + tasks),再 `/forge:apply` → `/forge:review` → `/forge:verify` → `/forge:archive`。模糊想法先 `/forge:brainstorm` 或 `/forge:explore`。小 bugfix / typo / logic 微调可直接改代码,但必须补回归测试或说明验证方式。实施只在 active change scope;**禁止**顺手重构无关模块。
+非平凡需求(新对象 / 新 workflow / 新 provider / 新 step type / 架构边界 / 跨子系统重构)→ 先用 `superpowers:brainstorming` 明确目标、约束和方案,用户确认后用 `superpowers:writing-plans` 拆实施计划。实现阶段按任务性质使用 `superpowers:test-driven-development` / `superpowers:systematic-debugging` / `superpowers:executing-plans` / `superpowers:subagent-driven-development`。发布门顺序固定:先用 `superpowers:verification-before-completion` 做证据化验证,再用项目级 skill `document-release` 同步五件套、contracts、backlog、CHANGELOG 和 archive 引用;`document-release` 完成并再次按范围验证后,才使用 `superpowers:finishing-a-development-branch` 做 merge / push。Codex 环境若关联 Linear issue,`document-release` 阶段准备 evidence,只有目标分支 merge / push 成功后才把 Linear 标 Done 并评论证据。小 bugfix / typo / logic 微调可轻量处理,但必须先读相关文件、说明短方案,并补回归测试或说明验证方式;如果任务来自 `docs/backlog/active.md`,收尾时还必须显式处理 backlog 状态,完成则归档,未完成则保留并说明原因。
 
-禁令:`artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径 不提交;测试总数不硬编码(`python -m pytest -q` 实测);provider model id 不硬编码;贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007)。
+禁令:`artifacts/` / `demo_artifacts/` / `.env` / API key / 本机绝对路径 不提交;测试总数不硬编码(`python -m pytest -q` 实测);provider model id 不硬编码;贵族 API(`mesh.generation`)不做 framework 静默重试(ADR-007);Codex 不执行删除文件操作。
 
-### forge 行为塑造 skill
+### Superpowers skill
 
-forge 插件自带全套行为塑造 skill(走 `Skill` tool invoke):
-- `forge:brainstorming` — 创意 / requirements 阶段
-- `forge:writing-plans` — 把 forge artifacts 转 implementation plan
-- `forge:subagent-driven-development` — 派 fresh implementer / spec_reviewer / code_quality_reviewer / final_reviewer per task
-- `forge:requesting-code-review` — final review at branch completion
-- `forge:verification-before-completion` — verify claims before declaring done
-- `forge:systematic-debugging` — bug encountered
+- `superpowers:brainstorming` — 创意 / requirements 阶段
+- `superpowers:writing-plans` — 把确认后的方案拆成实施计划
+- `superpowers:test-driven-development` — 功能 / bugfix 实现前建立红绿回归
+- `superpowers:systematic-debugging` — 遇到 bug / 测试失败 / 意外行为
+- `superpowers:executing-plans` — 在当前会话按计划执行
+- `superpowers:subagent-driven-development` — 用户明确允许子代理时按任务派发
+- `superpowers:requesting-code-review` — 完成较大任务后的 review
+- `superpowers:verification-before-completion` — 宣称完成前验证
+- `superpowers:finishing-a-development-branch` — 分支收尾
+- `document-release` — 项目级文档发布 / 归档 / backlog / 五件套同步
 
 ### Codex CLI Convention
 
-**Convention**:重要 design 阶段先跑 `/codex:adversarial-review`(catch latent design smell);final review 跑 `/codex:review --base main`(catch cross-archive mixed-scope)。Opt-in 不强制,但 audit 数据(retire-forgeue-protocol-layer-fully 2026-05-10)显示这层 catch ~30-40% 业务 bug,user 自律调用以保留独有 leverage。
+重要 design 阶段可跑 `/codex:adversarial-review`(catch latent design smell);final review 可跑 `/codex:review --base main`(catch cross-archive mixed-scope)。Opt-in 不强制;Codex review 意见必须独立对照代码验证,不把 claim 当结论。
 
 ### Backlog
 
-项目唯一 backlog = `forge/backlog/`,forge 原生生成产物(`/forge:archive` 或 `forge backlog` 从各 change 的 `forge-scope-entries` + `forge/legacy-requirements.yaml` 生成;`forge backlog --check` 守门)。`active.md` 列未决待办、`archived.md` 列 tombstone,**勿手编**。原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。
+项目当前 backlog = `docs/backlog/`。`active.md` 列未决待办、`archived.md` 列 tombstone。凡是从 `docs/backlog/active.md` 认领或受其驱动的任务,即使是小 bugfix,收尾时也要显式结账:完成则移入 `docs/backlog/archived.md`,未完成则继续留在 `active.md` 并写明理由;不能只改代码不处理 backlog 状态。原 `docs/followon_backlog/` 手工 registry 2026-05-19 retired、内容已并入 backlog;历史 tombstone 冻结于 `docs/followon_backlog/archived.md`。

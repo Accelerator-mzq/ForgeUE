@@ -17,9 +17,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DryRunPass.run` 改 `async def` + 新 `ComfyAgentWorker.aprobe` async classmethod(Fluid Pause #1 scope 扩大)
 - `StepContext.lifecycle: ExternalProcessLifecycle | None = None` 字段加入
 - 全量 1179 passed / 3 skipped / 0 failed(实测 2026-05-20;baseline 1136 → net +43 新 fence)
-- L2 live evidence:`forge/changes/executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`
+- L2 live evidence:`docs/archive/forge_changes/2026-05-20-executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`
 
 ## [Unreleased]
+
+### Changed
+
+- **Backlog closeout rule**: `AGENTS.md` / `CLAUDE.md` / `docs/backlog/README.md` 现在要求凡是源自 `docs/backlog/active.md` 的任务,收尾时必须显式处理 active→archived 状态,小 bugfix 也不例外,避免只改代码不结账。
+- **FOR-8 multi-mode comfy DAG warning**:`ManagedProcessRegistry.select` 不再只采用第一个
+  managed subprocess lifecycle selection;同一 run 内多个 Comfy step 解析出不同 lifecycle mode
+  时直接 `ValueError` fail-fast,避免 `ensure_running` / `ensure_release` 混用导致释放语义含糊。
+  同步 retired active backlog `multi-mode-comfy-dag-warning`。
+- **FOR-10 wait-ready-monotonic-time**:`ComfyLifecycleManager._wait_ready` 改用 `time.monotonic()` 绝对 deadline,新增 oversleep 回归测试;对应 active backlog `wait-ready-monotonic-time` 已归档。
+- **FOR-11 blob backend streaming implementation**:`BlobBackend` 从
+  `NotImplementedError` stub 升级为 MVP object-store backend,提供可注入
+  `BlobClient` protocol + 默认 `InMemoryBlobClient`;支持 value/source_path 写入、
+  read/exists、blob resume drift 校验,并允许
+  `ArtifactRepository.put(source_path=..., payload_kind=PayloadKind.blob)`。同步
+  retired active backlog `blob-backend-streaming-implementation`。
+- **FOR-14 metadata corruption detection**:`ArtifactRepository.dump_run_metadata`
+  现在在 `_artifacts.json` 旁写 `_artifacts.integrity.json`,记录 sha256 /
+  artifact_count / artifact_ids;`load_run_metadata` 发现 integrity 文件时先校验,
+  mismatch 抛 `ArtifactMetadataIntegrityError` fail-fast。legacy 无 integrity 文件
+  run 保持兼容。同步 retired active backlog `metadata-corruption-detection`。
+- **FOR-13 worker candidate source_path migration**:`ImageCandidate` / `MeshCandidate`
+  / `AudioCandidate` / `VideoCandidate` 扩 `source_path`;本地 ComfyUI worker 只读格式校验所需
+  文件头,由 generator executor 优先调用 `repo.put(source_path=...)` 落盘,`data`
+  保留给 fake / 远端 worker 与兼容回退。同步 retired active backlog
+  `worker-candidate-source-path-migration`。
+- **FOR-12 repo.put staging hash atomicity**:`PayloadBackend.write` / registry write 返回
+  `WriteResult(ref, content_hash)`;`FileBackend.write(source_path=...)` 改为先对
+  staging `tmp_dest` 完成 size + `hash_path(tmp_dest)` 验证,再 `os.replace` 到 final
+  dest,消除 replace 后 hash 失败导致 payload / metadata 半提交窗口。同步 retired
+  active backlog `repo-put-staging-hash-atomicity`。
+- **FOR-5 + FOR-6 FakeComfyWorker async/multimodal test fixture**:
+  `FakeComfyWorker.agenerate` 现在真实让出 event loop;同一 fake worker 补
+  `agenerate_mesh` / `agenerate_audio` / `agenerate_video` stub,并兼容 mesh executor
+  远端注入路径的 `agenerate(source_image_bytes=...)`。同步 retired active backlog
+  `fake-comfy-worker-agenerate-yield-point` 与 `fake-comfy-worker-mesh-audio-video-stub`。
+- **项目工作流迁移**:ForgeUE_codex 主工作流从项目内 forge 切换为 Superpowers-first。长期 backlog / contracts / change archive 内容已复制到 `docs/backlog` / `docs/contracts` / `docs/archive/forge_changes`;旧 `forge/` 目录不由 Codex 删除,由用户按人工清单处理。
 
 ### Removed
 

@@ -104,6 +104,12 @@ from framework.providers.workers.video_worker import VideoCandidate
 _COMFY_LOGGER = logging.getLogger("framework.providers.workers.comfy_worker")
 
 
+def _read_prefix(path: Path, size: int) -> bytes:
+    """只读取文件头部做格式校验,避免把大 payload 全量读进内存。"""
+    with path.open("rb") as fh:
+        return fh.read(size)
+
+
 class WorkerError(RuntimeError):
     """Generic worker failure (bad request, upstream error)."""
 
@@ -135,6 +141,7 @@ class ImageCandidate:
     mime_type: str = "image/png"
     format: str = "png"
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_path: str | None = None       # FOR-13:本地文件优先走 repo.put(source_path=...)
 
 
 class ComfyWorker(ABC):
@@ -214,11 +221,25 @@ class FakeComfyWorker(ComfyWorker):
         *,
         spec: dict[str, Any],
         num_candidates: int,
+        source_image_bytes: bytes | None = None,
         seed: int | None = None,
         timeout_s: float | None = None,
-    ) -> list[ImageCandidate]:
-        """异步主面(TBD-010 Task 3):FakeComfyWorker 的 async 版本直接委托给 generate 逻辑。
-        Fake worker 不真正启动子进程,无需 asyncio.create_subprocess_exec。"""
+    ) -> list[ImageCandidate] | list[MeshCandidate]:
+        """异步主面(TBD-010 Task 3):Fake worker 也真实让出一次 event loop。
+
+        `source_image_bytes` 是 FOR-6 兼容层:mesh executor 的远端注入路径调
+        `worker.agenerate(source_image_bytes=...)`,这里返回 MeshCandidate。
+        """
+        await asyncio.sleep(0)
+        if source_image_bytes is not None:
+            return self._generate_mesh_candidates(
+                spec=spec,
+                num_candidates=num_candidates,
+                seed=seed,
+                timeout_s=timeout_s,
+                source_image_bytes=source_image_bytes,
+                source_image_filename=None,
+            )
         return self.generate(
             spec=spec, num_candidates=num_candidates, seed=seed, timeout_s=timeout_s,
         )
@@ -234,26 +255,7 @@ class FakeComfyWorker(ComfyWorker):
         # v2 schema gate (OpenSpec change Task 6): only enforced if spec
         # uses the new `comfy_workflow` field; legacy `prompt_summary`
         # specs pass through unchanged for back-compat.
-        if "comfy_workflow" in spec:
-            if not isinstance(spec["comfy_workflow"], str) or not spec["comfy_workflow"]:
-                raise WorkerUnsupportedResponse(
-                    "FakeComfyWorker.generate: spec.comfy_workflow must be a "
-                    "non-empty string"
-                )
-            if "comfy_params" in spec and not isinstance(spec["comfy_params"], dict):
-                raise WorkerUnsupportedResponse(
-                    "FakeComfyWorker.generate: spec.comfy_params must be a dict"
-                )
-            lifecycle = spec.get("comfy_lifecycle", "none")
-            # Task 10:FakeComfyWorker 同步解锁 — 接受四个合法值,集合外才 raise。
-            _FAKE_VALID_LIFECYCLES = {
-                "none", "ensure_running", "ensure_release", "self_managed_session",
-            }
-            if lifecycle not in _FAKE_VALID_LIFECYCLES:
-                raise WorkerUnsupportedResponse(
-                    f"FakeComfyWorker.generate: spec.comfy_lifecycle={lifecycle!r} 不合法; "
-                    f"合法值为 {sorted(_FAKE_VALID_LIFECYCLES)}。"
-                )
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.generate")
         self.calls.append({
             "spec": dict(spec),
             "num_candidates": num_candidates,
@@ -270,6 +272,127 @@ class FakeComfyWorker(ComfyWorker):
             _synth_candidate(spec=spec, index=i, seed=seed)
             for i in range(num_candidates)
         ]
+
+    async def agenerate_mesh(
+        self,
+        *,
+        spec: dict[str, Any],
+        source_image_filename: str,
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[MeshCandidate]:
+        """FOR-6:Comfy mesh async stub,供 executor 单测直接注入 fake worker。"""
+        await asyncio.sleep(0)
+        return self._generate_mesh_candidates(
+            spec=spec,
+            num_candidates=num_candidates,
+            seed=seed,
+            timeout_s=timeout_s,
+            source_image_bytes=None,
+            source_image_filename=source_image_filename,
+        )
+
+    async def agenerate_audio(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[AudioCandidate]:
+        """FOR-6:Comfy audio async stub,返回 deterministic minimal FLAC。"""
+        await asyncio.sleep(0)
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.agenerate_audio")
+        self.calls.append({
+            "kind": "audio",
+            "spec": dict(spec),
+            "num_candidates": num_candidates,
+            "seed": seed,
+            "timeout_s": timeout_s,
+        })
+        return [
+            _synth_audio_candidate(spec=spec, index=i, seed=seed)
+            for i in range(max(1, num_candidates))
+        ]
+
+    async def agenerate_video(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int = 1,
+        seed: int | None = None,
+        timeout_s: float | None = None,
+    ) -> list[VideoCandidate]:
+        """FOR-6:Comfy video async stub,返回 deterministic minimal BMFF mp4。"""
+        await asyncio.sleep(0)
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.agenerate_video")
+        self.calls.append({
+            "kind": "video",
+            "spec": dict(spec),
+            "num_candidates": num_candidates,
+            "seed": seed,
+            "timeout_s": timeout_s,
+        })
+        return [
+            _synth_video_candidate(spec=spec, index=i, seed=seed)
+            for i in range(max(1, num_candidates))
+        ]
+
+    def _generate_mesh_candidates(
+        self,
+        *,
+        spec: dict[str, Any],
+        num_candidates: int,
+        seed: int | None,
+        timeout_s: float | None,
+        source_image_bytes: bytes | None,
+        source_image_filename: str | None,
+    ) -> list[MeshCandidate]:
+        """FOR-6:mesh 两种调用面共享同一 deterministic fake 输出。"""
+        _validate_fake_comfy_spec(spec, surface="FakeComfyWorker.agenerate_mesh")
+        source_token = (
+            source_image_bytes
+            if source_image_bytes is not None
+            else (source_image_filename or "").encode("utf-8")
+        )
+        self.calls.append({
+            "kind": "mesh",
+            "spec": dict(spec),
+            "num_candidates": num_candidates,
+            "seed": seed,
+            "timeout_s": timeout_s,
+            "source_size": len(source_image_bytes or b""),
+            "source_image_filename": source_image_filename,
+        })
+        return [
+            _synth_mesh_candidate(
+                source_token=source_token, spec=spec, index=i, seed=seed,
+            )
+            for i in range(max(1, num_candidates))
+        ]
+
+
+def _validate_fake_comfy_spec(spec: dict[str, Any], *, surface: str) -> None:
+    """FakeComfyWorker v2 schema gate;只在 spec 使用 comfy_workflow 时启用。"""
+    if "comfy_workflow" not in spec:
+        return
+    if not isinstance(spec["comfy_workflow"], str) or not spec["comfy_workflow"]:
+        raise WorkerUnsupportedResponse(
+            f"{surface}: spec.comfy_workflow must be a non-empty string"
+        )
+    if "comfy_params" in spec and not isinstance(spec["comfy_params"], dict):
+        raise WorkerUnsupportedResponse(f"{surface}: spec.comfy_params must be a dict")
+    lifecycle = spec.get("comfy_lifecycle", "none")
+    # Task 10:FakeComfyWorker 同步解锁 — 接受四个合法值,集合外才 raise。
+    valid_lifecycles = {
+        "none", "ensure_running", "ensure_release", "self_managed_session",
+    }
+    if lifecycle not in valid_lifecycles:
+        raise WorkerUnsupportedResponse(
+            f"{surface}: spec.comfy_lifecycle={lifecycle!r} 不合法; "
+            f"合法值为 {sorted(valid_lifecycles)}。"
+        )
 
 
 def _synth_candidate(*, spec: dict[str, Any], index: int, seed: int | None) -> ImageCandidate:
@@ -311,6 +434,116 @@ def _make_solid_png(*, width: int, height: int, rgb: tuple[int, int, int]) -> by
     ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)   # 8-bit RGB
     png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", compressed) + chunk(b"IEND", b"")
     return bytes(png)
+
+
+def _synth_mesh_candidate(
+    *,
+    source_token: bytes,
+    spec: dict[str, Any],
+    index: int,
+    seed: int | None,
+) -> MeshCandidate:
+    """生成最小 GLB 容器,足够 executor 当 file-backed mesh 使用。"""
+    json_chunk = json.dumps({
+        "asset": {"version": "2.0", "generator": "forgeue-fake-comfy-mesh"},
+        "meshes": [{"name": f"fake_comfy_{index}", "primitives": [{"attributes": {}}]}],
+        "scenes": [{"nodes": []}],
+        "scene": 0,
+        "nodes": [],
+    }).encode("utf-8")
+    json_chunk += b" " * ((4 - len(json_chunk) % 4) % 4)
+    total_length = 12 + 8 + len(json_chunk) + 8
+    data = (
+        struct.pack("<4sII", b"glTF", 2, total_length)
+        + struct.pack("<II", len(json_chunk), 0x4E4F534A)
+        + json_chunk
+        + struct.pack("<II", 0, 0x004E4942)
+    )
+    return MeshCandidate(
+        data=data,
+        format="glb",
+        mime_type="model/gltf-binary",
+        poly_count=0,
+        has_uv=False,
+        has_rig=False,
+        metadata={
+            "synthetic": True,
+            "source": "fake_comfy",
+            "index": index,
+            "seed": (seed or 0) + index,
+            "source_image_hash": hashlib.sha1(source_token).hexdigest()[:12],
+            "spec": dict(spec),
+        },
+    )
+
+
+def _synth_audio_candidate(
+    *, spec: dict[str, Any], index: int, seed: int | None,
+) -> AudioCandidate:
+    """生成最小 FLAC bytes,保持 FakeAudioWorker 同类测试语义。"""
+    return AudioCandidate(
+        data=_make_minimal_flac(payload=f"fake-comfy-{index}".encode("utf-8")),
+        format="flac",
+        metadata={
+            "synthetic": True,
+            "source": "fake_comfy",
+            "index": index,
+            "seed": (seed or 0) + index,
+            "spec": dict(spec),
+        },
+        duration_seconds=None,
+        sample_rate=None,
+    )
+
+
+def _make_minimal_flac(*, payload: bytes) -> bytes:
+    """最小 FLAC 头:magic + STREAMINFO,不依赖外部 codec。"""
+    out = bytearray(b"fLaC")
+    out.extend(b"\x80\x00\x00\x22")
+    streaminfo = bytearray()
+    streaminfo.extend(struct.pack(">H", 4096))
+    streaminfo.extend(struct.pack(">H", 4096))
+    streaminfo.extend(b"\x00\x00\x00")
+    streaminfo.extend(b"\x00\x00\x00")
+    sr = 44100
+    streaminfo.append((sr >> 12) & 0xFF)
+    streaminfo.append((sr >> 4) & 0xFF)
+    streaminfo.append(((sr & 0x0F) << 4) | (1 << 1))
+    streaminfo.append(0xF0)
+    streaminfo.extend(b"\x00\x00\x00\x00")
+    streaminfo.extend(b"\x00" * 16)
+    out.extend(streaminfo)
+    out.extend(b"\xff\xf8")
+    out.extend(payload[:8])
+    return bytes(out)
+
+
+def _synth_video_candidate(
+    *, spec: dict[str, Any], index: int, seed: int | None,
+) -> VideoCandidate:
+    """生成最小 BMFF mp4 ftyp box,匹配 video worker 的 mp4-only contract。"""
+    return VideoCandidate(
+        data=_make_minimal_mp4(),
+        format="mp4",
+        metadata={
+            "synthetic": True,
+            "source": "fake_comfy",
+            "index": index,
+            "seed": (seed or 0) + index,
+            "spec": dict(spec),
+        },
+    )
+
+
+def _make_minimal_mp4() -> bytes:
+    """最小 ftyp box:len + b'ftyp' + major_brand + compatible brands。"""
+    return (
+        b"\x00\x00\x00\x20"
+        b"ftyp"
+        b"isom"
+        b"\x00\x00\x02\x00"
+        b"isomiso2mp41mp42"
+    )
 
 
 # ----------------------------------------------------------------------------
@@ -427,6 +660,8 @@ class ComfyAgentWorker(ComfyWorker):
         artifacts_dir: Path,                     # REQUIRED (G3 fix; ctx.run_dir)
         python_exe: Path | None = None,          # OPTIONAL (= sys.executable)
         default_lifecycle: str = "none",         # OPTIONAL (only "none" supported in this change)
+        capability: str | None = None,           # 可选:provider metadata 可显式指定 capability
+        output_root: Path | None = None,         # 可选:覆盖 comfy outputs containment 根目录
     ) -> None:
         # F4 fix: REQUIRED project_id None/empty raise.
         if not project_id:
@@ -461,15 +696,20 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyAgentWorker.__init__: 不支持的 default_lifecycle={default_lifecycle!r}; "
                 f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
-        # D1: capability dispatch via model_id 推断;unknown id raise(不静默 fallback)。
-        # F-Plan-R3-A round-3 修订:audio capability 已加(comfy/local-audio);
-        # Phase 3 D6 修订:video capability 已加(comfy/local-video) — TBD-009 全 3 phase closed。
-        capability = self._CAPABILITY_BY_MODEL_ID.get(model_id)
+        # capability 可由 provider metadata 显式传入;未传时保留旧 model_id 推断。
+        # 这样自定义 model id 仍能复用同一 ComfyAgentWorker 输出校验表。
         if capability is None:
+            capability = self._CAPABILITY_BY_MODEL_ID.get(model_id)
+            if capability is None:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.__init__: unsupported model_id={model_id!r}, "
+                    f"expected one of {sorted(self._CAPABILITY_BY_MODEL_ID)} "
+                    f"(all TBD-009 phases closed: image / mesh / audio / video)"
+                )
+        elif capability not in self._REQUIRED_OUTPUT_KEY:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.__init__: unsupported model_id={model_id!r}, "
-                f"expected one of {sorted(self._CAPABILITY_BY_MODEL_ID)} "
-                f"(all TBD-009 phases closed: image / mesh / audio / video)"
+                f"ComfyAgentWorker.__init__: unsupported capability={capability!r}; "
+                f"expected one of {sorted(self._REQUIRED_OUTPUT_KEY)}"
             )
         self.scripts_dir = Path(scripts_dir)
         self.python_exe = Path(python_exe) if python_exe else Path(sys.executable)
@@ -502,7 +742,9 @@ class ComfyAgentWorker(ComfyWorker):
         # of the existing `is_file()` + `is_symlink()` + extension whitelist
         # + magic-bytes checks.
         env_output_root = os.environ.get("FORGEUE_COMFY_OUTPUT_ROOT")
-        if env_output_root:
+        if output_root is not None:
+            self.comfy_output_root = Path(output_root).resolve()
+        elif env_output_root:
             self.comfy_output_root = Path(env_output_root).resolve()
         else:
             # Heuristic fallback: scripts_dir parent (covers ComfyUI install
@@ -741,11 +983,11 @@ class ComfyAgentWorker(ComfyWorker):
                 )
             # OpenSpec change `comfy-agent-cli-path-containment-hardening`
             # (2026-05-04 follow-on for G11-F2):assert path under
-            # `comfy_output_root` before read_bytes — defense-in-depth
+            # `comfy_output_root` before reading header bytes — defense-in-depth
             self._assert_path_within_comfy_output_root(src, output_kind="images")
             dst = comfy_subdir / src.name
             shutil.copy2(src, dst)
-            data = dst.read_bytes()
+            header = _read_prefix(dst, 8)
             # G11 R2 fix: validate PNG magic bytes (8-byte signature
             # 89 50 4E 47 0D 0A 1A 0A). image-generation path must reject
             # non-PNG bytes — a workflow producing JPG/WEBP/etc. should be
@@ -753,14 +995,14 @@ class ComfyAgentWorker(ComfyWorker):
             # capability with implicit PNG expectation per ImageCandidate
             # mime_type default). Future change can broaden the magic
             # allowlist to JPEG/WEBP if needed.
-            if data[:8] != b"\x89PNG\r\n\x1a\n":
+            if header != b"\x89PNG\r\n\x1a\n":
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker: outputs.images file {src.name!r} is "
-                    f"not a valid PNG (first 8 bytes {data[:8]!r}); "
+                    f"not a valid PNG (first 8 bytes {header!r}); "
                     f"image-generation path requires PNG magic bytes"
                 )
             candidates.append(ImageCandidate(
-                data=data,
+                data=header,
                 width=width,
                 height=height,
                 seed=seed,
@@ -772,6 +1014,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_project_id": self.project_id,
                     "comfy_outputs_orig": str(src),
                 },
+                source_path=str(dst),
             ))
         return candidates
 
@@ -1089,18 +1332,18 @@ class ComfyAgentWorker(ComfyWorker):
                 )
             # OpenSpec change `comfy-agent-cli-path-containment-hardening`
             # (2026-05-04 follow-on for G11-F2):assert path under
-            # `comfy_output_root` before read_bytes
+            # `comfy_output_root` before reading header bytes
             self._assert_path_within_comfy_output_root(src, output_kind="glb")
-            glb_bytes = src.read_bytes()
+            glb_header = _read_prefix(src, 4)
             # GLB magic bytes 校验:`b"glTF"`(4-byte signature for binary glTF)
-            if glb_bytes[:4] != b"glTF":
+            if glb_header != b"glTF":
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.generate_mesh: outputs.glb file {src.name!r} is "
-                    f"not a valid GLB (first 4 bytes {glb_bytes[:4]!r}); "
+                    f"not a valid GLB (first 4 bytes {glb_header!r}); "
                     f"mesh-generation path requires glTF binary magic bytes"
                 )
             candidates.append(MeshCandidate(
-                data=glb_bytes,
+                data=glb_header,
                 format="glb",
                 mime_type="model/gltf-binary",
                 metadata={
@@ -1116,6 +1359,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "source": "comfy_agent_cli",
                     "seed": seed,
                 },
+                source_path=str(src),
             ))
         return candidates
 
@@ -1336,26 +1580,26 @@ class ComfyAgentWorker(ComfyWorker):
                     f"expected one of {sorted(self._AUDIO_FORMAT_WHITELIST)} "
                     f"(file: {src.name})"
                 )
-            audio_bytes = src.read_bytes()
+            audio_head = _read_prefix(src, 64 * 1024)
             # F5 round-1 mandatory magic bytes 二次校验
             magic_ok = (
-                (ext == "flac" and audio_bytes[:4] == b"fLaC")
+                (ext == "flac" and audio_head[:4] == b"fLaC")
                 or (ext == "mp3" and (
-                    audio_bytes[:3] == b"ID3"
-                    or audio_bytes[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2")
+                    audio_head[:3] == b"ID3"
+                    or audio_head[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2")
                 ))
-                or (ext == "wav" and audio_bytes[:4] == b"RIFF" and audio_bytes[8:12] == b"WAVE")
+                or (ext == "wav" and audio_head[:4] == b"RIFF" and audio_head[8:12] == b"WAVE")
             )
             if not magic_ok:
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.agenerate_audio: audio format mismatch "
-                    f"(file: {src.name}; extension={ext!r}; magic bytes={audio_bytes[:12].hex()}) — "
+                    f"(file: {src.name}; extension={ext!r}; magic bytes={audio_head[:12].hex()}) — "
                     f"扩展名与 payload bytes 不一致;F5 round-1 二次校验拒绝"
                 )
             from framework.providers.workers.audio_metadata import parse_audio_metadata
-            duration_seconds, sample_rate = parse_audio_metadata(audio_bytes, ext)
+            duration_seconds, sample_rate = parse_audio_metadata(audio_head, ext)
             candidates.append(AudioCandidate(
-                data=audio_bytes,
+                data=audio_head,
                 format=ext,  # type: ignore[arg-type]
                 metadata={
                     "comfy_manifest": comfy_workflow,
@@ -1371,6 +1615,7 @@ class ComfyAgentWorker(ComfyWorker):
                 },
                 duration_seconds=duration_seconds,
                 sample_rate=sample_rate,
+                source_path=str(src),
             ))
         return candidates
 
@@ -1596,28 +1841,29 @@ class ComfyAgentWorker(ComfyWorker):
                     f"expected 'mp4' (webm follow-on `comfy-video-webm-adoption`; round-2 F2);"
                     f"file: {src.name}"
                 )
-            video_bytes = src.read_bytes()
+            video_head = _read_prefix(src, 16)
+            video_size = src.stat().st_size
             # round-2 F4 + round-3 PF2 BMFF strict 5-tuple 校验
-            if len(video_bytes) < 16:
+            if len(video_head) < 16:
                 raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.agenerate_video: mp4 too short: {len(video_bytes)} bytes "
+                    f"ComfyAgentWorker.agenerate_video: mp4 too short: {len(video_head)} bytes "
                     f"(need >= 16 for minimal BMFF header; file: {src.name})"
                 )
-            if video_bytes[4:8] != b"ftyp":
+            if video_head[4:8] != b"ftyp":
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.agenerate_video: mp4 BMFF header mismatch: "
-                    f"offset 4-8 = {video_bytes[4:8]!r}, expected b'ftyp' "
+                    f"offset 4-8 = {video_head[4:8]!r}, expected b'ftyp' "
                     f"(file: {src.name})"
                 )
-            box_size = int.from_bytes(video_bytes[0:4], "big")
-            if box_size == 1 or box_size < 8 or box_size > len(video_bytes):
+            box_size = int.from_bytes(video_head[0:4], "big")
+            if box_size == 1 or box_size < 8 or box_size > video_size:
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.agenerate_video: mp4 BMFF first box_size={box_size} "
-                    f"out of range [8, {len(video_bytes)}] "
+                    f"out of range [8, {video_size}] "
                     f"(largesize box_size==1 deferred to follow-on `video-bmff-largesize-support`; "
                     f"round-3 PF2;file: {src.name})"
                 )
-            major_brand = video_bytes[8:12]
+            major_brand = video_head[8:12]
             if major_brand == b"\x00\x00\x00\x00" or major_brand == b"    ":
                 raise WorkerUnsupportedResponse(
                     f"ComfyAgentWorker.agenerate_video: mp4 BMFF major_brand is empty / "
@@ -1625,7 +1871,7 @@ class ComfyAgentWorker(ComfyWorker):
                 )
             # D8 + D1:VideoCandidate format 硬编码 "mp4";5 个 video metadata 字段恒为 None
             candidates.append(VideoCandidate(
-                data=video_bytes,
+                data=video_head,
                 format="mp4",
                 metadata={
                     "comfy_manifest": comfy_workflow,
@@ -1644,6 +1890,7 @@ class ComfyAgentWorker(ComfyWorker):
                 width=None,
                 height=None,
                 fps=None,
+                source_path=str(src),
             ))
         return candidates
 

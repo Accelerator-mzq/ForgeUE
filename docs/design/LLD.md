@@ -123,7 +123,7 @@
 | `kind` | `inline / file / blob` | 载体态 |
 | `inline_value` | Any? | `kind=inline` 时填 |
 | `file_path` | str? | 相对 Artifact Store root |
-| `blob_key` | str? | 对象存储 key(blob 预留) |
+| `blob_key` | str? | 对象存储 key(`BlobBackend` MVP 使用可注入 client 协议) |
 | `size_bytes` | int | 体积 |
 
 **ArtifactType**
@@ -747,7 +747,7 @@ class StepExecutor(ABC):
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `lifecycle` | `ExternalProcessLifecycle \| None` | `None` | orchestrator 注入;executor 内调 `ctx.lifecycle.ensure_running()` 等;lifecycle=None 时 executor 跳过调用 |
+| `lifecycle` | `ExternalProcessLifecycle \| None` | `None` | orchestrator 注入;executor 内调 `ctx.lifecycle.ensure(config.default_lifecycle)`;lifecycle=None 时 executor 跳过调用 |
 
 **`DryRunPass.run` async 化 + `aprobe`(Fluid Pause #1 scope 扩大)**:
 
@@ -797,45 +797,71 @@ class StepExecutor(ABC):
   - 关键修正:`rejected_candidate_ids` 必须从 `kept` 排除,而不是同时进 `selected` 和 `dropped`(下游只看 `selected_ids`,后者会让显式拒绝失效)
   - fence:`test_codex_audit_fixes::test_select_bare_approve_keeps_whole_pool` + `test_select_bare_approve_excludes_explicit_rejects`
 
-### 5.9 Lifecycle Manager(`src/framework/runtime/lifecycle.py`,自 `executor-async-rewrite` TBD-010,2026-05-20)
+### 5.9 Lifecycle Manager(`src/framework/runtime/lifecycle.py`, `src/framework/runtime/managed_process_registry.py`,自 `executor-async-rewrite` TBD-010,2026-05-20)
 
 **`ExternalProcessLifecycle` ABC**:
 
 ```python
 class ExternalProcessLifecycle(ABC):
     @abstractmethod
-    async def ensure_running(self) -> None: ...
-    @abstractmethod
-    async def ensure_release(self, reason: str) -> None: ...
+    async def ensure(self, mode: str) -> None: ...
     @abstractmethod
     async def release(self, mode: str, reason: str) -> None: ...
+    @abstractmethod
+    async def status(self) -> bool: ...
 ```
+
+**`ManagedProcessRegistry` seam**:
+
+- `ManagedProcessRegistry` 作为运行时 seam 统一调度托管 subprocess provider;Orchestrator 只依赖 registry 返回的 `ExternalProcessLifecycle`,不关心具体 provider。
+- `ComfyManagedProcessAdapter` 是第一个具体 adapter;后续新增 subprocess provider 时,只需新增 adapter 并注册到 registry,不需要改 Orchestrator 主流程。
 
 **`ComfyLifecycleManager(ExternalProcessLifecycle)`**:
 
-- `A+seam` 设计(ADR-runner-lifecycle-A):采用 seam 注入而非全 registry,因 TBD-011 provider #2 形态未定;`ComfyLifecycleManager` 是首个具体实现,第二个 subprocess provider 出现时再 generalize。
-- 内部 `_start_comfy_server()`:spawn `python -m factory_v3 serve`(或配置的启动命令) + `_poll_until_ready(timeout=90s)` 轮询 `/system_stats` 确认就绪
-- `release(mode, reason)`:根据 `mode`(ensure_running → skip stop / ensure_release → stop / self_managed_session → stop + cleanup session state)决策是否关闭进程
+- 内部 `_start_comfy_server()`:spawn `python -m factory_v3 serve`(或配置的启动命令) + `_poll_until_ready(timeout=120s)` 轮询 `/system_stats` 确认就绪
+- `release(mode, reason)`:根据 `(mode, reason)` 决策表决定是否关闭进程;`ensure_running` 不 stop,`ensure_release` 在 run/cascade/cancel/error/close 后 stop,`self_managed_session` 仅 `orchestrator_close` stop
 - `_send_interrupt()`:async `POST /interrupt` server-side abort
 
 **Orchestrator 集成**:
 
 ```python
 async def arun(self, task, workflow, steps, ...) -> RunResult:
-    lifecycle = self._lifecycle_manager   # 由调用方注入或构造
+    selection = self.managed_process_registry.select(steps=steps)
+    mode = selection.mode if selection else None
+    lifecycle = None
+    if selection and mode == "self_managed_session":
+        lifecycle = self._self_managed_lifecycles.setdefault(
+            selection.owner_key(),
+            selection.lifecycle,
+        )
+    elif selection:
+        lifecycle = selection.lifecycle
+    reason = "run_end"
     try:
-        await lifecycle.ensure_running()
+        if lifecycle:
+            await lifecycle.ensure(mode)
         # ... 主流程 ...
     finally:
-        await self._release_lifecycle_bounded(lifecycle, timeout=30.0)
+        if lifecycle:
+            await self._release_lifecycle_bounded(
+                lifecycle,
+                mode,
+                reason,
+                sink=...
+            )
 
 async def aclose(self) -> None:
-    """disposal 钩子;框架/测试结束时调用确保进程清理。"""
-    if self._lifecycle_manager:
-        await self._lifecycle_manager.release("shutdown", "aclose")
+    """释放 self_managed_session 持有的抽象 lifecycle。"""
+    for lifecycle in self._self_managed_lifecycles.values():
+        await self._release_lifecycle_bounded(
+            lifecycle,
+            "self_managed_session",
+            "orchestrator_close",
+            sink=...
+        )
 ```
 
-`_release_lifecycle_bounded(lifecycle, timeout)`:套 `asyncio.wait_for(lifecycle.release(...), timeout=timeout)`;超时记 warning 不 raise(防 release 本身挂死导致 orchestrator 无法退出)。
+`_release_lifecycle_bounded(manager, mode, reason, sink)`:套 `asyncio.wait_for(manager.release(mode, reason), timeout=30s)`;超时调用 `sink` 留痕并记 warning,不 raise(防 release 本身挂死导致 orchestrator 无法退出)。
 
 ---
 
@@ -1248,7 +1274,7 @@ def by_lineage(self, source_artifact_id: str) -> list[Artifact]
 | --- | --- | --- |
 | Inline | `inline_backend.py` | `PayloadRef.kind=inline`,上限 64 KB |
 | File | `file_backend.py` | `kind=file`,落 `<artifact_root>/<run_id>/<artifact_id>.<ext>` |
-| Blob | `blob_backend.py` | 预留,MVP 不启用 |
+| Blob | `blob_backend.py` | `kind=blob`,写入 `<bucket>/<run_id>/<artifact_id>.<ext>`;默认 `InMemoryBlobClient`,生产侧可注入 S3/MinIO/Azure adapter |
 
 ### 8.3 Hashing(`hashing.py`)
 

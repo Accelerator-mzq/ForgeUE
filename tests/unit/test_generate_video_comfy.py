@@ -47,6 +47,18 @@ from framework.runtime.executors.generate_video import (
 # ---- Fixtures ---------------------------------------------------------------
 
 
+def _comfy_provider_config(tmp_path: Path) -> dict[str, str | None]:
+    """构造测试用 ComfyUI provider_config，与 models.yaml 元数据形状对齐。"""
+    return {
+        "adapter": "comfy_agent_cli",
+        "scripts_dir": str(tmp_path / "yaml_scripts"),
+        "python_exe": None,
+        "default_lifecycle": "none",
+        "input_dir": str(tmp_path / "yaml_input"),
+        "output_root": str(tmp_path),
+    }
+
+
 def _make_video_ctx(
     tmp_path: Path,
     run_id: str = "run_comfy_video",
@@ -63,6 +75,9 @@ def _make_video_ctx(
         routes.append(PreparedRoute(
             model="comfy/local-video", api_key_env=None, api_base=None,
             kind="video", pricing=None,
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config=_comfy_provider_config(tmp_path),
         ))
     policy = ProviderPolicy(
         capability_required="video.t2v",
@@ -103,17 +118,22 @@ def _make_video_ctx(
     return ctx, repo
 
 
-def _fake_video_candidate() -> VideoCandidate:
+def _fake_video_candidate(
+    *,
+    data: bytes | None = None,
+    source_path: str | None = None,
+) -> VideoCandidate:
     """Construct a deterministic VideoCandidate for repo.put fences。
 
     Minimal valid BMFF mp4 bytes (32 bytes) — 通过 round-2 F4 + round-3 PF2 strict
     5-tuple,但 fence 不依赖 worker 层 BMFF 校验(executor fence 走 mock worker
     返回 candidate,不经过 _run_once_video)。
     """
-    data = (
-        b"\x00\x00\x00\x20" + b"ftyp" + b"isom" + b"\x00\x00\x02\x00"
-        + b"isom" + b"iso2" + b"mp41" + b"mp42"
-    )
+    if data is None:
+        data = (
+            b"\x00\x00\x00\x20" + b"ftyp" + b"isom" + b"\x00\x00\x02\x00"
+            + b"isom" + b"iso2" + b"mp41" + b"mp42"
+        )
     return VideoCandidate(
         data=data,
         format="mp4",
@@ -129,6 +149,7 @@ def _fake_video_candidate() -> VideoCandidate:
         width=None,
         height=None,
         fps=None,
+        source_path=source_path,
     )
 
 
@@ -311,6 +332,30 @@ async def test_executor_persists_video_artifact_with_shape_mp4_and_format_aware_
     # PayloadRef.file_path extension = `.mp4`(实际 payload bytes 格式)
     assert art.payload_ref.file_path is not None
     assert art.payload_ref.file_path.endswith(".mp4")
+
+
+async def test_executor_persists_video_candidate_source_path_without_using_data(tmp_path, monkeypatch):
+    """FOR-13:VideoCandidate.source_path 优先落盘,避免大视频 payload 全量驻留。"""
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+    (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+    ctx, repo = _make_video_ctx(tmp_path)
+    source = tmp_path / "source_video.mp4"
+    source.write_bytes(
+        b"\x00\x00\x00\x20" + b"ftyp" + b"isom" + b"\x00\x00\x02\x00"
+        + b"isom" + b"iso2" + b"mp41" + b"mp42" + b"real-video-payload"
+    )
+    executor = GenerateVideoExecutor()
+    cand = _fake_video_candidate(
+        data=b"\x00\x00\x00\x20ftypisom",
+        source_path=str(source),
+    )
+    with patch("framework.runtime.executors.generate_video.ComfyAgentWorker") as cls_mock:
+        worker_inst = MagicMock()
+        worker_inst.agenerate_video = AsyncMock(return_value=[cand])
+        cls_mock.return_value = worker_inst
+        result = await executor.execute(ctx)
+    video_art = next(a for a in result.artifacts if a.artifact_type.modality == "video")
+    assert repo.read_payload(video_art.artifact_id) == source.read_bytes()
 
 
 async def test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields(tmp_path, monkeypatch):

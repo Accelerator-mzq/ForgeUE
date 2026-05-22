@@ -18,13 +18,18 @@ These fences lock the conditional enforcement contract.
 """
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
+from framework.providers.workers.audio_worker import AudioCandidate
 from framework.providers.workers.comfy_worker import (
     FakeComfyWorker,
     ImageCandidate,
     WorkerUnsupportedResponse,
 )
+from framework.providers.workers.mesh_worker import MeshCandidate
+from framework.providers.workers.video_worker import VideoCandidate
 
 
 def _stub_image_candidate() -> ImageCandidate:
@@ -107,3 +112,77 @@ def test_fake_comfy_worker_v2_schema_gate_rejects_non_none_lifecycle():
             },
             num_candidates=1,
         )
+
+
+@pytest.mark.asyncio
+async def test_fake_comfy_worker_agenerate_yields_to_event_loop():
+    """FOR-5:FakeComfyWorker.agenerate 至少让出一次 event loop。
+
+    这能防止并发 fence 被 fake worker 的同步语义污染。
+    """
+    worker = FakeComfyWorker()
+    observed: list[str] = []
+
+    async def marker() -> None:
+        observed.append("marker-ran")
+
+    marker_task = asyncio.create_task(marker())
+    await worker.agenerate(
+        spec={"prompt_summary": "async fake", "width": 1, "height": 1},
+        num_candidates=1,
+    )
+    observed_before_cleanup = list(observed)
+    await marker_task
+
+    assert observed_before_cleanup == ["marker-ran"]
+
+
+@pytest.mark.asyncio
+async def test_fake_comfy_worker_exposes_mesh_audio_video_async_stubs():
+    """FOR-6:同一个 FakeComfyWorker 可直接 await 多模态 Comfy async 面。"""
+    worker = FakeComfyWorker()
+    spec = {"comfy_workflow": "stub/workflow", "comfy_params": {}}
+
+    mesh_candidates = await worker.agenerate_mesh(
+        spec=spec,
+        source_image_filename="input.png",
+        num_candidates=2,
+        seed=10,
+        timeout_s=1.0,
+    )
+    audio_candidates = await worker.agenerate_audio(
+        spec=spec,
+        num_candidates=2,
+        seed=20,
+        timeout_s=1.0,
+    )
+    video_candidates = await worker.agenerate_video(
+        spec=spec,
+        num_candidates=2,
+        seed=30,
+        timeout_s=1.0,
+    )
+
+    assert [type(c) for c in mesh_candidates] == [MeshCandidate, MeshCandidate]
+    assert [type(c) for c in audio_candidates] == [AudioCandidate, AudioCandidate]
+    assert [type(c) for c in video_candidates] == [VideoCandidate, VideoCandidate]
+    assert [c.format for c in mesh_candidates] == ["glb", "glb"]
+    assert [c.format for c in audio_candidates] == ["flac", "flac"]
+    assert [c.format for c in video_candidates] == ["mp4", "mp4"]
+
+
+@pytest.mark.asyncio
+async def test_fake_comfy_worker_supports_mesh_executor_style_agenerate():
+    """FOR-6:mesh executor 远端注入路径调用 worker.agenerate(source_image_bytes=...)。"""
+    worker = FakeComfyWorker()
+
+    mesh_candidates = await worker.agenerate(
+        source_image_bytes=b"fake-png",
+        spec={"prompt_summary": "mesh fake"},
+        num_candidates=1,
+        timeout_s=1.0,
+    )
+
+    assert len(mesh_candidates) == 1
+    assert isinstance(mesh_candidates[0], MeshCandidate)
+    assert mesh_candidates[0].metadata["source_image_hash"]

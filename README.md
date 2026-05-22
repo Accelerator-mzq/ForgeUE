@@ -246,7 +246,7 @@ bundle 立即能 `"models_ref": "image_fast"`。注册表是进程单例，热�
 |---|---|---|
 | **Dry-run Pass**（零副作用预检）| Claude 原创 | `src/framework/runtime/dry_run_pass.py` |
 | **Checkpoint + content hash 缓存** | Claude 原创 | `src/framework/runtime/checkpoint_store.py` · resume 时命中哈希跳执行 |
-| **PayloadRef 三态**（inline/file/blob）| Claude 原创 | `src/framework/artifact_store/payload_backends/` · MVP 实现 inline + file |
+| **PayloadRef 三态**（inline/file/blob）| Claude 原创 | `src/framework/artifact_store/payload_backends/` · MVP 实现 inline + file + blob |
 | **Artifact Lineage + VariantTracker** | 自研 | `src/framework/artifact_store/lineage.py` · `variant_tracker.py` |
 | **5 维 rubric scoring + 5 类 Policy** | assistant 方案 | `src/framework/core/policies.py` · `review_engine/` |
 | **Verdict ↔ TransitionPolicy 引擎** | 共识 | `src/framework/runtime/transition_engine.py` · 支持 9 种 Decision |
@@ -355,18 +355,19 @@ python -m pytest -v -k p3           # 关键字过滤
 
 ---
 
-## AI Workflow / forge
+## AI 工作流 / Superpowers
 
-ForgeUE 采用 forge 作为 AI 主工作流。非平凡需求走 change 流程(`/forge:propose <name>` 产 4 件套 → `/forge:apply` → `/forge:review` → `/forge:verify` → `/forge:archive`)+ forge 自带行为塑造 skill(brainstorming → writing-plans → subagent-driven-development → requesting-code-review → verification-before-completion)。Codex CLI opt-in(`/codex:adversarial-review` design hook + `/codex:review --base main` final hook)。小 bugfix 可轻量处理,但必须补测试或说明验证方式。详见 `CLAUDE.md`。
+ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求先用 `superpowers:brainstorming` 明确目标、约束和方案;方案确认后用 `superpowers:writing-plans` 生成实施计划;实现阶段按任务性质使用 TDD、systematic debugging、executing-plans 或 subagent-driven-development;完成前用 verification-before-completion 做证据化验证。涉及文档同步、归档、backlog 或五件套更新时,使用项目级 skill `document-release` 做文档发布检查。Codex review 保留为可选辅助(`/codex:adversarial-review` design hook + `/codex:review --base main` final hook),但外部 review 结论必须独立核验。
 
 | 入口 | 用途 |
 |---|---|
 | [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
-| [`forge/specs/`](forge/specs/) | 当前行为契约层:8 个 capability spec(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
-| [`forge/changes/`](forge/changes/) | 未来变更入口 |
-| [`forge/backlog/active.md`](forge/backlog/active.md) | Backlog —— 项目唯一待办集合(forge 原生生成) |
+| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:8 个 capability contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
+| [`docs/archive/forge_changes/`](docs/archive/forge_changes/) | 历史 forge change evidence 归档,只读参考 |
+| [`docs/backlog/active.md`](docs/backlog/active.md) | Backlog —— 项目当前待办集合 |
+| [`.agents/skills/document-release/SKILL.md`](.agents/skills/document-release/SKILL.md) | 项目级文档发布 / 归档 / backlog 同步 skill |
 
-`docs/` 五件套仍是长期权威;forge 通过"契约抽取"与之互补,不替代。
+`docs/` 五件套仍是长期权威;`docs/contracts/` 是从原 forge contract 迁移来的精简契约层,不替代五件套。
 
 ---
 
@@ -378,7 +379,7 @@ ForgeUE 采用 forge 作为 AI 主工作流。非平凡需求走 change 流程(`
 2. **多模态扩展** —— AudioCraft / TRELLIS / TripoSR worker（`providers/workers/` 已留位）
 3. **DAG Workflow** —— 非线性 + 分支 + merge（`Step.depends_on` 已支持多依赖）
 4. **Workflow 模板继承** —— `Workflow.template_ref` 字段已预留
-5. **Blob 存储后端** —— S3/MinIO（`PayloadRef.kind="blob"` 已支持，`payload_backends/blob.py` 空实现）
+5. **Blob 存储云 SDK adapter** —— `BlobBackend` MVP 已支持可注入 client + 内存默认实现;真实 S3/MinIO/Azure SDK adapter 可按 `BlobClient` protocol 后续接入
 6. **Resource Budget / GPU 调度** —— `BudgetPolicy.gpu_seconds_cap` 已有
 7. **Run Comparison / 基线回归** —— ✅ 已实装(2026-04-25,见 `src/framework/comparison/`)。CLI 入口 `python -m framework.comparison --baseline-run <id_a> --candidate-run <id_b> --artifact-root <root>`,read-only 比较两个完成的 Run 目录,产出 `comparison_report.json` + `comparison_summary.md`(覆盖 artifact / verdict / metric diff)。完整 flag 列表见 `--help`
 8. **Human-in-the-loop 标准协议** —— `human_gate` Step.type + `EscalationPolicy.notify_channel`

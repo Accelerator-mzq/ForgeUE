@@ -121,6 +121,7 @@ class VideoCandidate:
     width: int | None = None  # 本 change scope 始终 None
     height: int | None = None  # 本 change scope 始终 None
     fps: float | None = None  # 本 change scope 始终 None
+    source_path: str | None = None  # FOR-13:大视频由 ArtifactRepository 从文件路径流式落盘
 
 
 # ----------------------------------------------------------------------------
