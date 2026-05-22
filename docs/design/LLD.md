@@ -797,7 +797,7 @@ class StepExecutor(ABC):
   - 关键修正:`rejected_candidate_ids` 必须从 `kept` 排除,而不是同时进 `selected` 和 `dropped`(下游只看 `selected_ids`,后者会让显式拒绝失效)
   - fence:`test_codex_audit_fixes::test_select_bare_approve_keeps_whole_pool` + `test_select_bare_approve_excludes_explicit_rejects`
 
-### 5.9 Lifecycle Manager(`src/framework/runtime/lifecycle.py`,自 `executor-async-rewrite` TBD-010,2026-05-20)
+### 5.9 Lifecycle Manager(`src/framework/runtime/lifecycle.py`, `src/framework/runtime/managed_process_registry.py`,自 `executor-async-rewrite` TBD-010,2026-05-20)
 
 **`ExternalProcessLifecycle` ABC**:
 
@@ -811,9 +811,13 @@ class ExternalProcessLifecycle(ABC):
     async def release(self, mode: str, reason: str) -> None: ...
 ```
 
+**`ManagedProcessRegistry` seam**:
+
+- `ManagedProcessRegistry` 作为运行时 seam 统一调度托管 subprocess provider;Orchestrator 只依赖 registry 返回的 `ExternalProcessLifecycle`,不关心具体 provider。
+- `ComfyManagedProcessAdapter` 是第一个具体 adapter;后续新增 subprocess provider 时,只需新增 adapter 并注册到 registry,不需要改 Orchestrator 主流程。
+
 **`ComfyLifecycleManager(ExternalProcessLifecycle)`**:
 
-- `A+seam` 设计(ADR-runner-lifecycle-A):采用 seam 注入而非全 registry,因 TBD-011 provider #2 形态未定;`ComfyLifecycleManager` 是首个具体实现,第二个 subprocess provider 出现时再 generalize。
 - 内部 `_start_comfy_server()`:spawn `python -m factory_v3 serve`(或配置的启动命令) + `_poll_until_ready(timeout=90s)` 轮询 `/system_stats` 确认就绪
 - `release(mode, reason)`:根据 `mode`(ensure_running → skip stop / ensure_release → stop / self_managed_session → stop + cleanup session state)决策是否关闭进程
 - `_send_interrupt()`:async `POST /interrupt` server-side abort
