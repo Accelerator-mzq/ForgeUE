@@ -16,7 +16,7 @@ class ManagedProcessSelection:
     mode: str
     lifecycle: ExternalProcessLifecycle
     provider_name: str | None = None
-    provider_kind: str = "openai_compat"
+    provider_kind: str = "subprocess"
     route_model: str | None = None
 
 
