@@ -64,6 +64,16 @@ def test_resolve_comfy_agent_config_prefers_spec_then_env_then_yaml():
     assert cfg.default_lifecycle == "ensure_release"
 
 
+def test_resolve_comfy_agent_config_uses_env_lifecycle_when_spec_absent():
+    route = _route()
+    cfg = resolve_comfy_agent_config(
+        route,
+        spec={},
+        env={"FORGEUE_COMFY_LIFECYCLE": "self_managed_session"},
+    )
+    assert cfg.default_lifecycle == "self_managed_session"
+
+
 def test_resolve_comfy_agent_config_uses_yaml_when_env_absent():
     route = _route()
     cfg = resolve_comfy_agent_config(route=route, spec={}, env={})

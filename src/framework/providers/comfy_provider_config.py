@@ -43,7 +43,6 @@ def first_comfy_agent_route(routes: Sequence) -> object | None:
 
 
 def resolve_comfy_agent_config(
-    *,
     route: object,
     spec: Mapping | None = None,
     env: Mapping[str, str] | None = None,
