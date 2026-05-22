@@ -51,6 +51,7 @@ from framework.runtime.failure_mode_map import classify as classify_failure
 from framework.runtime.failure_mode_map import synthesise_verdict as synth_failure_verdict
 from framework.runtime.lifecycle import ExternalProcessLifecycle
 from framework.runtime.managed_process_registry import (
+    ManagedProcessOwnerKey,
     ManagedProcessRegistry,
     ManagedProcessSelection,
     build_default_managed_process_registry,
@@ -111,8 +112,12 @@ class Orchestrator:
             managed_process_registry or build_default_managed_process_registry()
         )
         self._max_loop = max_loop
-        # self_managed_session 模式下跨 arun 复用的 lifecycle 实例。
-        # 其他模式下为 None(per-arun lifecycle 仅在 arun 局部变量中存在)。
+        # self_managed_session 模式下按 provider identity 跨 arun 复用 lifecycle。
+        # 其他模式下不进 map(per-arun lifecycle 仅在 arun 局部变量中存在)。
+        self._self_managed_lifecycles: dict[
+            ManagedProcessOwnerKey, ExternalProcessLifecycle
+        ] = {}
+        # 兼容既有测试 / 调试入口:指向第一个 self_managed_session lifecycle。
         self._lifecycle: ExternalProcessLifecycle | None = None
         # aclose() 中 release 失败时的留痕记录(dict 或 None)
         self._lifecycle_release_failed: dict | None = None
@@ -201,10 +206,22 @@ class Orchestrator:
         应在所有 arun 调用完成后调用(例如通过 async with 上下文管理器)。
         release 超时或失败时不抛出异常,失败留痕写入 self._lifecycle_release_failed。
         """
-        if self._lifecycle is not None:
-            manager = self._lifecycle
-            # self_managed_session 的 mode 固定为 "self_managed_session"
+        if self._self_managed_lifecycles:
+            # self_managed_session 的 mode 固定为 "self_managed_session"。
             mode = "self_managed_session"
+            managers = list(self._self_managed_lifecycles.values())
+            self._self_managed_lifecycles.clear()
+            self._lifecycle = None
+            for manager in managers:
+                await self._release_lifecycle_bounded(
+                    manager, mode, "orchestrator_close",
+                    sink=lambda d: setattr(self, "_lifecycle_release_failed", d),
+                )
+        elif self._lifecycle is not None:
+            # 向后兼容:若外部测试直接塞入 _lifecycle,仍按旧路径释放。
+            manager = self._lifecycle
+            mode = "self_managed_session"
+            self._lifecycle = None
             await self._release_lifecycle_bounded(
                 manager, mode, "orchestrator_close",
                 sink=lambda d: setattr(self, "_lifecycle_release_failed", d),
@@ -283,10 +300,14 @@ class Orchestrator:
 
         if lc_selection is not None:
             if lc_mode == "self_managed_session":
-                # self_managed_session:跨 arun 复用同一个 lifecycle 实例。
-                if self._lifecycle is None:
-                    self._lifecycle = lc_selection.lifecycle
-                active_manager: ExternalProcessLifecycle | None = self._lifecycle
+                # self_managed_session:按 provider identity 跨 arun 复用 lifecycle。
+                owner_key = lc_selection.owner_key()
+                active_manager = self._self_managed_lifecycles.get(owner_key)
+                if active_manager is None:
+                    active_manager = lc_selection.lifecycle
+                    self._self_managed_lifecycles[owner_key] = active_manager
+                    if self._lifecycle is None:
+                        self._lifecycle = active_manager
             else:
                 # ensure_running / ensure_release:每次 arun 使用本次 selection 的 lifecycle。
                 per_arun_lifecycle = lc_selection.lifecycle

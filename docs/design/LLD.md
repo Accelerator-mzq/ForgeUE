@@ -818,8 +818,8 @@ class ExternalProcessLifecycle(ABC):
 
 **`ComfyLifecycleManager(ExternalProcessLifecycle)`**:
 
-- 内部 `_start_comfy_server()`:spawn `python -m factory_v3 serve`(或配置的启动命令) + `_poll_until_ready(timeout=90s)` 轮询 `/system_stats` 确认就绪
-- `release(mode, reason)`:根据 `mode`(ensure_running → skip stop / ensure_release → stop / self_managed_session → stop + cleanup session state)决策是否关闭进程
+- 内部 `_start_comfy_server()`:spawn `python -m factory_v3 serve`(或配置的启动命令) + `_poll_until_ready(timeout=120s)` 轮询 `/system_stats` 确认就绪
+- `release(mode, reason)`:根据 `(mode, reason)` 决策表决定是否关闭进程;`ensure_running` 不 stop,`ensure_release` 在 run/cascade/cancel/error/close 后 stop,`self_managed_session` 仅 `orchestrator_close` stop
 - `_send_interrupt()`:async `POST /interrupt` server-side abort
 
 **Orchestrator 集成**:
@@ -827,8 +827,15 @@ class ExternalProcessLifecycle(ABC):
 ```python
 async def arun(self, task, workflow, steps, ...) -> RunResult:
     selection = self.managed_process_registry.select(steps=steps)
-    lifecycle = selection.lifecycle if selection else None
     mode = selection.mode if selection else None
+    lifecycle = None
+    if selection and mode == "self_managed_session":
+        lifecycle = self._self_managed_lifecycles.setdefault(
+            selection.owner_key(),
+            selection.lifecycle,
+        )
+    elif selection:
+        lifecycle = selection.lifecycle
     reason = "run_end"
     try:
         if lifecycle:
@@ -845,9 +852,9 @@ async def arun(self, task, workflow, steps, ...) -> RunResult:
 
 async def aclose(self) -> None:
     """释放 self_managed_session 持有的抽象 lifecycle。"""
-    if self._lifecycle:
+    for lifecycle in self._self_managed_lifecycles.values():
         await self._release_lifecycle_bounded(
-            self._lifecycle,
+            lifecycle,
             "self_managed_session",
             "orchestrator_close",
             sink=...

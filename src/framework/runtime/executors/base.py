@@ -35,11 +35,10 @@ class StepContext:
     runtime-core/spec.md "StepContext exposes run_dir for in-tree
     artifact placement" Requirement.
 
-    `lifecycle` 由 Orchestrator 在 arun 开始时构建并注入
-    (Task 9 executor-async-rewrite):comfy/local* + comfy_lifecycle != none 时
-    为 ComfyLifecycleManager 实例;其余情况为 None。
-    executor 通过此字段感知 lifecycle 模式,无需直接操作 manager。
-    (Task 10 将解锁 ComfyAgentWorker 侧的 lifecycle gate)
+    `lifecycle` 由 Orchestrator 在 arun 开始时通过 ManagedProcessRegistry
+    选择并注入:托管 subprocess provider route 命中且 lifecycle != none 时
+    为 ExternalProcessLifecycle 实例;其余情况为 None。executor 通过此字段
+    感知 lifecycle 模式,无需直接操作具体 manager。
     """
 
     run: Run

@@ -270,6 +270,78 @@ async def test_orchestrator_uses_managed_process_registry_selection(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_self_managed_session_keeps_lifecycle_per_managed_process_selection(tmp_path):
+    """self_managed_session 复用按 provider identity 隔离,避免第二 provider 拿到旧 lifecycle。"""
+
+    class _DummyLifecycle:
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.ensure_calls: list[str] = []
+            self.release_calls: list[tuple[str, str]] = []
+
+        async def ensure(self, mode: str) -> None:
+            self.ensure_calls.append(mode)
+
+        async def release(self, mode: str, reason: str) -> None:
+            self.release_calls.append((mode, reason))
+
+        async def status(self) -> bool:
+            return True
+
+    lifecycle_a = _DummyLifecycle("provider-a")
+    lifecycle_b = _DummyLifecycle("provider-b")
+    selections = [
+        ManagedProcessSelection(
+            adapter_name="provider_a_adapter",
+            mode="self_managed_session",
+            lifecycle=lifecycle_a,
+            provider_name="provider_a",
+            provider_kind="subprocess",
+            route_model="provider-a/model",
+        ),
+        ManagedProcessSelection(
+            adapter_name="provider_b_adapter",
+            mode="self_managed_session",
+            lifecycle=lifecycle_b,
+            provider_name="provider_b",
+            provider_kind="subprocess",
+            route_model="provider-b/model",
+        ),
+    ]
+
+    class _SwitchingRegistry:
+        def select(self, steps, env=None):
+            return selections.pop(0)
+
+    seen: list = []
+    executor = _LifecycleRecordingExecutor(seen)
+    orch, _, _ = _build_orch_with_executor(
+        executor,
+        tmp_path,
+        managed_process_registry=_SwitchingRegistry(),
+    )
+
+    task, workflow, steps = _make_comfy_task_workflow_steps(
+        mode="self_managed_session"
+    )
+    await orch.arun(
+        task=task, workflow=workflow, steps=steps,
+        run_id="r_self_managed_a", skip_dry_run=True,
+    )
+    await orch.arun(
+        task=task, workflow=workflow, steps=steps,
+        run_id="r_self_managed_b", skip_dry_run=True,
+    )
+    await orch.aclose()
+
+    assert seen == [lifecycle_a, lifecycle_b]
+    assert lifecycle_a.ensure_calls == ["self_managed_session"]
+    assert lifecycle_b.ensure_calls == ["self_managed_session"]
+    assert ("self_managed_session", "orchestrator_close") in lifecycle_a.release_calls
+    assert ("self_managed_session", "orchestrator_close") in lifecycle_b.release_calls
+
+
+@pytest.mark.asyncio
 async def test_self_managed_session_released_only_at_aclose(
     monkeypatch, tmp_path
 ):

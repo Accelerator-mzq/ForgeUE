@@ -8,6 +8,9 @@ from typing import Protocol
 from framework.runtime.lifecycle import ExternalProcessLifecycle
 
 
+ManagedProcessOwnerKey = tuple[str, str | None, str, str | None]
+
+
 @dataclass(frozen=True)
 class ManagedProcessSelection:
     """registry 命中后的 lifecycle 注入结果。"""
@@ -18,6 +21,15 @@ class ManagedProcessSelection:
     provider_name: str | None = None
     provider_kind: str = "subprocess"
     route_model: str | None = None
+
+    def owner_key(self) -> ManagedProcessOwnerKey:
+        """返回 self-managed lifecycle 复用隔离键。"""
+        return (
+            self.adapter_name,
+            self.provider_name,
+            self.provider_kind,
+            self.route_model,
+        )
 
 
 class ManagedProcessAdapter(Protocol):
