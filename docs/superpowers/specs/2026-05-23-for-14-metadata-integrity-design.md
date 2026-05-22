@@ -1,49 +1,48 @@
-# FOR-14 Metadata Integrity Design
+# FOR-14 Metadata Integrity 设计
 
-Date: 2026-05-23
+日期:2026-05-23
 
-Issue: Linear FOR-14 `metadata-corruption-detection`
+Issue:Linear FOR-14 `metadata-corruption-detection`
 
-Status: user-approved design, awaiting written-spec review
+状态:用户已确认设计方向,等待书面 spec 复审
 
-## Problem
+## 问题
 
-`_artifacts.json` is the resume cache trust root for Artifact metadata.
-ForgeUE already protects file/blob payload bytes during `load_run_metadata` by
-checking backend existence and current payload hash. That does not protect the
-metadata file itself.
+`_artifacts.json` 是 resume cache 的 Artifact 元数据可信根。ForgeUE 现有
+`load_run_metadata` 已经能保护 file/blob payload bytes:先检查 backend 是否存在,
+再检查当前 payload hash 是否等于 metadata 记录的 hash。但这不保护
+`_artifacts.json` 文件本身。
 
-The current gap is:
+当前缺口:
 
-- Inline payloads travel inside `_artifacts.json`, so changing the inline value
-  and matching hash inside the same file can still look self-consistent.
-- Metadata fields such as `artifact_id`, `hash`, `payload_ref`, lineage, tags,
-  and schema fields can be changed before resume.
-- A schema-valid but semantically changed `_artifacts.json` may allow a wrong
-  cache hit, or hide the real reason a cache hit disappeared.
+- Inline payload 直接存在 `_artifacts.json` 内。若有人同时改 inline value 和
+  对应 hash,单文件内部仍可能看起来自洽。
+- `artifact_id` / `hash` / `payload_ref` / lineage / tags / schema 字段都可能在
+  resume 前被手工改动。
+- 一个 schema 合法但语义被改过的 `_artifacts.json` 可能导致错误 cache hit,
+  或掩盖 cache hit 消失的真实原因。
 
-FOR-14 therefore treats `_artifacts.json` integrity as a separate trust-boundary
-problem from file/blob payload drift.
+因此 FOR-14 把 `_artifacts.json` 完整性视为独立可信边界,与 file/blob payload
+漂移校验分开处理。
 
-## Decision
+## 决策
 
-Implement the companion checksum file design.
+采用伴生 checksum 文件方案。
 
-After `ArtifactRepository.dump_run_metadata()` writes `{run_dir}/_artifacts.json`,
-it also writes `{run_dir}/_artifacts.integrity.json`. On resume,
-`ArtifactRepository.load_run_metadata()` verifies the integrity file before
-parsing Artifact records whenever the integrity file exists.
+`ArtifactRepository.dump_run_metadata()` 写完 `{run_dir}/_artifacts.json` 后,
+同步写 `{run_dir}/_artifacts.integrity.json`。resume 时,
+`ArtifactRepository.load_run_metadata()` 只要发现 integrity 文件存在,就先校验
+integrity,再解析 Artifact records。
 
-Integrity mismatch fails fast by raising a dedicated
-`ArtifactMetadataIntegrityError`. It does not silently skip entries or fall back
-to re-execution.
+integrity 不匹配时抛出专用异常 `ArtifactMetadataIntegrityError`,fail-fast。
+它不静默跳过条目,也不自动退化成重新执行 step。
 
-Legacy run directories that only have `_artifacts.json` and no integrity file
-remain loadable. Resume reads must not backfill or mutate legacy metadata.
+历史 run 目录如果只有 `_artifacts.json`、没有 integrity 文件,仍按 legacy 路径加载。
+resume 读路径不得自动补写或修改历史 metadata。
 
-## File Format
+## 文件格式
 
-`_artifacts.integrity.json` contains a small JSON object:
+`_artifacts.integrity.json` 是一个小 JSON object:
 
 ```json
 {
@@ -56,85 +55,79 @@ remain loadable. Resume reads must not backfill or mutate legacy metadata.
 }
 ```
 
-Field rules:
+字段规则:
 
-- `schema_version` must equal `"1.0"` for this implementation.
-- `artifacts_file` must equal `"_artifacts.json"`.
-- `algorithm` must equal `"sha256"`.
-- `artifacts_sha256` is computed with the existing bounded-RSS `hash_path`
-  helper over the final `_artifacts.json` bytes.
-- `artifact_count` equals the number of dumped artifacts.
-- `artifact_ids` preserves the dumped artifact order from `_artifacts.json`.
+- `schema_version` 必须等于 `"1.0"`。
+- `artifacts_file` 必须等于 `"_artifacts.json"`。
+- `algorithm` 必须等于 `"sha256"`。
+- `artifacts_sha256` 使用现有 bounded-RSS `hash_path` helper,对最终
+  `_artifacts.json` 文件 bytes 计算。
+- `artifact_count` 等于 dump 出来的 artifact 数量。
+- `artifact_ids` 保留 `_artifacts.json` 中 artifact 的顺序。
 
-This deliberately binds the final file bytes, not a custom per-record canonical
-form. It is simpler and catches any manual file edit, including whitespace,
-field, order, entry, and inline payload changes.
+这个方案绑定最终文件 bytes,不再设计每条 Artifact 的额外 canonical hash。这样更简单,
+也能抓住任何手工编辑,包括空白、字段、顺序、条目和 inline payload 变化。
 
-## Runtime Flow
+## 运行流程
 
 Dump flow:
 
-1. `dump_run_metadata(run_id, run_dir)` gathers artifacts via
-   `find_by_producer(run_id=run_id)`.
-2. It writes `_artifacts.json` exactly as it does today.
-3. It hashes the written `_artifacts.json` with `hash_path`.
-4. It writes `_artifacts.integrity.json` with the metadata above.
+1. `dump_run_metadata(run_id, run_dir)` 通过 `find_by_producer(run_id=run_id)`
+   收集当前 run 的 artifacts。
+2. 按现有格式写 `_artifacts.json`。
+3. 用 `hash_path` 计算写盘后的 `_artifacts.json` hash。
+4. 写 `_artifacts.integrity.json`。
 
 Load flow:
 
-1. If `_artifacts.json` is absent, return `0` as today.
-2. If `_artifacts.integrity.json` is absent, use the existing legacy load path.
-3. If `_artifacts.integrity.json` exists, verify it first.
-4. If verification fails, raise `ArtifactMetadataIntegrityError`.
-5. If verification passes, continue with the existing three filters:
-   already-known id skip, backend `exists()` skip, file/blob payload hash drift
-   skip.
+1. `_artifacts.json` 不存在时,和现状一致返回 `0`。
+2. `_artifacts.integrity.json` 不存在时,走 legacy load path。
+3. `_artifacts.integrity.json` 存在时,先校验 integrity。
+4. 校验失败时抛 `ArtifactMetadataIntegrityError`。
+5. 校验通过后,继续沿用现有三道过滤:已存在 id skip / backend `exists()` skip /
+   file/blob payload hash drift skip。
 
-`framework.run --resume` should not catch this new exception. The CLI should
-fail clearly so the operator sees that resume metadata is corrupt instead of
-getting a misleading cache miss.
+`framework.run --resume` 不捕获这个新异常。CLI 应该明确失败,让操作者看到 resume
+metadata 已损坏,而不是得到误导性的 cache miss。
 
-## Scope
+## 范围
 
-In scope:
+本次范围:
 
-- Add the integrity file writer and verifier in
-  `src/framework/artifact_store/repository.py`.
-- Add `ArtifactMetadataIntegrityError`.
-- Preserve legacy directories with no integrity file.
-- Keep existing file/blob payload drift checks unchanged.
-- Add regression tests for normal load, inline metadata tamper,
-  `artifact_id` tamper, corrupt integrity JSON, and legacy compatibility.
-- Update artifact/runtime contracts, SRS/testing/acceptance docs, CHANGELOG, and
-  backlog closeout during implementation.
+- 在 `src/framework/artifact_store/repository.py` 增加 integrity writer / verifier。
+- 增加 `ArtifactMetadataIntegrityError`。
+- 保持无 integrity 文件的历史 run 兼容。
+- 保持现有 file/blob payload drift 校验不变。
+- 增加正常 load、inline metadata tamper、`artifact_id` tamper、坏 integrity JSON、
+  legacy compatibility 等回归测试。
+- 实现阶段同步 artifact/runtime contracts、SRS、testing spec、acceptance report、
+  CHANGELOG 和 backlog closeout。
 
-Out of scope:
+本次不做:
 
-- HMAC signatures, hash chains, key management, or malicious-forger resistance.
-- Auto-repairing corrupt metadata.
-- Backfilling integrity files from resume read paths.
-- Changing `PayloadRef` schema.
-- Changing file/blob payload drift behavior.
+- HMAC signature、hash chain、key management 或防恶意伪造。
+- 自动修复损坏 metadata。
+- 在 resume 读路径 backfill integrity 文件。
+- 修改 `PayloadRef` schema。
+- 修改 file/blob payload drift 行为。
 
-## Error Handling
+## 错误处理
 
-`ArtifactMetadataIntegrityError` should include the run directory and a concise
-reason, such as:
+`ArtifactMetadataIntegrityError` 应包含 run directory 和简短原因,例如:
 
-- integrity file is invalid JSON
-- unsupported integrity schema version
-- unexpected integrity file target
-- algorithm is not sha256
+- integrity 文件不是合法 JSON
+- integrity schema version 不支持
+- integrity 指向的 target 文件异常
+- algorithm 不是 sha256
 - `_artifacts.json` hash mismatch
 - artifact count mismatch
 - artifact id list mismatch
 
-All of these are fail-fast resume errors because the metadata trust root is no
-longer reliable.
+这些都属于 fail-fast resume errors,因为 metadata 可信根已经不可靠。
 
-## Tests
+## 测试
 
-Primary tests should live near existing ArtifactRepository coverage:
+主要测试放在现有 ArtifactRepository 覆盖附近:
 
 - `test_dump_run_metadata_writes_integrity_file`
 - `test_load_run_metadata_verifies_integrity_before_registering`
@@ -143,23 +136,22 @@ Primary tests should live near existing ArtifactRepository coverage:
 - `test_load_run_metadata_fails_fast_when_integrity_json_is_invalid`
 - `test_load_run_metadata_legacy_without_integrity_file_still_loads`
 
-Regression commands for implementation:
+实现阶段回归命令:
 
 ```bash
 python -m pytest tests/unit/test_artifact_repository.py -q
 python -m pytest tests/unit/test_codex_audit_fixes.py tests/unit/test_repo_put_streaming.py -q
 ```
 
-If CLI resume behavior changes beyond exception propagation, add and run the
-smallest relevant CLI or integration smoke test.
+若 CLI resume 行为除异常透传外还有变更,再补最小相关 CLI 或 integration smoke。
 
-## Acceptance
+## 验收
 
-The change is accepted when:
+完成标准:
 
-- Fresh runs write `_artifacts.integrity.json` next to `_artifacts.json`.
-- Untouched metadata still resumes and can produce cache hits.
-- Hand-edited `_artifacts.json` fails resume before Artifact registration.
-- Old run directories without integrity files remain compatible.
-- Existing file/blob payload drift tests still pass.
-- Documentation and backlog closeout cite concrete evidence files.
+- 新 run 在 `_artifacts.json` 旁写出 `_artifacts.integrity.json`。
+- 未修改 metadata 的 run 仍可 resume,并可产生 cache hit。
+- 手工编辑 `_artifacts.json` 后,resume 在 Artifact registration 前失败。
+- 没有 integrity 文件的旧 run 目录仍兼容。
+- 现有 file/blob payload drift tests 继续通过。
+- 文档和 backlog closeout 附具体证据文件链接。
