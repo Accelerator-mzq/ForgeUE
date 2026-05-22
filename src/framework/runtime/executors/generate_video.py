@@ -37,7 +37,6 @@ num_frames / seed / steps)全在 `step.config.spec.comfy_params` 内;executor SH
 """
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from framework.core.artifact import (
@@ -49,6 +48,10 @@ from framework.core.artifact import (
 )
 from framework.core.enums import ArtifactRole, PayloadKind, StepType
 from framework.core.policies import RetryPolicy
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
+)
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
     WorkerError,
@@ -101,13 +104,18 @@ class GenerateVideoExecutor(StepExecutor):
         # 沿 audio F-Plan-R7-B round-7:用 `or RetryPolicy()` default
         policy = ctx.step.retry_policy or RetryPolicy()
 
-        if self._should_use_comfy_worker_path(ctx):
+        use_comfy_worker_path = self._should_use_comfy_worker_path(ctx)
+        pp = ctx.step.provider_policy
+        comfy_route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+
+        if use_comfy_worker_path:
+            assert comfy_route is not None
             # Task 5: await async helper
             candidates = await self._generate_via_comfy_worker(
                 ctx=ctx, spec=spec, num=num, seed=seed,
                 timeout_s=timeout_s, policy=policy,
             )
-            chosen_model = "comfy/local-video"
+            chosen_model = comfy_route.model
         elif self._worker is not None:
             # Future remote video worker path — out of scope this change(本 commit
             # 不实装具体行为;留下入口便于 follow-on `video-worker-remote-adoption`)
@@ -148,7 +156,7 @@ class GenerateVideoExecutor(StepExecutor):
                 payload_kind=PayloadKind.file,
                 producer=ProducerRef(
                     run_id=ctx.run.run_id, step_id=ctx.step.step_id,
-                    provider="comfy_agent_cli" if chosen_model == "comfy/local-video" else "video_worker",
+                    provider="comfy_agent_cli" if use_comfy_worker_path else "video_worker",
                     model=chosen_model,
                 ),
                 lineage=Lineage(
@@ -187,16 +195,11 @@ class GenerateVideoExecutor(StepExecutor):
         )
 
     def _should_use_comfy_worker_path(self, ctx: StepContext) -> bool:
-        """OpenSpec change comfy-agent-cli-video-adoption Phase 3 D6:detect
-        `model == "comfy/local-video"` in prepared_routes — take inline
-        ComfyAgentWorker dispatch branch。沿 audio / image / mesh `_should_use_*_path`
-        模式;`ctx.step.provider_policy` 是顶层字段(per task.py:36),**不**是
-        `ctx.step.config.provider_policy`。
-        """
+        """根据 provider metadata 判断是否进入 ComfyAgentWorker 分支。"""
         pp = ctx.step.provider_policy
         if pp is None or not pp.prepared_routes:
             return False
-        return any(getattr(r, "model", None) == "comfy/local-video" for r in pp.prepared_routes)
+        return first_comfy_agent_route(pp.prepared_routes) is not None
 
     async def _generate_via_comfy_worker(
         self,
@@ -223,30 +226,38 @@ class GenerateVideoExecutor(StepExecutor):
         内部已实现 `for i in range(max(1, num_candidates))`(沿 audio F-Plan-3 +
         F-Plan-R5-A round-5 修订)。
         """
-        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
-        if not scripts_dir:
+        pp = ctx.step.provider_policy
+        route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        if route is None:
             raise VideoWorkerUnsupportedResponse(
-                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses comfy/local-video "
-                "route but ComfyUI agent CLI location not configured "
+                "ComfyAgentWorker route not found; prepared_routes must include "
+                "provider_kind='subprocess' and provider_config.adapter='comfy_agent_cli'"
+            )
+        try:
+            config = resolve_comfy_agent_config(route, spec=spec)
+        except ValueError as exc:
+            raise VideoWorkerUnsupportedResponse(str(exc)) from exc
+        if not config.scripts_dir:
+            raise VideoWorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var and provider_config.scripts_dir "
+                "are unset; ComfyUI agent CLI location not configured "
                 "(see CLAUDE.md double-terminal setup)"
             )
-        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        # Task 10 round 2 Important-2:spec(step config 由来)优先,env 次之,最后 "none"。
-        # spec.comfy_lifecycle 由 bundle task JSON 设置,env FORGEUE_COMFY_LIFECYCLE 作全局 fallback。
-        comfy_lifecycle = spec.get("comfy_lifecycle") or os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
-            scripts_dir=Path(scripts_dir),
-            model_id="comfy/local-video",
+            scripts_dir=Path(config.scripts_dir),
+            model_id=route.model,
+            capability="video",
             run_id=ctx.run.run_id,
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
-            python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=comfy_lifecycle,
+            python_exe=Path(config.python_exe) if config.python_exe else None,
+            default_lifecycle=config.default_lifecycle,
+            output_root=Path(config.output_root) if config.output_root else None,
         )
         # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
         # ComfyLifecycleManager.ensure 幂等,重复调用安全)
         if ctx.lifecycle is not None:
-            await ctx.lifecycle.ensure(comfy_lifecycle)
+            await ctx.lifecycle.ensure(config.default_lifecycle)
 
         attempts = max(1, policy.max_attempts)
         last_exc: VideoWorkerError | None = None

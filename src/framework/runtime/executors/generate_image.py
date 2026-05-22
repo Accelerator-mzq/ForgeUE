@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +37,10 @@ from framework.core.enums import ArtifactRole, PayloadKind, StepType
 from framework.core.policies import RetryPolicy
 from framework.providers.base import ProviderError, ProviderTimeout
 from framework.providers.capability_router import CapabilityRouter
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
+)
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
     ComfyWorker,
@@ -84,11 +87,6 @@ class GenerateImageExecutor(StepExecutor):
         policy = ctx.step.retry_policy or RetryPolicy()
         attempts = max(1, policy.max_attempts)
 
-        # OpenSpec change comfy-agent-cli-adoption (round 2 G2 + post-round-3
-        # plan-stage Q1 sweep): worker-dispatch branch detects model=='comfy/local'
-        # in prepared_routes and constructs ComfyAgentWorker inline from env
-        # config (FORGEUE_COMFY_*) — bypassing the router-dispatch branch which
-        # would otherwise mis-route to LiteLLM wildcard.
         use_worker_path = self._should_use_worker_path(ctx)
         use_api_path = (not use_worker_path) and self._should_use_api_path(ctx)
 
@@ -263,17 +261,11 @@ class GenerateImageExecutor(StepExecutor):
     # ---- path selection + API routing ----------------------------------------
 
     def _should_use_worker_path(self, ctx: StepContext) -> bool:
-        """OpenSpec change comfy-agent-cli-adoption (round 2 G2): detect
-        `model == "comfy/local"` in prepared_routes — take inline
-        ComfyAgentWorker dispatch branch instead of router/api path.
-        Without this branch, the router-dispatch path would forward
-        `comfy/local` to LiteLLMAdapter wildcard which would fail (HTTP
-        OpenAI call with non-OpenAI model id).
-        """
+        """根据 provider metadata 判断是否进入 ComfyAgentWorker 分支。"""
         pp = ctx.step.provider_policy
         if pp is None or not pp.prepared_routes:
             return False
-        return any(getattr(r, "model", None) == "comfy/local" for r in pp.prepared_routes)
+        return first_comfy_agent_route(pp.prepared_routes) is not None
 
     async def _generate_via_worker(
         self, *, ctx: StepContext, spec: dict, num: int,
@@ -285,36 +277,44 @@ class GenerateImageExecutor(StepExecutor):
         construct ComfyAgentWorker inline from env config + StepContext,
         bypassing CapabilityRouter。Task 5 改用 `await worker.agenerate()`
         而非原 sync `generate()`,消除 asyncio.run bridge。"""
-        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
-        if not scripts_dir:
+        pp = ctx.step.provider_policy
+        route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        if route is None:
             raise WorkerUnsupportedResponse(
-                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses comfy/local "
-                "route but ComfyUI agent CLI location not configured "
+                "ComfyAgentWorker route not found; prepared_routes must include "
+                "provider_kind='subprocess' and provider_config.adapter='comfy_agent_cli'"
+            )
+        try:
+            config = resolve_comfy_agent_config(route, spec=spec)
+        except ValueError as exc:
+            raise WorkerUnsupportedResponse(str(exc)) from exc
+        if not config.scripts_dir:
+            raise WorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var and provider_config.scripts_dir "
+                "are unset; ComfyUI agent CLI location not configured "
                 "(see CLAUDE.md double-terminal setup)"
             )
-        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        # Task 10 round 2 Important-2:spec(step config 由来)优先,env 次之,最后 "none"。
-        # spec.comfy_lifecycle 由 bundle task JSON 设置,env FORGEUE_COMFY_LIFECYCLE 作全局 fallback。
-        comfy_lifecycle = spec.get("comfy_lifecycle") or os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
-            scripts_dir=Path(scripts_dir),
-            model_id="comfy/local",                 # P-F1 修订:capability dispatch 必填(image)
+            scripts_dir=Path(config.scripts_dir),
+            model_id=route.model,
+            capability="image",
             run_id=ctx.run.run_id,
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
-            python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=comfy_lifecycle,
+            python_exe=Path(config.python_exe) if config.python_exe else None,
+            default_lifecycle=config.default_lifecycle,
+            output_root=Path(config.output_root) if config.output_root else None,
         )
         # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
         # None 表示 lifecycle="none",orchestrator 未注入 manager,无需 ensure。
         # ComfyLifecycleManager.ensure 幂等,重复调用安全)
         if ctx.lifecycle is not None:
-            await ctx.lifecycle.ensure(comfy_lifecycle)
+            await ctx.lifecycle.ensure(config.default_lifecycle)
         # Task 5: 直接 await async 主面 agenerate,不走 sync generate
         candidates = await worker.agenerate(
             spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s,
         )
-        return candidates, "comfy/local", None
+        return candidates, route.model, None
 
     def _should_use_api_path(self, ctx: StepContext) -> bool:
         pp = ctx.step.provider_policy

@@ -427,6 +427,8 @@ class ComfyAgentWorker(ComfyWorker):
         artifacts_dir: Path,                     # REQUIRED (G3 fix; ctx.run_dir)
         python_exe: Path | None = None,          # OPTIONAL (= sys.executable)
         default_lifecycle: str = "none",         # OPTIONAL (only "none" supported in this change)
+        capability: str | None = None,           # 可选:provider metadata 可显式指定 capability
+        output_root: Path | None = None,         # 可选:覆盖 comfy outputs containment 根目录
     ) -> None:
         # F4 fix: REQUIRED project_id None/empty raise.
         if not project_id:
@@ -461,15 +463,20 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyAgentWorker.__init__: 不支持的 default_lifecycle={default_lifecycle!r}; "
                 f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
-        # D1: capability dispatch via model_id 推断;unknown id raise(不静默 fallback)。
-        # F-Plan-R3-A round-3 修订:audio capability 已加(comfy/local-audio);
-        # Phase 3 D6 修订:video capability 已加(comfy/local-video) — TBD-009 全 3 phase closed。
-        capability = self._CAPABILITY_BY_MODEL_ID.get(model_id)
+        # capability 可由 provider metadata 显式传入;未传时保留旧 model_id 推断。
+        # 这样自定义 model id 仍能复用同一 ComfyAgentWorker 输出校验表。
         if capability is None:
+            capability = self._CAPABILITY_BY_MODEL_ID.get(model_id)
+            if capability is None:
+                raise WorkerUnsupportedResponse(
+                    f"ComfyAgentWorker.__init__: unsupported model_id={model_id!r}, "
+                    f"expected one of {sorted(self._CAPABILITY_BY_MODEL_ID)} "
+                    f"(all TBD-009 phases closed: image / mesh / audio / video)"
+                )
+        elif capability not in self._REQUIRED_OUTPUT_KEY:
             raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.__init__: unsupported model_id={model_id!r}, "
-                f"expected one of {sorted(self._CAPABILITY_BY_MODEL_ID)} "
-                f"(all TBD-009 phases closed: image / mesh / audio / video)"
+                f"ComfyAgentWorker.__init__: unsupported capability={capability!r}; "
+                f"expected one of {sorted(self._REQUIRED_OUTPUT_KEY)}"
             )
         self.scripts_dir = Path(scripts_dir)
         self.python_exe = Path(python_exe) if python_exe else Path(sys.executable)
@@ -502,7 +509,9 @@ class ComfyAgentWorker(ComfyWorker):
         # of the existing `is_file()` + `is_symlink()` + extension whitelist
         # + magic-bytes checks.
         env_output_root = os.environ.get("FORGEUE_COMFY_OUTPUT_ROOT")
-        if env_output_root:
+        if output_root is not None:
+            self.comfy_output_root = Path(output_root).resolve()
+        elif env_output_root:
             self.comfy_output_root = Path(env_output_root).resolve()
         else:
             # Heuristic fallback: scripts_dir parent (covers ComfyUI install

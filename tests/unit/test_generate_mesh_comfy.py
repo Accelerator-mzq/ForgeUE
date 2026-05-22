@@ -45,6 +45,18 @@ from framework.runtime.failure_mode_map import DEFAULT_MAP, classify
 # ---- Fixtures ---------------------------------------------------------------
 
 
+def _comfy_provider_config(tmp_path: Path) -> dict[str, str | None]:
+    """构造测试用 ComfyUI provider_config，与 models.yaml 元数据形状对齐。"""
+    return {
+        "adapter": "comfy_agent_cli",
+        "scripts_dir": str(tmp_path / "yaml_scripts"),
+        "python_exe": None,
+        "default_lifecycle": "none",
+        "input_dir": str(tmp_path / "yaml_input"),
+        "output_root": str(tmp_path),
+    }
+
+
 def _seed_image(repo: ArtifactRepository, run_id: str) -> tuple[str, bytes]:
     aid = f"{run_id}_img"
     src_bytes = b"\x89PNG\r\n\x1a\nfake-png-payload-for-comfy-mesh-test"
@@ -98,6 +110,9 @@ def _make_comfy_mesh_ctx(
         routes.append(PreparedRoute(
             model="comfy/local-mesh", api_key_env=None, api_base=None,
             kind="mesh", pricing=None,
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config=_comfy_provider_config(tmp_path),
         ))
     if extra_routes:
         routes.extend(extra_routes)
@@ -253,12 +268,40 @@ async def test_generate_via_comfy_worker_raises_when_FORGEUE_COMFY_INPUT_DIR_uns
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.delenv("FORGEUE_COMFY_INPUT_DIR", raising=False)
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
+    route = ctx.step.provider_policy.prepared_routes[0]
+    route.provider_config["input_dir"] = None
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with pytest.raises(MeshWorkerUnsupportedResponse, match="FORGEUE_COMFY_INPUT_DIR"):
         await executor._generate_via_comfy_worker(
             ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
         )
+
+
+async def test_generate_via_comfy_worker_uses_yaml_input_dir_when_env_absent(tmp_path, monkeypatch):
+    monkeypatch.delenv("FORGEUE_COMFY_SCRIPTS_DIR", raising=False)
+    monkeypatch.delenv("FORGEUE_COMFY_INPUT_DIR", raising=False)
+    yaml_scripts = tmp_path / "yaml_scripts"
+    yaml_input = tmp_path / "yaml_input"
+    yaml_scripts.mkdir()
+    ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
+    route = ctx.step.provider_policy.prepared_routes[0]
+    route.provider_config["scripts_dir"] = str(yaml_scripts)
+    route.provider_config["input_dir"] = str(yaml_input)
+
+    executor = GenerateMeshExecutor(worker=FakeMeshWorker())
+    with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
+        await executor._generate_via_comfy_worker(
+            ctx=ctx,
+            spec={"comfy_workflow": "M/01", "comfy_params": {}},
+            source_image_bytes=src_bytes,
+            num=1,
+            seed=None,
+            timeout_s=600,
+        )
+    assert yaml_input.is_dir()
+    assert W.call_args.kwargs["scripts_dir"] == yaml_scripts
 
 
 async def test_generate_via_comfy_worker_constructs_worker_with_model_id_comfy_local_mesh(tmp_path, monkeypatch):
@@ -287,6 +330,8 @@ async def test_generate_via_comfy_worker_raises_when_env_unset(tmp_path, monkeyp
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.delenv("FORGEUE_COMFY_SCRIPTS_DIR", raising=False)
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
+    route = ctx.step.provider_policy.prepared_routes[0]
+    route.provider_config["scripts_dir"] = None
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with pytest.raises(MeshWorkerUnsupportedResponse, match="FORGEUE_COMFY_SCRIPTS_DIR"):
         await executor._generate_via_comfy_worker(

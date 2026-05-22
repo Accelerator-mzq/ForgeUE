@@ -38,11 +38,14 @@ from framework.providers.workers.mesh_worker import (
     MeshWorkerTimeout,
     MeshWorkerUnsupportedResponse,
 )
+from framework.providers.comfy_provider_config import (
+    first_comfy_agent_route,
+    resolve_comfy_agent_config,
+)
 # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1 mesh:
 # 本地 ComfyUI mesh 走 executor-side branch + ComfyAgentWorker.generate_mesh,
 # ComfyWorker 异常 hierarchy 与 MeshWorker 不交叉(failure_mode_map 优先匹配 MeshWorker*),
 # 必须 wrap 才能让 FailureModeMap 路由正确(D9 + R2-F2)。
-import os
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
     WorkerError as _ComfyWorkerError,
@@ -70,14 +73,11 @@ class GenerateMeshExecutor(StepExecutor):
         self._worker = worker
 
     def _should_use_comfy_worker_path(self, ctx: StepContext) -> bool:
-        """OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1:
-        检测 prepared_routes 是否含 `comfy/local-mesh` model,决定是否走本地
-        ComfyAgentWorker dispatch(R2-F1 修订:provider_policy 在 Step 顶层,
-        不在 step.config 嵌套,沿用现有 generate_mesh.py:202 同模式)。"""
+        """根据 provider metadata 判断是否进入 ComfyAgentWorker 分支。"""
         pp = ctx.step.provider_policy
         if pp is None or not pp.prepared_routes:
             return False
-        return any(r.model == "comfy/local-mesh" for r in pp.prepared_routes)
+        return first_comfy_agent_route(pp.prepared_routes) is not None
 
     async def _generate_via_comfy_worker(
         self,
@@ -101,26 +101,36 @@ class GenerateMeshExecutor(StepExecutor):
            mesh_worker_timeout → abort_or_fallback,与远端 mesh 终态一致)
         Task 5: 转 async — 用 await worker.agenerate_mesh(...)
         """
-        scripts_dir = os.environ.get("FORGEUE_COMFY_SCRIPTS_DIR")
-        if not scripts_dir:
+        pp = ctx.step.provider_policy
+        route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        if route is None:
             raise MeshWorkerUnsupportedResponse(
-                "FORGEUE_COMFY_SCRIPTS_DIR env var unset; bundle uses "
-                "comfy/local-mesh route but ComfyUI agent CLI location "
-                "not configured (see CLAUDE.md double-terminal setup)"
+                "ComfyAgentWorker route not found; prepared_routes must include "
+                "provider_kind='subprocess' and provider_config.adapter='comfy_agent_cli'"
+            )
+        try:
+            config = resolve_comfy_agent_config(route, spec=spec)
+        except ValueError as exc:
+            raise MeshWorkerUnsupportedResponse(str(exc)) from exc
+        if not config.scripts_dir:
+            raise MeshWorkerUnsupportedResponse(
+                "FORGEUE_COMFY_SCRIPTS_DIR env var and provider_config.scripts_dir "
+                "are unset; ComfyUI agent CLI location not configured "
+                "(see CLAUDE.md double-terminal setup)"
             )
         # round 5 D10:source bytes 写到 ComfyUI 自家 input/ 目录(via REQUIRED env
         # FORGEUE_COMFY_INPUT_DIR),不是 ForgeUE in-tree(round 1-4 假设错 — ComfyUI
         # LoadImage 节点只读自己 input/ 的 filename,不接绝对路径)。
-        comfy_input_dir = os.environ.get("FORGEUE_COMFY_INPUT_DIR")
-        if not comfy_input_dir:
+        if not config.input_dir:
             raise MeshWorkerUnsupportedResponse(
-                "FORGEUE_COMFY_INPUT_DIR env var unset; mesh path requires "
-                "ComfyUI installation's own input/ directory (e.g. "
+                "FORGEUE_COMFY_INPUT_DIR env var and provider_config.input_dir "
+                "are unset; mesh path requires ComfyUI installation's own "
+                "input/ directory (e.g. "
                 "D:/AI/ComfyUI/apps/official-main-git-v092/input) for "
                 "LoadImage node to resolve source image filename — see "
                 "CLAUDE.md mesh adoption section"
             )
-        input_dir = Path(comfy_input_dir)
+        input_dir = Path(config.input_dir)
         input_dir.mkdir(parents=True, exist_ok=True)
         sha1_hex = hashlib.sha1(source_image_bytes).hexdigest()[:16]
         # round 5 D10:filename 'forgeue_' prefix 避免与 ComfyUI 自家 input 文件冲突;
@@ -130,23 +140,21 @@ class GenerateMeshExecutor(StepExecutor):
         if not input_path.exists():
             input_path.write_bytes(source_image_bytes)
 
-        python_exe = os.environ.get("FORGEUE_COMFY_PYTHON_EXE") or None
-        # Task 10 round 2 Important-2:spec(step config 由来)优先,env 次之,最后 "none"。
-        # spec.comfy_lifecycle 由 bundle task JSON 设置,env FORGEUE_COMFY_LIFECYCLE 作全局 fallback。
-        comfy_lifecycle = spec.get("comfy_lifecycle") or os.environ.get("FORGEUE_COMFY_LIFECYCLE", "none")
         worker = ComfyAgentWorker(
-            scripts_dir=Path(scripts_dir),
-            model_id="comfy/local-mesh",         # D1 capability dispatch
+            scripts_dir=Path(config.scripts_dir),
+            model_id=route.model,
+            capability="mesh",
             run_id=ctx.run.run_id,
             project_id=ctx.task.project_id,
             artifacts_dir=ctx.run_dir,
-            python_exe=Path(python_exe) if python_exe else None,
-            default_lifecycle=comfy_lifecycle,
+            python_exe=Path(config.python_exe) if config.python_exe else None,
+            default_lifecycle=config.default_lifecycle,
+            output_root=Path(config.output_root) if config.output_root else None,
         )
         # Task 10:worker 调用前先 ensure lifecycle 就绪(仅 ctx.lifecycle 非 None 时调用;
         # ComfyLifecycleManager.ensure 幂等,重复调用安全)
         if ctx.lifecycle is not None:
-            await ctx.lifecycle.ensure(comfy_lifecycle)
+            await ctx.lifecycle.ensure(config.default_lifecycle)
 
         # D9 + R2-F2:内部 retry loop(本地 mesh 走 standard retry,绕开
         # executor 主流程 attempts=1 强制);RetryPolicy.max_attempts 默认 2(policies.py:26)
@@ -213,6 +221,9 @@ class GenerateMeshExecutor(StepExecutor):
         # 用此 flag 决定 attribution(避免误用 `self._worker.name`,该字段是
         # framework.run 注入的 fallback worker 名,不一定是当前活跃 worker)。
         use_comfy_worker_path = self._should_use_comfy_worker_path(ctx)
+        pp = ctx.step.provider_policy
+        comfy_route = first_comfy_agent_route(pp.prepared_routes if pp else [])
+        comfy_model = getattr(comfy_route, "model", None)
 
         # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1:
         # comfy/local-mesh route → 走本地 ComfyAgentWorker 自有 retry loop;
@@ -283,7 +294,7 @@ class GenerateMeshExecutor(StepExecutor):
                     # mesh worker 名(可能是 HunyuanMeshWorker / FakeMeshWorker)
                     provider=("comfy_agent_cli" if use_comfy_worker_path else self._worker.name),
                     model=(
-                        "comfy/local-mesh" if use_comfy_worker_path
+                        comfy_model if use_comfy_worker_path and comfy_model is not None
                         else cfg.get("model_hint", self._worker.name)
                     ),
                 ),
@@ -327,7 +338,7 @@ class GenerateMeshExecutor(StepExecutor):
         # the step's ProviderPolicy instead).
         route_pricing = _first_mesh_route_pricing(ctx)
         cost_usd = estimate_mesh_call_cost_usd(
-            model=("comfy/local-mesh" if use_comfy_worker_path else self._worker.name),
+            model=(comfy_model if use_comfy_worker_path and comfy_model is not None else self._worker.name),
             num_candidates=len(mesh_ids),
             route_pricing=route_pricing,
         )

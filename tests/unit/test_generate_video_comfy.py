@@ -47,6 +47,18 @@ from framework.runtime.executors.generate_video import (
 # ---- Fixtures ---------------------------------------------------------------
 
 
+def _comfy_provider_config(tmp_path: Path) -> dict[str, str | None]:
+    """构造测试用 ComfyUI provider_config，与 models.yaml 元数据形状对齐。"""
+    return {
+        "adapter": "comfy_agent_cli",
+        "scripts_dir": str(tmp_path / "yaml_scripts"),
+        "python_exe": None,
+        "default_lifecycle": "none",
+        "input_dir": str(tmp_path / "yaml_input"),
+        "output_root": str(tmp_path),
+    }
+
+
 def _make_video_ctx(
     tmp_path: Path,
     run_id: str = "run_comfy_video",
@@ -63,6 +75,9 @@ def _make_video_ctx(
         routes.append(PreparedRoute(
             model="comfy/local-video", api_key_env=None, api_base=None,
             kind="video", pricing=None,
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config=_comfy_provider_config(tmp_path),
         ))
     policy = ProviderPolicy(
         capability_required="video.t2v",

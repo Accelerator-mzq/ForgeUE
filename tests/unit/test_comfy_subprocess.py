@@ -29,6 +29,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from framework.core.policies import PreparedRoute
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
     WorkerError,
@@ -40,6 +41,32 @@ from framework.providers.workers.comfy_worker import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _comfy_provider_config(tmp_path: Path) -> dict[str, str | None]:
+    """构造测试用 ComfyUI provider_config，与 models.yaml 元数据形状对齐。"""
+    return {
+        "adapter": "comfy_agent_cli",
+        "scripts_dir": str(tmp_path / "yaml_scripts"),
+        "python_exe": None,
+        "default_lifecycle": "none",
+        "input_dir": str(tmp_path / "yaml_input"),
+        "output_root": str(tmp_path),
+    }
+
+
+def _comfy_image_route(tmp_path: Path, *, model: str = "comfy/local") -> PreparedRoute:
+    """构造 executor 测试用 ComfyUI image route。"""
+    return PreparedRoute(
+        model=model,
+        api_key_env=None,
+        api_base=None,
+        kind="image",
+        pricing=None,
+        provider_name="comfy_api",
+        provider_kind="subprocess",
+        provider_config=_comfy_provider_config(tmp_path),
+    )
 
 
 def _make_worker(tmp_path: Path) -> ComfyAgentWorker:
@@ -566,26 +593,44 @@ def test_cancel_under_to_thread_does_not_orphan_processes(tmp_path):
 
 
 def test_executor_dispatches_comfy_local_to_worker_not_router(tmp_path, monkeypatch):
-    """GenerateImageExecutor._should_use_worker_path detects model='comfy/local'
-    in prepared_routes — takes worker dispatch branch instead of router branch."""
-    from framework.providers.model_registry import ResolvedRoute
+    """GenerateImageExecutor 依据 provider metadata 进入 worker branch。"""
+    from framework.core.policies import PreparedRoute
     from framework.runtime.executors.generate_image import GenerateImageExecutor
 
     executor = GenerateImageExecutor()
     ctx = MagicMock()
     ctx.step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="comfy/local", api_key_env=None, api_base=None,
-                      kind="image", pricing=None),
+        _comfy_image_route(tmp_path),
     ]
     assert executor._should_use_worker_path(ctx) is True
 
     # Non-comfy route should NOT trigger worker path.
     ctx2 = MagicMock()
     ctx2.step.provider_policy.prepared_routes = [
-        ResolvedRoute(model="qwen/qwen-image-2.0", api_key_env="QWEN", api_base=None,
+        PreparedRoute(model="qwen/qwen-image-2.0", api_key_env="QWEN", api_base=None,
                       kind="image", pricing=None),
     ]
     assert executor._should_use_worker_path(ctx2) is False
+
+
+def test_executor_dispatches_comfy_provider_metadata_even_with_custom_model_id(tmp_path):
+    from framework.core.policies import PreparedRoute
+    from framework.runtime.executors.generate_image import GenerateImageExecutor
+
+    executor = GenerateImageExecutor()
+    ctx = MagicMock()
+    ctx.step.provider_policy.prepared_routes = [
+        PreparedRoute(
+            model="local/custom-image",
+            api_key_env=None,
+            api_base=None,
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={"adapter": "comfy_agent_cli"},
+        )
+    ]
+    assert executor._should_use_worker_path(ctx) is True
 
 
 async def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
@@ -608,6 +653,7 @@ async def test_comfy_agent_worker_reads_env_config(tmp_path, monkeypatch):
     ctx.run.run_id = "run_test"
     ctx.task.project_id = "proj_test"
     ctx.run_dir = tmp_path / "run_dir"
+    ctx.step.provider_policy.prepared_routes = [_comfy_image_route(tmp_path)]
     # Task 10:lifecycle=None 表示 lifecycle="none",不注入 manager;
     # 测试验证 _generate_via_worker env 读取逻辑,不测 lifecycle.ensure 路径
     ctx.lifecycle = None
@@ -637,6 +683,17 @@ async def test_env_unset_raises_unsupported_response(tmp_path, monkeypatch):
     ctx.run_dir = tmp_path
     ctx.run.run_id = "run_x"
     ctx.task.project_id = "proj_x"
+    ctx.step.provider_policy.prepared_routes = [
+        PreparedRoute(
+            model="comfy/local",
+            api_key_env=None,
+            api_base=None,
+            kind="image",
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config={"adapter": "comfy_agent_cli"},
+        )
+    ]
 
     with pytest.raises(WorkerUnsupportedResponse, match="FORGEUE_COMFY_SCRIPTS_DIR"):
         # Task 5 GREEN: _generate_via_worker 已转 async def,需 await
@@ -761,6 +818,21 @@ def test_capability_inferred_mesh_for_comfy_local_mesh(tmp_path):
     worker = _make_mesh_worker(tmp_path)
     assert worker._capability == "mesh"
     assert worker.model_id == "comfy/local-mesh"
+
+
+def test_comfy_agent_worker_accepts_explicit_capability_for_custom_model_id(tmp_path):
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    worker = ComfyAgentWorker(
+        scripts_dir=scripts_dir,
+        model_id="local/custom-image",
+        capability="image",
+        run_id="run_custom",
+        project_id="proj_custom",
+        artifacts_dir=tmp_path,
+    )
+    assert worker.model_id == "local/custom-image"
+    assert worker._capability == "image"
 
 
 def test_unknown_model_id_raises_at_init(tmp_path):
@@ -1268,6 +1340,9 @@ async def test_executor_dispatches_comfy_local_records_provider_as_comfy_agent_c
         prepared_routes=[PreparedRoute(
             model="comfy/local", api_key_env=None, api_base=None,
             kind="image", pricing=None,
+            provider_name="comfy_api",
+            provider_kind="subprocess",
+            provider_config=_comfy_provider_config(tmp_path),
         )],
     )
     step = Step(
