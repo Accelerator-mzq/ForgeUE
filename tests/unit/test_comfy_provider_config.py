@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from framework.core.policies import PreparedRoute
 from framework.providers.comfy_provider_config import (
     first_comfy_agent_route,
@@ -82,3 +84,30 @@ def test_resolve_comfy_agent_config_uses_yaml_when_env_absent():
     assert cfg.input_dir == "yaml/input"
     assert cfg.output_root == "yaml/root"
     assert cfg.default_lifecycle == "ensure_running"
+
+
+@pytest.mark.parametrize(
+    ("spec", "env", "provider_config", "expected_fragment"),
+    [
+        ({"comfy_lifecycle": ""}, {}, {"default_lifecycle": "ensure_running"}, "''"),
+        (
+            {},
+            {"FORGEUE_COMFY_LIFECYCLE": "warp_drive"},
+            {"default_lifecycle": "ensure_running"},
+            "warp_drive",
+        ),
+        ({}, {}, {"default_lifecycle": "warp_drive"}, "warp_drive"),
+    ],
+)
+def test_resolve_comfy_agent_config_rejects_invalid_lifecycle(
+    spec, env, provider_config, expected_fragment
+):
+    route = _route(provider_config={"adapter": "comfy_agent_cli", **provider_config})
+    with pytest.raises(ValueError, match=expected_fragment):
+        resolve_comfy_agent_config(route, spec=spec, env=env)
+
+
+def test_resolve_comfy_agent_config_defaults_lifecycle_to_none_when_absent():
+    route = _route(provider_config={"adapter": "comfy_agent_cli"})
+    cfg = resolve_comfy_agent_config(route, spec={}, env={})
+    assert cfg.default_lifecycle == "none"

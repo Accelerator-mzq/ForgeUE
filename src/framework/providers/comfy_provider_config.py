@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 _COMFY_ADAPTER = "comfy_agent_cli"
 _VALID_LIFECYCLES = {"none", "ensure_running", "ensure_release", "self_managed_session"}
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,19 @@ class ComfyAgentConfig:
 def _route_config(route: object) -> dict:
     raw = getattr(route, "provider_config", None) or {}
     return dict(raw)
+
+
+def _mapping_value(mapping: Mapping | None, key: str) -> object:
+    if not isinstance(mapping, Mapping):
+        return _MISSING
+    return mapping[key] if key in mapping else _MISSING
+
+
+def _first_present(*items: object) -> object:
+    for value in items:
+        if value is not _MISSING:
+            return value
+    return "none"
 
 
 def is_comfy_agent_route(route: object) -> bool:
@@ -52,11 +66,10 @@ def resolve_comfy_agent_config(
     provider_cfg = _route_config(route)
     spec_cfg = spec if isinstance(spec, Mapping) else {}
 
-    lifecycle = (
-        spec_cfg.get("comfy_lifecycle")
-        or source_env.get("FORGEUE_COMFY_LIFECYCLE")
-        or provider_cfg.get("default_lifecycle")
-        or "none"
+    lifecycle = _first_present(
+        _mapping_value(spec_cfg, "comfy_lifecycle"),
+        _mapping_value(source_env, "FORGEUE_COMFY_LIFECYCLE"),
+        _mapping_value(provider_cfg, "default_lifecycle"),
     )
     if lifecycle not in _VALID_LIFECYCLES:
         raise ValueError(
