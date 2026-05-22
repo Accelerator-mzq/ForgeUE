@@ -222,10 +222,11 @@ python -m framework.pricing_probe --apply
 
 ### 3.1 ComfyUI agent CLI pipeline(image / mesh / audio / video,真实出图)
 
-ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。默认 `config/models.yaml` `providers.comfy_api.subprocess.default_lifecycle` 仍是 `none`,所以 L2 live smoke 默认按手工双终端跑;也可显式设 `ensure_running` / `ensure_release` / `self_managed_session` 让框架托管 lifecycle。
+ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。默认 `config/models.yaml` `providers.comfy_api.subprocess.default_lifecycle` 仍是 `none`,所以 L2 live smoke 默认由外部确保 ComfyUI server running;也可显式设 `ensure_running` / `ensure_release` / `self_managed_session` 让框架托管 lifecycle。`factory_v3 serve/stop` 只是本机 ComfyUI server lifecycle helper;ForgeUE 生成/探活/取消仍走 `python -m comfyui_api run/status/cancel`。
 
 ```bash
-# 默认手工 smoke(lifecycle=none)终端 1:启 ComfyUI(detached,~30-90s 冷启动;用户自管,`python -m factory_v3 stop` 停)
+# 默认手工 smoke(lifecycle=none)前置:确保 ComfyUI server running
+# 本机推荐用 factory_v3 serve/stop 启停服务;若已有常驻 ComfyUI,只要 comfyui_api status online 即可
 python -m factory_v3 serve
 
 # 默认手工 smoke 终端 2:export env + 跑 ForgeUE 四 capability 冒烟
@@ -238,7 +239,7 @@ python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm 
 ```
 
 ```powershell
-# PowerShell 等价(内联 env 拆为 $env: 赋值)
+# PowerShell 等价(内联 env 拆为 $env: 赋值;server 已常驻时可跳过 serve)
 python -m factory_v3 serve
 $env:FORGEUE_COMFY_SCRIPTS_DIR="D:/AI/ComfyUI/scripts"
 $env:FORGEUE_COMFY_INPUT_DIR="D:/AI/ComfyUI/apps/official-main-git-v092/input"
