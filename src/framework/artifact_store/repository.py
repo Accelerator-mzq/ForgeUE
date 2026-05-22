@@ -40,6 +40,21 @@ from framework.core.artifact import (
 from framework.core.enums import ArtifactRole, PayloadKind
 
 
+_ARTIFACTS_FILENAME = "_artifacts.json"
+_ARTIFACTS_INTEGRITY_FILENAME = "_artifacts.integrity.json"
+_ARTIFACTS_INTEGRITY_SCHEMA_VERSION = "1.0"
+_ARTIFACTS_INTEGRITY_ALGORITHM = "sha256"
+
+
+class ArtifactMetadataIntegrityError(RuntimeError):
+    """`_artifacts.json` integrity 校验失败。"""
+
+    def __init__(self, run_dir: Path, reason: str) -> None:
+        super().__init__(f"artifact metadata integrity failed for {run_dir}: {reason}")
+        self.run_dir = run_dir
+        self.reason = reason
+
+
 class ArtifactRepository:
     def __init__(
         self,
@@ -208,12 +223,110 @@ class ArtifactRepository:
         """
         run_arts = self.find_by_producer(run_id=run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
-        target = run_dir / "_artifacts.json"
+        target = run_dir / _ARTIFACTS_FILENAME
         data = [a.model_dump(mode="json") for a in run_arts]
         target.write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8",
         )
+        self._write_metadata_integrity(run_dir=run_dir, artifacts=run_arts)
         return len(run_arts)
+
+    def _write_metadata_integrity(
+        self,
+        *,
+        run_dir: Path,
+        artifacts: list[Artifact],
+    ) -> None:
+        """Write checksum metadata that binds the final `_artifacts.json` bytes."""
+        artifacts_path = run_dir / _ARTIFACTS_FILENAME
+        integrity_path = run_dir / _ARTIFACTS_INTEGRITY_FILENAME
+        data = {
+            "schema_version": _ARTIFACTS_INTEGRITY_SCHEMA_VERSION,
+            "artifacts_file": _ARTIFACTS_FILENAME,
+            "algorithm": _ARTIFACTS_INTEGRITY_ALGORITHM,
+            "artifacts_sha256": hash_path(artifacts_path),
+            "artifact_count": len(artifacts),
+            "artifact_ids": [a.artifact_id for a in artifacts],
+        }
+        integrity_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _verify_metadata_integrity(self, *, run_dir: Path) -> None:
+        """Fail fast when `_artifacts.json` no longer matches its integrity file."""
+        integrity_path = run_dir / _ARTIFACTS_INTEGRITY_FILENAME
+        if not integrity_path.is_file():
+            return
+
+        try:
+            integrity = json.loads(integrity_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ArtifactMetadataIntegrityError(
+                run_dir, f"integrity file invalid JSON: {exc}"
+            ) from exc
+
+        if not isinstance(integrity, dict):
+            raise ArtifactMetadataIntegrityError(
+                run_dir, "integrity file must be a JSON object"
+            )
+        if integrity.get("schema_version") != _ARTIFACTS_INTEGRITY_SCHEMA_VERSION:
+            raise ArtifactMetadataIntegrityError(
+                run_dir,
+                f"unsupported integrity schema_version: {integrity.get('schema_version')!r}",
+            )
+        if integrity.get("artifacts_file") != _ARTIFACTS_FILENAME:
+            raise ArtifactMetadataIntegrityError(
+                run_dir,
+                f"unexpected integrity artifacts_file: {integrity.get('artifacts_file')!r}",
+            )
+        if integrity.get("algorithm") != _ARTIFACTS_INTEGRITY_ALGORITHM:
+            raise ArtifactMetadataIntegrityError(
+                run_dir,
+                f"unsupported integrity algorithm: {integrity.get('algorithm')!r}",
+            )
+
+        artifacts_path = run_dir / _ARTIFACTS_FILENAME
+        expected_hash = integrity.get("artifacts_sha256")
+        actual_hash = hash_path(artifacts_path)
+        if expected_hash != actual_hash:
+            raise ArtifactMetadataIntegrityError(
+                run_dir,
+                f"_artifacts.json hash mismatch: expected {expected_hash!r}, got {actual_hash!r}",
+            )
+
+        try:
+            artifacts_raw = json.loads(artifacts_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise ArtifactMetadataIntegrityError(
+                run_dir, f"_artifacts.json invalid JSON: {exc}"
+            ) from exc
+        if not isinstance(artifacts_raw, list):
+            raise ArtifactMetadataIntegrityError(
+                run_dir, "_artifacts.json must be a JSON array"
+            )
+
+        actual_ids: list[str] = []
+        for entry in artifacts_raw:
+            if not isinstance(entry, dict) or not isinstance(
+                entry.get("artifact_id"), str
+            ):
+                raise ArtifactMetadataIntegrityError(
+                    run_dir,
+                    "_artifacts.json contains entry without string artifact_id",
+                )
+            actual_ids.append(entry["artifact_id"])
+
+        if integrity.get("artifact_count") != len(artifacts_raw):
+            raise ArtifactMetadataIntegrityError(
+                run_dir,
+                f"artifact count mismatch: expected {integrity.get('artifact_count')!r}, got {len(artifacts_raw)!r}",
+            )
+        if integrity.get("artifact_ids") != actual_ids:
+            raise ArtifactMetadataIntegrityError(
+                run_dir,
+                f"artifact id list mismatch: expected {integrity.get('artifact_ids')!r}, got {actual_ids!r}",
+            )
 
     def load_run_metadata(self, *, run_id: str, run_dir: Path) -> int:
         """Re-hydrate Artifact records produced by *run_id* from
@@ -230,9 +343,10 @@ class ArtifactRepository:
         because their payload travels with the metadata (no external
         bytes to drift).
         """
-        target = run_dir / "_artifacts.json"
+        target = run_dir / _ARTIFACTS_FILENAME
         if not target.is_file():
             return 0
+        self._verify_metadata_integrity(run_dir=run_dir)
         raw = json.loads(target.read_text(encoding="utf-8"))
         n = 0
         for d in raw:

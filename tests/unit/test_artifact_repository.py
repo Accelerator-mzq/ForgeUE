@@ -267,11 +267,17 @@ def test_load_metadata_blob_kind_registers_when_payload_matches(repo, tmp_path):
     fresh = ArtifactRepository(backend_registry=repo.backend_registry)
     fresh._artifacts.clear()
     import framework.artifact_store.repository as repo_mod
+    real_hash_path = repo_mod.hash_path
+
+    def _hash_path_only_for_metadata_integrity(path, *args, **kwargs):
+        if Path(path).name == "_artifacts.json":
+            return real_hash_path(path, *args, **kwargs)
+        raise AssertionError("hash_path SHALL NOT be invoked on blob kind drift")
 
     with _patch_t6.object(
         repo_mod,
         "hash_path",
-        side_effect=AssertionError("hash_path SHALL NOT be invoked on blob kind drift"),
+        side_effect=_hash_path_only_for_metadata_integrity,
     ):
         n = fresh.load_run_metadata(run_id="r_blob", run_dir=run_dir)
 
