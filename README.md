@@ -312,7 +312,7 @@ python -m pytest -v -k p3           # 关键字过滤
 | **2** | `pip install -e ".[llm]"` + `python -c "import litellm, instructor"` | 开源包装好，版本 ≥ pyproject 声明 |
 | **3** | `python -m framework.run --task examples/character_extract.json --run-id r1 --live-llm` | `.env` 密钥 + LiteLLM 真实调用 OK |
 | **4** | `python -m framework.run --task examples/ue_export_pipeline.json --run-id r2 --live-llm`（改 `ue_target.project_root` 到临时目录）| 全链 + 产 manifest + evidence |
-| **5** | ComfyUI agent CLI live smoke:默认 `lifecycle=none` 时先 `python -m factory_v3 serve`,再跑 `examples/comfy_local_smoke*.json`;也可设 `ensure_running` / `ensure_release` / `self_managed_session` 由框架托管 | 真实 image / mesh / audio / video 产物(manifest 名,不再 inline `workflow_graph`;不再用 `--comfy-url`)|
+| **5** | ComfyUI agent CLI live smoke:默认 `lifecycle=none` 时先确保 ComfyUI server running(本机推荐 `python -m factory_v3 serve` 作为启停 helper),再跑 `examples/comfy_local_smoke*.json`;也可设 `ensure_running` / `ensure_release` / `self_managed_session` 由框架托管 | 真实 image / mesh / audio / video 产物;ForgeUE 生成仍走 `python -m comfyui_api run`(manifest 名,不再 inline `workflow_graph`;不再用 `--comfy-url`)|
 | **6** | 空白 UE 5.x 工程 → 跑档 4 → UE Python Console `exec(open('ue_scripts/run_import.py').read())` | `Content Browser` 出资产 + `evidence.json` 完整追溯 |
 
 详见 [`docs/claude_unified_architecture_plan_v1.md` §K](docs/claude_unified_architecture_plan_v1.md)。

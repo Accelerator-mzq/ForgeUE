@@ -569,9 +569,10 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 
 ### 4 Capability 命令矩阵
 
-**前置(双终端工作流,沿 `CLAUDE.md` ComfyUI 接入段)**:
-- 终端 1:`python -m factory_v3 serve` 启 ComfyUI(detached, ~30-90s 冷启动;用户自管)
-- 终端 2:export env + 跑 ForgeUE
+**默认手工 smoke 前置(lifecycle=`none`,沿 `CLAUDE.md` ComfyUI 接入段)**:
+- 先确保 ComfyUI server running;本机推荐 `python -m factory_v3 serve` 启服务(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)
+- `factory_v3 serve/stop` 只是本机 ComfyUI server lifecycle helper;ForgeUE 生成/探活/取消仍走 `python -m comfyui_api run/status/cancel`
+- 然后 export env + 跑 ForgeUE
 
 **通用 env**:
 ```bash
