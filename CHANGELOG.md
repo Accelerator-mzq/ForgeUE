@@ -17,9 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `DryRunPass.run` 改 `async def` + 新 `ComfyAgentWorker.aprobe` async classmethod(Fluid Pause #1 scope 扩大)
 - `StepContext.lifecycle: ExternalProcessLifecycle | None = None` 字段加入
 - 全量 1179 passed / 3 skipped / 0 failed(实测 2026-05-20;baseline 1136 → net +43 新 fence)
-- L2 live evidence:`forge/changes/executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`
+- L2 live evidence:`docs/archive/forge_changes/2026-05-20-executor-async-rewrite/notes/live_smoke_lifecycle_20260520.md`
 
 ## [Unreleased]
+
+### Changed
+
+- **项目工作流迁移**:ForgeUE_codex 主工作流从项目内 forge 切换为 Superpowers-first。长期 backlog / contracts / change archive 内容已复制到 `docs/backlog` / `docs/contracts` / `docs/archive/forge_changes`;旧 `forge/` 目录不由 Codex 删除,由用户按人工清单处理。
 
 ### Removed
 
