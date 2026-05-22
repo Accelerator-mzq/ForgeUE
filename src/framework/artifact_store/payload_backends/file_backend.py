@@ -13,7 +13,13 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge, _MISSING
+from framework.artifact_store.hashing import hash_path, hash_payload
+from framework.artifact_store.payload_backends.base import (
+    PayloadBackend,
+    PayloadTooLarge,
+    WriteResult,
+    _MISSING,
+)
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -55,7 +61,7 @@ class FileBackend(PayloadBackend):
         artifact_id: str,
         suffix: str = "",
         source_path: str | os.PathLike | None = None,
-    ) -> PayloadRef:
+    ) -> WriteResult:
         rel = f"{run_id}/{artifact_id}{suffix}"
         abs_path = self._resolve(rel)
         abs_path.parent.mkdir(parents=True, exist_ok=True)
@@ -85,7 +91,8 @@ class FileBackend(PayloadBackend):
                 raise PayloadTooLarge(
                     f"file payload {src_stat.st_size} bytes exceeds cap {FILE_MAX_BYTES}"
                 )
-            # D4 D-Atomic:tmp → chmod → stat → os.replace(永不直接写 abs_path)
+            # D4/FOR-12 D-Atomic:tmp → chmod → stat/hash → os.replace
+            # 永不在 hash 完成前触碰 abs_path,避免 metadata 半提交窗口。
             tmp_dest = abs_path.with_name(
                 f"{abs_path.name}.part.{os.getpid()}.{uuid.uuid4().hex[:8]}"
             )
@@ -101,17 +108,22 @@ class FileBackend(PayloadBackend):
                     raise PayloadTooLarge(
                         f"file payload {dest_size} bytes (post-copy) exceeds cap {FILE_MAX_BYTES}"
                     )
+                content_hash = hash_path(tmp_dest)
+                result = WriteResult(
+                    ref=PayloadRef(
+                        kind=PayloadKind.file,
+                        file_path=rel,
+                        size_bytes=dest_size,
+                    ),
+                    content_hash=content_hash,
+                )
                 # 同盘 atomic replace;tmp 被替换为 abs_path
                 os.replace(tmp_dest, abs_path)
             except BaseException:
                 # R4-F1 D-Atomic:任何异常清理 tmp,绝不触碰 abs_path
                 tmp_dest.unlink(missing_ok=True)
                 raise
-            return PayloadRef(
-                kind=PayloadKind.file,
-                file_path=rel,
-                size_bytes=dest_size,
-            )
+            return result
 
         # Value 分支(既有路径,完全保留)
         data = _coerce_bytes(value, suffix)
@@ -120,10 +132,14 @@ class FileBackend(PayloadBackend):
                 f"file payload {len(data)} bytes exceeds cap {FILE_MAX_BYTES}"
             )
         abs_path.write_bytes(data)
-        return PayloadRef(
-            kind=PayloadKind.file,
-            file_path=rel,
-            size_bytes=len(data),
+        return WriteResult(
+            ref=PayloadRef(
+                kind=PayloadKind.file,
+                file_path=rel,
+                size_bytes=len(data),
+            ),
+            # 保留 repo.put 旧语义:value 分支 hash arbitrary payload,不是文件 JSON bytes。
+            content_hash=hash_payload(value),
         )
 
     def read(self, ref: PayloadRef) -> bytes:

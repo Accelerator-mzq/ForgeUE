@@ -1,14 +1,14 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 10 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 15 项 legacy requirements 待办(不计入上面 14)。
+> 待办计 9 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 15 项 legacy requirements 待办(不计入上面 9)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (9)
+## Future Work (8)
 
 ### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
 
@@ -93,32 +93,6 @@ await 链中可以接受。未来若引入 GB 级 video 或长片场景,可加 a
 - **priority**: low
 - **related change**: (无)
 - **triggered_by**: (无)
-
-### `2026-05-21-repo-put-streaming-payload::repo-put-staging-hash-atomicity`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: `FileBackend.write` 改为 staging-hash 模式:对 `tmp_dest` 计算 hash 与
-size 完成验证后再 `os.replace(tmp, abs_path)`,通过 `WriteResult(ref,
-content_hash)` 或等价机制把 hash 透传给 `repo.put`,消除 `os.replace`
-成功后 `hash_path(final)` 失败 → 旧 valid payload 被覆盖但 metadata 没
-更新的半提交窗口。
-
-- **reason**: R6-F2 codex finding 暴露(2026-05-21 round 6 adversarial review):
-当前设计先 `os.replace(tmp, abs_path)` 再 `repo.put` 对 final dest 跑
-`hash_path`,replace 后 hash 失败会让旧 valid payload 被覆盖但 Artifact
-metadata 不更新。本 change scope 内已用 R4-F1 atomic write + R5-F3
-unlink-tmp 守门 copy 失败 path,**replace 后 hash 失败的具体场景** 在
-实际系统(本地磁盘 + 小文件)概率极低(`hash_path` 失败要么是 disk
-unmount / 文件被外部进程删,要么是 OOM / FS 异常)。Staging hash 改造
-要求 backend `write` 返回类型从 `PayloadRef` 变 `WriteResult` 双件,
-repo.put 信任 backend 给的 hash 不再自己算,scope 涉及 ABC / repo /
-3 backend 实装全跟,**留 follow-on `repo-put-staging-hash-atomicity`
-看实际生产中是否真有命中 case 再动**。本 change 进 apply 时主代理对
-实施者明确该限制。
-
-- **priority**: medium
-- **related change**: (无)
-- **triggered_by**: undefined#undefined
 
 ### `2026-05-21-repo-put-streaming-payload::worker-candidate-source-path-migration`
 

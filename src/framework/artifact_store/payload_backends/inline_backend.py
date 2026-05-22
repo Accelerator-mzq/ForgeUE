@@ -9,7 +9,13 @@ import os
 from pathlib import Path
 from typing import Any
 
-from framework.artifact_store.payload_backends.base import PayloadBackend, PayloadTooLarge, _MISSING
+from framework.artifact_store.hashing import hash_payload
+from framework.artifact_store.payload_backends.base import (
+    PayloadBackend,
+    PayloadTooLarge,
+    WriteResult,
+    _MISSING,
+)
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -35,7 +41,7 @@ class InlineBackend(PayloadBackend):
         artifact_id: str,
         suffix: str = "",
         source_path: str | os.PathLike | None = None,
-    ) -> PayloadRef:
+    ) -> WriteResult:
         # D10 守门:InlineBackend 不支持 source_path 零拷贝路径
         if source_path is not None:
             raise ValueError(
@@ -49,7 +55,10 @@ class InlineBackend(PayloadBackend):
             raise PayloadTooLarge(
                 f"inline payload {size} bytes exceeds cap {INLINE_MAX_BYTES}"
             )
-        return PayloadRef(kind=PayloadKind.inline, inline_value=value, size_bytes=size)
+        return WriteResult(
+            ref=PayloadRef(kind=PayloadKind.inline, inline_value=value, size_bytes=size),
+            content_hash=hash_payload(value),
+        )
 
     def read(self, ref: PayloadRef) -> Any:
         return ref.inline_value

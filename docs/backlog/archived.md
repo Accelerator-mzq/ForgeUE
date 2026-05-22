@@ -3,6 +3,24 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-22 FOR-12 completion
+
+### `2026-05-21-repo-put-streaming-payload::repo-put-staging-hash-atomicity`
+
+- **new_status**: completed
+- **reason**: `PayloadBackend.write` / `PayloadBackendRegistry.write` 已返回 `WriteResult(ref, content_hash)`;
+  `FileBackend.write(source_path=...)` 现在对 `tmp_dest` 完成 size + `hash_path(tmp_dest)`
+  验证后才 `os.replace(tmp_dest, abs_path)`,`ArtifactRepository.put` 直接使用 backend
+  透传的 `content_hash`,不再在 replace 后对 final dest 重算 hash。
+- **evidence**: `src/framework/artifact_store/payload_backends/base.py`,
+  `src/framework/artifact_store/payload_backends/file_backend.py`,
+  `src/framework/artifact_store/repository.py`,
+  `tests/unit/test_repo_put_streaming.py::test_source_path_hash_failure_preserves_existing_dest_and_metadata`,
+  `docs/contracts/artifact-contract.md`;
+  `python -m pytest tests/unit/test_payload_backends.py tests/unit/test_repo_put_streaming.py tests/unit/test_artifact_repository.py -q`
+  → `52 passed, 1 skipped`
+- **archived_by**: FOR-12 repo-put staging hash atomicity 2026-05-22
+
 ## 2026-05-22 backlog audit
 
 ### `2026-05-20-executor-async-rewrite::tbd-011-provider-kind-schema`

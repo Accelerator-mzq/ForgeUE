@@ -178,6 +178,67 @@ def test_source_modified_between_stat_and_copy_hashes_dest_not_source(repo, tmp_
     assert art.hash != hash_payload(original), "hash 不应来自被替换前的 source 内容"
 
 
+def test_source_path_hash_failure_preserves_existing_dest_and_metadata(repo, tmp_path):
+    """FOR-12 fence:source_path 写入必须先 hash staging,再 replace final。
+
+    旧实现先 os.replace(tmp, final),再由 repo.put 对 final 跑 hash_path。
+    一旦 replace 后 hash 失败,final payload 已变成新 bytes,但 Artifact metadata
+    仍停在旧 hash,形成半提交窗口。
+    """
+    existing = b"existing-valid-payload-do-not-corrupt"
+    new_payload = b"new-payload-that-must-not-replace-before-hash"
+    old_art = repo.put(
+        artifact_id="aid_atomic_hash",
+        value=existing,
+        artifact_type=_video_type(),
+        role=ArtifactRole.intermediate,
+        format="bin",
+        mime_type="application/octet-stream",
+        payload_kind=PayloadKind.file,
+        producer=_producer(),
+        file_suffix=".bin",
+    )
+    backend = repo.backend_registry.get(PayloadKind.file)
+    dest_abs = backend.absolute_path(old_art.payload_ref)
+    assert dest_abs.read_bytes() == existing
+
+    src = tmp_path / "new_source.bin"
+    src.write_bytes(new_payload)
+
+    import framework.artifact_store.repository as repo_mod
+    import framework.artifact_store.payload_backends.file_backend as fb_mod
+
+    # 同时 patch 两个 seam:
+    # - 当前旧实现会命中 repo_mod.hash_path(final)
+    # - FOR-12 新实现应命中 fb_mod.hash_path(tmp_dest),发生在 replace 前
+    with patch.object(repo_mod, "hash_path", side_effect=OSError("simulated hash failure")):
+        with patch.object(
+            fb_mod, "hash_path",
+            side_effect=OSError("simulated hash failure"),
+            create=True,
+        ):
+            with pytest.raises(OSError, match="simulated hash failure"):
+                repo.put(
+                    artifact_id="aid_atomic_hash",
+                    source_path=src,
+                    artifact_type=_video_type(),
+                    role=ArtifactRole.intermediate,
+                    format="bin",
+                    mime_type="application/octet-stream",
+                    payload_kind=PayloadKind.file,
+                    producer=_producer(),
+                    file_suffix=".bin",
+                )
+
+    assert dest_abs.read_bytes() == existing, (
+        "hash 失败发生时,既有 final payload 不应被新 payload 覆盖"
+    )
+    assert repo.get("aid_atomic_hash").hash == old_art.hash
+    assert repo.get("aid_atomic_hash").payload_ref.size_bytes == old_art.payload_ref.size_bytes
+    tmp_files = list(dest_abs.parent.glob(f"{dest_abs.name}.part.*"))
+    assert tmp_files == [], f"tmp 文件应被清理,但找到:{tmp_files}"
+
+
 def test_null_inline_payload_survives_resume(repo, tmp_path):
     """D10 + R3 resume seam fence:value=None inline payload 在 dump+load 全 round-trip 后仍存活。
 

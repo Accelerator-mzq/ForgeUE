@@ -88,9 +88,9 @@ tests/unit/test_repo_put_streaming.py::test_zero_copy_rss_bounded_200mb -v`
 
 ## Scenario: pytest 跑通
 
-**Given** `tests/unit/test_repo_put_streaming.py::test_cap_rejected_without_read`
-**When** 执行 `python -m pytest tests/unit/test_repo_put_streaming.py
-::test_cap_rejected_without_read -v`
+**Given** `tests/unit/test_payload_backends.py::test_file_backend_zero_copy_cap_rejection_without_read`
+**When** 执行 `python -m pytest tests/unit/test_payload_backends.py
+::test_file_backend_zero_copy_cap_rejection_without_read -v`
 **Then** 退出码 == 0
 **And** spy_copy2.called == False
 
@@ -140,5 +140,6 @@ patch 源模块对已绑定引用无效)。断言 spy 未被调用(确认未走�
   - `tests/unit/test_repo_put_streaming.py::test_value_source_path_mutually_exclusive`
   - `tests/unit/test_repo_put_streaming.py::test_source_path_requires_file_kind`
   - `tests/unit/test_repo_put_streaming.py::test_neither_value_nor_source_path`
-  - `tests/unit/test_repo_put_streaming.py::test_cap_rejected_without_read`
-- 集成 baseline:`python -m pytest -q` 跑全套,SHALL 不回退既有 1190+ 用例
+  - `tests/unit/test_payload_backends.py::test_file_backend_zero_copy_cap_rejection_without_read`
+  - `tests/unit/test_repo_put_streaming.py::test_source_path_hash_failure_preserves_existing_dest_and_metadata`
+- 集成 baseline:`python -m pytest -q` 跑全套,SHALL 不回退既有用例(不硬编码总数)

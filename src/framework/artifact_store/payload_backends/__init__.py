@@ -8,6 +8,7 @@ from framework.artifact_store.payload_backends.base import (
     PayloadBackend,
     PayloadBackendRegistry,
     PayloadTooLarge,
+    WriteResult,
     get_backend_registry,
 )
 from framework.artifact_store.payload_backends.inline_backend import InlineBackend
@@ -18,6 +19,7 @@ __all__ = [
     "PayloadBackend",
     "PayloadBackendRegistry",
     "PayloadTooLarge",
+    "WriteResult",
     "InlineBackend",
     "FileBackend",
     "BlobBackend",

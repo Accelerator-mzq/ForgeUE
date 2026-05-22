@@ -31,9 +31,12 @@
 当 `source_path` 不为空时(D9 D-HashSource-vs-Dest):
 - `repo.put` SHALL 把 `source_path` 透传到 `PayloadBackend.write` 的同名 keyword
   参数,**不**在 ArtifactRepository 层读 bytes
-- 内容哈希 SHALL 走 `hash_path(backend.absolute_path(ref))` 对**最终落盘 dest 文件**
-  stream 取样,**不**走 `hash_path(source_path)`(避免 source 在 stat / copy / hash
-  三阶段间被并发改导致漂移)
+- `PayloadBackend.write` SHALL 返回 `WriteResult(ref, content_hash)`,`repo.put`
+  SHALL 信任该 `content_hash`,不在 `os.replace` 后对 final dest 重算 hash
+- source_path 分支的内容哈希 SHALL 走 `hash_path(tmp_dest)` 对**staging 临时文件**
+  stream 取样,并且必须发生在 `os.replace(tmp_dest, abs_path)` 之前;
+  **不**走 `hash_path(source_path)`(避免 source 在 stat / copy / hash 三阶段间被
+  并发改导致漂移)
 - `PayloadRef.size_bytes` SHALL 等于 `Path(dest_abs).stat().st_size`(post-copy
   dest stat),与 hash 同源 — `FileBackend.write` 仅在 pre-copy 用 `src.stat()`
   做 fail-fast cap 校验,最终 size_bytes 取 dest stat
@@ -127,17 +130,23 @@ overhead`。
 **Then** 进程 RSS 增量 SHALL 小于 32 MB(chunk_size 默认 8 MB,加 Python 解释器
 overhead + sha256 内部状态;fence 阈值 32 MB 给运行时波动余量)
 
-## Requirement: PayloadBackend.write ABC 接受 source_path keyword
+## Requirement: PayloadBackend.write ABC 接受 source_path keyword 并返回 WriteResult
 
 **MODIFIED.** `framework.artifact_store.payload_backends.base.PayloadBackend.write`
 ABC 签名 SHALL 演进为
 `write(self, value: Any = _MISSING, *, run_id: str, artifact_id: str,
-suffix: str = "", source_path: str | os.PathLike | None = None) -> PayloadRef`
+suffix: str = "", source_path: str | os.PathLike | None = None) -> WriteResult`
 (D10 D-NullValueAmbiguity:`_MISSING` 是 `base.py` 顶层定义的私有 sentinel,
 **不**用 `None` 作 "未传" 默认值,因 `value=None` 是合法 inline JSON null payload)。
 
 `PayloadBackendRegistry.write` SHALL 把 `source_path` 透传到具体 backend,
-签名同步为 `write(self, kind, value: Any = _MISSING, **kwargs)`。
+签名同步为 `write(self, kind, value: Any = _MISSING, **kwargs) -> WriteResult`。
+`WriteResult` SHALL carry exactly:
+- `ref: PayloadRef`
+- `content_hash: str`
+
+`ArtifactRepository.put` SHALL 从 `WriteResult.ref` 构造 Artifact payload_ref,并从
+`WriteResult.content_hash` 构造 Artifact.hash。
 
 `InlineBackend.write` 与 `BlobBackend.write` SHALL 在收到非空 `source_path` 时
 raise `ValueError("source_path is only supported by FileBackend")`。两者也 SHALL
@@ -161,9 +170,10 @@ raise `ValueError("source_path is only supported by FileBackend")`。两者也 S
      (`tmp_dest = abs_path.with_name(f"{abs_path.name}.part.<pid>.<uuid8>")`)
      + `os.chmod(tmp_dest, 0o644)` 权限归一化(POSIX;Windows 由 NTFS 继承可
      conditional skip)+ `dest_size = tmp_dest.stat().st_size` 二次校验 +
+     **`content_hash = hash_path(tmp_dest)`** staging hash +
      **`os.replace(tmp_dest, abs_path)`** 原子替换 dest;**SHALL NOT** 直接
      `copyfile(src, abs_path)` 写 final path(中断会留半文件覆盖既有 valid payload)
-  4. **异常清理**:`copy2` / `os.replace` 任一抛异常 SHALL `tmp_dest.unlink
+  4. **异常清理**:`copyfile` / `hash_path(tmp_dest)` / `os.replace` 任一抛异常 SHALL `tmp_dest.unlink
      (missing_ok=True)` 清理 tmp,并 re-raise 原始异常;既有 `abs_path` 上 valid
      payload SHALL 保持未被破坏(同 artifact_id resume 场景关键)
   5. **Post-copy size 兜底**:若 `dest_size > FILE_MAX_BYTES`(race window 内
@@ -173,7 +183,7 @@ raise `ValueError("source_path is only supported by FileBackend")`。两者也 S
   替换 dest
 - `source_path` 不存在 → SHALL raise `FileNotFoundError`(传播 `Path.stat()` 原生
   异常);非 regular file → SHALL raise `ValueError`(R4-F3 显式 guard)
-- **返回的 `PayloadRef` size_bytes 来自 dest stat,与 hash 同源**(D9
+- **返回的 `WriteResult.ref` size_bytes 来自 dest stat,与 hash 同源**(D9
   D-HashSource-vs-Dest 不可妥协 invariant):
   `PayloadRef(kind=PayloadKind.file,
   file_path=<run_id>/<artifact_id><suffix>, size_bytes=<dest_stat.st_size>)`
@@ -182,8 +192,9 @@ raise `ValueError("source_path is only supported by FileBackend")`。两者也 S
   `PayloadRef.size_bytes == Path(dest).stat().st_size`
 
 当 `source_path` 为空时,既有 `_coerce_bytes(value, suffix)` → `write_bytes` 路径完全
-保留;两条分支在外部观察(返回值 + 落盘 bytes)上 SHALL 等价(byte-equal scenario
-下 source / dest hash / size 一致,但**契约约束 dest**)。
+保留;`WriteResult.content_hash` SHALL 沿用旧 `repo.put` 语义走 `hash_payload(value)`。
+两条分支在外部观察(落盘 bytes)上 SHALL 等价(byte-equal scenario 下 source /
+dest hash / size 一致,但**契约约束 dest**)。
 
 ## Scenario: zero-copy 路径不全量驻留内存
 
@@ -249,8 +260,11 @@ register。对 `inline` 直接 register(无判定步骤)。
   二选一拒签 + payload_kind 拒签 + 全部 5 个 Scenario(RSS fence 用
   `tracemalloc.get_traced_memory()` peak 或 `resource.getrusage().ru_maxrss` 增量,
   Windows 平台用 `psutil.Process().memory_info().rss` 增量)
+- 单元测试 `tests/unit/test_repo_put_streaming.py::test_source_path_hash_failure_preserves_existing_dest_and_metadata`
+  —— 覆盖 FOR-12 staging hash atomicity:hash 失败发生时 final payload 与旧 metadata
+  保持一致,tmp 清理
 - 单元测试 `tests/unit/test_artifact_repository.py` —— 扩 hash_path / hash_payload
   等价性 fence + drift 校验 fence
 - 单元测试 `tests/unit/test_payload_backends.py` —— 扩 InlineBackend / BlobBackend
   对非空 source_path raise ValueError fence + FileBackend cap 拒签 fence
-- baseline:`python -m pytest -q` 实测;1190+ 既有用例 SHALL 不回退
+- baseline:`python -m pytest -q` 实测;既有用例 SHALL 不回退(不硬编码总数)

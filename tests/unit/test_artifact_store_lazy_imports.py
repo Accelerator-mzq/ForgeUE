@@ -31,6 +31,7 @@ _PUBLIC_ALL_NAMES = (
     "PayloadBackendRegistry",
     "PayloadTooLarge",
     "VariantTracker",
+    "WriteResult",
     "get_backend_registry",
     "hash_inputs",
     "hash_payload",

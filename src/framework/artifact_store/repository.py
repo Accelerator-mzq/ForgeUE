@@ -92,21 +92,16 @@ class ArtifactRepository:
                 f"repo.put: source_path requires payload_kind=file (got {payload_kind!r})"
             )
 
-        # 落盘(backend 透传 source_path keyword)
-        ref = self._registry.write(
+        # 落盘并接收 backend 已验证的内容 hash。
+        # FOR-12:source_path 分支的 hash 在 staging tmp 上完成,repo 不再
+        # 在 replace 后重算 final hash,避免 payload/metadata 半提交窗口。
+        result = self._registry.write(
             payload_kind, value,
             run_id=producer.run_id, artifact_id=artifact_id, suffix=file_suffix,
             source_path=source_path,
         )
-
-        # 哈希分两路(D9 D-HashSource-vs-Dest):
-        # source_path 路径取 dest 文件哈希,与落盘数据同源(隔离 source 并发改)
-        # value 路径沿用 hash_payload(value) 既有语义
-        if source_path is not None:
-            dest_abs = self._registry.get(payload_kind).absolute_path(ref)
-            content_hash = hash_path(dest_abs)
-        else:
-            content_hash = hash_payload(value)
+        ref = result.ref
+        content_hash = result.content_hash
 
         art = Artifact(
             artifact_id=artifact_id,

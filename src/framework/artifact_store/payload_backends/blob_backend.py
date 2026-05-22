@@ -5,7 +5,11 @@ import os
 from pathlib import Path
 from typing import Any
 
-from framework.artifact_store.payload_backends.base import PayloadBackend, _MISSING
+from framework.artifact_store.payload_backends.base import (
+    PayloadBackend,
+    WriteResult,
+    _MISSING,
+)
 from framework.core.artifact import PayloadRef
 from framework.core.enums import PayloadKind
 
@@ -23,7 +27,7 @@ class BlobBackend(PayloadBackend):
         artifact_id: str,
         suffix: str = "",
         source_path: str | os.PathLike | None = None,
-    ) -> PayloadRef:
+    ) -> WriteResult:
         # D10 守门:BlobBackend 不支持 source_path 零拷贝路径
         if source_path is not None:
             raise ValueError(

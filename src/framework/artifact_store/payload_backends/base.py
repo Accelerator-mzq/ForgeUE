@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,14 @@ from framework.core.enums import PayloadKind
 
 class PayloadTooLarge(Exception):
     """Raised when payload size exceeds backend cap."""
+
+
+@dataclass(frozen=True)
+class WriteResult:
+    """Backend 写入结果:PayloadRef + 已验证落盘内容 hash。"""
+
+    ref: PayloadRef
+    content_hash: str
 
 
 # D10 D-NullValueAmbiguity 私有 sentinel — 用 identity 区分 "未传" vs "显式 None"
@@ -33,9 +42,9 @@ class PayloadBackend(ABC):
         artifact_id: str,
         suffix: str = "",
         source_path: str | os.PathLike | None = None,
-    ) -> PayloadRef:
+    ) -> WriteResult:
         """Persist *value* (or zero-copy from *source_path* on FileBackend) and
-        return a PayloadRef that can later be read back.
+        return a WriteResult carrying PayloadRef + content hash.
 
         Only FileBackend honors *source_path*; InlineBackend / BlobBackend raise.
         `value=_MISSING` is the unset sentinel; `value=None` is a legitimate
@@ -73,7 +82,7 @@ class PayloadBackendRegistry:
             raise KeyError(f"No backend registered for kind={kind}")
         return self._backends[kind]
 
-    def write(self, kind: PayloadKind, value: Any = _MISSING, **kwargs: Any) -> PayloadRef:
+    def write(self, kind: PayloadKind, value: Any = _MISSING, **kwargs: Any) -> WriteResult:
         return self.get(kind).write(value, **kwargs)
 
     def read(self, ref: PayloadRef) -> Any:

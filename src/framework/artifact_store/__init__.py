@@ -7,7 +7,7 @@ get a clean import surface without paying the cost of write-side machinery.
 
 Eager: hash_inputs / hash_payload (zero framework deps, used by hash recompute).
 Lazy: ArtifactRepository, PayloadBackend / PayloadBackendRegistry / PayloadTooLarge /
-get_backend_registry, LineageIndex, VariantTracker.
+WriteResult / get_backend_registry, LineageIndex, VariantTracker.
 
 See openspec/specs/artifact-contract/spec.md "Package import surface is lazy-load
 by default" for the behavioral contract.
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         PayloadBackend,
         PayloadBackendRegistry,
         PayloadTooLarge,
+        WriteResult,
         get_backend_registry,
     )
     from framework.artifact_store.repository import ArtifactRepository
@@ -35,6 +36,7 @@ _LAZY_PAYLOAD_BACKEND_NAMES = frozenset(
         "PayloadBackend",
         "PayloadBackendRegistry",
         "PayloadTooLarge",
+        "WriteResult",
         "get_backend_registry",
     }
 )
@@ -83,6 +85,7 @@ __all__ = [
     "PayloadBackendRegistry",
     "PayloadTooLarge",
     "VariantTracker",
+    "WriteResult",
     "get_backend_registry",
     "hash_inputs",
     "hash_payload",

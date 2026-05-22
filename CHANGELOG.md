@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FOR-12 repo.put staging hash atomicity**:`PayloadBackend.write` / registry write 返回
+  `WriteResult(ref, content_hash)`;`FileBackend.write(source_path=...)` 改为先对
+  staging `tmp_dest` 完成 size + `hash_path(tmp_dest)` 验证,再 `os.replace` 到 final
+  dest,消除 replace 后 hash 失败导致 payload / metadata 半提交窗口。同步 retired
+  active backlog `repo-put-staging-hash-atomicity`。
 - **项目工作流迁移**:ForgeUE_codex 主工作流从项目内 forge 切换为 Superpowers-first。长期 backlog / contracts / change archive 内容已复制到 `docs/backlog` / `docs/contracts` / `docs/archive/forge_changes`;旧 `forge/` 目录不由 Codex 删除,由用户按人工清单处理。
 
 ### Removed

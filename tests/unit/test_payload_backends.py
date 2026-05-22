@@ -21,7 +21,8 @@ from framework.core.enums import PayloadKind
 
 def test_inline_roundtrip_small_json():
     b = InlineBackend()
-    ref = b.write({"k": "v", "n": 3}, run_id="r1", artifact_id="a1")
+    result = b.write({"k": "v", "n": 3}, run_id="r1", artifact_id="a1")
+    ref = result.ref
     assert ref.kind == PayloadKind.inline
     assert b.read(ref) == {"k": "v", "n": 3}
     assert b.exists(ref)
@@ -38,7 +39,7 @@ def test_inline_200_byte_json_acceptance():
     """Plan §F0-2 acceptance: 200 byte JSON round-trips through inline."""
     b = InlineBackend()
     payload = {"field_" + str(i): i for i in range(5)}
-    ref = b.write(payload, run_id="r_acc", artifact_id="tiny")
+    ref = b.write(payload, run_id="r_acc", artifact_id="tiny").ref
     assert ref.size_bytes < 64 * 1024
     assert b.read(ref) == payload
 
@@ -48,7 +49,7 @@ def test_inline_200_byte_json_acceptance():
 def test_file_roundtrip_bytes(tmp_path: Path):
     b = FileBackend(root=str(tmp_path))
     data = b"\x89PNG\r\n\x1a\nsomebytes"
-    ref = b.write(data, run_id="run_1", artifact_id="img_1", suffix=".png")
+    ref = b.write(data, run_id="run_1", artifact_id="img_1", suffix=".png").ref
     assert ref.kind == PayloadKind.file
     assert ref.file_path == "run_1/img_1.png"
     assert b.read(ref) == data
@@ -58,14 +59,14 @@ def test_file_roundtrip_bytes(tmp_path: Path):
 def test_file_roundtrip_structured_becomes_json(tmp_path: Path):
     b = FileBackend(root=str(tmp_path))
     payload = {"k": [1, 2, 3]}
-    ref = b.write(payload, run_id="r1", artifact_id="spec", suffix=".json")
+    ref = b.write(payload, run_id="r1", artifact_id="spec", suffix=".json").ref
     raw = b.read(ref).decode("utf-8")
     assert json.loads(raw) == payload
 
 
 def test_file_rejects_path_traversal(tmp_path: Path):
     b = FileBackend(root=str(tmp_path))
-    data = b.write(b"x", run_id="r1", artifact_id="a", suffix=".bin")
+    data = b.write(b"x", run_id="r1", artifact_id="a", suffix=".bin").ref
     data.file_path = "../outside.bin"
     with pytest.raises(ValueError):
         b.read(data)
@@ -75,7 +76,7 @@ def test_file_10mb_image_acceptance(tmp_path: Path):
     """Plan §F0-2 acceptance: 10MB binary round-trips through file backend."""
     b = FileBackend(root=str(tmp_path))
     data = b"\x00" * (10 * 1024 * 1024)
-    ref = b.write(data, run_id="run_acc", artifact_id="big_img", suffix=".bin")
+    ref = b.write(data, run_id="run_acc", artifact_id="big_img", suffix=".bin").ref
     assert ref.size_bytes == 10 * 1024 * 1024
     read_back = b.read(ref)
     assert len(read_back) == 10 * 1024 * 1024
@@ -105,8 +106,10 @@ def test_blob_not_implemented():
 
 def test_registry_dispatch(tmp_path: Path):
     reg = get_backend_registry(artifact_root=str(tmp_path))
-    inline_ref = reg.write(PayloadKind.inline, {"x": 1}, run_id="r1", artifact_id="a1")
-    file_ref = reg.write(PayloadKind.file, b"hello", run_id="r1", artifact_id="a2", suffix=".txt")
+    inline_ref = reg.write(PayloadKind.inline, {"x": 1}, run_id="r1", artifact_id="a1").ref
+    file_ref = reg.write(
+        PayloadKind.file, b"hello", run_id="r1", artifact_id="a2", suffix=".txt",
+    ).ref
     assert reg.read(inline_ref) == {"x": 1}
     assert reg.read(file_ref) == b"hello"
     assert reg.exists(inline_ref)
@@ -190,10 +193,11 @@ def test_file_backend_zero_copy_byte_equal(tmp_path):
     payload = b"forge-zero-copy-payload" * 1024  # ~24 KB
     src.write_bytes(payload)
     b = FileBackend(root=str(tmp_path / "store"))
-    ref = b.write(  # 不传 value(留 _MISSING),只传 source_path
+    result = b.write(  # 不传 value(留 _MISSING),只传 source_path
         run_id="r1", artifact_id="aid_zc", suffix=".bin",
         source_path=src,
     )
+    ref = result.ref
     assert ref.kind == PayloadKind.file
     dest_abs = b.absolute_path(ref)
     # D9 invariant:size_bytes 取 dest stat
@@ -258,13 +262,13 @@ def test_file_backend_zero_copy_normalizes_permissions(tmp_path):
     if sys.platform != "win32":
         src.chmod(0o444)
     b = FileBackend(root=str(tmp_path / "store"))
-    ref = b.write(run_id="r", artifact_id="aid_ro", suffix=".bin", source_path=src)
+    ref = b.write(run_id="r", artifact_id="aid_ro", suffix=".bin", source_path=src).ref
     dest_abs = b.absolute_path(ref)
     assert dest_abs.read_bytes() == b"payload-from-readonly-source"
     # 重复写同 artifact_id 也应该成功
     new_src = tmp_path / "rewrite_source.bin"
     new_src.write_bytes(b"rewritten-payload")
-    ref2 = b.write(run_id="r", artifact_id="aid_ro", suffix=".bin", source_path=new_src)
+    ref2 = b.write(run_id="r", artifact_id="aid_ro", suffix=".bin", source_path=new_src).ref
     assert b.absolute_path(ref2).read_bytes() == b"rewritten-payload"
 
 
@@ -274,7 +278,7 @@ def test_file_backend_zero_copy_failure_preserves_existing_dest(tmp_path):
     existing = b"existing-valid-payload-do-not-corrupt"
     ref_old = b.write(
         value=existing, run_id="r", artifact_id="aid_atomic", suffix=".bin",
-    )
+    ).ref
     dest_abs = b.absolute_path(ref_old)
     assert dest_abs.read_bytes() == existing
 
@@ -306,7 +310,7 @@ def test_file_backend_post_copy_cap_overflow_preserves_existing_dest(tmp_path):
     b = FileBackend(root=str(tmp_path / "store"))
     # 先写一个既有 valid payload 到 abs_path
     existing = b"existing-valid-payload-do-not-corrupt"
-    ref_old = b.write(value=existing, run_id="r", artifact_id="aid_postcp", suffix=".bin")
+    ref_old = b.write(value=existing, run_id="r", artifact_id="aid_postcp", suffix=".bin").ref
     dest_abs = b.absolute_path(ref_old)
     assert dest_abs.read_bytes() == existing
 
