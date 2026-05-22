@@ -139,9 +139,9 @@ class GenerateImageExecutor(StepExecutor):
         ).hexdigest()[:8]
         for i, cand in enumerate(candidates):
             aid = f"{ctx.run.run_id}_{ctx.step.step_id}_cand_{spec_fp}_{i}"
+            payload_kwargs = _candidate_payload_kwargs(cand)
             art = ctx.repository.put(
                 artifact_id=aid,
-                value=cand.data,
                 artifact_type=ArtifactType(
                     modality="image", shape="raster", display_name="concept_image",
                 ),
@@ -183,9 +183,10 @@ class GenerateImageExecutor(StepExecutor):
                 validation=ValidationRecord(
                     status="passed",
                     checks=[ValidationCheck(name="image.bytes_nonempty",
-                                            result="passed" if cand.data else "failed")],
+                                            result="passed" if _candidate_payload_nonempty(cand) else "failed")],
                 ),
                 file_suffix=f".{cand.format}",
+                **payload_kwargs,
             )
             image_arts.append(art)
             image_ids.append(aid)
@@ -501,6 +502,20 @@ def _apply_revision_hint(spec: dict[str, Any], hint: dict[str, Any]) -> dict[str
     if isinstance(overrides, dict):
         merged.update(overrides)
     return merged
+
+
+def _candidate_payload_kwargs(cand: ImageCandidate) -> dict[str, Any]:
+    """FOR-13:本地 Comfy 输出优先传 source_path,API/fake 候选保持 bytes 路径。"""
+    if cand.source_path:
+        return {"source_path": cand.source_path}
+    return {"value": cand.data}
+
+
+def _candidate_payload_nonempty(cand: ImageCandidate) -> bool:
+    if cand.source_path:
+        path = Path(cand.source_path)
+        return path.is_file() and path.stat().st_size > 0
+    return bool(cand.data)
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:

@@ -398,12 +398,13 @@ json.dumps({
 # ---------------------------------------------------------------------------
 
 
-def test_generate_video_mp4_extension_detection_reads_bytes(tmp_path):
-    """mp4 extension OK,通过 BMFF strict 5-tuple → VideoCandidate。"""
+def test_generate_video_mp4_extension_detection_records_source_path_without_full_read(tmp_path):
+    """mp4 extension OK,通过 BMFF strict 5-tuple → VideoCandidate(source_path=...)。"""
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "wan_test.mp4"
     _make_minimal_mp4(fake_video)
-    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy video worker must not full-read output")):
         candidates = worker.generate_video(
             spec={"comfy_workflow": "Vedio/test", "comfy_params": {"positive_prompt": "x"}},
             num_candidates=1,
@@ -411,7 +412,8 @@ def test_generate_video_mp4_extension_detection_reads_bytes(tmp_path):
     assert len(candidates) == 1
     cand = candidates[0]
     assert cand.format == "mp4"
-    assert cand.data == fake_video.read_bytes()
+    assert cand.source_path == str(fake_video)
+    assert cand.data[4:8] == b"ftyp"
 
 
 def test_generate_video_unsupported_extension_mov_raises_unsupported_response(tmp_path):

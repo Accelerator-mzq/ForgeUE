@@ -251,8 +251,9 @@ register。对 `inline` 直接 register(无判定步骤)。
   `FileBackend.write` 保持同步实现
 - 不动 inline / blob backend 内部实现(只在 ABC 层加 keyword 参数透传 + raise
   guard)
-- 不迁移 18 处既有 `repo.put` 调用站点 —— `source_path` 为 opt-in,既有 value 路径
-  完全向后兼容
+- Phase 1 曾不迁移既有 `repo.put` 调用站点;FOR-13 已迁移 image / mesh /
+  audio / video generator 的本地 ComfyUI source_path 路径。既有 value 路径仍完全
+  向后兼容,供 fake / 远端 worker 与无 source_path 的候选对象使用。
 
 ## Validation
 

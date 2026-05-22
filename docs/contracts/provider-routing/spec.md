@@ -94,7 +94,7 @@ Each non-OpenAI protocol family SHALL ship its own adapter / worker module: Dash
 
 - GIVEN a step whose `provider_policy.prepared_routes` contains `ResolvedRoute(model="comfy/local-audio", ...)`; `step.type=StepType.generate`; `step.capability_ref="audio.t2a"`; `step.depends_on=[]`
 - WHEN `GenerateAudioExecutor._should_use_comfy_worker_path(ctx)` returns True
-- THEN the executor takes the comfy-worker dispatch branch and calls `_generate_via_comfy_worker(...)` which constructs `ComfyAgentWorker(model_id="comfy/local-audio", ...)` inline (NO source bytes write to ComfyUI input/, NO `_resolve_source_image` call, NO `FORGEUE_COMFY_INPUT_DIR` read) and invokes `worker.generate_audio(spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s)`; `_capability="audio"` is inferred; output validation requires `outputs.audio` non-empty and rejects `outputs.images / glb / video`; returned `AudioCandidate`s carry comfy provenance in `metadata={comfy_manifest, comfy_params_snapshot, comfy_capability="audio", comfy_original_filename, comfy_subprocess_run_metadata}` and are persisted via `repo.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})`
+- THEN the executor takes the comfy-worker dispatch branch and calls `_generate_via_comfy_worker(...)` which constructs `ComfyAgentWorker(model_id="comfy/local-audio", ...)` inline (NO source bytes write to ComfyUI input/, NO `_resolve_source_image` call, NO `FORGEUE_COMFY_INPUT_DIR` read) and invokes `worker.generate_audio(spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s)`; `_capability="audio"` is inferred; output validation requires `outputs.audio` non-empty and rejects `outputs.images / glb / video`; returned `AudioCandidate`s carry comfy provenance in `metadata={comfy_manifest, comfy_params_snapshot, comfy_capability="audio", comfy_original_filename, comfy_subprocess_run_metadata}` plus `source_path`, and are persisted via `repo.put(source_path=cand.source_path, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})` when present, falling back to byte-value persistence for fake / remote candidates
 
 ## Requirement: Wildcard adapter is registered last
 
@@ -260,13 +260,13 @@ All three methods share a private helper `_run_subprocess_and_validate(spec, tim
 
 **Given** environment variables `FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts`, `FORGEUE_COMFY_PYTHON_EXE` unset, `FORGEUE_COMFY_LIFECYCLE` unset; resolved route `ResolvedRoute(model="comfy/local", ...)`; `ctx.run.run_id="run_abc"`; `ctx.task.project_id="proj_comfy_smoke"`; `ctx.run_dir=Path("artifacts/2026-05-02/run_abc")`
 **When** `GenerateImageExecutor._generate_via_worker` constructs `worker = ComfyAgentWorker(scripts_dir=..., model_id="comfy/local", ...)` and calls `worker.generate(spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl", ...}, num_candidates=1, seed=42, timeout_s=300)`
-**Then** the worker's `_capability == "image"`; the worker spawns subprocess and reads PNG bytes from `outputs.images`; returns `list[ImageCandidate]`
+**Then** the worker's `_capability == "image"`; the worker spawns subprocess, copies each PNG into the run's `comfy/` directory, validates the PNG header, and returns `list[ImageCandidate]` with `source_path` pointing at the in-tree copy
 
 ## Scenario: ComfyAgentWorker (mesh) calls generate_mesh with source_image_filename injected (regression)
 
 **Given** environment variables as above + `FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input`; resolved route `ResolvedRoute(model="comfy/local-mesh", ..., pricing=None)`; an upstream image step has produced source bytes resolved via `_resolve_source_image(ctx)` and written to `D:/AI/ComfyUI/apps/official-main-git-v092/input/forgeue_abc123def456.png`
 **When** `GenerateMeshExecutor._generate_via_comfy_worker` constructs `worker = ComfyAgentWorker(model_id="comfy/local-mesh", ...)` and calls `worker.generate_mesh(spec=..., source_image_filename="forgeue_abc123def456.png", ...)`
-**Then** the worker's `_capability == "mesh"`; reads GLB bytes from `outputs.glb`; returns `list[MeshCandidate]`
+**Then** the worker's `_capability == "mesh"`; validates the GLB header from `outputs.glb` without full-reading the payload and returns `list[MeshCandidate]` with `source_path` pointing at the ComfyUI output file
 
 ## Scenario: ComfyAgentWorker (audio) calls generate_audio with prompt embedded in spec.comfy_params (NEW for this change)
 
@@ -414,7 +414,7 @@ The system SHALL document that `CancelledError` propagation does NOT reach `Comf
 
 ## Requirement: ComfyAgentWorker rejects non-image outputs in the image-generation path
 
-The system SHALL treat a non-empty `outputs.audio` or `outputs.glb` field in the agent CLI response as `WorkerUnsupportedResponse` when invoked through `ComfyAgentWorker` in the `image.generation` capability path. Mesh, audio, and video workflows are out of scope for this change; mixing them into the image generation path would silently drop produced bytes (image executor only constructs `ImageCandidate`s) and would skip the modality-specific metadata required by the `artifact-contract` mesh / audio requirements. A future change SHALL introduce dedicated mesh / audio paths before non-empty values in those fields are accepted.
+The system SHALL treat a non-empty `outputs.audio` or `outputs.glb` field in the agent CLI response as `WorkerUnsupportedResponse` when invoked through `ComfyAgentWorker` in the `image.generation` capability path. Mesh, audio, and video workflows have dedicated capability paths; mixing them into the image generation path would silently drop modality-specific metadata required by the `artifact-contract` mesh / audio / video requirements.
 
 ## Scenario: Workflow accidentally selected that produces a GLB raises rather than silently dropping it
 
@@ -595,7 +595,7 @@ else:
     candidates = self._worker.generate(source_image_bytes=source_bytes, spec=spec, ...)
 ```
 
-The existing constructor-injected `HunyuanTokenhubMeshWorker` / `Tripo3DMeshWorker` path SHALL NOT be invoked when `comfy/local-mesh` is the route. The downstream `repo.put` loop (`generate_mesh.py:114-160`) SHALL be UNCHANGED — both comfy-mesh and remote-mesh `MeshCandidate`s share the same persistence path, with `metadata={..., "worker_metadata": dict(cand.metadata)}` carrying provenance per the artifact-contract spec.
+The existing constructor-injected `HunyuanTokenhubMeshWorker` / `Tripo3DMeshWorker` path SHALL NOT be invoked when `comfy/local-mesh` is the route. The downstream `repo.put` loop SHALL prefer `source_path` for comfy-mesh candidates and keep byte-value persistence for remote mesh candidates, with `metadata={..., "worker_metadata": dict(cand.metadata)}` carrying provenance per the artifact-contract spec.
 
 This is a NEW dispatch mode for `GenerateMeshExecutor` parallel to the executor-side branch pattern established by `GenerateImageExecutor` for `comfy/local`: mesh dispatch now supports BOTH constructor-injected worker (remote Hunyuan3D / Tripo3D, dispatched by injection at `framework.run` time, see `generate_mesh.py:194`) AND executor-side model-id branch (local ComfyUI mesh, dispatched by route inspection in `execute`). **The image-to-mesh contract from `MeshWorker` ABC is preserved**: ComfyUI mesh sources its image from the same `_resolve_source_image(ctx)` priority chain (verdict / selected_set / direct image / candidate_set, see `generate_mesh.py:233-301`) as Hunyuan / Tripo3D — no standalone (text-to-mesh) mesh worker mode is introduced (B2 codex finding accepted-codex 2026-05-03: design D7 chose image-to-mesh path to avoid extending `MeshWorker` ABC and to keep lineage uniform across mesh worker brands).
 
@@ -712,7 +712,7 @@ The wrap SHALL preserve the original ComfyWorker exception via `from exc` for di
 
 The system SHALL establish an audio worker baseline at `src/framework/providers/workers/audio_worker.py` that mirrors the structure of `mesh_worker.py` (sibling to `MeshWorker` / `MeshCandidate`):
 
-- `AudioCandidate` dataclass with required fields: `data: bytes` (audio file bytes), `format: Literal["flac", "mp3", "wav"]` (lowercase, no leading dot), `metadata: dict[str, Any]` (provenance ONLY:exactly the 5 `comfy_*` keys `comfy_manifest`, `comfy_params_snapshot`, `comfy_capability="audio"`, `comfy_original_filename`, `comfy_subprocess_run_metadata` — F-Plan-R7-A round-7 plan 修订:**delete** optional `duration_seconds` / `sample_rate` / `format_detected` keys from metadata to avoid double-source conflict with `AudioCandidate.duration_seconds` / `.sample_rate` top-level fields per F3 round-1 design D5 single-source decision), `duration_seconds: float | None = None` (top-level field, single-source per F3 round-1), `sample_rate: int | None = None` (top-level field, single-source per F3 round-1); the `metadata` field is the source of `Artifact.metadata.worker_metadata` after `repo.put` per the Phase 1 mesh `MeshCandidate.metadata["worker_metadata"]` modeling
+- `AudioCandidate` dataclass with required fields: `data: bytes` (full bytes for fake / remote workers; Comfy local path stores header bytes only), `format: Literal["flac", "mp3", "wav"]` (lowercase, no leading dot), `metadata: dict[str, Any]` (provenance ONLY:exactly the 5 `comfy_*` keys `comfy_manifest`, `comfy_params_snapshot`, `comfy_capability="audio"`, `comfy_original_filename`, `comfy_subprocess_run_metadata` — F-Plan-R7-A round-7 plan 修订:**delete** optional `duration_seconds` / `sample_rate` / `format_detected` keys from metadata to avoid double-source conflict with `AudioCandidate.duration_seconds` / `.sample_rate` top-level fields per F3 round-1 design D5 single-source decision), `duration_seconds: float | None = None` (top-level field, single-source per F3 round-1), `sample_rate: int | None = None` (top-level field, single-source per F3 round-1), `source_path: str | None = None` (FOR-13 local file persistence path); the `metadata` field is the source of `Artifact.metadata.worker_metadata` after `repo.put` per the Phase 1 mesh `MeshCandidate.metadata["worker_metadata"]` modeling
 
 - `AudioWorker(ABC)` abstract base class with one `@abstractmethod`:
 
@@ -791,7 +791,7 @@ The system SHALL extend the executor table with `GenerateAudioExecutor` (new fil
   1. Constructs `ComfyAgentWorker(scripts_dir=..., model_id="comfy/local-audio", run_id=ctx.run.run_id, project_id=ctx.task.project_id, artifacts_dir=ctx.run_dir, default_lifecycle="none")` inline (mirrors mesh path)
   2. Runs an internal retry loop bounded by `(ctx.step.retry_policy or RetryPolicy()).max_attempts` (default 2; F-Plan-R2-A round-2 plan 修订:`retry_policy` is a top-level Step field per `src/framework/core/task.py:30-42` — NOT under `step.config`; mirrors mesh implementation `policy = ctx.step.retry_policy or RetryPolicy()` at `src/framework/runtime/executors/generate_mesh.py:146` and `:191`. Local audio is NOT premium per the `pricing.per_task_usd > 0` boundary, so the executor MAY retry without ADR-007 single-attempt restrictions)
   3. Calls `worker.generate_audio(spec=spec, num_candidates=num, seed=seed, timeout_s=timeout_s)` and returns the resulting `list[AudioCandidate]`
-  4. Persists each candidate via `repo.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})` (mirrors mesh `repo.put` with `file_suffix=".glb"`; format-aware `file_suffix` keeps the artifact tree extensions consistent with payload bytes)
+  4. Persists each candidate via `repo.put(source_path=cand.source_path, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})` when `cand.source_path` is present, falling back to byte-value persistence for fake / remote candidates (mirrors mesh `repo.put` with `file_suffix=".glb"`; format-aware `file_suffix` keeps the artifact tree extensions consistent with payload bytes)
 
 - The executor SHALL NOT call `_resolve_source_image(ctx)` or any source-bytes resolution helper — audio is text-to-audio (no upstream image step required); the bundle's `step.depends_on` (top-level field per task.py:41) SHALL be empty for `audio.t2a` capability_ref steps using `audio_local` alias unless the bundle explicitly pipelines audio from another step (out of scope for this change). Per design D7, the prompt and all manifest-specific parameters live entirely in `spec["comfy_params"]` and the executor SHALL NOT inject any params (in contrast to mesh which injects `comfy_params["input_image"] = "<filename>"` per `comfy-agent-cli-mesh-audio-video-adoption` design D8)
 
@@ -801,7 +801,7 @@ The system SHALL extend the executor table with `GenerateAudioExecutor` (new fil
 
 **Given** a step whose `provider_policy.prepared_routes` contains `ResolvedRoute(model="comfy/local-audio", api_key_env=None, api_base=None, kind="audio", pricing=None)`; `step.type=StepType.generate`; `step.capability_ref="audio.t2a"`; `step.depends_on=[]` (top-level per task.py:41); `step.config.spec={"comfy_workflow": "Audio_Workflows/audio_stable_audio_example", "comfy_params": {"text": "uplifting electronic music, 130bpm", "duration_seconds": 10.0, "seed": 42, "steps": 50}, "comfy_lifecycle": "none"}`
 **When** `GenerateAudioExecutor._should_use_comfy_worker_path(ctx)` returns True
-**Then** the executor takes the comfy-worker dispatch branch and calls `_generate_via_comfy_worker(...)` which constructs `ComfyAgentWorker(model_id="comfy/local-audio", ...)` inline (NO `_resolve_source_image` call, NO source bytes write to ComfyUI input/) and invokes `worker.generate_audio(spec=..., num_candidates=1, seed=42, timeout_s=300)`; `_capability="audio"` is inferred; output validation requires `outputs.audio` non-empty and rejects `outputs.images / glb / video`; returned `AudioCandidate`s carry comfy provenance in `metadata={comfy_manifest, comfy_params_snapshot, comfy_capability="audio", comfy_original_filename, ...}` and are persisted via `repo.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})`
+**Then** the executor takes the comfy-worker dispatch branch and calls `_generate_via_comfy_worker(...)` which constructs `ComfyAgentWorker(model_id="comfy/local-audio", ...)` inline (NO `_resolve_source_image` call, NO source bytes write to ComfyUI input/) and invokes `worker.generate_audio(spec=..., num_candidates=1, seed=42, timeout_s=300)`; `_capability="audio"` is inferred; output validation requires `outputs.audio` non-empty and rejects `outputs.images / glb / video`; returned `AudioCandidate`s carry comfy provenance in `metadata={comfy_manifest, comfy_params_snapshot, comfy_capability="audio", comfy_original_filename, ...}` plus `source_path`, and are persisted via `repo.put(source_path=cand.source_path, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", metadata={"worker_metadata": dict(cand.metadata), ...})` when present
 
 ## Scenario: GenerateAudioExecutor does NOT call _resolve_source_image even if a depends_on is present
 
@@ -809,7 +809,7 @@ The system SHALL extend the executor table with `GenerateAudioExecutor` (new fil
 **When** `GenerateAudioExecutor.execute(ctx)` runs
 **Then** the executor does NOT call `_resolve_source_image(ctx)` (audio has no source image protocol); upstream Artifacts MAY be referenced for lineage purposes but are NOT loaded as input bytes; `tests/unit/test_generate_audio_comfy.py::test_executor_no_source_image_resolution` fences absence of source-bytes wiring
 
-## Requirement: ComfyAgentWorker.generate_audio reads audio bytes and detects format from file extension
+## Requirement: ComfyAgentWorker.generate_audio reads audio header bytes and detects format from file extension
 
 The system SHALL implement `ComfyAgentWorker.generate_audio(spec: dict, num_candidates: int, seed: int | None, timeout_s: float) -> list[AudioCandidate]` as the audio-mode entry point. The method SHALL:
 
@@ -823,15 +823,15 @@ The system SHALL implement `ComfyAgentWorker.generate_audio(spec: dict, num_cand
      - If `not src.is_file()`: raise `WorkerUnsupportedResponse(f"ComfyAgentWorker: outputs.audio path does not exist: {src}")`
      - If `src.is_symlink()`: raise `WorkerUnsupportedResponse(f"ComfyAgentWorker: outputs.audio path is a symlink, refusing to follow: {src}")`
    - Detect the format by `src.suffix.lower()[1:]` (strip leading dot); the bare format string MUST be in the whitelist `{"flac", "mp3", "wav"}`; if the extension is not in the whitelist, raise `WorkerUnsupportedResponse` listing the unsupported extension and the supported whitelist (the wrapper layer at `_generate_via_comfy_worker` will translate this to `AudioWorkerUnsupportedResponse`)
-   - Read the file bytes via `data = src.read_bytes()`
+   - Read only the first 64 KB via `_read_prefix(src, 64 * 1024)` for magic-byte validation and best-effort metadata parsing; full payload bytes are not loaded into memory on the Comfy local path
 
 4. **Magic bytes second-pass validation** (F5 round-2 修订:mandatory, mirrors Phase 1 mesh FR-WORKER-006 GLB magic gate):
-   - `flac` → `data[:4] == b"fLaC"` (FLAC magic per RFC 9639)
-   - `mp3` → `data[:3] == b"ID3"` OR `data[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2")` (ID3v2 tag or MPEG frame sync)
-   - `wav` → `data[:4] == b"RIFF"` AND `data[8:12] == b"WAVE"` (RIFF chunk + WAVE format)
-   - On mismatch: raise `WorkerUnsupportedResponse(f"audio format mismatch: extension={ext} but magic bytes={data[:12].hex()}")` (the wrapper layer at `_generate_via_comfy_worker` will translate this to `AudioWorkerUnsupportedResponse`)
+   - `flac` → `audio_head[:4] == b"fLaC"` (FLAC magic per RFC 9639)
+   - `mp3` → `audio_head[:3] == b"ID3"` OR `audio_head[:2] in (b"\xff\xfb", b"\xff\xfa", b"\xff\xf3", b"\xff\xf2")` (ID3v2 tag or MPEG frame sync)
+   - `wav` → `audio_head[:4] == b"RIFF"` AND `audio_head[8:12] == b"WAVE"` (RIFF chunk + WAVE format)
+   - On mismatch: raise `WorkerUnsupportedResponse(f"audio format mismatch: extension={ext} but magic bytes={audio_head[:12].hex()}")` (the wrapper layer at `_generate_via_comfy_worker` will translate this to `AudioWorkerUnsupportedResponse`)
 
-5. Construct `AudioCandidate(data=data, format=ext, metadata={"comfy_manifest": spec["comfy_workflow"], "comfy_params_snapshot": dict(spec.get("comfy_params") or {}), "comfy_capability": "audio", "comfy_original_filename": Path(abs_path).name, "comfy_subprocess_run_metadata": {...exit_code, total_seconds, ...}}, duration_seconds=None, sample_rate=None)` (F3 round-2:duration_seconds / sample_rate are top-level fields; F4 round-2:both are `None` in this change scope because ComfyUI agent CLI `extract_outputs` does NOT expose audio metadata — the `outputs.metadata.audio` JSON path does NOT exist in the agent CLI envelope per probe in `notes/audio_subprocess_probe_20260503.md`; follow-on change `audio-metadata-parser` may introduce mutagen / stdlib `wave` parsing)
+5. Construct `AudioCandidate(data=audio_head, source_path=str(src), format=ext, metadata={"comfy_manifest": spec["comfy_workflow"], "comfy_params_snapshot": dict(spec.get("comfy_params") or {}), "comfy_capability": "audio", "comfy_original_filename": Path(abs_path).name, "comfy_subprocess_run_metadata": {...exit_code, total_seconds, ...}}, duration_seconds=<best-effort parsed value>, sample_rate=<best-effort parsed value>)` (F3 round-2:duration_seconds / sample_rate are top-level fields; FOR-13 keeps the full payload on disk and sends `source_path` to the repository)
 
 6. Return `list[AudioCandidate]` aggregated across all `num_candidates` per-candidate subprocess invocations (F-Plan-3 round-2 plan 修订:`generate_audio` SHALL implement an internal `for i in range(max(1, num_candidates)): call_seed = (seed or 0) + i; ...` loop calling a private `_run_once_audio` helper per candidate — mirroring image / mesh worker patterns at `src/framework/providers/workers/comfy_worker.py:427` and `:689`. Per F4 round-1 probe, the registered audio manifests have a single SaveAudioMP3 node producing 1 file per subprocess run, so `num_candidates > 1` requires multiple subprocess invocations; the wrapper layer at `_generate_via_comfy_worker` SHALL NOT need a second outer loop — `generate_audio` aggregates internally)
 
@@ -1055,7 +1055,7 @@ The pre-existing image / mesh / audio capability rows in the same 4-dict tables 
 **When** `_validate_outputs(outputs)` runs
 **Then** raises `WorkerUnsupportedResponse` for each of the three pre-existing capability modes; `tests/unit/test_comfy_subprocess.py::test_image_mode_still_rejects_outputs_video_after_change` + `::test_mesh_mode_still_rejects_outputs_video_after_change` + `::test_audio_mode_still_rejects_outputs_video_after_change` fence the regression for each
 
-## Requirement: ComfyAgentWorker.generate_video reads video bytes, validates magic bytes, and applies BMFF strict header check (round-2 F4 修订)
+## Requirement: ComfyAgentWorker.generate_video reads video header bytes and applies BMFF strict header check (round-2 F4 修订)
 
 The system SHALL implement `ComfyAgentWorker.generate_video(spec, num_candidates, seed, timeout_s) -> list[VideoCandidate]` (NOT part of the `ComfyWorker` ABC; sibling method to `generate_mesh` / `generate_audio`). The implementation SHALL:
 
@@ -1067,38 +1067,38 @@ The system SHALL implement `ComfyAgentWorker.generate_video(spec, num_candidates
   - **Path trust-boundary protection** (sweep mirror of audio F-Plan-4 round-2 + image / mesh G11 R2 fix at `comfy_worker.py:541-554`): `if not src.is_file(): raise WorkerUnsupportedResponse(...)` AND `if src.is_symlink(): raise WorkerUnsupportedResponse(...)`
   - `ext = src.suffix.lower()[1:]` (strip leading dot)
   - Whitelist check (round-2 F2 修订:mp4-only): `ext != "mp4" → raise WorkerUnsupportedResponse(f"unsupported video format {ext!r}, expected 'mp4' (webm follow-on; round-2 F2)")`
-  - `data = src.read_bytes()` (D4: full bytes-read, sweep mirror of audio; large-file streaming deferred to follow-on `repo-put-streaming-payload`)
+  - `video_head = _read_prefix(src, 16)` and `video_size = src.stat().st_size`; full payload bytes are not loaded into memory on the Comfy local path after FOR-13
   - **BMFF strict header validation (D9 + round-2 F4 修订, mandatory)**:
     ```python
     # mp4: BMFF (ISO/IEC 14496-12) strict header check
-    if len(data) < 16:
+    if len(video_head) < 16:
         raise WorkerUnsupportedResponse(
-            f"mp4 too short: {len(data)} bytes (need >= 16 for minimal BMFF header)"
+            f"mp4 too short: {len(video_head)} bytes (need >= 16 for minimal BMFF header)"
         )
-    if data[4:8] != b"ftyp":
+    if video_head[4:8] != b"ftyp":
         raise WorkerUnsupportedResponse(
-            f"mp4 BMFF header mismatch: offset 4-8 = {data[4:8]!r}, expected b'ftyp'"
+            f"mp4 BMFF header mismatch: offset 4-8 = {video_head[4:8]!r}, expected b'ftyp'"
         )
-    box_size = int.from_bytes(data[0:4], "big")
+    box_size = int.from_bytes(video_head[0:4], "big")
     # round-3 PF2 修订:reject box_size == 1 (largesize follow-on `video-bmff-largesize-support`)
-    if box_size == 1 or box_size < 8 or box_size > len(data):
+    if box_size == 1 or box_size < 8 or box_size > video_size:
         raise WorkerUnsupportedResponse(
-            f"mp4 BMFF first box_size={box_size} out of range [8, {len(data)}] "
+            f"mp4 BMFF first box_size={box_size} out of range [8, {video_size}] "
             f"(largesize box_size==1 deferred to follow-on `video-bmff-largesize-support`; round-3 PF2)"
         )
-    major_brand = data[8:12]
+    major_brand = video_head[8:12]
     if major_brand == b"\x00\x00\x00\x00" or major_brand == b"    ":
         raise WorkerUnsupportedResponse(
             f"mp4 BMFF major_brand is empty / all-spaces: {major_brand!r}"
         )
     ```
-  - Construct `VideoCandidate(data=data, format="mp4", metadata={"comfy_manifest": comfy_workflow, "comfy_params_snapshot": params_snapshot, "comfy_capability": "video", "comfy_original_filename": src.name, "comfy_subprocess_run_metadata": {...}}, duration_seconds=None, frame_count=None, width=None, height=None, fps=None)` (D8: format hardcoded `"mp4"` post-F2 修订;5 metadata-None defaults — ComfyUI agent CLI does not expose video metadata; follow-on `video-metadata-parser` adds ffprobe / mutagen parsing)
+  - Construct `VideoCandidate(data=video_head, source_path=str(src), format="mp4", metadata={"comfy_manifest": comfy_workflow, "comfy_params_snapshot": params_snapshot, "comfy_capability": "video", "comfy_original_filename": src.name, "comfy_subprocess_run_metadata": {...}}, duration_seconds=None, frame_count=None, width=None, height=None, fps=None)` (D8: format hardcoded `"mp4"` post-F2 修订;5 metadata-None defaults — ComfyUI agent CLI does not expose video metadata; follow-on `video-metadata-parser` adds ffprobe / mutagen parsing)
 
-## Scenario: generate_video reads mp4 bytes and detects format
+## Scenario: generate_video records source_path without full-reading mp4 payload
 
 **Given** `ComfyAgentWorker._capability == "video"` and `_run_subprocess_and_validate` returning `outputs.video = ["<abs_path>/wan21_1.3b_5sec_00001.mp4"]`; the file at that path exists, is not a symlink, and contains valid mp4 bytes (magic `b"ftyp"` at offset 4)
 **When** `generate_video(spec, num_candidates=1, seed=42, timeout_s=600)` runs
-**Then** returns `[VideoCandidate(data=<mp4 bytes>, format="mp4", metadata={...}, duration_seconds=None, frame_count=None, ...)]`; `tests/unit/test_comfy_subprocess.py::test_generate_video_mp4_extension_detection_reads_bytes` fences this
+**Then** returns `[VideoCandidate(data=<bmff_header>, source_path="<abs_path>/wan21_1.3b_5sec_00001.mp4", format="mp4", metadata={...}, duration_seconds=None, frame_count=None, ...)]`; `tests/unit/test_comfy_subprocess_video.py::test_generate_video_mp4_extension_detection_records_source_path_without_full_read` fences this
 
 ## Scenario: generate_video rejects unsupported extension (round-2 F2: webm also rejected as out-of-scope)
 
@@ -1179,7 +1179,7 @@ The system SHALL implement `GenerateVideoExecutor` at `src/framework/runtime/exe
     - `ComfyWorkerTimeout` → wrap as `VideoWorkerTimeout(str(exc))` with `from exc`; honor `_should_retry(policy, wrapped)`; if `attempt + 1 >= attempts or not _should_retry(...)`: raise wrapped (NOT bare `raise`)
     - `ComfyWorkerUnsupportedResponse` → immediate `raise VideoWorkerUnsupportedResponse(str(exc)) from exc` (deterministic, no retry)
     - `ComfyWorkerError` → immediate `raise VideoWorkerError(str(exc)) from exc` (no retry)
-- `execute(self, ctx) -> ExecutorResult`: parses `cfg = ctx.step.config or {}`, `spec = cfg.get("spec", {})`, `num = int(cfg.get("num_candidates", 1))`, `seed = cfg.get("seed")`, `timeout_s = cfg.get("worker_timeout_s")`; if `_should_use_comfy_worker_path(ctx)`: `candidates = _generate_via_comfy_worker(...)`; else: `raise VideoWorkerUnsupportedResponse("no video worker path resolved")`; iterates candidates calling `ctx.repository.put(value=cand.data, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"), metadata={"format": cand.format, "duration_seconds": cand.duration_seconds, "frame_count": cand.frame_count, "width": cand.width, "height": cand.height, "fps": cand.fps, "worker_metadata": dict(cand.metadata), ...})`
+- `execute(self, ctx) -> ExecutorResult`: parses `cfg = ctx.step.config or {}`, `spec = cfg.get("spec", {})`, `num = int(cfg.get("num_candidates", 1))`, `seed = cfg.get("seed")`, `timeout_s = cfg.get("worker_timeout_s")`; if `_should_use_comfy_worker_path(ctx)`: `candidates = _generate_via_comfy_worker(...)`; else: `raise VideoWorkerUnsupportedResponse("no video worker path resolved")`; iterates candidates calling `ctx.repository.put(source_path=cand.source_path, payload_kind=PayloadKind.file, file_suffix=f".{cand.format}", artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"), metadata={"format": cand.format, "duration_seconds": cand.duration_seconds, "frame_count": cand.frame_count, "width": cand.width, "height": cand.height, "fps": cand.fps, "worker_metadata": dict(cand.metadata), ...})` when `cand.source_path` is present, falling back to byte-value persistence for fake / remote candidates
 
 ## Scenario: GenerateVideoExecutor dispatches comfy/local-video to comfy worker branch
 

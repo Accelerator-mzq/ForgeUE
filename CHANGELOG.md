@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **FOR-13 worker candidate source_path migration**:`ImageCandidate` / `MeshCandidate`
+  / `AudioCandidate` / `VideoCandidate` 扩 `source_path`;本地 ComfyUI worker 只读格式校验所需
+  文件头,由 generator executor 优先调用 `repo.put(source_path=...)` 落盘,`data`
+  保留给 fake / 远端 worker 与兼容回退。同步 retired active backlog
+  `worker-candidate-source-path-migration`。
 - **FOR-12 repo.put staging hash atomicity**:`PayloadBackend.write` / registry write 返回
   `WriteResult(ref, content_hash)`;`FileBackend.write(source_path=...)` 改为先对
   staging `tmp_dest` 完成 size + `hash_path(tmp_dest)` 验证,再 `os.replace` 到 final

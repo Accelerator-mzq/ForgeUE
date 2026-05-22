@@ -25,13 +25,14 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from framework.core.policies import PreparedRoute
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
+    ImageCandidate,
     WorkerError,
     WorkerTimeout,
     WorkerUnsupportedResponse,
@@ -504,19 +505,93 @@ def test_subprocess_invocation_passes_task_project_id_as_dash_dash_project(tmp_p
 
 
 def test_outputs_paths_are_copied_into_run_artifact_tree(tmp_path):
-    """outputs.images paths are copy2'd into <artifacts_dir>/comfy/."""
+    """outputs.images paths are copy2'd into <artifacts_dir>/comfy/ 并以 source_path 交给 repo。"""
     worker = _make_worker(tmp_path)
     src = tmp_path / "external" / "out.png"
     _make_png_file(src)
-    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(src)]))) as run_mock:
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_stdout([str(src)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy image worker must not full-read output")):
         candidates = worker.generate(
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
         )
     in_tree = worker.artifacts_dir / "comfy" / "out.png"
     assert in_tree.is_file()
+    assert candidates[0].source_path == str(in_tree)
     assert candidates[0].metadata["in_tree_path"] == str(in_tree)
     assert candidates[0].metadata["comfy_outputs_orig"] == str(src)
+
+
+async def test_generate_image_executor_persists_source_path_candidate_without_using_data(tmp_path, monkeypatch):
+    """FOR-13:ImageCandidate.source_path 优先持久化,不再把 cand.data 当最终 payload。"""
+    from datetime import datetime, timezone
+
+    from framework.artifact_store import ArtifactRepository, get_backend_registry
+    from framework.core.artifact import ArtifactType
+    from framework.core.enums import RiskLevel, RunMode, RunStatus, StepType, TaskType
+    from framework.core.policies import ProviderPolicy
+    from framework.core.task import Run, Step, Task
+    from framework.runtime.executors.base import StepContext
+    from framework.runtime.executors.generate_image import GenerateImageExecutor
+
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+    (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+    source = tmp_path / "comfy_out.png"
+    _make_png_file(source)
+
+    repo = ArtifactRepository(backend_registry=get_backend_registry(artifact_root=str(tmp_path / "store")))
+    step = Step(
+        step_id="step_image",
+        type=StepType.generate,
+        name="image",
+        risk_level=RiskLevel.medium,
+        capability_ref="image.generation",
+        config={"num_candidates": 1, "spec": {"prompt_summary": "x"}},
+        provider_policy=ProviderPolicy(
+            capability_required="image.generation",
+            prepared_routes=[_comfy_image_route(tmp_path)],
+        ),
+    )
+    task = Task(
+        task_id="t",
+        task_type=TaskType.asset_generation,
+        run_mode=RunMode.production,
+        title="image",
+        input_payload={},
+        expected_output={},
+        project_id="proj_image",
+    )
+    run = Run(
+        run_id="run_image_source_path",
+        task_id="t",
+        project_id="proj_image",
+        status=RunStatus.running,
+        started_at=datetime.now(timezone.utc),
+        workflow_id="w",
+        trace_id="tr",
+    )
+    ctx = StepContext(
+        run=run,
+        task=task,
+        step=step,
+        repository=repo,
+        upstream_artifact_ids=[],
+        run_dir=tmp_path,
+        lifecycle=None,
+    )
+    candidate = ImageCandidate(
+        data=b"not-the-file-payload",
+        width=64,
+        height=64,
+        seed=7,
+        source_path=str(source),
+    )
+    with patch("framework.runtime.executors.generate_image.ComfyAgentWorker") as worker_cls:
+        worker_cls.return_value.agenerate = AsyncMock(return_value=[candidate])
+        result = await GenerateImageExecutor().execute(ctx)
+
+    image_art = next(a for a in result.artifacts if a.artifact_type.modality == "image")
+    assert repo.read_payload(image_art.artifact_id) == source.read_bytes()
 
 
 def test_outputs_glb_non_empty_raises_unsupported_response(tmp_path):
@@ -1037,23 +1112,22 @@ def test_image_mode_still_rejects_outputs_video(tmp_path):
 # ---- Mesh artifact (data + metadata + GLB magic) (D5 + R2-F3) ----------------
 
 
-def test_comfy_mesh_candidate_data_is_glb_bytes_read_from_outputs_glb_path(tmp_path):
-    """D5: MeshCandidate.data == Path(outputs.glb[0]).read_bytes()(无 worker 内部 copy,
-    bytes 直接进 candidate;ArtifactRepository.put 后续负责 in-tree copy)。"""
+def test_comfy_mesh_candidate_records_source_path_without_full_reading_outputs_glb(tmp_path):
+    """FOR-13:MeshCandidate 记录 source_path,worker 不再把 GLB 全量读进 data。"""
     worker = _make_mesh_worker(tmp_path)
     fake_input = tmp_path / "input.png"
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb, extra_bytes=b"some-payload-bytes")
-    expected_bytes = fake_glb.read_bytes()
-    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock:
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_mesh_stdout([str(fake_glb)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy mesh worker must not full-read output")):
         cands = worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_filename=fake_input.name,
             num_candidates=1,
         )
     assert len(cands) == 1
-    assert cands[0].data == expected_bytes
+    assert cands[0].source_path == str(fake_glb)
     assert cands[0].data.startswith(b"glTF")
 
 

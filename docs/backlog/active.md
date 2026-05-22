@@ -83,25 +83,6 @@ await 链中可以接受。未来若引入 GB 级 video 或长片场景,可加 a
 - **related change**: (无)
 - **triggered_by**: (无)
 
-### `2026-05-21-repo-put-streaming-payload::worker-candidate-source-path-migration`
-
-- **source change**: 2026-05-21-repo-put-streaming-payload
-- **description**: Phase 2:Worker Candidate(AudioCandidate / ImageCandidate / MeshCandidate /
-VideoCandidate)协议扩 `source_path: str | None = None` 字段;ComfyUI agent
-CLI 路径下 worker 不再 `Path.read_bytes()`,而是返回 source_path;5 个
-file generator executor 切到 `repo.put(source_path=cand.source_path)`
-实现端到端 zero-copy。
-
-- **reason**: Phase 1(本 change)只做 `repo.put` / `FileBackend` / `hashing` 底层
-zero-copy 能力,worker 协议保持 `data: bytes` 不变,executor 调用零变化。
-Phase 2 在 Phase 1 已就位的接口上做单点迁移,review 复杂度独立可控;
-未来远端 worker(Hunyuan3D / Tripo3D / Wan video remote)是 HTTP 下载场
-景,可选维持 bytes 也可改 stream download 到临时文件再 source_path。
-
-- **priority**: medium
-- **related change**: (无)
-- **triggered_by**: (无)
-
 ## Out of Scope (1)
 
 ### `2026-05-21-repo-put-streaming-payload::metadata-corruption-detection`

@@ -72,6 +72,7 @@ class MeshCandidate:
     has_uv: bool = True
     has_rig: bool = False
     metadata: dict[str, Any] = field(default_factory=dict)
+    source_path: str | None = None  # FOR-13:本地 worker 可传文件路径给 ArtifactRepository 零拷贝落盘
 
 
 class MeshWorker(ABC):

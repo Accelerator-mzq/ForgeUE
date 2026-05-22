@@ -147,7 +147,12 @@ def _make_comfy_mesh_ctx(
     return ctx, repo, src_bytes
 
 
-def _fake_mesh_candidate(extra_meta: dict | None = None) -> MeshCandidate:
+def _fake_mesh_candidate(
+    extra_meta: dict | None = None,
+    *,
+    data: bytes | None = None,
+    source_path: str | None = None,
+) -> MeshCandidate:
     meta = {
         "comfy_manifest": "Mesh/01",
         "comfy_params_snapshot": {"image_path": "x"},
@@ -158,9 +163,10 @@ def _fake_mesh_candidate(extra_meta: dict | None = None) -> MeshCandidate:
     if extra_meta:
         meta.update(extra_meta)
     return MeshCandidate(
-        data=b"glTF\x02\x00\x00\x00" + b"\x00" * 16,
+        data=data if data is not None else b"glTF\x02\x00\x00\x00" + b"\x00" * 16,
         format="glb", mime_type="model/gltf-binary",
         metadata=meta,
+        source_path=source_path,
     )
 
 
@@ -518,6 +524,24 @@ async def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_b
     assert result.metrics["mesh_count"] == 1
     # cost = 0(comfy local pricing=None)
     assert result.metrics["cost_usd"] == 0.0
+
+
+async def test_executor_persists_mesh_candidate_source_path_without_using_data(tmp_path, monkeypatch):
+    """FOR-13:MeshCandidate.source_path 优先落盘,cand.data 只保留校验头/兼容信息。"""
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))
+    ctx, repo, _ = _make_comfy_mesh_ctx(tmp_path, num_candidates=1)
+    source = tmp_path / "source_mesh.glb"
+    source.write_bytes(b"glTF\x02\x00\x00\x00real-mesh-payload")
+    fake_cand = _fake_mesh_candidate(data=b"glTF", source_path=str(source))
+    executor = GenerateMeshExecutor(worker=FakeMeshWorker())
+
+    with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[fake_cand])
+        result = await executor.execute(ctx)
+
+    mesh_art = next(a for a in result.artifacts if a.artifact_type.modality == "mesh")
+    assert repo.read_payload(mesh_art.artifact_id) == source.read_bytes()
 
 
 async def test_executor_execute_remote_hunyuan_route_does_not_dispatch_to_comfy_branch(tmp_path):

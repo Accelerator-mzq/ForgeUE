@@ -158,6 +158,7 @@ The system SHALL maintain a dedicated unit-test module `tests/unit/test_comfy_su
 - `test_subprocess_invocation_passes_workflow_params_lifecycle_timeout`
 - `test_subprocess_invocation_passes_task_project_id_as_dash_dash_project`
 - `test_outputs_paths_are_copied_into_run_artifact_tree`
+- `test_generate_image_executor_persists_source_path_candidate_without_using_data`
 - `test_outputs_glb_non_empty_raises_unsupported_response` (image-mode regression)
 - `test_outputs_audio_non_empty_raises_unsupported_response` (image-mode regression)
 - `test_outputs_video_non_empty_raises_unsupported_response` (image-mode regression)
@@ -184,10 +185,10 @@ The system SHALL maintain a dedicated unit-test module `tests/unit/test_comfy_su
 - `test_image_mode_still_rejects_outputs_glb`
 - `test_image_mode_still_rejects_outputs_audio`
 - `test_image_mode_still_rejects_outputs_video`
-- `test_comfy_mesh_candidate_data_is_glb_bytes_read_from_outputs_glb_path`
+- `test_comfy_mesh_candidate_records_source_path_without_full_reading_outputs_glb`
 - `test_comfy_mesh_candidate_metadata_records_comfy_provenance`
 - `test_comfy_mesh_candidate_metadata_snapshot_isolated_from_spec_mutation`
-- `test_generate_mesh_executor_persists_comfy_mesh_via_repo_put_with_file_suffix_glb`
+- `test_executor_persists_mesh_candidate_source_path_without_using_data`
 - `test_generate_mesh_executor_artifact_in_tree_path_is_artifact_id_glb`
 - `test_generate_via_comfy_worker_writes_source_bytes_to_in_tree_input_file_with_sha1_name`
 - `test_generate_via_comfy_worker_passes_source_image_path_to_worker_generate_mesh`
@@ -206,9 +207,11 @@ The system SHALL maintain a dedicated unit-test module `tests/unit/test_comfy_su
 - `test_audio_mode_no_auxiliary_log_emission`
 - `test_image_mode_still_rejects_outputs_audio_after_change` (regression after audio capability added)
 - `test_mesh_mode_still_rejects_outputs_audio_after_change` (regression)
-- `test_generate_audio_flac_extension_detection_reads_bytes`
-- `test_generate_audio_mp3_extension_detection_reads_bytes`
-- `test_generate_audio_wav_extension_detection_reads_bytes`
+- `test_generate_audio_flac_extension_detection_records_source_path_without_full_read`
+- `test_generate_audio_mp3_id3_magic_match_accepts`
+- `test_generate_audio_mp3_mpeg_frame_sync_magic_match_accepts`
+- `test_generate_audio_wav_riff_wave_magic_match_accepts`
+- `test_executor_persists_audio_candidate_source_path_without_using_data`
 - `test_generate_audio_unsupported_extension_ogg_raises_unsupported_response`
 - `test_generate_audio_metadata_records_comfy_provenance`
 - `test_generate_audio_metadata_snapshot_is_independent_copy`
@@ -218,11 +221,15 @@ The system SHALL maintain a dedicated unit-test module `tests/unit/test_comfy_su
 
 The pre-existing `tests/unit/test_comfy_http_unsupported.py` fence file SHALL NOT be reintroduced.
 
-## Scenario: Each named fence in test_comfy_subprocess.py is collected and passes (image + mesh + audio)
+**Video-mode source_path fences (FOR-13 delta):**
+- `test_generate_video_mp4_extension_detection_records_source_path_without_full_read`
+- `test_executor_persists_video_candidate_source_path_without_using_data`
+
+## Scenario: Each named Comfy source_path fence is collected and passes
 
 **Given** the post-change repository
-**When** `python -m pytest tests/unit/test_comfy_subprocess.py -v` runs
-**Then** every fence named above (image-mode + mesh-mode + audio-mode) is collected by pytest, runs without skips that aren't documented in CLAUDE.md or the test docstring, and passes; total fence count is approximately 60+ (image baseline ~26 + mesh additions ~22 + audio additions ~14)
+**When** `python -m pytest tests/unit/test_comfy_subprocess.py tests/unit/test_comfy_subprocess_audio.py tests/unit/test_comfy_subprocess_video.py tests/unit/test_generate_mesh_comfy.py tests/unit/test_generate_audio_comfy.py tests/unit/test_generate_video_comfy.py -v` runs
+**Then** every fence named above (image-mode + mesh-mode + audio-mode + video-mode source_path delta) is collected by pytest, runs without skips that aren't documented in CLAUDE.md or the test docstring, and passes
 
 ## Requirement: ComfyUI subprocess fences mock subprocess only, not HTTP
 

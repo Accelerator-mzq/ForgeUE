@@ -133,9 +133,9 @@ class GenerateAudioExecutor(StepExecutor):
         audio_ids: list[str] = []
         for i, cand in enumerate(candidates):
             aid = f"{ctx.run.run_id}_{ctx.step.step_id}_cand_audio_{i}"
+            payload_kwargs = _candidate_payload_kwargs(cand)
             art = ctx.repository.put(
                 artifact_id=aid,
-                value=cand.data,
                 # F-Plan-R6-A round-6 critical:shape="waveform" 与 UE bridge
                 # _KIND_MAP[("audio", "waveform")] = "sound_wave" 唯一映射对齐;
                 # 若用 shape=cand.format(flac/mp3/wav)UE 静默 skip → import_audio 不触发
@@ -168,12 +168,13 @@ class GenerateAudioExecutor(StepExecutor):
                 validation=ValidationRecord(
                     status="passed",
                     checks=[ValidationCheck(name="audio.bytes_nonempty",
-                                            result="passed" if cand.data else "failed")],
+                                            result="passed" if _candidate_payload_nonempty(cand) else "failed")],
                 ),
                 # F-Plan-R6-A:`file_suffix=f".{cand.format}"` 反映真实 payload bytes
                 # (与 modality+shape dispatch 不冲突 — payload extension 用于 UE
                 # `unreal.SoundFactory` import 时按扩展名 dispatch)
                 file_suffix=f".{cand.format}",
+                **payload_kwargs,
             )
             audio_arts.append(art)
             audio_ids.append(aid)
@@ -280,6 +281,20 @@ def _audio_mime_type(fmt: str) -> str:
         "mp3": "audio/mpeg",
         "wav": "audio/wav",
     }.get(fmt, "application/octet-stream")
+
+
+def _candidate_payload_kwargs(cand: AudioCandidate) -> dict[str, object]:
+    """FOR-13:Comfy 本地音频输出用 source_path,远端/fake worker 继续传 bytes。"""
+    if cand.source_path:
+        return {"source_path": cand.source_path}
+    return {"value": cand.data}
+
+
+def _candidate_payload_nonempty(cand: AudioCandidate) -> bool:
+    if cand.source_path:
+        path = Path(cand.source_path)
+        return path.is_file() and path.stat().st_size > 0
+    return bool(cand.data)
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:

@@ -80,7 +80,7 @@ tests/unit/test_repo_put_streaming.py::test_zero_copy_rss_bounded_200mb -v`
 
 **ADDED.** Pytest 套件 SHALL 守门:当 `source_path` 指向一个 size 超过
 `FILE_MAX_BYTES` 的文件时,`FileBackend.write` SHALL raise `PayloadTooLarge`,
-且 SHALL NOT 调用 `Path.read_bytes()` / `shutil.copy2`(避免无意义 IO)。
+且 SHALL NOT 调用整文件读取 API / `shutil.copy2`(避免无意义 IO)。
 
 实现策略:用 monkeypatch 把 `shutil.copy2` 替换成会 raise 的 spy,断言 spy 未被调用。
 源文件用 sparse file(`f.seek(FILE_MAX_BYTES + 1); f.write(b"\x00")`)或
@@ -127,8 +127,9 @@ patch 源模块对已绑定引用无效)。断言 spy 未被调用(确认未走�
 ## Non-Goals
 
 - 不在本 change 跑端到端 P0-P4 integration test;只加单元 fence
-- 不在本 change 加 ComfyUI live smoke fence —— Worker / Candidate / executor 路径不
-  动(沿 proposal Out of Scope `worker-candidate-source-path-migration`)
+- Phase 1 不加 ComfyUI live smoke fence;Worker / Candidate / executor 路径已由
+  FOR-13 后续迁移覆盖,对应 source_path fences 见当前 `spec.md` 与
+  `tests/unit/test_comfy_subprocess*.py` / `test_generate_*_comfy.py`。
 
 ## Validation
 

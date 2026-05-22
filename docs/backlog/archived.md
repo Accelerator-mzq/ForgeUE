@@ -41,6 +41,28 @@
   → `52 passed, 1 skipped`
 - **archived_by**: FOR-12 repo-put staging hash atomicity 2026-05-22
 
+## 2026-05-22 FOR-13 completion
+
+### `2026-05-21-repo-put-streaming-payload::worker-candidate-source-path-migration`
+
+- **new_status**: completed
+- **reason**: Worker Candidate 协议已扩 `source_path: str | None = None`,本地
+  ComfyUI image / mesh / audio / video 输出只读取格式校验所需文件头,再由
+  `GenerateImageExecutor` / `GenerateMeshExecutor` / `GenerateAudioExecutor` /
+  `GenerateVideoExecutor` 优先走 `repo.put(source_path=...)` 持久化;`data: bytes`
+  保留给 fake / 远端 worker 与无 `source_path` 的兼容回退路径。
+- **evidence**: `src/framework/providers/workers/comfy_worker.py`,
+  `src/framework/providers/workers/{mesh_worker,audio_worker,video_worker}.py`,
+  `src/framework/runtime/executors/generate_{image,mesh,audio,video}.py`,
+  `tests/unit/test_comfy_subprocess.py`,
+  `tests/unit/test_comfy_subprocess_audio.py`,
+  `tests/unit/test_comfy_subprocess_video.py`,
+  `tests/unit/test_generate_mesh_comfy.py`,
+  `tests/unit/test_generate_audio_comfy.py`,
+  `tests/unit/test_generate_video_comfy.py`,
+  `demo_artifacts/2026-05-22/adhoc/for13_source_path_migration/evidence.md`。
+- **archived_by**: FOR-13 worker-candidate-source-path-migration 2026-05-22
+
 ## 2026-05-22 backlog audit
 
 ### `2026-05-20-executor-async-rewrite::tbd-011-provider-kind-schema`
@@ -103,5 +125,5 @@
 
 - **new_status**: duplicate
 - **reason**: 同名真实 follow-on 已在 Future Work 保留一条,此 Out of Scope 版本内容重复,仅作为 tombstone 记录去重。
-- **evidence**: `docs/backlog/active.md` Future Work 仍保留 `worker-candidate-source-path-migration`;当前 worker candidate 与 executor 路径仍用 `data: bytes` / `value=cand.data`,因此保留单一 active 条目即可。
+- **evidence**: backlog audit 时 `docs/backlog/active.md` Future Work 仍保留同名真实 follow-on;该 duplicate tombstone 只记录去重事实。真实 follow-on 已由上方 FOR-13 completion tombstone 关闭。
 - **archived_by**: backlog audit 2026-05-22

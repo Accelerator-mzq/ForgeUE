@@ -105,6 +105,7 @@ class AudioCandidate:
     metadata: dict[str, Any] = field(default_factory=dict)
     duration_seconds: float | None = None  # 本 change scope 始终 None
     sample_rate: int | None = None  # 本 change scope 始终 None
+    source_path: str | None = None  # FOR-13:ComfyUI 本地输出走 repo.put(source_path=...) 零拷贝
 
 
 # ----------------------------------------------------------------------------

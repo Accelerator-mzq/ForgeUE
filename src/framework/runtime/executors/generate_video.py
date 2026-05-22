@@ -136,9 +136,9 @@ class GenerateVideoExecutor(StepExecutor):
         video_ids: list[str] = []
         for i, cand in enumerate(candidates):
             aid = f"{ctx.run.run_id}_{ctx.step.step_id}_cand_video_{i}"
+            payload_kwargs = _candidate_payload_kwargs(cand)
             art = ctx.repository.put(
                 artifact_id=aid,
-                value=cand.data,
                 # D1 + D8 critical:shape="mp4" 与 UE bridge
                 # _KIND_MAP[("video", "mp4")] = "file_media_source" 唯一映射对齐;
                 # 若用 shape=cand.format 而 webm 还没扩 _KIND_MAP,manifest_builder
@@ -178,13 +178,14 @@ class GenerateVideoExecutor(StepExecutor):
                 validation=ValidationRecord(
                     status="passed",
                     checks=[ValidationCheck(name="video.bytes_nonempty",
-                                            result="passed" if cand.data else "failed")],
+                                            result="passed" if _candidate_payload_nonempty(cand) else "failed")],
                 ),
                 # `file_suffix=f".{cand.format}"` 反映真实 payload bytes
                 # (post-F2 sweep mp4-only 等价于 ".mp4";未来 webm follow-on 时
                 # 自动随 cand.format 扩 ".webm";与 modality+shape dispatch 不冲突
                 # — payload extension 用于 UE FileMediaSource import 时按扩展名 dispatch)
                 file_suffix=f".{cand.format}",
+                **payload_kwargs,
             )
             video_arts.append(art)
             video_ids.append(aid)
@@ -295,6 +296,20 @@ def _video_mime_type(fmt: str) -> str:
         "mp4": "video/mp4",
         "webm": "video/webm",  # follow-on placeholder,本 change scope worker 层 reject webm
     }.get(fmt, "application/octet-stream")
+
+
+def _candidate_payload_kwargs(cand: VideoCandidate) -> dict[str, object]:
+    """FOR-13:Comfy 本地视频输出用 source_path,远端/fake worker 继续传 bytes。"""
+    if cand.source_path:
+        return {"source_path": cand.source_path}
+    return {"value": cand.data}
+
+
+def _candidate_payload_nonempty(cand: VideoCandidate) -> bool:
+    if cand.source_path:
+        path = Path(cand.source_path)
+        return path.is_file() and path.stat().st_size > 0
+    return bool(cand.data)
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:

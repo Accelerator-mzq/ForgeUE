@@ -288,12 +288,13 @@ _ok_audio_stdout(
 # ---- generate_audio path:format detection + magic bytes(D10 + F5)------------
 
 
-def test_generate_audio_flac_extension_detection_reads_bytes(tmp_path):
-    """flac 扩展名 + `fLaC` magic 接受 → AudioCandidate(format="flac")。"""
+def test_generate_audio_flac_extension_detection_records_source_path_without_full_read(tmp_path):
+    """flac 扩展名 + `fLaC` magic 接受 → AudioCandidate(format="flac", source_path=...)。"""
     worker = _make_audio_worker(tmp_path)
     fake = tmp_path / "out.flac"
     _make_flac_file(fake, payload=b"hello")
-    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock:
+    with _patch_create_subprocess_exec(_make_async_completed(_ok_audio_stdout([str(fake)]))) as run_mock, \
+            patch.object(Path, "read_bytes", side_effect=AssertionError("Comfy audio worker must not full-read output")):
         cands = worker.generate_audio(
             spec={"comfy_workflow": "x", "comfy_params": {}},
             num_candidates=1,
@@ -301,6 +302,7 @@ def test_generate_audio_flac_extension_detection_reads_bytes(tmp_path):
     assert len(cands) == 1
     assert isinstance(cands[0], AudioCandidate)
     assert cands[0].format == "flac"
+    assert cands[0].source_path == str(fake)
     assert cands[0].data[:4] == b"fLaC"
 
 

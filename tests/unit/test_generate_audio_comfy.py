@@ -117,16 +117,21 @@ def _make_audio_ctx(
     return ctx, repo
 
 
-def _fake_audio_candidate(format_: str = "flac") -> AudioCandidate:
+def _fake_audio_candidate(
+    format_: str = "flac",
+    *,
+    data: bytes | None = None,
+    source_path: str | None = None,
+) -> AudioCandidate:
     """Construct a deterministic AudioCandidate for repo.put fences。"""
-    if format_ == "flac":
+    if data is None and format_ == "flac":
         data = b"fLaC" + b"\x80\x00\x00\x22" + b"\x00" * 50
-    elif format_ == "mp3":
+    elif data is None and format_ == "mp3":
         data = b"ID3\x04\x00\x00\x00\x00\x00\x00" + b"\x00" * 50
-    elif format_ == "wav":
+    elif data is None and format_ == "wav":
         data = b"RIFF" + b"\x24\x00\x00\x00" + b"WAVE" + b"\x00" * 50
     else:
-        data = b"\x00" * 64
+        data = data if data is not None else b"\x00" * 64
     return AudioCandidate(
         data=data,
         format=format_,  # type: ignore[arg-type]
@@ -139,6 +144,7 @@ def _fake_audio_candidate(format_: str = "flac") -> AudioCandidate:
         },
         duration_seconds=None,
         sample_rate=None,
+        source_path=source_path,
     )
 
 
@@ -315,6 +321,28 @@ async def test_executor_persists_audio_artifact_with_shape_waveform_and_format_a
     # PayloadRef.file_path extension = `.flac`(实际 payload bytes 格式)
     assert art.payload_ref.file_path is not None
     assert art.payload_ref.file_path.endswith(".flac")
+
+
+async def test_executor_persists_audio_candidate_source_path_without_using_data(tmp_path, monkeypatch):
+    """FOR-13:AudioCandidate.source_path 优先落盘,避免大音频 payload 全量驻留。"""
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
+    (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
+    ctx, repo = _make_audio_ctx(tmp_path)
+    source = tmp_path / "source_audio.flac"
+    source.write_bytes(b"fLaC" + b"\x80\x00\x00\x22" + b"real-audio-payload")
+    executor = GenerateAudioExecutor()
+    cand = _fake_audio_candidate(
+        format_="flac",
+        data=b"fLaC",
+        source_path=str(source),
+    )
+    with patch("framework.runtime.executors.generate_audio.ComfyAgentWorker") as cls_mock:
+        worker_inst = MagicMock()
+        worker_inst.agenerate_audio = AsyncMock(return_value=[cand])
+        cls_mock.return_value = worker_inst
+        result = await executor.execute(ctx)
+    audio_art = next(a for a in result.artifacts if a.artifact_type.modality == "audio")
+    assert repo.read_payload(audio_art.artifact_id) == source.read_bytes()
 
 
 async def test_executor_artifact_top_level_metadata_includes_format_duration_sample_rate(tmp_path, monkeypatch):

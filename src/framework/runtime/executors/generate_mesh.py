@@ -277,9 +277,9 @@ class GenerateMeshExecutor(StepExecutor):
         for i, cand in enumerate(candidates):
             aid = f"{ctx.run.run_id}_{ctx.step.step_id}_mesh_{spec_fp}_{i}"
             shape = _MESH_SHAPE_BY_FORMAT.get(cand.format, "gltf")
+            payload_kwargs = _candidate_payload_kwargs(cand)
             art = ctx.repository.put(
                 artifact_id=aid,
-                value=cand.data,
                 artifact_type=ArtifactType(
                     modality="mesh", shape=shape, display_name="mesh_asset",
                 ),
@@ -321,9 +321,10 @@ class GenerateMeshExecutor(StepExecutor):
                 validation=ValidationRecord(
                     status="passed",
                     checks=[ValidationCheck(name="mesh.bytes_nonempty",
-                                            result="passed" if cand.data else "failed")],
+                                            result="passed" if _candidate_payload_nonempty(cand) else "failed")],
                 ),
                 file_suffix=f".{cand.format}",
+                **payload_kwargs,
             )
             mesh_arts.append(art)
             mesh_ids.append(aid)
@@ -475,6 +476,20 @@ def _resolve_source_image(ctx: StepContext) -> tuple[bytes | None, str | None]:
                         return repo.read_payload(cid), cid
 
     return None, None
+
+
+def _candidate_payload_kwargs(cand: MeshCandidate) -> dict[str, Any]:
+    """FOR-13:本地 Comfy mesh 输出用 source_path,远端 worker 继续传 bytes。"""
+    if cand.source_path:
+        return {"source_path": cand.source_path}
+    return {"value": cand.data}
+
+
+def _candidate_payload_nonempty(cand: MeshCandidate) -> bool:
+    if cand.source_path:
+        path = Path(cand.source_path)
+        return path.is_file() and path.stat().st_size > 0
+    return bool(cand.data)
 
 
 def _should_retry(policy: RetryPolicy, exc: Exception) -> bool:
