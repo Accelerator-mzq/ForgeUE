@@ -747,7 +747,7 @@ class StepExecutor(ABC):
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
-| `lifecycle` | `ExternalProcessLifecycle \| None` | `None` | orchestrator 注入;executor 内调 `ctx.lifecycle.ensure_running()` 等;lifecycle=None 时 executor 跳过调用 |
+| `lifecycle` | `ExternalProcessLifecycle \| None` | `None` | orchestrator 注入;executor 内调 `ctx.lifecycle.ensure(config.default_lifecycle)`;lifecycle=None 时 executor 跳过调用 |
 
 **`DryRunPass.run` async 化 + `aprobe`(Fluid Pause #1 scope 扩大)**:
 
@@ -804,11 +804,11 @@ class StepExecutor(ABC):
 ```python
 class ExternalProcessLifecycle(ABC):
     @abstractmethod
-    async def ensure_running(self) -> None: ...
-    @abstractmethod
-    async def ensure_release(self, reason: str) -> None: ...
+    async def ensure(self, mode: str) -> None: ...
     @abstractmethod
     async def release(self, mode: str, reason: str) -> None: ...
+    @abstractmethod
+    async def status(self) -> bool: ...
 ```
 
 **`ManagedProcessRegistry` seam**:
@@ -836,7 +836,12 @@ async def arun(self, task, workflow, steps, ...) -> RunResult:
         # ... 主流程 ...
     finally:
         if lifecycle:
-            await self._release_lifecycle_bounded(lifecycle, mode, reason)
+            await self._release_lifecycle_bounded(
+                lifecycle,
+                mode,
+                reason,
+                sink=...
+            )
 
 async def aclose(self) -> None:
     """释放 self_managed_session 持有的抽象 lifecycle。"""
@@ -845,10 +850,11 @@ async def aclose(self) -> None:
             self._lifecycle,
             "self_managed_session",
             "orchestrator_close",
+            sink=...
         )
 ```
 
-`_release_lifecycle_bounded(lifecycle, mode, reason)`:套 `asyncio.wait_for(lifecycle.release(mode, reason), timeout=30s)`;超时记 warning/metrics 不 raise(防 release 本身挂死导致 orchestrator 无法退出)。
+`_release_lifecycle_bounded(manager, mode, reason, sink)`:套 `asyncio.wait_for(manager.release(mode, reason), timeout=30s)`;超时调用 `sink` 留痕并记 warning,不 raise(防 release 本身挂死导致 orchestrator 无法退出)。
 
 ---
 
