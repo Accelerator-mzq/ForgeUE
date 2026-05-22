@@ -3,6 +3,26 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-22 FOR-7 completion
+
+### `2026-05-20-executor-async-rewrite::managed-process-registry-generalization`
+
+- **new_status**: completed
+- **reason**: `ComfyLifecycleManager` 的选择边界已泛化为 `ManagedProcessRegistry` / `ManagedProcessAdapter` seam;
+  `ComfyManagedProcessAdapter` 是第一个具体 adapter,Orchestrator 只依赖 registry 返回的 `ExternalProcessLifecycle`。
+  `self_managed_session` lifecycle 复用已按 `(adapter_name, provider_name, provider_kind, route_model)`
+  隔离,为第二个托管 subprocess provider 预留接入骨架。
+- **evidence**: `src/framework/runtime/managed_process_registry.py`,
+  `src/framework/providers/comfy_provider_config.py`,
+  `src/framework/runtime/orchestrator.py`,
+  `tests/unit/test_managed_process_registry.py`,
+  `tests/unit/test_orchestrator.py::test_self_managed_session_keeps_lifecycle_per_managed_process_selection`;
+  FOR-7 已合入并推送到 `origin/forge-codex` (`3fad01a Fix Comfy dry-run probe fixtures`);
+  合入后 `python -m pytest -q` → `1256 passed, 4 skipped`
+  (`demo_artifacts/2026-05-22/adhoc/for7_merge_to_forge_codex/pytest_full.log`);
+  Linear FOR-7 状态为 `Done`。
+- **archived_by**: FOR-7 managed-process-registry-generalization 2026-05-22
+
 ## 2026-05-22 FOR-12 completion
 
 ### `2026-05-21-repo-put-streaming-payload::repo-put-staging-hash-atomicity`

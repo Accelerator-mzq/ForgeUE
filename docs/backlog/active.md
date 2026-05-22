@@ -1,14 +1,14 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 9 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 15 项 legacy requirements 待办(不计入上面 9)。
+> 待办计 8 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 15 项 legacy requirements 待办(不计入上面 8)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (8)
+## Future Work (7)
 
 ### `2026-05-20-executor-async-rewrite::fake-comfy-worker-agenerate-yield-point`
 
@@ -31,17 +31,6 @@
 - **priority**: low
 - **related change**: (无)
 - **triggered_by**: undefined#undefined
-
-### `2026-05-20-executor-async-rewrite::managed-process-registry-generalization`
-
-- **source change**: 2026-05-20-executor-async-rewrite
-- **description**: 把 ComfyLifecycleManager 泛化成通用 ManagedProcessRegistry(brainstorm 方案 C),支持多个框架托管的外部 subprocess provider。
-
-- **reason**: 本 change 采 A+seam —— 抽象 ExternalProcessLifecycle ABC + 唯一具体实现 ComfyLifecycleManager。TBD-011 引入第二个托管 subprocess provider 且其 形态(怎么起 / 探活 / 停)明确后,由 A→C 机械泛化(把现有类塞进 registry 当一个 entry)。现在从单样本 ComfyUI 猜 registry 抽象边界会猜错。
-
-- **priority**: medium
-- **related change**: (无)
-- **triggered_by**: (无)
 
 ### `2026-05-20-executor-async-rewrite::multi-mode-comfy-dag-warning`
 
