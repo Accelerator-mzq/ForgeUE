@@ -1,49 +1,42 @@
-# Engine Bridge Godot4 Implementation Plan
+# Engine Bridge + Godot4 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给 agentic workers:** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 按任务执行。所有步骤用 checkbox（`- [ ]`）追踪。
 
-**Goal:** Refactor export delivery from UE-only to an engine adapter boundary and add a Godot 4.x headless import MVP.
+**目标:** 把当前 UE-only export 交付边界重构为通用 Engine Adapter 边界，并新增 Godot 4.x headless import MVP。
 
-**Architecture:** Add `EngineTarget` and an `EngineAdapter` registry. Convert legacy `ue_target` to `engine_target(engine="unreal")`, move current UE export behavior behind `UnrealAdapter`, then add `Godot4Adapter` that stages supported assets and runs `godot --headless --path <project_root> --import`.
+**架构:** 新增 `EngineTarget`、`EngineAdapter` 和 adapter registry。旧 `ue_target` 自动兼容为 `engine_target(engine="unreal")`；现有 UE `manifest_only` 行为迁入 `UnrealAdapter`；新增 `Godot4Adapter` 负责 stage 资源并执行 `godot --headless --path <project_root> --import`。
 
-**Tech Stack:** Python 3.12, Pydantic v2, pytest, stdlib subprocess/asyncio, existing ForgeUE ArtifactRepository, existing UE bridge modules.
+**技术栈:** Python 3.12、Pydantic v2、pytest、stdlib `asyncio/subprocess`、现有 `ArtifactRepository`、现有 UE bridge 模块。
 
 ---
 
-## File Structure
+## 文件结构
 
-- Create `src/framework/engine_bridge/core.py`: generic engine target/evidence models and `resolve_engine_target`.
-- Create `src/framework/engine_bridge/adapters.py`: `EngineAdapter` protocol and shared adapter errors.
-- Create `src/framework/engine_bridge/registry.py`: small registry for `unreal` and `godot4` adapters.
-- Create `src/framework/engine_bridge/unreal/adapter.py`: wraps current UE manifest-only export behavior.
-- Create `src/framework/engine_bridge/unreal/__init__.py`: exports `UnrealAdapter`.
-- Create `src/framework/engine_bridge/godot4/adapter.py`: stages artifacts and drives Godot 4 headless import.
-- Create `src/framework/engine_bridge/godot4/__init__.py`: exports `Godot4Adapter`.
-- Create `tests/unit/test_engine_target.py`: schema and legacy `ue_target` compatibility.
-- Create `tests/unit/test_engine_adapter_registry.py`: adapter resolution and unknown-engine failures.
-- Create `tests/unit/test_godot4_adapter.py`: Godot staging, command construction, evidence, unsupported video.
-- Modify `src/framework/core/task.py`: add `engine_target` and legacy normalization.
-- Modify `src/framework/core/__init__.py`: export `EngineTarget` and `EngineEvidence`.
-- Modify `src/framework/runtime/executors/export.py`: turn `ExportExecutor` into adapter dispatch and preserve export wildcard behavior.
-- Modify `src/framework/run.py`: register the generic export executor.
-- Modify existing UE integration tests only where they instantiate `ExportExecutor` or assert capability behavior.
-- Create `examples/godot4_export_smoke.json`: dry-run/fake-friendly Godot export bundle.
-- Modify docs release surfaces after code passes: README, SRS, HLD, LLD, test_spec, acceptance_report, contracts, backlog, CHANGELOG.
+- 新建 `src/framework/engine_bridge/core.py`: 通用 `EngineTarget`、`EngineEvidence`、`resolve_engine_target`。
+- 新建 `src/framework/engine_bridge/adapters.py`: `EngineAdapter` protocol。
+- 新建 `src/framework/engine_bridge/registry.py`: engine id 到 adapter 的 registry。
+- 新建 `src/framework/engine_bridge/unreal/adapter.py`: 包装当前 UE export 行为。
+- 新建 `src/framework/engine_bridge/godot4/adapter.py`: Godot 4 stage + headless import。
+- 修改 `src/framework/core/task.py`: 增加 `engine_target`，保留 `ue_target` 兼容。
+- 修改 `src/framework/runtime/executors/export.py`: 改为 adapter dispatch。
+- 新增 `tests/unit/test_engine_target.py`、`tests/unit/test_engine_adapter_registry.py`、`tests/unit/test_godot4_adapter.py`。
+- 新增 `examples/godot4_export_smoke.json`。
+- 文档同步范围: `README.md`、`AGENTS.md`、`CLAUDE.md`、五件套、`docs/contracts/**`、`docs/backlog/active.md`、`CHANGELOG.md`。
 
-## Task 1: Add EngineTarget and legacy ue_target normalization
+## 任务 1: 新增 EngineTarget 与旧 ue_target 兼容
 
-**Files:**
-- Create: `src/framework/engine_bridge/core.py`
-- Modify: `src/framework/core/task.py`
-- Modify: `src/framework/core/__init__.py`
-- Create: `tests/unit/test_engine_target.py`
-- Test: `tests/unit/test_engine_target.py`
+**文件:**
+- 新建: `src/framework/engine_bridge/core.py`
+- 修改: `src/framework/core/task.py`
+- 修改: `src/framework/core/__init__.py`
+- 新建: `tests/unit/test_engine_target.py`
 
-- [ ] **Step 1: Write failing schema tests**
+- [ ] **步骤 1: 写红灯测试**
 
-Add `tests/unit/test_engine_target.py`:
+创建 `tests/unit/test_engine_target.py`:
 
 ```python
+import pytest
 from pydantic import ValidationError
 
 from framework.core.enums import RunMode, TaskType
@@ -111,21 +104,19 @@ def test_resolve_engine_target_requires_any_engine_target():
         resolve_engine_target(task)
 ```
 
-Also add `import pytest` at the top of the test file.
+- [ ] **步骤 2: 确认红灯**
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
+运行:
 
 ```powershell
 python -m pytest tests/unit/test_engine_target.py -q
 ```
 
-Expected: FAIL because `framework.engine_bridge.core` does not exist.
+预期: 失败，原因是 `framework.engine_bridge.core` 尚不存在。
 
-- [ ] **Step 3: Implement generic engine models**
+- [ ] **步骤 3: 实现通用模型**
 
-Create `src/framework/engine_bridge/core.py`:
+创建 `src/framework/engine_bridge/core.py`:
 
 ```python
 """Generic engine bridge models shared by Unreal and Godot adapters."""
@@ -139,7 +130,7 @@ from framework.core.ue import UEOutputTarget
 
 
 class EngineTarget(BaseModel):
-    """Engine-neutral delivery target declared at Task level."""
+    """Task 层声明的引擎无关交付目标。"""
 
     engine: Literal["unreal", "godot4"]
     project_name: str
@@ -152,7 +143,7 @@ class EngineTarget(BaseModel):
 
     @classmethod
     def from_ue_target(cls, target: UEOutputTarget) -> "EngineTarget":
-        # 中文注释:旧 ue_target 兼容为 unreal adapter 输入,不丢 UE 专属配置
+        # 中文注释:旧 ue_target 兼容为 unreal adapter 输入，不丢 UE 专属配置。
         return cls(
             engine="unreal",
             project_name=target.project_name,
@@ -183,7 +174,7 @@ class EngineTarget(BaseModel):
 
 
 class EngineEvidence(BaseModel):
-    """Engine-neutral evidence item for adapter operations."""
+    """引擎 adapter 操作的通用 evidence。"""
 
     evidence_item_id: str
     op_id: str
@@ -204,72 +195,69 @@ def resolve_engine_target(task) -> EngineTarget:
     raise RuntimeError("export step requires engine_target or legacy ue_target")
 ```
 
-- [ ] **Step 4: Add Task field and exports**
+- [ ] **步骤 4: 接入 Task 和 core export surface**
 
-Modify `src/framework/core/task.py`:
+修改 `src/framework/core/task.py`:
 
 ```python
 from framework.engine_bridge.core import EngineTarget
 ```
 
-Add the field next to `ue_target`:
+在 `Task` 中加入:
 
 ```python
     engine_target: EngineTarget | None = None
     ue_target: UEOutputTarget | None = None
 ```
 
-Modify `src/framework/core/__init__.py`:
+修改 `src/framework/core/__init__.py`:
 
 ```python
 from framework.engine_bridge.core import EngineEvidence, EngineTarget
 ```
 
-Add both names to `__all__`.
+并把 `EngineEvidence`、`EngineTarget` 加入 `__all__`。
 
-- [ ] **Step 5: Run tests**
+- [ ] **步骤 5: 确认绿灯**
 
-Run:
+运行:
 
 ```powershell
 python -m pytest tests/unit/test_engine_target.py tests/unit/test_core_schemas.py::test_ue_output_target_default_manifest_only -q
 ```
 
-Expected: PASS.
+预期: 全部通过。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6: 提交**
 
 ```powershell
 git add src/framework/engine_bridge/core.py src/framework/core/task.py src/framework/core/__init__.py tests/unit/test_engine_target.py
 git commit -m "feat: add engine target schema"
 ```
 
-## Task 2: Add EngineAdapter registry and make ExportExecutor generic
+## 任务 2: 新增 EngineAdapter registry，并让 ExportExecutor 支持通用 export
 
-**Files:**
-- Create: `src/framework/engine_bridge/__init__.py`
-- Create: `src/framework/engine_bridge/adapters.py`
-- Create: `src/framework/engine_bridge/registry.py`
-- Modify: `src/framework/runtime/executors/export.py`
-- Create: `tests/unit/test_engine_adapter_registry.py`
-- Test: `tests/unit/test_engine_adapter_registry.py`
+**文件:**
+- 新建: `src/framework/engine_bridge/__init__.py`
+- 新建: `src/framework/engine_bridge/adapters.py`
+- 新建: `src/framework/engine_bridge/registry.py`
+- 修改: `src/framework/runtime/executors/export.py`
+- 新建: `tests/unit/test_engine_adapter_registry.py`
 
-- [ ] **Step 1: Write failing registry tests**
+- [ ] **步骤 1: 写 registry 红灯测试**
 
-Create `tests/unit/test_engine_adapter_registry.py`:
+创建 `tests/unit/test_engine_adapter_registry.py`:
 
 ```python
 import pytest
 
-from framework.engine_bridge.adapters import EngineAdapter
-from framework.engine_bridge.core import EngineTarget
 from framework.engine_bridge.registry import EngineAdapterRegistry
 
 
 class _FakeAdapter:
     engine = "godot4"
 
-    async def export(self, ctx, *, target: EngineTarget):
+    async def export(self, ctx, *, target):
         return None
 
 
@@ -286,19 +274,17 @@ def test_registry_rejects_unknown_engine():
         registry.resolve("godot4")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
+- [ ] **步骤 2: 确认红灯**
 
 ```powershell
 python -m pytest tests/unit/test_engine_adapter_registry.py -q
 ```
 
-Expected: FAIL because registry modules do not exist.
+预期: 失败，registry 模块不存在。
 
-- [ ] **Step 3: Implement adapter protocol and registry**
+- [ ] **步骤 3: 实现 protocol 和 registry**
 
-Create `src/framework/engine_bridge/adapters.py`:
+创建 `src/framework/engine_bridge/adapters.py`:
 
 ```python
 """Engine adapter protocol for export delivery."""
@@ -314,10 +300,10 @@ class EngineAdapter(Protocol):
     engine: str
 
     async def export(self, ctx: StepContext, *, target: EngineTarget) -> ExecutorResult:
-        """Deliver upstream artifacts into one engine project."""
+        """把上游 Artifact 交付到一个具体引擎项目。"""
 ```
 
-Create `src/framework/engine_bridge/registry.py`:
+创建 `src/framework/engine_bridge/registry.py`:
 
 ```python
 """Small registry mapping engine ids to export adapters."""
@@ -340,7 +326,7 @@ class EngineAdapterRegistry:
             raise KeyError(f"No engine adapter registered for engine={engine}") from exc
 ```
 
-Create `src/framework/engine_bridge/__init__.py`:
+创建 `src/framework/engine_bridge/__init__.py`:
 
 ```python
 from framework.engine_bridge.core import EngineEvidence, EngineTarget, resolve_engine_target
@@ -349,9 +335,9 @@ from framework.engine_bridge.registry import EngineAdapterRegistry
 __all__ = ["EngineAdapterRegistry", "EngineEvidence", "EngineTarget", "resolve_engine_target"]
 ```
 
-- [ ] **Step 4: Change ExportExecutor registration behavior**
+- [ ] **步骤 4: 让 ExportExecutor 先支持 wildcard export**
 
-Modify `src/framework/runtime/executors/export.py` so `ExportExecutor` can handle both existing `ue.export` steps and new `engine.export` steps:
+把 `src/framework/runtime/executors/export.py` 的类头改成:
 
 ```python
 class ExportExecutor(StepExecutor):
@@ -361,45 +347,43 @@ class ExportExecutor(StepExecutor):
     capability_ref = None
 ```
 
-Keep the old body for now. This task only proves wildcard export dispatch is valid; Task 3 moves UE-specific code behind `UnrealAdapter`.
+此任务暂不移动 UE 逻辑；任务 3 再把 UE 逻辑迁进 `UnrealAdapter`。
 
-- [ ] **Step 5: Run tests**
-
-Run:
+- [ ] **步骤 5: 验证**
 
 ```powershell
 python -m pytest tests/unit/test_engine_adapter_registry.py tests/integration/test_p4_ue_manifest_only.py::test_p4_full_pipeline_writes_manifest_plan_and_evidence -q
 ```
 
-Expected: PASS.
+预期: 全部通过。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6: 提交**
 
 ```powershell
 git add src/framework/engine_bridge/__init__.py src/framework/engine_bridge/adapters.py src/framework/engine_bridge/registry.py src/framework/runtime/executors/export.py tests/unit/test_engine_adapter_registry.py
 git commit -m "feat: add engine adapter registry"
 ```
 
-## Task 3: Move current UE export behavior behind UnrealAdapter
+## 任务 3: 把现有 UE export 行为迁入 UnrealAdapter
 
-**Files:**
-- Create: `src/framework/engine_bridge/unreal/__init__.py`
-- Create: `src/framework/engine_bridge/unreal/adapter.py`
-- Modify: `src/framework/runtime/executors/export.py`
-- Modify: `tests/integration/test_p4_ue_manifest_only.py`
-- Test: `tests/integration/test_p4_ue_manifest_only.py`
+**文件:**
+- 新建: `src/framework/engine_bridge/unreal/__init__.py`
+- 新建: `src/framework/engine_bridge/unreal/adapter.py`
+- 修改: `src/framework/runtime/executors/export.py`
+- 修改: `tests/unit/test_engine_adapter_registry.py`
+- 测试: `tests/integration/test_p4_ue_manifest_only.py`
 
-- [ ] **Step 1: Add failing test that ExportExecutor uses adapter registry**
+- [ ] **步骤 1: 写 ExportExecutor dispatch 红灯测试**
 
-Add to `tests/unit/test_engine_adapter_registry.py`:
+在 `tests/unit/test_engine_adapter_registry.py` 追加:
 
 ```python
-import types
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from framework.core.enums import RunMode, StepType, TaskType
 from framework.core.task import Run, Step, Task
 from framework.engine_bridge.core import EngineTarget
-from framework.engine_bridge.registry import EngineAdapterRegistry
 from framework.runtime.executors.base import ExecutorResult, StepContext
 from framework.runtime.executors.export import ExportExecutor
 
@@ -440,13 +424,13 @@ async def test_export_executor_dispatches_to_engine_adapter(tmp_path):
             run_id="r",
             task_id="t",
             project_id="proj",
-            started_at=__import__("datetime").datetime.now(__import__("datetime").timezone.utc),
+            started_at=datetime.now(timezone.utc),
             workflow_id="w",
             trace_id="trace",
         ),
         task=task,
         step=Step(step_id="export", type=StepType.export, name="export", capability_ref="engine.export"),
-        repository=types.SimpleNamespace(),
+        repository=SimpleNamespace(),
     )
 
     result = await executor.execute(ctx)
@@ -454,21 +438,17 @@ async def test_export_executor_dispatches_to_engine_adapter(tmp_path):
     assert result.metrics["engine"] == "godot4"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
+- [ ] **步骤 2: 确认红灯**
 
 ```powershell
 python -m pytest tests/unit/test_engine_adapter_registry.py::test_export_executor_dispatches_to_engine_adapter -q
 ```
 
-Expected: FAIL because `ExportExecutor` has no `adapter_registry` constructor argument and does not dispatch.
+预期: 失败，`ExportExecutor` 尚无 `adapter_registry` 参数。
 
-- [ ] **Step 3: Create UnrealAdapter by moving UE-specific ExportExecutor logic**
+- [ ] **步骤 3: 创建 UnrealAdapter**
 
-Create `src/framework/engine_bridge/unreal/adapter.py`.
-
-Move the current UE-specific imports and helper methods from `src/framework/runtime/executors/export.py` into:
+创建 `src/framework/engine_bridge/unreal/adapter.py`，把当前 `ExportExecutor.execute` 及其 UE helper 移入:
 
 ```python
 class UnrealAdapter:
@@ -479,13 +459,12 @@ class UnrealAdapter:
 
     async def export(self, ctx: StepContext, *, target: EngineTarget) -> ExecutorResult:
         ue_target = target.to_ue_target()
-        # 中文注释:这里粘贴原 ExportExecutor.execute 的 manifest_only 实现,
-        # 但把 ctx.task.ue_target 替换为 ue_target。
+        # 中文注释:这里保留原 manifest_only 实现，只把 ctx.task.ue_target 替换为 ue_target。
 ```
 
-When moving code, replace every `target = ctx.task.ue_target` read with `ue_target = target.to_ue_target()` and use `ue_target` for UE bridge calls.
+迁移时把所有 `ctx.task.ue_target` 改为局部变量 `ue_target`，其余 UE bridge 逻辑不做行为重构。
 
-Create `src/framework/engine_bridge/unreal/__init__.py`:
+创建 `src/framework/engine_bridge/unreal/__init__.py`:
 
 ```python
 from framework.engine_bridge.unreal.adapter import UnrealAdapter
@@ -493,9 +472,9 @@ from framework.engine_bridge.unreal.adapter import UnrealAdapter
 __all__ = ["UnrealAdapter"]
 ```
 
-- [ ] **Step 4: Replace ExportExecutor with adapter dispatch**
+- [ ] **步骤 4: 简化 ExportExecutor 为 adapter dispatch**
 
-Modify `src/framework/runtime/executors/export.py`:
+把 `src/framework/runtime/executors/export.py` 改成:
 
 ```python
 """Generic export step executor — dispatches to engine adapters."""
@@ -530,34 +509,31 @@ class ExportExecutor(StepExecutor):
         return await adapter.export(ctx, target=target)
 ```
 
-- [ ] **Step 5: Run focused UE compatibility tests**
-
-Run:
+- [ ] **步骤 5: 验证 UE 兼容**
 
 ```powershell
 python -m pytest tests/unit/test_engine_adapter_registry.py tests/integration/test_p4_ue_manifest_only.py -q
 ```
 
-Expected: PASS. Existing `ue_target` bundles still go through `UnrealAdapter`.
+预期: 全部通过，旧 `ue_target` bundle 仍通过 `UnrealAdapter` 执行。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 6: 提交**
 
 ```powershell
-git add src/framework/engine_bridge/unreal src/framework/runtime/executors/export.py tests/unit/test_engine_adapter_registry.py tests/integration/test_p4_ue_manifest_only.py
+git add src/framework/engine_bridge/unreal src/framework/runtime/executors/export.py tests/unit/test_engine_adapter_registry.py
 git commit -m "refactor: route export through unreal adapter"
 ```
 
-## Task 4: Add Godot4Adapter staging and evidence without running Godot
+## 任务 4: 新增 Godot4Adapter stage / manifest / evidence
 
-**Files:**
-- Create: `src/framework/engine_bridge/godot4/__init__.py`
-- Create: `src/framework/engine_bridge/godot4/adapter.py`
-- Create: `tests/unit/test_godot4_adapter.py`
-- Test: `tests/unit/test_godot4_adapter.py`
+**文件:**
+- 新建: `src/framework/engine_bridge/godot4/__init__.py`
+- 新建: `src/framework/engine_bridge/godot4/adapter.py`
+- 新建: `tests/unit/test_godot4_adapter.py`
 
-- [ ] **Step 1: Write failing Godot staging tests**
+- [ ] **步骤 1: 写 Godot stage 红灯测试**
 
-Create `tests/unit/test_godot4_adapter.py` with helper artifacts that write real files under `tmp_path`:
+创建 `tests/unit/test_godot4_adapter.py`，其中 helper 使用真实临时文件和 `ArtifactRepository.put(value=..., file_suffix=...)`，避免依赖外部路径:
 
 ```python
 from __future__ import annotations
@@ -565,8 +541,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-
-import pytest
 
 from framework.artifact_store import ArtifactRepository, get_backend_registry
 from framework.core.artifact import ArtifactType, Lineage, ProducerRef
@@ -636,7 +610,7 @@ def _ctx(tmp_path: Path, project_root: Path, artifact_ids: list[str], repo: Arti
     )
 ```
 
-Add the first test:
+追加测试:
 
 ```python
 async def test_godot4_adapter_stages_supported_artifacts_and_writes_plan(tmp_path):
@@ -651,216 +625,52 @@ async def test_godot4_adapter_stages_supported_artifacts_and_writes_plan(tmp_pat
 
     async def fake_runner(argv, *, cwd, log_path):
         calls.append((argv, cwd, log_path))
-        staged = project / "forgeue" / "generated" / "run_godot" / "source.png"
-        staged.with_suffix(staged.suffix + ".import").write_text("[remap]", encoding="utf-8")
+        staged = project / "forgeue" / "generated" / "run_godot" / "art_png.png"
+        Path(str(staged) + ".import").write_text("[remap]", encoding="utf-8")
         imported = project / ".godot" / "imported"
         imported.mkdir(parents=True)
-        (imported / "source.png.fake.ctex").write_bytes(b"ctex")
+        (imported / "art_png.png.fake.ctex").write_bytes(b"ctex")
         return 0
 
     adapter = Godot4Adapter(command_runner=fake_runner)
-    result = await adapter.export(_ctx(tmp_path, project, [art.artifact_id], repo), target=_ctx(tmp_path, project, [art.artifact_id], repo).task.engine_target)
+    ctx = _ctx(tmp_path, project, [art.artifact_id], repo)
+    result = await adapter.export(ctx, target=ctx.task.engine_target)
 
     run_folder = project / "forgeue" / "generated" / "run_godot"
-    assert (run_folder / "source.png").is_file()
+    assert (run_folder / "art_png.png").is_file()
     assert (run_folder / "godot_manifest.json").is_file()
     assert (run_folder / "godot_import_plan.json").is_file()
     evidence = json.loads((run_folder / "evidence.json").read_text(encoding="utf-8"))
     assert any(item["status"] == "success" and item["kind"] == "godot_import" for item in evidence)
-    assert calls[0][0][-3:] == ["--headless", "--path", str(project)] or "--import" in calls[0][0]
+    assert calls[0][0] == [str(tmp_path / "Godot_v4.exe"), "--headless", "--path", str(project), "--import"]
     assert result.metrics["engine"] == "godot4"
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run:
+- [ ] **步骤 2: 确认红灯**
 
 ```powershell
 python -m pytest tests/unit/test_godot4_adapter.py::test_godot4_adapter_stages_supported_artifacts_and_writes_plan -q
 ```
 
-Expected: FAIL because `Godot4Adapter` does not exist.
+预期: 失败，`Godot4Adapter` 不存在。
 
-- [ ] **Step 3: Implement Godot4Adapter staging skeleton**
+- [ ] **步骤 3: 实现 Godot4Adapter**
 
-Create `src/framework/engine_bridge/godot4/adapter.py`:
+创建 `src/framework/engine_bridge/godot4/adapter.py`，实现:
+
+- 支持 `("image", "png")`、`("image", "jpg")`、`("image", "jpeg")`、`("audio", "wav")`、`("audio", "mp3")`、`("mesh", "glb")`。
+- stage 到 `<project_root>/<asset_root>/<run_id>/`。
+- 写 `godot_manifest.json`、`godot_import_plan.json`、`evidence.json`。
+- 有可导入操作时运行 `[godot_exe, "--headless", "--path", project_root, "--import"]`。
+- 验证源文件旁 `.import` 与 `.godot/imported/<filename>*`。
+
+实现时保留中文注释说明关键边界:
 
 ```python
-"""Godot 4.x engine adapter using headless import."""
-from __future__ import annotations
-
-import asyncio
-import json
-import os
-import shutil
-from pathlib import Path
-from uuid import uuid4
-
-from framework.core.artifact import Artifact
-from framework.core.enums import PayloadKind
-from framework.engine_bridge.core import EngineEvidence, EngineTarget
-from framework.runtime.executors.base import ExecutorResult, StepContext
-
-
-_SUPPORTED: dict[tuple[str, str], str] = {
-    ("image", "png"): "texture",
-    ("image", "jpg"): "texture",
-    ("image", "jpeg"): "texture",
-    ("audio", "wav"): "audio_stream",
-    ("audio", "mp3"): "audio_stream",
-    ("mesh", "glb"): "scene",
-}
-
-
-class Godot4Adapter:
-    engine = "godot4"
-
-    def __init__(self, *, command_runner=None) -> None:
-        self._command_runner = command_runner or self._run_command
-
-    async def export(self, ctx: StepContext, *, target: EngineTarget) -> ExecutorResult:
-        if target.import_mode != "headless_import":
-            raise RuntimeError(f"godot4 adapter only supports headless_import, got {target.import_mode}")
-        project_root = Path(target.project_root)
-        if not (project_root / "project.godot").is_file():
-            raise RuntimeError(f"Godot project_root missing project.godot: {project_root}")
-        run_folder = project_root / target.asset_root / ctx.run.run_id
-        run_folder.mkdir(parents=True, exist_ok=True)
-
-        manifest_assets: list[dict] = []
-        operations: list[dict] = []
-        evidence: list[EngineEvidence] = []
-        for art in self._collect_upstream(ctx):
-            kind = _SUPPORTED.get((art.artifact_type.modality, art.artifact_type.shape))
-            if kind is None:
-                evidence.append(self._evidence(art, kind="stage_file", status="skipped", error="unsupported godot4 artifact shape"))
-                continue
-            src = self._resolve_source_path(ctx, art)
-            if src is None:
-                evidence.append(self._evidence(art, kind="stage_file", status="failed", error="source file not found"))
-                continue
-            dest = run_folder / Path(src).name
-            await asyncio.to_thread(shutil.copy2, src, dest)
-            source_uri = dest.relative_to(project_root).as_posix()
-            entry_id = f"ga_{art.artifact_id}"
-            manifest_assets.append({
-                "asset_entry_id": entry_id,
-                "artifact_id": art.artifact_id,
-                "asset_kind": kind,
-                "source_uri": source_uri,
-            })
-            operations.append({
-                "op_id": f"op_import_{art.artifact_id}",
-                "kind": "godot_import",
-                "asset_entry_id": entry_id,
-            })
-            evidence.append(self._evidence(art, kind="stage_file", status="success", target_uri=source_uri))
-
-        self._write_json(run_folder / "godot_manifest.json", {
-            "manifest_id": f"gm_{ctx.run.run_id}",
-            "engine": "godot4",
-            "run_id": ctx.run.run_id,
-            "assets": manifest_assets,
-        })
-        self._write_json(run_folder / "godot_import_plan.json", {
-            "plan_id": f"gp_{ctx.run.run_id}",
-            "manifest_id": f"gm_{ctx.run.run_id}",
-            "operations": operations,
-        })
-
-        if operations:
-            exe = self._resolve_executable(target)
-            log_path = run_folder / "godot_import.log"
-            argv = [exe, "--headless", "--path", str(project_root), "--import"]
-            exit_code = await self._command_runner(argv, cwd=project_root, log_path=log_path)
-            if exit_code != 0:
-                evidence.append(EngineEvidence(
-                    evidence_item_id=self._id(),
-                    op_id="op_godot_import",
-                    engine="godot4",
-                    kind="godot_import",
-                    status="failed",
-                    log_ref=log_path.relative_to(project_root).as_posix(),
-                    error=f"godot import exited with {exit_code}",
-                ))
-            else:
-                evidence.extend(self._verify_imports(project_root, manifest_assets, log_path))
-
-        self._write_json(run_folder / "evidence.json", [item.model_dump() for item in evidence])
-        return ExecutorResult(metrics={
-            "engine": "godot4",
-            "run_folder": str(run_folder),
-            "manifest_entries": len(manifest_assets),
-            "skipped_ops": sum(1 for item in evidence if item.status == "skipped"),
-        })
-
-    def _collect_upstream(self, ctx: StepContext) -> list[Artifact]:
-        return [ctx.repository.get(aid) for aid in ctx.upstream_artifact_ids if ctx.repository.exists(aid)]
-
-    def _resolve_source_path(self, ctx: StepContext, art: Artifact) -> Path | None:
-        if art.payload_ref.kind != PayloadKind.file or not art.payload_ref.file_path:
-            return None
-        path = Path(art.payload_ref.file_path)
-        return path if path.is_file() else None
-
-    def _resolve_executable(self, target: EngineTarget) -> str:
-        exe = target.executable_path or os.environ.get("GODOT4_EXE")
-        if not exe:
-            raise RuntimeError("Godot 4 executable not configured; set engine_target.executable_path or GODOT4_EXE")
-        return exe
-
-    async def _run_command(self, argv: list[str], *, cwd: Path, log_path: Path) -> int:
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        out, _ = await proc.communicate()
-        log_path.write_bytes(out)
-        return int(proc.returncode or 0)
-
-    def _verify_imports(self, project_root: Path, assets: list[dict], log_path: Path) -> list[EngineEvidence]:
-        imported_dir = project_root / ".godot" / "imported"
-        out: list[EngineEvidence] = []
-        for asset in assets:
-            source = project_root / asset["source_uri"]
-            import_file = Path(str(source) + ".import")
-            imported_matches = list(imported_dir.glob(f"{source.name}*")) if imported_dir.is_dir() else []
-            status = "success" if import_file.is_file() and imported_matches else "failed"
-            out.append(EngineEvidence(
-                evidence_item_id=self._id(),
-                op_id=f"op_verify_{asset['artifact_id']}",
-                engine="godot4",
-                kind="godot_import",
-                status=status,
-                source_uri=asset["source_uri"],
-                target_uri=imported_matches[0].relative_to(project_root).as_posix() if imported_matches else None,
-                log_ref=log_path.relative_to(project_root).as_posix(),
-                error=None if status == "success" else "Godot import output not found",
-            ))
-        return out
-
-    def _evidence(self, art: Artifact, *, kind: str, status: str, target_uri: str | None = None, error: str | None = None) -> EngineEvidence:
-        return EngineEvidence(
-            evidence_item_id=self._id(),
-            op_id=f"op_{kind}_{art.artifact_id}",
-            engine="godot4",
-            kind=kind,
-            status=status,
-            source_uri=art.payload_ref.file_path,
-            target_uri=target_uri,
-            error=error,
-        )
-
-    def _write_json(self, path: Path, value) -> None:
-        path.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    def _id(self) -> str:
-        return f"ev_{uuid4().hex[:12]}"
+# 中文注释:不手写 Godot .import 文件，交给 Godot 自己生成。
 ```
 
-Create `src/framework/engine_bridge/godot4/__init__.py`:
+创建 `src/framework/engine_bridge/godot4/__init__.py`:
 
 ```python
 from framework.engine_bridge.godot4.adapter import Godot4Adapter
@@ -868,42 +678,30 @@ from framework.engine_bridge.godot4.adapter import Godot4Adapter
 __all__ = ["Godot4Adapter"]
 ```
 
-- [ ] **Step 4: Fix the test context duplication**
-
-In the test, create `ctx = _ctx(...)` once and pass `target=ctx.task.engine_target`:
-
-```python
-ctx = _ctx(tmp_path, project, [art.artifact_id], repo)
-result = await adapter.export(ctx, target=ctx.task.engine_target)
-```
-
-- [ ] **Step 5: Run tests**
-
-Run:
+- [ ] **步骤 4: 验证**
 
 ```powershell
 python -m pytest tests/unit/test_godot4_adapter.py::test_godot4_adapter_stages_supported_artifacts_and_writes_plan -q
 ```
 
-Expected: PASS.
+预期: 通过。
 
-- [ ] **Step 6: Commit**
+- [ ] **步骤 5: 提交**
 
 ```powershell
 git add src/framework/engine_bridge/godot4 tests/unit/test_godot4_adapter.py
 git commit -m "feat: add godot4 staging adapter"
 ```
 
-## Task 5: Register Godot4Adapter in ExportExecutor and add unsupported-video fence
+## 任务 5: 注册 Godot4Adapter，并补 video/mp4 skipped fence
 
-**Files:**
-- Modify: `src/framework/runtime/executors/export.py`
-- Modify: `tests/unit/test_godot4_adapter.py`
-- Test: `tests/unit/test_godot4_adapter.py`
+**文件:**
+- 修改: `src/framework/runtime/executors/export.py`
+- 修改: `tests/unit/test_godot4_adapter.py`
 
-- [ ] **Step 1: Add unsupported video test**
+- [ ] **步骤 1: 增加 video/mp4 skipped 测试**
 
-Add to `tests/unit/test_godot4_adapter.py`:
+在 `tests/unit/test_godot4_adapter.py` 追加:
 
 ```python
 async def test_godot4_adapter_skips_video_mp4_first_phase(tmp_path):
@@ -928,58 +726,53 @@ async def test_godot4_adapter_skips_video_mp4_first_phase(tmp_path):
     assert result.metrics["skipped_ops"] == 1
 ```
 
-- [ ] **Step 2: Run test**
-
-Run:
+- [ ] **步骤 2: 验证 adapter 测试**
 
 ```powershell
 python -m pytest tests/unit/test_godot4_adapter.py -q
 ```
 
-Expected: PASS.
+预期: 通过。
 
-- [ ] **Step 3: Register Godot4Adapter by default**
+- [ ] **步骤 3: 默认注册 Godot4Adapter**
 
-Modify `src/framework/runtime/executors/export.py`:
+修改 `src/framework/runtime/executors/export.py`:
 
 ```python
 from framework.engine_bridge.godot4 import Godot4Adapter
 ```
 
-In the default registry block:
+默认 registry:
 
 ```python
 adapter_registry.register(UnrealAdapter(permission_policy=permission_policy))
 adapter_registry.register(Godot4Adapter())
 ```
 
-- [ ] **Step 4: Run full focused export tests**
-
-Run:
+- [ ] **步骤 4: focused 验证**
 
 ```powershell
 python -m pytest tests/unit/test_engine_target.py tests/unit/test_engine_adapter_registry.py tests/unit/test_godot4_adapter.py tests/integration/test_p4_ue_manifest_only.py -q
 ```
 
-Expected: PASS.
+预期: 全部通过。
 
-- [ ] **Step 5: Commit**
+- [ ] **步骤 5: 提交**
 
 ```powershell
 git add src/framework/runtime/executors/export.py tests/unit/test_godot4_adapter.py
 git commit -m "feat: register godot4 export adapter"
 ```
 
-## Task 6: Add Godot example bundle and example smoke coverage
+## 任务 6: 新增 Godot example bundle 与 smoke 覆盖
 
-**Files:**
-- Create: `examples/godot4_export_smoke.json`
-- Modify: `tests/integration/test_example_bundles_smoke.py`
-- Test: `tests/integration/test_example_bundles_smoke.py`
+**文件:**
+- 新建: `examples/godot4_export_smoke.json`
+- 修改: `tests/integration/test_example_bundles_smoke.py`
 
-- [ ] **Step 1: Add example bundle**
+- [ ] **步骤 1: 新增 example bundle**
 
-Create `examples/godot4_export_smoke.json`:
+创建 `examples/godot4_export_smoke.json`:
 
 ```json
 {
@@ -1024,19 +817,15 @@ Create `examples/godot4_export_smoke.json`:
 }
 ```
 
-- [ ] **Step 2: Run example smoke loader**
-
-Run:
+- [ ] **步骤 2: 验证 example loader**
 
 ```powershell
 python -m pytest tests/integration/test_example_bundles_smoke.py -q
 ```
 
-Expected: PASS. If the smoke test assumes every export bundle has `ue_target`, update it to accept either `task.ue_target` or `task.engine_target`.
+预期: 通过。若测试假设 export bundle 必有 `ue_target`，改为接受 `task.ue_target` 或 `task.engine_target`。
 
-- [ ] **Step 3: Add explicit loader assertion if missing**
-
-If `test_example_bundles_smoke.py` has no direct assertion for the new bundle, add:
+- [ ] **步骤 3: 若缺少显式断言，补 Godot loader test**
 
 ```python
 def test_godot4_export_smoke_bundle_loads():
@@ -1045,164 +834,157 @@ def test_godot4_export_smoke_bundle_loads():
     assert bundle.steps[-1].capability_ref == "engine.export"
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **步骤 4: 提交**
 
 ```powershell
 git add examples/godot4_export_smoke.json tests/integration/test_example_bundles_smoke.py
 git commit -m "test: add godot4 export smoke bundle"
 ```
 
-## Task 7: Documentation release sync for engine-first positioning
+## 任务 7: 文档发布同步
 
-**Files:**
-- Modify: `README.md`
-- Modify: `AGENTS.md`
-- Modify: `CLAUDE.md`
-- Modify: `docs/requirements/SRS.md`
-- Modify: `docs/design/HLD.md`
-- Modify: `docs/design/LLD.md`
-- Modify: `docs/testing/test_spec.md`
-- Modify: `docs/acceptance/acceptance_report.md`
-- Create or modify: `docs/contracts/engine-export-bridge/spec.md`
-- Modify: `docs/contracts/ue-export-bridge/spec.md`
-- Modify: `docs/backlog/active.md`
-- Modify: `CHANGELOG.md`
+**文件:**
+- 修改: `README.md`
+- 修改: `AGENTS.md`
+- 修改: `CLAUDE.md`
+- 修改: `docs/requirements/SRS.md`
+- 修改: `docs/design/HLD.md`
+- 修改: `docs/design/LLD.md`
+- 修改: `docs/testing/test_spec.md`
+- 修改: `docs/acceptance/acceptance_report.md`
+- 新建或修改: `docs/contracts/engine-export-bridge/spec.md`
+- 修改: `docs/contracts/ue-export-bridge/spec.md`
+- 修改: `docs/backlog/active.md`
+- 修改: `CHANGELOG.md`
 
-- [ ] **Step 1: Invoke document-release**
+- [ ] **步骤 1: 使用 document-release**
 
-Use project-local `document-release` before editing docs. Keep archive files read-only.
+执行文档同步前先使用项目级 `document-release` skill。历史 archive 只读。
 
-- [ ] **Step 2: Update current positioning text**
+- [ ] **步骤 2: 同步项目定位**
 
-Replace UE-first language with engine-first language in current docs. Required new wording:
-
-```text
-ForgeUE is a multi-engine content delivery framework. The core runtime owns multi-model generation, artifact governance, review, workflow execution, and provider routing. Engine-specific delivery lives behind EngineAdapter implementations. Unreal remains the default adapter; Godot 4.x is supported through a headless import adapter.
-```
-
-- [ ] **Step 3: Update five-pack**
-
-SRS:
+当前文档统一为:
 
 ```text
-FR-ENGINE-001: The framework SHALL expose an engine-neutral EngineTarget on Task.
-FR-ENGINE-002: The export step SHALL dispatch through EngineAdapter implementations.
-FR-ENGINE-003: The Unreal adapter SHALL preserve current manifest_only behavior.
-FR-ENGINE-004: The Godot 4 adapter SHALL support headless_import for png/jpeg/wav/mp3/glb sources.
+ForgeUE 是多引擎内容交付框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 EngineAdapter 实现。Unreal 是默认 adapter；Godot 4.x 通过 headless import adapter 支持。
 ```
 
-HLD: add `engine_bridge` between runtime executors and engine-specific adapters.
+- [ ] **步骤 3: 同步五件套**
 
-LLD: add `EngineTarget`, `EngineEvidence`, `EngineAdapterRegistry`, `UnrealAdapter`, and `Godot4Adapter` sections.
+SRS 增加 engine requirements:
 
-test_spec: add L0/L1 rows for engine target, registry, Godot adapter, and UE compatibility.
+```text
+FR-ENGINE-001: 框架应在 Task 上暴露 engine-neutral EngineTarget。
+FR-ENGINE-002: export step 应通过 EngineAdapter dispatch。
+FR-ENGINE-003: Unreal adapter 应保持当前 manifest_only 行为。
+FR-ENGINE-004: Godot 4 adapter 应支持 png/jpeg/wav/mp3/glb 的 headless_import。
+```
 
-acceptance_report: mark Godot 4 headless import as implemented only if focused tests pass; mark L2 real Godot smoke as pending until a real `GODOT4_EXE` run is captured.
+HLD: 在 runtime executor 与具体引擎之间加入 `engine_bridge`。
 
-- [ ] **Step 4: Update contracts and backlog**
+LLD: 补 `EngineTarget`、`EngineEvidence`、`EngineAdapterRegistry`、`UnrealAdapter`、`Godot4Adapter`。
 
-Create `docs/contracts/engine-export-bridge/spec.md` with current behavior for generic dispatch and Godot MVP. Update `docs/contracts/ue-export-bridge/spec.md` to state it is now the Unreal adapter contract.
+test_spec: 新增 engine target、registry、Godot adapter、UE compatibility 测试行。
 
-In `docs/backlog/active.md`, keep FOR-30 / LR-0135 as an Unreal RemoteControl adapter follow-on. Do not archive it in this change.
+acceptance_report: Godot 4 headless import 只能在 focused tests 通过后标 L0/L1；真实 Godot L2 smoke 在 `GODOT4_EXE` 实跑前保持 pending。
 
-- [ ] **Step 5: Update CHANGELOG**
+- [ ] **步骤 4: 同步 contracts 与 backlog**
 
-Add one scoped `[Unreleased]` entry summarizing:
+创建 `docs/contracts/engine-export-bridge/spec.md`，描述 generic dispatch 与 Godot MVP 当前行为。
+
+更新 `docs/contracts/ue-export-bridge/spec.md`，说明它现在是 Unreal adapter contract。
+
+`docs/backlog/active.md` 保留 FOR-30 / LR-0135，定位为 Unreal RemoteControl adapter follow-on，不在本 change 归档。
+
+- [ ] **步骤 5: 更新 CHANGELOG**
+
+在 `[Unreleased]` 添加 scoped entry:
 
 ```text
 - Engine Bridge + Godot 4 headless import: introduced engine_target / EngineAdapter dispatch, preserved Unreal manifest_only compatibility, and added Godot 4 headless import staging and evidence.
 ```
 
-- [ ] **Step 6: Verify docs**
-
-Run:
+- [ ] **步骤 6: 文档验证**
 
 ```powershell
 rg -n "UE 专用|UE production-chain|UEOutputTarget 前置|ue_target" README.md AGENTS.md CLAUDE.md docs/requirements docs/design docs/contracts -S
 git diff --check
 ```
 
-Expected: remaining `ue_target` hits are compatibility notes or UE adapter contract references.
+预期: 剩余 `ue_target` 命中只出现在兼容说明或 Unreal adapter contract。
 
-- [ ] **Step 7: Commit**
+- [ ] **步骤 7: 提交**
 
 ```powershell
 git add README.md AGENTS.md CLAUDE.md docs/requirements/SRS.md docs/design/HLD.md docs/design/LLD.md docs/testing/test_spec.md docs/acceptance/acceptance_report.md docs/contracts docs/backlog/active.md CHANGELOG.md
 git commit -m "docs: describe engine bridge godot4 delivery"
 ```
 
-## Task 8: Final verification
+## 任务 8: 最终验证
 
-**Files:**
-- No planned edits.
+**文件:** 无计划编辑。
 
-- [ ] **Step 1: Run focused verification**
-
-Run:
+- [ ] **步骤 1: 聚焦验证**
 
 ```powershell
 python -m pytest tests/unit/test_engine_target.py tests/unit/test_engine_adapter_registry.py tests/unit/test_godot4_adapter.py tests/integration/test_p4_ue_manifest_only.py tests/integration/test_example_bundles_smoke.py -q
 ```
 
-Expected: all selected tests pass.
+预期: 全部通过。
 
-- [ ] **Step 2: Run full verification**
-
-Run:
+- [ ] **步骤 2: 全量验证**
 
 ```powershell
 python -m pytest -q
 ```
 
-Expected: pass or report unrelated pre-existing failures with exact failing tests.
+预期: 通过；若失败，记录具体 failing tests 与是否为本 change 引入。
 
-- [ ] **Step 3: Create evidence note**
+- [ ] **步骤 3: 创建证据文件**
 
-Create `demo_artifacts/2026-05-23/adhoc/engine_bridge_godot4_verification.md` with:
+创建 `demo_artifacts/2026-05-23/adhoc/engine_bridge_godot4_verification.md`:
 
 ```markdown
-# Engine Bridge Godot4 Verification
+# Engine Bridge Godot4 验证
 
-Date: 2026-05-23
+日期: 2026-05-23
 
-## Commands
+## 命令
 
 - `python -m pytest tests/unit/test_engine_target.py tests/unit/test_engine_adapter_registry.py tests/unit/test_godot4_adapter.py tests/integration/test_p4_ue_manifest_only.py tests/integration/test_example_bundles_smoke.py -q`
 - `python -m pytest -q`
 
-## Results
+## 结果
 
-- Focused verification: record the exact pytest summary from Step 1.
-- Full verification: record the exact pytest summary from Step 2.
+- 聚焦验证: 记录步骤 1 的准确 pytest 摘要。
+- 全量验证: 记录步骤 2 的准确 pytest 摘要。
 
-## Docs
+## 文档
 
-- Five-pack synchronized: yes
-- Contracts synchronized: yes
-- Backlog decision: FOR-30 remains active as Unreal RemoteControl adapter follow-on
+- 五件套已同步: 是
+- Contracts 已同步: 是
+- Backlog 决策: FOR-30 保持 active,作为 Unreal RemoteControl adapter follow-on
 ```
 
-- [ ] **Step 4: Commit evidence if project policy allows**
+`demo_artifacts/` 不提交，只在最终回复中作为本地证据路径引用。
 
-Do not commit `demo_artifacts/`. Mention the evidence path in the final response as a local verification artifact.
+## 自审
 
-## Self-Review
+Spec 覆盖:
 
-Spec coverage:
+- Engine Bridge 抽象:任务 1、任务 2、任务 3。
+- Unreal 兼容:任务 3 与任务 8 聚焦 UE 测试。
+- Godot 4 headless import MVP:任务 4、任务 5、任务 6。
+- 五件套与 contracts:任务 7。
+- FOR-30 分离:任务 7 明确保留为 Unreal adapter follow-on。
 
-- Engine Bridge abstraction: Task 1, Task 2, Task 3.
-- Unreal compatibility: Task 3 and Task 8 focused UE tests.
-- Godot 4 headless import MVP: Task 4, Task 5, Task 6.
-- Docs five-pack and contracts: Task 7.
-- FOR-30 separation: Task 7 backlog step keeps it as Unreal adapter follow-on.
+占位扫描:
 
-Placeholder scan:
+- 可执行步骤内没有红旗占位标记。
+- `video/mp4` unsupported 行为明确且有测试。
 
-- No red-flag placeholder markers remain in actionable steps.
-- Unsupported `video/mp4` behavior is explicit and tested.
+类型一致性:
 
-Type consistency:
-
-- `EngineTarget.engine` values are `unreal` and `godot4`.
-- Generic export steps use `capability_ref="engine.export"` while legacy `ue.export` is handled by wildcard `ExportExecutor`.
-- Godot import mode is consistently `headless_import`.
+- `EngineTarget.engine` 只使用 `unreal` / `godot4`。
+- 通用 export step 使用 `capability_ref="engine.export"`，旧 `ue.export` 由 wildcard `ExportExecutor` 兼容。
+- Godot import mode 始终是 `headless_import`。
