@@ -148,12 +148,15 @@ D:\ClaudeProject\ForgeUE_claude\
 │
 ├── examples/                    # TaskBundle JSON（Task + Workflow + Steps）
 │
-├── docs/                        # 架构文档
-│   ├── claude_unified_architecture_plan_v1.md      # 唯一权威设计
-│   ├── unified_architecture_vNext.md               # 精简版
-│   ├── claude_cross_review_report_v1.md            # 交叉评审
-│   ├── claude_independent_plan_v1.md               # 独立方案 v1
-│   └── assistant_plan_bundle/                      # 详细分章节设计
+├── docs/                        # 当前文档入口与架构权威
+│   ├── INDEX.md                  # 文档导航入口
+│   ├── requirements/SRS.md       # 需求规格
+│   ├── design/HLD.md             # 概要设计
+│   ├── design/LLD.md             # 详细设计
+│   ├── testing/test_spec.md      # 测试规格
+│   ├── acceptance/acceptance_report.md
+│   ├── contracts/                # 当前行为契约
+│   └── archive/                  # 历史 plan_v1 等归档史料
 │
 ├── tests/
 │   ├── integration/             # 阶段闭环 + 场景级 + Run Comparison 集成测试
@@ -256,7 +259,7 @@ bundle 立即能 `"models_ref": "image_fast"`。注册表是进程单例，热�
 | **Verdict ↔ TransitionPolicy 引擎** | 共识 | `src/framework/runtime/transition_engine.py` · 支持 9 种 Decision |
 | **`revision_hint` 回环** | §F3-4 | 评审 `revise` → 自动注入下一 step 的 `inputs["revision_hint"]` |
 | **FailureModeMap**（§C.6）| 交叉评审新增 | exception → Decision → transition · `src/framework/runtime/failure_mode_map.py` |
-| **Engine Bridge dispatch** | FOR-30 Engine Bridge | `src/framework/engine_bridge/` · `ExportExecutor` wildcard dispatch |
+| **Engine Bridge dispatch** | Engine Bridge 抽象 | `src/framework/engine_bridge/` · `ExportExecutor` wildcard dispatch |
 | **`risk_level` 调度** | Claude 原创 | `Scheduler.runnable_after` 按 low→medium→high 排序 |
 | **DeterminismPolicy**（seed 传递 + 模型版本锁）| 共识 | `Task.determinism_policy` |
 | **OTel tracing**（Run → Step → Provider）| 共识 | `src/framework/observability/tracing.py` |
@@ -338,7 +341,7 @@ python -m pytest -v -k p3           # 关键字过滤
 | **6** | ComfyUI agent CLI live smoke:默认 `lifecycle=none` 时先确保 ComfyUI server running(本机推荐 `python -m factory_v3 serve` 作为启停 helper),再跑 `examples/comfy_local_smoke*.json`;也可设 `ensure_running` / `ensure_release` / `self_managed_session` 由框架托管 | 真实 image / mesh / audio / video 产物;ForgeUE 生成仍走 `python -m comfyui_api run`(manifest 名,不再 inline `workflow_graph`;不再用 `--comfy-url`)|
 | **7** | 空白 UE 5.x 工程 → 跑档 4 → UE Python Console `exec(open('ue_scripts/run_import.py').read())` | `Content Browser` 出资产 + `evidence.json` 完整追溯 |
 
-详见 [`docs/claude_unified_architecture_plan_v1.md` §K](docs/claude_unified_architecture_plan_v1.md)。
+当前文档入口见 [`docs/INDEX.md`](docs/INDEX.md)；历史 plan_v1 已归档到 [`docs/archive/claude_unified_architecture_plan_v1.md`](docs/archive/claude_unified_architecture_plan_v1.md)。
 
 ### 常见错误速查
 
