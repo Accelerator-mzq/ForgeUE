@@ -1,11 +1,25 @@
 """Engine bridge core schemas."""
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
-from framework.core.ue import UEOutputTarget
+if TYPE_CHECKING:
+    from framework.core.ue import UEOutputTarget
+
+
+def _list_option(options: dict, name: str) -> list[str]:
+    value = options.get(name, [])
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple, set)):
+        raise ValueError(
+            f"EngineTarget.options.{name} must be a sequence of strings"
+        )
+    if not all(isinstance(item, str) for item in value):
+        raise ValueError(
+            f"EngineTarget.options.{name} must be a sequence of strings"
+        )
+    return list(value)
 
 
 class EngineTarget(BaseModel):
@@ -21,7 +35,7 @@ class EngineTarget(BaseModel):
     options: dict = Field(default_factory=dict)
 
     @classmethod
-    def from_ue_target(cls, target: UEOutputTarget) -> "EngineTarget":
+    def from_ue_target(cls, target: "UEOutputTarget") -> "EngineTarget":
         """Convert legacy UE target into the engine-agnostic schema."""
 
         return cls(
@@ -38,11 +52,13 @@ class EngineTarget(BaseModel):
             },
         )
 
-    def to_ue_target(self) -> UEOutputTarget:
+    def to_ue_target(self) -> "UEOutputTarget":
         """Convert an Unreal engine target back to the legacy UE schema."""
 
         if self.engine != "unreal":
             raise ValueError("only unreal engine targets can be converted to UEOutputTarget")
+
+        from framework.core.ue import UEOutputTarget
 
         return UEOutputTarget(
             project_name=self.project_name,
@@ -52,7 +68,8 @@ class EngineTarget(BaseModel):
                 "asset_naming_policy",
                 "gdd_preferred_then_house_rules",
             ),
-            expected_asset_kinds=list(self.options.get("expected_asset_kinds", [])),
+            # 显式拒绝字符串,避免 "texture" 被 list() 拆成字符列表。
+            expected_asset_kinds=_list_option(self.options, "expected_asset_kinds"),
             import_mode=self.import_mode,
             validation_hooks=list(self.validation_hooks),
         )
