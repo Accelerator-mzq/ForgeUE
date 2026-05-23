@@ -46,7 +46,7 @@
 
 | 级别 | 验收手段 | 状态判定 |
 | --- | --- | --- |
-| L0 自动化 | `pytest -q` 全绿 | **1179 用例通过 ✅**(2026-05-20 实测;历史基线 549 → 848 Run Comparison → 1144 forgeue tooling+lazy → 1184 comfy-agent-cli → 1294 audio → 1414 video → 1136 retire-protocol-layer → 1179 executor-async-rewrite;详见 §8.1) |
+| L0 自动化 | `pytest -q` 全绿 | 用例数以本地命令实测为准;Engine Bridge / Godot 4 docs release 以 focused suite 与 example smoke 的既有通过记录为证据 |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
 | L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
 | L3 UE 真机冒烟 | UE commandlet `UnrealEditor-Cmd.exe -ExecutePythonScript=ue_scripts/a1_run.py`(0 GUI 依赖)或 GUI Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 + PythonScriptPlugin |
@@ -64,7 +64,8 @@
 | P1 | basic_llm + LiteLLM + Instructor | `integration/test_p1_structured_extraction.py` | ✅ `examples/character_extract.json` | — | ✅ |
 | P2 | standalone_review | `integration/test_p2_standalone_review.py` | ✅ `examples/review_3_images.json` | — | ✅ |
 | P3 | production + 内嵌 review | `integration/test_p3_production_pipeline.py` | ✅ `examples/image_pipeline.json` | — | ✅ |
-| P4 | UE Bridge manifest_only | `integration/test_p4_ue_manifest_only.py`(stub unreal) | ✅ `examples/ue_export_pipeline.json` | ✅ UE 5.7.4 真机(2026-04-23 commandlet) | ✅ |
+| P4 | Engine Bridge + Unreal adapter manifest_only | `integration/test_p4_ue_manifest_only.py`(stub unreal) | ✅ `examples/ue_export_pipeline.json` | ✅ UE 5.7.4 真机(2026-04-23 commandlet) | ✅ |
+| P4-Godot | Godot 4 headless import MVP | `test_engine_target.py` / `test_engine_adapter_registry.py` / `test_godot4_adapter.py` + `test_example_bundles_smoke.py` | ✅ `examples/godot4_export_smoke.json` | ⏳ 真实 Godot 4 L2 smoke 待配置 `GODOT4_EXE` 或 `engine_target.executable_path` 后执行 | ⏳ |
 
 ### 3.2 L 层能力
 
@@ -164,11 +165,22 @@
 | FR-STORE-005 Lineage | test_artifact_repository | ✅ |
 | FR-STORE-006 4 层校验 | test_artifact_repository | ✅ |
 
-### 4.7 FR-UE UE Bridge
+### 4.7 FR-ENGINE Engine Bridge
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
-| FR-UE-001 manifest_only / bridge_execute | 代码审阅 + enum | ✅ manifest_only / ❌ bridge_execute 未启动 |
+| FR-ENGINE-001 EngineTarget + legacy ue_target 兼容 | `tests/unit/test_engine_target.py` | ✅ |
+| FR-ENGINE-002 EngineAdapterRegistry + ExportExecutor dispatch | `tests/unit/test_engine_adapter_registry.py` | ✅ |
+| FR-ENGINE-003 Unreal adapter 保持 manifest_only | `tests/integration/test_p4_ue_manifest_only.py` + `tests/unit/test_ue_bridge.py` | ✅ |
+| FR-ENGINE-004 Godot 4 headless import MVP | `tests/unit/test_godot4_adapter.py` + `tests/integration/test_example_bundles_smoke.py::test_godot4_export_smoke_bundle_loads` | ✅ L0/L1 自动化通过;⏳ L2 真 Godot 4 smoke 待本机配置 `GODOT4_EXE` |
+
+已验证事实:Engine Bridge focused suite 上一轮为 `34 passed`;Task 6 example smoke 为 `59 passed`。本报告不把这些数字作为全量测试总数。
+
+### 4.8 FR-UE Unreal Adapter / UE Bridge
+
+| 编号 | 验收手段 | 状态 |
+| --- | --- | --- |
+| FR-UE-001 manifest_only / bridge_execute | 代码审阅 + enum + EngineTarget legacy 兼容 | ✅ manifest_only / ❌ bridge_execute 未启动 |
 | FR-UE-002 文件契约落盘 | integration/test_p4 | ✅ |
 | FR-UE-003 UE Python Console 导入 | stub unreal(`test_p4`) + UE 5.7.4 commandlet 真机 | ✅(2026-04-23 A1 通过,见 §6.1)|
 | FR-UE-004 naming_policy 声明 | test_ue_bridge | ✅ |
@@ -177,7 +189,7 @@
 | FR-UE-007 Bridge 不越界 | 代码审阅 + permission_policy | ✅ |
 | FR-UE-008 Phase C 默认拒绝 | test_ue_bridge | ✅ |
 
-### 4.8 FR-WORKER 多模态 Worker
+### 4.9 FR-WORKER 多模态 Worker
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
@@ -194,7 +206,7 @@
 | FR-WORKER-011 Audio worker baseline + ComfyUI audio capability + remote HTTP / MiniMax audio worker(自 v1.7/FOR-26)| `audio_worker.py::AudioWorker/AudioCandidate(source_path)` + `comfy_worker.py::generate_audio` + `remote_audio_worker.py::RemoteHttpAudioWorker` + `minimax_music_worker.py::MiniMaxMusicWorker` + `generate_audio.py::GenerateAudioExecutor` + `test_audio_worker.py`(6 fence) + `test_comfy_subprocess_audio.py`(含 FOR-13 source_path 不全读 fence) + `test_generate_audio_comfy.py`(含 source_path 优先落盘 fence) + `test_remote_audio_worker.py`(FOR-26) + `test_minimax_music_worker.py`(FOR-26 MiniMax) + `test_run_remote_audio.py`(FOR-26) + `test_failure_mode_map.py`(audio +6) + `test_probe_framework.py`(audio +2) + `test_model_registry.py`(audio_remote/audio_minimax) | ✅ Level 0/1/2 全通过;Level 2 ComfyUI evidence FULL PASS(真实 FLAC 1,227,925 bytes / 1199.1 KB + magic bytes `fLaC`,evidence `openspec/changes/archive/2026-05-03-comfy-agent-cli-audio-adoption/notes/live_smoke_audio_20260503_full.md`);FOR-26 remote HTTP 与 MiniMax direct worker 为 L1 offline contract(`httpx.MockTransport`,不触发真实付费 API) |
 | FR-WORKER-012 Video worker baseline + ComfyUI video capability + UE bridge file_media_source(自 v1.8)| `video_worker.py::VideoWorker/VideoCandidate(source_path)` + `comfy_worker.py::generate_video`(BMFF strict 5-tuple header-only validation)+ `generate_video.py::GenerateVideoExecutor` + `manifest_builder._KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + `domain_video.py`(D12 `Content/Movies/<run_id>/` packaging path 分流)+ `test_artifact.py`(10 fence 含 P12 regression)+ `test_video_worker.py`(7 fence)+ `test_comfy_subprocess_video.py`(含 BMFF strict + FOR-13 source_path 不全读 fence)+ `test_generate_video_comfy.py`(含 source_path 优先落盘 fence)+ `test_failure_mode_map.py`(video +6)+ `test_ue_bridge.py`(video+F1 sweep +10)+ `test_p4_ue_manifest_only.py`(video stub+F1 +5)+ `test_probe_framework.py`(video +2)+ `test_model_registry.py`(video +2)+ examples bundles auto-discover 3 fence | ✅ Level 0/1 全通过(pytest -q 1414+ passed,4-处 export gate sweep + BMFF strict 5-tuple + D14 priority 全 verify);Level 2 evidence + a2_video UE 真机 P4 commandlet 验收待用户在装 UE 5.x 的本机跑 `examples/comfy_local_smoke_video.json`(沿 a2_mesh 2026-04-23 commandlet 模式;Wan 1.3B 7 分钟 generation + 模型 ~3GB HuggingFace 拉)— evidence 落 OpenSpec change `comfy-agent-cli-video-adoption` notes/ |
 
-### 4.9 FR-RUNTIME 工程化
+### 4.10 FR-RUNTIME 工程化
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
@@ -211,7 +223,7 @@
 | FR-RUNTIME-011 cache-hit 回放 cost | test_codex_audit_fixes(`_orchestrator_replays_cached_cost_into_budget_tracker`) | ✅ |
 | FR-RUNTIME-012 unsupported 三层 short-circuit | test_codex_audit_fixes(`_router_does_not_fallback_on_unsupported` / `_image_executor_does_not_retry_on_unsupported` / `_*_unsupported_response_skips_transient_retry` × 3) | ✅ |
 
-### 4.10 FR-COST 成本追踪
+### 4.11 FR-COST 成本追踪
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
@@ -225,7 +237,7 @@
 | FR-COST-008 image_edit cost_usd | test_codex_audit_fixes(`_image_edit_emits_cost_usd`) | ✅ |
 | FR-COST-009 parallel_candidates 同质性 | test_codex_audit_fixes(`_generate_image_parallel_rejects_heterogeneous_models`) | ✅ |
 
-### 4.11 FR-OBS 可观测
+### 4.12 FR-OBS 可观测
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |

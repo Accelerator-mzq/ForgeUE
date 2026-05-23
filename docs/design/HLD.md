@@ -23,7 +23,7 @@
 | --- | --- |
 | 三 `RunMode` 共享调度器,不分裂实现 | FR-WF-002 |
 | Provider 统一抽象 + 能力别名解耦 | FR-MODEL-001, FR-MODEL-006 |
-| UE 侧文件契约交付,框架与 UE 进程解耦 | ADR-001, FR-UE-002 |
+| EngineAdapter 隔离具体引擎交付;Unreal 文件契约与 Godot headless import 都不污染核心 runtime | FR-ENGINE-001~004, ADR-001, FR-UE-002 |
 | async-first 执行 + sync-shim 兼容 | FR-RUNTIME-004, NFR-PERF-001 |
 | 失败模式 → Decision 映射完备 | FR-RUNTIME-007, NFR-REL-001 |
 | 可观测事件流 loop-aware + 线程安全 | FR-OBS-001, FR-OBS-004 |
@@ -82,14 +82,17 @@
 ├────────────────────────────────────────────────────────────────────┤
 │  对象与合约层 (src/framework/core/, src/framework/schemas/)                  │
 │  Task / Run / Workflow / Step / Artifact                            │
-│  UEOutputTarget / UEAssetManifest / UEImportPlan / Evidence         │
+│  EngineTarget / UEOutputTarget(legacy) / UEAssetManifest / Evidence │
 │  ReviewReport / Verdict / Checkpoint / Policies                     │
 ├────────────────────────────────────────────────────────────────────┤
 │  存储层 (src/framework/artifact_store/)                                  │
 │  Repository / PayloadBackend × 3(inline/file/blob)                  │
 │  Lineage / VariantTracker / Hashing                                 │
 ├────────────────────────────────────────────────────────────────────┤
-│  UE Bridge 层 (src/framework/ue_bridge/)                                 │
+│  Engine Bridge 层 (src/framework/engine_bridge/)                         │
+│  EngineTarget / EngineAdapterRegistry / UnrealAdapter / Godot4Adapter│
+├────────────────────────────────────────────────────────────────────┤
+│  Unreal 文件契约层 (src/framework/ue_bridge/)                            │
 │  Inspect → Plan → (Execute 预留) → Evidence                         │
 │  ManifestBuilder / ImportPlanBuilder / PermissionPolicy             │
 ├────────────────────────────────────────────────────────────────────┤
@@ -112,7 +115,8 @@
 | 评审引擎 | Rubric 加载 + LLM judge 并发 | 被 ReviewExecutor 调用 |
 | 对象与合约层 | Pydantic schema 定义 | 无运行时逻辑 |
 | 存储层 | Artifact 落盘 + 血缘 | 不决定内容 |
-| UE Bridge 层 | Manifest / Plan 构建 + 权限 | 不直接调 UE API |
+| Engine Bridge 层 | `StepType.export` 引擎分发 + adapter 边界 | 不包含生成 / review / provider 逻辑 |
+| Unreal 文件契约层 | Manifest / Plan 构建 + 权限 | 只作为 Unreal adapter 下游契约,不直接调 UE API |
 | 可观测 | 事件 / 追踪 / 密钥 | 横切关注点 |
 | UE 端代理 | UE 内 Python 导入 | 独立进程,文件契约通信 |
 
@@ -120,7 +124,7 @@
 
 ```
 ┌─────────────────────────┐          文件契约           ┌──────────────────────┐
-│ ForgeUE Python Process  │  ────────────────────▶      │  UE 5.x Editor       │
+│ ForgeUE Python Process  │  ────────────────────▶      │  Unreal Engine 5.x   │
 │                         │   manifest.json             │                      │
 │  framework.run          │   import_plan.json          │  Python Console:     │
 │  + Artifact Store       │   evidence.json  (seeded)   │  exec(run_import.py) │
@@ -129,6 +133,14 @@
 │                         │  (UE 侧 append 新的)         │  + import unreal     │
 │                         │ ◀───── evidence.json  ──── │                      │
 └─────────────────────────┘                             └──────────────────────┘
+
+        │                         headless import           ┌──────────────────────┐
+        └────────────────────────────────────────────────▶  │  Godot 4.x Project   │
+                                  godot_manifest.json       │                      │
+                                  godot_import_plan.json    │  godot --headless    │
+                                  evidence.json             │  --path <project>    │
+                                  staged png/wav/mp3/glb    │  --import            │
+                                                            └──────────────────────┘
 
         │                                                        │
         │ WS (/ws/run/{run_id})                                   │
@@ -165,7 +177,8 @@
 | Runtime | `src/framework/runtime/` | `Orchestrator.arun` | 生命周期编排 |
 | Review Engine | `src/framework/review_engine/` | `ChiefJudge.ajudge_with_panel` | 评审与决策 |
 | Artifact Store | `src/framework/artifact_store/` | `Repository.put / get` | Artifact 持久化 |
-| UE Bridge | `src/framework/ue_bridge/` | `ManifestBuilder` / `ImportPlanBuilder` | UE 侧文件契约构建 |
+| Engine Bridge | `src/framework/engine_bridge/` | `EngineAdapter.export` / `EngineAdapterRegistry.resolve` | 具体引擎导出分发 |
+| UE Bridge | `src/framework/ue_bridge/` | `ManifestBuilder` / `ImportPlanBuilder` | Unreal adapter 下游文件契约构建 |
 | Observability | `src/framework/observability/` | `EventBus.publish` / `compact_messages` | 事件 + 追踪 + 密钥 |
 | Server | `src/framework/server/` | `/ws/run` / `/ws/step` | WS 进度推送 |
 | Pricing Probe | `src/framework/pricing_probe/` | CLI `--apply` | 定价自动化 |
@@ -186,7 +199,10 @@ server ──► runtime ──► providers ──► core
    │      artifact_store ───────────────┤
    │         │                          │
    │         ▼                          │
-   │      ue_bridge ────────────────────┘
+   │      engine_bridge ────────────────┤
+   │         │                          │
+   │         ▼                          │
+   │      ue_bridge(unreal only) ───────┘
    │
    └──► observability (横切,所有层可调)
 
@@ -209,7 +225,8 @@ ue_scripts/: 完全独立,不 import framework.*;仅依赖 import unreal
          ├── RunMode (三选一)
          ├── TaskType
          ├── input_payload
-         ├── UEOutputTarget?           ───┐
+         ├── EngineTarget?             ───┐
+         ├── UEOutputTarget?(legacy)       │
          ├── ReviewPolicy?                │
          └── DeterminismPolicy?           │
          │                                 │
@@ -262,12 +279,14 @@ ue_scripts/: 完全独立,不 import framework.*;仅依赖 import unreal
 | ReviewReport | 分析说明(供人读) | 与 Verdict 分离 |
 | Verdict | 流程控制结论(供机器读) | 9 种 decision |
 | Checkpoint | Step 完成后的 hash 快照 | 支持 resume |
+| EngineTarget | 通用引擎交付目标 | `engine="unreal"|"godot4"`,legacy `ue_target` 可转换 |
+| EngineEvidence | 通用引擎操作审计 | Godot 4 adapter 使用 |
 | UEAssetManifest | 声明式资产清单 | 交付 UE 侧 |
 | UEImportPlan | 执行式导入计划 | UE 侧消费 |
 | Evidence | UE 侧操作审计 | seeded by framework + appended by UE |
 | PayloadRef | Artifact 载体抽象 | inline / file / blob |
 | Lineage | 血缘关系 | source + transformation |
-| ValidationRecord | 4 层校验结果 | 文件 / 元数据 / 业务 / UE |
+| ValidationRecord | 4 层校验结果 | 文件 / 元数据 / 业务 / 引擎交付 |
 
 字段级定义见 LLD。
 
@@ -285,7 +304,7 @@ ue_scripts/: 完全独立,不 import framework.*;仅依赖 import unreal
 5. Step execution         → Executor 执行 → Checkpoint
 6. Verdict dispatching    → review 产出 Verdict → TransitionEngine
 7. Validation gates       → Artifact 入 Store 前 4 层校验
-8. Export                 → UEAssetManifest + UEImportPlan
+8. Export                 → EngineAdapter dispatch(Unreal manifest / Godot headless import)
 9. Run finalize           → 指标 / trace / lineage 归档
 ```
 
@@ -296,8 +315,8 @@ ue_scripts/: 完全独立,不 import framework.*;仅依赖 import unreal
 - 所有 Step 的 output_schema 合法
 - ProviderPolicy.preferred_models 可达
 - input_bindings 能解析
-- UEOutputTarget.project_root 可访问
-- UE 侧路径无同名冲突(warn)
+- EngineTarget / legacy UEOutputTarget project_root 可访问
+- Unreal 侧路径无同名冲突(warn);Godot 真导入需 `engine_target.executable_path` 或 `GODOT4_EXE`
 - Budget 估算不超 cap
 - 付费步未声明 cap → warnings.budget.cap_declared
 - Secrets 齐全
@@ -373,18 +392,48 @@ ForgeUE 将策略分为 5 类,互不覆盖:
 
 ---
 
-## 7. UE Bridge 边界
+## 7. Engine Bridge 与 Unreal 文件契约边界
 
-### 7.1 双模并存
+### 7.1 EngineAdapter dispatch
+
+`ExportExecutor` 不再直接承载某个引擎的导出实现,而是作为 `StepType.export` wildcard dispatcher:
+
+```
+task.engine_target or legacy task.ue_target
+  → resolve_engine_target(...)
+  → EngineAdapterRegistry.resolve(target.engine)
+  → adapter.export(ctx, target=target)
+```
+
+内置 adapter:
+
+| Adapter | engine | 交付模式 | 责任 |
+| --- | --- | --- | --- |
+| `UnrealAdapter` | `unreal` | `manifest_only` | 把旧 UE manifest-only 行为收敛到 Unreal adapter,继续调用 `ue_bridge` 构建 manifest / plan / evidence |
+| `Godot4Adapter` | `godot4` | `headless_import` | stage 支持的文件型 Artifact,写 Godot manifest / plan / evidence,调用 Godot headless import 并验证 fresh `.import` / `.godot/imported` |
+
+### 7.2 Unreal adapter 双模并存
 
 | 模式 | 触发 | 框架动作 | UE 侧动作 |
 | --- | --- | --- | --- |
-| **manifest_only**(MVP 默认) | `UEOutputTarget.import_mode="manifest_only"` | 产出 manifest + plan + evidence + 资产文件到 `<UE项目>/Content/Generated/<run_id>/` | UE Python Console 手动 `exec(run_import.py)` |
+| **manifest_only**(MVP 默认) | `engine_target(engine="unreal", import_mode="manifest_only")` 或 legacy `UEOutputTarget.import_mode="manifest_only"` | 产出 manifest + plan + evidence + 资产文件到 `<UE项目>/Content/Generated/<run_id>/` | UE Python Console 手动 `exec(run_import.py)` |
 | **bridge_execute**(后置) | `import_mode="bridge_execute"` | 额外调用 Python Editor Scripting | 框架进程直接操作 UE(需 UE 已启动) |
 
 **MVP 只启用 manifest_only**,bridge_execute 待稳定后评估。
 
-### 7.2 职责边界
+### 7.3 Godot 4 headless import MVP
+
+| 项 | 行为 |
+| --- | --- |
+| 支持格式 | `image/png`、`image/jpg`、`image/jpeg`、`audio/wav`、`audio/mp3`、`mesh/glb` |
+| stage 目录 | `<project_root>/<asset_root>/<run_id>/` |
+| 控制文件 | `godot_manifest.json`、`godot_import_plan.json`、`evidence.json` |
+| 命令 | `[godot_exe, "--headless", "--path", project_root, "--import"]` |
+| 可执行文件解析 | `engine_target.executable_path` → `GODOT4_EXE` → `RuntimeError` |
+| 成功证据 | Godot 命令成功且 `.import` / `.godot/imported` fresh 验证通过后写 `status="success"` |
+| video/mp4 | 第一阶段写 `skipped` evidence,不自动映射为 Godot runtime asset |
+
+### 7.4 Unreal adapter 职责边界
 
 | ✅ 做 | ❌ 不做 |
 | --- | --- |
@@ -395,13 +444,13 @@ ForgeUE 将策略分为 5 类,互不覆盖:
 | 写审计日志 | 改 GameMode / 默认地图 |
 | 记录 rollback hint | 跨项目批量操作 |
 
-### 7.3 权限层
+### 7.5 权限层
 
 `PermissionPolicy` 默认拒绝 Phase C 操作(创建材质 / 音频 cue),需显式 allow_flag。
 
-### 7.4 导入能力矩阵
+### 7.6 Unreal 导入能力矩阵
 
-| 资产类 | Manifest 支持 | UE Bridge MVP | Phase C |
+| 资产类 | Manifest 支持 | Unreal adapter MVP | Phase C |
 | --- | --- | --- | --- |
 | Texture | ✅ | ✅ | — |
 | Static Mesh | ✅ | ✅ | — |
@@ -409,7 +458,7 @@ ForgeUE 将策略分为 5 类,互不覆盖:
 | Material | 定义 | 只读 | 创建(需 allow) |
 | Sound Cue | 定义 | 只读 | 创建(需 allow) |
 
-### 7.5 D12 路径分流(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
+### 7.7 D12 路径分流(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
 
 `ExportExecutor` drop loop 与 `manifest_builder.build_manifest` 共用 `manifest_builder.derive_drop_target(art, *, target, run_id)` helper 计算 framework 端落盘路径(单源契约):
 
@@ -598,7 +647,8 @@ payload: { status, elapsed_s?, progress?, cost_usd?, ... }
 | CLI | argparse | `src/framework/run.py` |
 | WebSocket | JSON over WS | `src/framework/server/ws_server.py` |
 | HTTPS(Provider) | 各 provider REST | `src/framework/providers/*` |
-| File(UE 契约) | JSON / 资产文件 | `src/framework/ue_bridge/*` + `ue_scripts/*` |
+| Engine export | JSON / 资产文件 / headless command | `src/framework/engine_bridge/*` |
+| File(Unreal 契约) | JSON / 资产文件 | `src/framework/ue_bridge/*` + `ue_scripts/*` |
 | YAML / JSON 配置 | 文件读 | `config/models.yaml` / `examples/*.json` |
 
 详细字段见 LLD §9 与 SRS §5。
@@ -625,6 +675,7 @@ payload: { status, elapsed_s?, progress?, cost_usd?, ... }
 | --- | --- | --- |
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §A-C+E+L+N 拆分重组 |
 | v1.1 | 2026-04-27 | OpenSpec change `lazy-artifact-store-package-exports`:`framework.artifact_store` 包 init 由 eager re-export 改 PEP 562 lazy `__getattr__` + `__dir__`。**架构层无变化**:子系统边界(§3.1 子系统清单 / §3.2 依赖方向)、对象模型(§4)、Workflow 调度(§5)、subsystem topology 全保留;仅 packaging 机制(包公共 API 表面如何 lazy 暴露 ArtifactRepository / PayloadBackend* / LineageIndex / VariantTracker)被改。`__all__` byte-identical 9 名;30+ 既有 callsite 透明兼容。详见 `CHANGELOG.md [Unreleased].Changed` 与 `docs/acceptance/acceptance_report.md` §6.9 |
+| v1.2 | 2026-05-24 | Engine Bridge + Godot 4 headless import:在 runtime executor 与具体引擎之间加入 `src/framework/engine_bridge/`;`ue_bridge` 降为 Unreal adapter 下游文件契约;新增 Godot 4 headless import 进程拓扑与 adapter 边界。 |
 
 ### 14.2 参考
 

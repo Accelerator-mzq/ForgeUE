@@ -114,6 +114,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_payload_backends.py` | `artifact_store/payload_backends/*` | FR-STORE-002, FR-STORE-003 | L1 | inline 64KB 上限、file 落盘、BlobBackend MVP(value/source_path/write/read/exists/guard) |
 | `test_artifact_repository.py` | `artifact_store/repository.py` | FR-STORE-001, FR-STORE-002, FR-LC-009 | L1 | put / get / by_run / by_lineage + blob resume / blob drift skip / repo.put blob source_path / FOR-14 `_artifacts.integrity.json` metadata integrity fail-fast |
 | `test_checkpoint_store.py` | `runtime/checkpoint_store.py` | FR-LC-004, FR-LC-005 | L1,L2 | save/load/hash verify on resume |
+| `test_engine_target.py` | `engine_bridge/core.py` + `core/task.py` | FR-ENGINE-001 | L1,L2 | `EngineTarget(engine="godot4")` 接受、未知 engine 拒绝、legacy `UEOutputTarget` → `EngineTarget(engine="unreal")` 兼容、Unreal options roundtrip、缺 target fail-fast |
 
 ### 3.2 Runtime
 
@@ -177,19 +178,27 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_compactor.py` | `compactor.py` | FR-RUNTIME-003 | L1 | target_tokens 压缩、占位符插入 |
 | `test_secrets.py` | `secrets.py` | NFR-SEC-002, NFR-SEC-003 | L1 | API key 脱敏 |
 
-### 3.6 UE Bridge
+### 3.6 Engine Bridge / Godot 4
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
-| `test_ue_bridge.py` | `ue_bridge/*` | FR-UE-001 ~ FR-UE-008 | L1,L2 | ManifestBuilder modality 映射、PlanBuilder depends_on、Permission Phase C 默认拒绝、inspect_project / asset_exists、validate_manifest 重复路径、evidence 原子追加 |
+| `test_engine_adapter_registry.py` | `engine_bridge/registry.py` + `runtime/executors/export.py` | FR-ENGINE-002 | L1 | registry register/resolve/missing engine、`ExportExecutor` 按 `engine_target.engine` dispatch 到 adapter |
+| `test_godot4_adapter.py` | `engine_bridge/godot4/adapter.py` | FR-ENGINE-004 | L1,L2 | 支持 png stage + manifest/plan/evidence、`GODOT4_EXE` fallback、缺可执行文件 fail-fast、command fail 写 failed evidence、inline/unsupported skipped evidence、fresh `.import` / `.godot/imported` 验证、`video/mp4` first-phase skipped |
+| `test_example_bundles_smoke.py::test_godot4_export_smoke_bundle_loads` | `examples/godot4_export_smoke.json` | FR-ENGINE-001, FR-ENGINE-004 | L0 | Godot 4 bundle 可由 `load_task_bundle` 解析,`engine_target.engine == "godot4"`,末 step `capability_ref == "engine.export"` |
 
-### 3.7 Mesh / Generate
+### 3.7 UE Bridge
+
+| 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
+| --- | --- | --- | --- | --- |
+| `test_ue_bridge.py` | `ue_bridge/*` + `engine_bridge/unreal/adapter.py` | FR-ENGINE-003, FR-UE-001 ~ FR-UE-008 | L1,L2 | Unreal manifest-only contract、ManifestBuilder modality 映射、PlanBuilder depends_on、Permission Phase C 默认拒绝、inspect_project / asset_exists、validate_manifest 重复路径、evidence 原子追加 |
+
+### 3.8 Mesh / Generate
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
 | `test_generate_mesh_cost.py` | `executors/generate_mesh.py` | FR-COST-003, FR-MODEL-003 | L1,L3 | mesh 从 prepared_routes 读 pricing,metrics["cost_usd"] 非 0 |
 
-### 3.8 Pricing Probe
+### 3.9 Pricing Probe
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
@@ -199,20 +208,20 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_pricing_parser_hunyuan_image.py` | Hunyuan Image parser | FR-COST-006 | L1 | ¥0.5/张 postpaid tier |
 | `test_pricing_parser_dashscope.py` | DashScope parser(6 模型) | FR-COST-006 | L1 | 精确匹配首列 + 按表头定位价格列、qwen-plus 128K tier |
 
-### 3.9 Probe / Cleanup
+### 3.10 Probe / Cleanup
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
 | `test_probe_framework.py` | `probe_*.py` 的 lazy-init | NFR-MAINT-* | L3 | 无 API key 环境 import 不崩 |
 | `test_pr3_cleanup_fences.py` | URL scheme 大小写 / magic gate / module-level I/O | — | L3 | PR-3 共性平移守门 |
 
-### 3.10 Codex 21 条 audit fence(2026-04-22)
+### 3.11 Codex 21 条 audit fence(2026-04-22)
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
 | `test_codex_audit_fixes.py` | 5 轮 review-fix 循环全部 fence(29 用例)| FR-LC-006~008, FR-WORKER-009~010, FR-COST-008~009, FR-RUNTIME-008~012, FR-REVIEW-009, NFR-REL-009 | L1,L2,L3 | 见下方 §5 fence 清单第三段 |
 
-### 3.11 Run Comparison(2026-04-25,OpenSpec change `add-run-comparison-baseline-regression`)
+### 3.12 Run Comparison(2026-04-25,OpenSpec change `add-run-comparison-baseline-regression`)
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
@@ -222,14 +231,14 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_run_comparison_reporter.py` | `render_json` / `render_markdown` 纯函数 + `write_reports` 唯一 I/O 边界(UTF-8 + LF)/ ASCII-only(`_ascii_safe` / `_line_safe` / `_escape_cell`)/ 固定文件名 `comparison_report.json` + `comparison_summary.md` / sparse `summary_counts` `.get(key, 0)` 守门 / reporter subprocess import-fence(直接 + lazy public export 两路)| — | L0 | 65 用例 |
 | `test_run_comparison_cli.py` | argparse 11 flag → `RunComparisonInput` 映射 / exit code 0/2/3/1 / `--json-only` / `--markdown-only` 互斥 / `--quiet` stdout / `--no-hash-check` / `_safe_path_segment` / `_console_safe`(stdout/stderr ASCII-safe + 可见 `\\r` `\\n`)/ python -m subprocess / cli subprocess import-fence | — | L0 | 59 用例 |
 
-### 3.11A Run Comparison Integration(2026-04-25)
+### 3.12A Run Comparison Integration(2026-04-25)
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
 | `tests/integration/test_run_comparison_cli.py` | 真实 subprocess `python -m framework.comparison` 端到端 / 静态 builder fixture happy path(JSON schema_version=="1" + Markdown ASCII + 三个 ArtifactDiffKind + run-level cost_usd metric diff + Markdown 关键 section 标题)/ `<repo>/demo_artifacts/` 不污染(递归快照 size + mtime_ns + cwd sibling)/ lineage_delta `transformation_kind` 端到端 round-trip / `examples/mock_linear.json` + FakeAdapter 双跑(无 `--live-llm` / 无 `--comfy-url`)/ source run dir 字节级 read-only(对应 runtime-core delta spec) | — | L0 | 4 用例 |
 | `tests/fixtures/comparison/builders.py` | deterministic `build_fixture_pair(root)` / 合成日期 `2000-01-01` / 真实 Pydantic 类构造 / `hash_payload(bytes)` 真实计算 / 不依赖 `datetime.now` / `os.environ` / 网络 / provider | — | — | 公共构造 helper(被 integration test 调用)|
 
-### 3.12 Lazy artifact_store package exports(2026-04-27,OpenSpec change `lazy-artifact-store-package-exports`)
+### 3.13 Lazy artifact_store package exports(2026-04-27,OpenSpec change `lazy-artifact-store-package-exports`)
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
@@ -240,7 +249,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 |  | `test_no_callsite_uses_submodule_path`(Scenario 3):repo 全扫 `(?:from|import)\s+framework\.artifact_store\.<lazy>` 形式(S6 codex F3 finding 加 import-form);`^[ \t]*` multiline anchor 防 docstring 假阳性;排除 4 类(`src/framework/artifact_store/**` 包内部 + `tests/unit/test_payload_backends.py` sub-package consumer + 本 change 目录 + bytecode)| | | |
 | 收紧的既有 fence | `test_run_comparison_loader.py::TestLoaderImportFence` + `test_run_comparison_cli.py::TestCliImportFence` `_FORBIDDEN_FRAMEWORK_MODULES_*` 禁止清单从 9 prefix → 13 prefix(原 9 + `framework.artifact_store.{repository,payload_backends,lineage,variant_tracker}`);删 "transitive load is unavoidable" carve-out 段落;`comparison/cli.py` 顶 docstring 同步 trim | spec.md "Package import surface is lazy-load by default" Requirement | L0 | (no new test count;既有 fence 守紧) |
 
-### 3.13 ComfyUI v1.7 audio capability(2026-05-03,OpenSpec change `comfy-agent-cli-audio-adoption`)
+### 3.14 ComfyUI v1.7 audio capability(2026-05-03,OpenSpec change `comfy-agent-cli-audio-adoption`)
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
@@ -424,7 +433,8 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | FR-STRUCT(结构化) | integration/test_p1 | ✅ |
 | FR-REVIEW(评审) | integration/test_p2, test_chief_judge_parallel, test_review_budget | ✅ |
 | FR-STORE(Artifact) | test_core_schemas, test_artifact_repository, test_payload_backends | ✅ |
-| FR-UE(UE Bridge) | test_ue_bridge, integration/test_p4 | ✅(stub) |
+| FR-ENGINE(Engine Bridge) | test_engine_target, test_engine_adapter_registry, test_godot4_adapter, test_example_bundles_smoke | ✅(L0/L1 自动化;Godot 4 真机 L2 待配置 `GODOT4_EXE`) |
+| FR-UE(Unreal adapter / UE Bridge) | test_ue_bridge, integration/test_p4 | ✅(stub + UE 5.7.4 真机历史验收) |
 | FR-WORKER(多模态) | test_cn_image_adapters, **test_comfy_subprocess(自 v1.6 替代 test_comfy_http_unsupported)**, test_tripo3d_unsupported, integration/test_l4 | ✅ |
 | FR-RUNTIME(工程化) | test_failure_mode_map, test_transition_engine, test_budget_tracker, test_cancellation, test_transient_retry, test_retry_async, test_cascade_cancel | ✅ |
 | FR-COST(定价) | test_registry_pricing, test_budget_tracker_pricing, test_router_pricing_stash, test_generate_mesh_cost, test_pricing_* | ✅ |

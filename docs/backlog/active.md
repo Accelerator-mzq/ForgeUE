@@ -86,4 +86,4 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - `LR-0126` **TBD-001 bridge_execute 模式启用** — `bridge_execute` 模式启用条件
 - `LR-0128` **TBD-003 WS 鉴权 / 多租户 session** — WS 鉴权 / 多租户 session
 - `LR-0130` **TBD-005 DashScope / Tripo3D 下辖 parser 实装** — DashScope / Tripo3D 下辖 parser 实装
-- `LR-0135` **TBD-013 RemoteControl HTTP bridge** — RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor
+- `LR-0135` **TBD-013 RemoteControl HTTP bridge** — Unreal RemoteControl adapter follow-on(future `bridge_execute`):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor。FOR-30 Engine Bridge 相关讨论并入该 follow-on;本轮 Godot 4 headless import 不关闭 LR-0135。

@@ -10,16 +10,16 @@ Examples-and-acceptance treats each bundle under `examples/` as an end-to-end ac
 - `docs/acceptance/acceptance_report.md` §3 (P0-P4 / L1-L4 / F1-F5 / Plan C status), §6.1 (A1 UE 5.7.4 hardware smoke), §6.2 (bundle evidence taxonomy updated under TBD-008)
 - `README.md` §"Bundle 与 Example" (original five bundles; see doc-drift note below)
 - `CHANGELOG.md` [Unreleased] (parametrized live bundles, A1 / a2_mesh live bundle expansion)
-- Source: `examples/mock_linear.json`, `character_extract.json`, `review_3_images.json`, `image_pipeline.json`, `image_edit_pipeline.json`, `image_to_3d_pipeline.json`, `image_to_3d_pipeline_live.json`, `ue_export_pipeline.json`, `ue_export_pipeline_live.json`, `ue5_api_query.json`
+- Source: `examples/mock_linear.json`, `character_extract.json`, `review_3_images.json`, `image_pipeline.json`, `image_edit_pipeline.json`, `image_to_3d_pipeline.json`, `image_to_3d_pipeline_live.json`, `ue_export_pipeline.json`, `ue_export_pipeline_live.json`, `godot4_export_smoke.json`, `ue5_api_query.json`
 - Source: `src/framework/workflows/loader.py::load_task_bundle`
 - Source: `src/framework/workflows/loader.py::expand_model_refs`
 - Source: `tests/integration/test_p{0,1,2,3,4}_*.py`, `test_l4_image_to_3d.py`, `test_image_edit.py`, `test_dag_concurrency.py`, `test_example_bundles_smoke.py`, `test_ws_progress.py`
 
 ## Current Behavior
 
-A bundle is a JSON document containing three sections: a `Task` (with `task_type`, `run_mode`, `ue_target`, `review_policy`, bundled Policies), a `Workflow` (control-semantic Step graph with metadata), and a `Steps` array. The loader is `load_task_bundle`, which reads UTF-8 (avoiding Windows stdin gbk), expands `provider_policy.models_ref` into `prepared_routes` via `expand_model_refs(raw, get_model_registry())`, and then runs Pydantic validation. Callers that bypass the loader will hit `generate_structured failed: ProviderPolicy has no preferred or fallback models`.
+A bundle is a JSON document containing three sections: a `Task` (with `task_type`, `run_mode`, `engine_target` or legacy `ue_target`, `review_policy`, bundled Policies), a `Workflow` (control-semantic Step graph with metadata), and a `Steps` array. The loader is `load_task_bundle`, which reads UTF-8 (avoiding Windows stdin gbk), expands `provider_policy.models_ref` into `prepared_routes` via `expand_model_refs(raw, get_model_registry())`, and then runs Pydantic validation. Callers that bypass the loader will hit `generate_structured failed: ProviderPolicy has no preferred or fallback models`.
 
-Ten bundles currently ship under `examples/`, each tied to one acceptance scenario:
+Bundles under `examples/` each tie to one acceptance scenario:
 
 - `mock_linear.json` — P0, pure-mock linear three-step (offline, no API key)
 - `character_extract.json` — P1, LLM structured extraction into `UECharacter` (requires `--live-llm`)
@@ -30,6 +30,7 @@ Ten bundles currently ship under `examples/`, each tied to one acceptance scenar
 - `image_to_3d_pipeline_live.json` — L4, live-provider variant (Hunyuan 3D opt-in)
 - `ue_export_pipeline.json` — P4, UE manifest-only export via FakeComfy placeholder
 - `ue_export_pipeline_live.json` — A1, live-provider variant used for the 2026-04-23 UE 5.7.4 commandlet hardware smoke
+- `godot4_export_smoke.json` — P4-Godot, `engine_target.engine="godot4"` headless import bundle shape
 - `ue5_api_query.json` — L1, UE5 Python API question answering via `ue5_api_assist` alias
 
 Each bundle is covered by at least one integration test; `test_example_bundles_smoke.py` is the loader-contract fence that ensures every JSON under `examples/` can still be parsed after any change.
@@ -77,6 +78,12 @@ The system SHALL declare model selection via `provider_policy.models_ref` for ev
 ## Requirement: Loader-contract fence for every bundle
 
 The system SHALL load every JSON under `examples/` through `load_task_bundle` in `tests/integration/test_example_bundles_smoke.py`; adding a new bundle MUST be accompanied by at least one integration-test assertion for it.
+
+## Scenario: examples/godot4_export_smoke.json documents the Godot 4 engine_target shape
+
+- GIVEN `examples/godot4_export_smoke.json` declares `task.engine_target.engine == "godot4"` and a final export step with `capability_ref == "engine.export"`
+- WHEN `tests/integration/test_example_bundles_smoke.py::test_godot4_export_smoke_bundle_loads` loads the bundle through `load_task_bundle`
+- THEN the Task validates with a populated `engine_target`, the workflow exposes the export step, and future Godot example edits stay covered by the loader-contract fence
 
 ## Scenario: A new bundle is added
 

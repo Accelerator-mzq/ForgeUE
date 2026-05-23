@@ -64,7 +64,8 @@
 | `constraints` | dict | — | style/resolution/budget/latency/`parallel_dag`/`parallel_candidates` |
 | `expected_output` | dict | ✓ | artifact_types 声明 |
 | `review_policy` | ReviewPolicy? | — | 评审配置 |
-| `ue_target` | UEOutputTarget? | △ | production/ue_export 必填 |
+| `engine_target` | EngineTarget? | △ | export step 新通用入口;`engine` 当前为 `unreal` / `godot4` |
+| `ue_target` | UEOutputTarget? | △ | legacy Unreal input;存在时由 `EngineTarget.from_ue_target` 兼容转换 |
 | `determinism_policy` | DeterminismPolicy? | — | seed / version / hash lock |
 | `project_id` | str | ✓ | 多租户 |
 
@@ -308,7 +309,32 @@
 | `revision_hint` | dict? | 回传 Generator |
 | `followup_actions` | list[str] | — |
 
-### 2.10 UE 相关对象(`ue.py`)
+### 2.10 Engine / UE 相关对象(`engine_bridge/core.py`, `ue.py`)
+
+**EngineTarget**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `engine` | `Literal["unreal","godot4"]` | 引擎 adapter 路由 key |
+| `project_name` | str | 引擎项目名 |
+| `project_root` | str | 引擎项目根目录 |
+| `import_mode` | str | adapter 自行解释;Unreal 当前 `manifest_only`,Godot 当前 `headless_import` |
+| `asset_root` | str | 引擎内或项目内资产根;Godot 默认普通相对目录 |
+| `executable_path` | str? | Godot 4 真导入可执行文件路径;优先级高于 `GODOT4_EXE` |
+| `validation_hooks` | list[str] | 兼容既有 hooks |
+| `options` | dict | adapter 专属兼容字段;Unreal legacy `asset_naming_policy` / `expected_asset_kinds` 保存在这里 |
+
+`EngineTarget.from_ue_target(target)` 将 legacy `UEOutputTarget` 转成 `engine="unreal"`;`EngineTarget.to_ue_target()` 仅允许 `engine=="unreal"` 并回转旧 UE schema。
+
+**EngineEvidence**
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `evidence_item_id` / `op_id` | str | 证据与操作 id |
+| `engine` | `Literal["unreal","godot4"]` | 来源 adapter |
+| `kind` | str | 操作类型,Godot MVP 用 `godot_import` |
+| `status` | `success/failed/skipped` | 操作状态 |
+| `source_uri` / `target_uri` / `log_ref` / `error` | str? | 源、目标、日志与错误信息 |
 
 **UEOutputTarget**
 
@@ -520,7 +546,7 @@ done.discard(current)           # 允许同 step 重新入循环
 | Step `output_schema` 合法 | Run = failed |
 | ProviderPolicy.preferred_models 可达 | Run = failed |
 | input_bindings 能解析 | Run = failed |
-| UEOutputTarget.project_root 可访问 | Run = failed |
+| EngineTarget / legacy UEOutputTarget.project_root 可访问 | Run = failed |
 | UE 侧路径无同名冲突 | warn(不阻断) |
 | Budget 估算不超 cap | Run = failed |
 | 付费步未声明 cap | `warnings.budget.cap_declared`(不阻断,F1) |
@@ -764,7 +790,7 @@ class StepExecutor(ABC):
 | Review | `review.py` | 调 ChiefJudge |
 | Select | `select.py` | CandidateSet → 选型 |
 | Validate | `validate.py` | 独立验证 Step |
-| Export | `export.py` | UEAssetManifest 生成 |
+| Export | `export.py` | `EngineAdapter` dispatch(Unreal manifest-only / Godot headless import) |
 | Mock | `mock_executors.py` | P0 / 离线冒烟 |
 
 **GenerateImageExecutor 关键**:
@@ -1296,9 +1322,50 @@ def hash_inputs(*parts: Any) -> str   # SHA-256 over the concatenation of canoni
 
 ---
 
-## 9. UE Bridge(`src/framework/ue_bridge/`)
+## 9. Engine Bridge 与 Unreal 文件契约
 
-### 9.1 ManifestBuilder(`manifest_builder.py`)
+### 9.1 Engine Bridge(`src/framework/engine_bridge/`)
+
+**EngineAdapter protocol(`adapters.py`)**
+
+```python
+class EngineAdapter(Protocol):
+    engine: str
+    async def export(self, ctx: StepContext, *, target: EngineTarget) -> ExecutorResult:
+        ...
+```
+
+**EngineAdapterRegistry(`registry.py`)**
+
+- `register(adapter)`:以 `adapter.engine` 为稳定路由 key 覆盖注册。
+- `resolve(engine)`:返回匹配 adapter;缺失时 raise `KeyError("No engine adapter registered...")`。
+
+**ExportExecutor dispatcher(`runtime/executors/export.py`)**
+
+- `step_type = StepType.export`,`capability_ref = None`,作为 wildcard export executor。
+- 默认 registry 注册 `UnrealAdapter(permission_policy=...)` 与 `Godot4Adapter()`。
+- `execute(ctx)` 调 `resolve_engine_target(ctx.task)`;优先 `task.engine_target`,否则 legacy `task.ue_target` 转 `EngineTarget(engine="unreal")`;再按 `target.engine` 分发。
+- `_is_importable(art)` 仅作旧 UE contract 兼容 shim,实际过滤仍 defer `ue_bridge.manifest_builder.is_manifest_importable`。
+
+**UnrealAdapter(`engine_bridge/unreal/adapter.py`)**
+
+- `engine = "unreal"`。
+- adapter 边界接收 `EngineTarget`,内部 `target.to_ue_target()` 后复用旧 `ue_bridge` manifest-only 逻辑。
+- 保留 Verdict.reject 硬停、bare approve filter、D12 video path split、PermissionPolicy skipped evidence、manifest / plan / bundle Artifact 产出。
+
+**Godot4Adapter(`engine_bridge/godot4/adapter.py`)**
+
+- `engine = "godot4"`。
+- 支持 shape map:`("image","png")` / `("image","jpg")` / `("image","jpeg")` / `("audio","wav")` / `("audio","mp3")` / `("mesh","glb")`。
+- 对支持的 file-backed Artifact copy 到 `<project_root>/<asset_root>/<run_id>/<artifact_id>.<ext>`;inline payload 或 unsupported shape 写 `status="skipped"` `EngineEvidence`。
+- 写 `godot_manifest.json`、`godot_import_plan.json`、`evidence.json`;执行 `[godot_exe, "--headless", "--path", project_root, "--import"]`。
+- Godot 可执行文件解析顺序:`target.executable_path` → `GODOT4_EXE` → `RuntimeError`。
+- 仅在命令返回 0 且 staged asset 的 `.import` 文件与 `<project_root>/.godot/imported/` 输出都 fresh 后写 success evidence;命令失败或 stale cache 写 failed evidence 并 raise。
+- `video/mp4` 第一阶段不调用 Godot,只写 skipped evidence,避免把 mp4 自动解释成 Godot runtime asset。
+
+### 9.2 Unreal 文件契约(`src/framework/ue_bridge/`)
+
+### 9.2.1 ManifestBuilder(`manifest_builder.py`)
 
 ```
 def build(self, run_id: str, ue_target: UEOutputTarget,
@@ -1312,18 +1379,18 @@ def build(self, run_id: str, ue_target: UEOutputTarget,
 - `inline` 载体的 importable artifact → raise(只接受 `file` 载体)
 - `expected_asset_kinds` 声明了但 manifest 里缺 kind → flag warning
 
-#### 9.1.1 D12 路径分流 helpers(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
+#### 9.2.1.1 D12 路径分流 helpers(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
 
 `manifest_builder.py` 加 2 个 public helper:
 
 - `is_manifest_importable(art: Artifact) -> bool`:art 是否在 `_KIND_MAP` 命中(`payload.kind == file AND _KIND_MAP.get((modality, shape)) is not None`)。`ExportExecutor._is_importable` 与 `build_manifest` 都 defer 此 helper,消除原"modality whitelist + shape map miss"双源(沿 round 1 codex F1 + D10)。video.webm 等 unsupported shape 在两处都 silent skip 行为对齐,不会在 export drop loop crash。
 - `derive_drop_target(art, *, target: UEOutputTarget, run_id: str) -> tuple[Path, str]`:返回 `(drop_dir, target_filename)` —— video → `(<project_root>/Content/Movies/<run_id>, MS_<base>.mp4)`;其他 importable modality → `(<project_root>/Content/Generated/<run_id>, raw_basename)`(NG1 保 raw filename,沿 round 1 codex F2 + D1 修订)。`build_manifest` 用此 helper 计算 `UEAssetEntry.source_uri`,与 `ExportExecutor` drop 物理路径单源一致;`_KIND_MAP` miss(defensive)→ fall-through 非 video 分支返 raw basename,**不 raise**(沿 D10 + round 1 codex F1)。
 
-#### 9.1.2 ExportExecutor drop loop D12 split(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
+#### 9.2.1.2 UnrealAdapter drop loop D12 split(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08)
 
-`ExportExecutor.execute()` drop loop 调用 `derive_drop_target(art, target=ctx.task.ue_target, run_id=ctx.run.run_id)` 获 `(drop_dir, target_filename)`,`drop_dir.mkdir(parents=True, exist_ok=True)` + `shutil.copy2(src_fs, drop_dir / target_filename)`。permission denied evidence 显式 `skip_reason="permission_denied"`(F-C↔F-D 协议)。控制面 `evidence.json` `target_object_path` 反映物理 drop 路径相对 project_root(POSIX-style via `str(Path(...).relative_to(project_root))`)。
+`UnrealAdapter.export()` drop loop 调用 `derive_drop_target(art, target=ue_target, run_id=ctx.run.run_id)` 获 `(drop_dir, target_filename)`,`drop_dir.mkdir(parents=True, exist_ok=True)` + `shutil.copy2(src_fs, drop_dir / target_filename)`。permission denied evidence 显式 `skip_reason="permission_denied"`(F-C↔F-D 协议)。控制面 `evidence.json` `target_object_path` 反映物理 drop 路径相对 project_root(POSIX-style via `Path(...).relative_to(project_root).as_posix()`)。
 
-### 9.2 ImportPlanBuilder(`import_plan_builder.py`)
+### 9.2.2 ImportPlanBuilder(`import_plan_builder.py`)
 
 ```
 def build(self, manifest: UEAssetManifest) -> UEImportPlan
@@ -1335,7 +1402,7 @@ def build(self, manifest: UEAssetManifest) -> UEImportPlan
 2. `import_<kind>` op,`depends_on=[folder_op_id]`
 3. 若启用 Phase C(允许材质 / 音频 cue 创建)→ 额外加 `create_material_from_template` op
 
-### 9.3 PermissionPolicy(`permission_policy.py`)
+### 9.2.3 PermissionPolicy(`permission_policy.py`)
 
 **默认拒绝**:
 
@@ -1345,7 +1412,7 @@ def build(self, manifest: UEAssetManifest) -> UEImportPlan
 | `create_material_from_template` | ❌ 拒绝 | `ue_target.validation_hooks.include_phase_c=True` |
 | `create_sound_cue_from_template` | ❌ 拒绝 | 同上 |
 
-### 9.4 Inspect(`inspect/project.py`)
+### 9.2.4 Inspect(`inspect/project.py`)
 
 ```
 def inspect_project(project_root: Path) -> ProjectReadiness
@@ -1356,7 +1423,7 @@ def inspect_asset_exists(project_root: Path, object_path: str) -> bool
 - `.uproject` 不存在 → 标记 missing
 - 非 `/Game/` 开头的 asset_root → 返回空列表
 
-### 9.5 Evidence(`evidence.py`)
+### 9.2.5 Evidence(`evidence.py`)
 
 ```
 def make_record(op_id, kind, status, source_uri=None,
@@ -1369,7 +1436,7 @@ def append(path: Path, record: dict) -> None    # 原子追加
 
 **`skip_reason` 字段**(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08):`Literal["permission_denied", "no_handler"] | None = None`。区分 skipped record 的来源类型,使 `ue_scripts/run_import.py` pre-scan filter 可精确仅过滤 `permission_denied`(framework 端 `PermissionPolicy` 拒绝)而不误吞 `no_handler`(UE 端无 handler dispatch)skipped。default `None` 后向兼容旧 evidence(legacy fixture Pydantic load 走 None 路径)。
 
-### 9.6 validate_manifest
+### 9.2.6 validate_manifest
 
 ```
 def validate_manifest(manifest: UEAssetManifest) -> list[str]  # errors
@@ -1883,3 +1950,4 @@ Exception
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §B + §C.6 + §D + §E + §F + §H + §N + 源码实装拆分重组 |
 | v1.1 | 2026-04-22 | Codex 21 条 audit 修复落实装契约:§5.4 find_hit 长度校验 + cost_usd 持久化 + ArtifactRepository 跨进程持久化(`_artifacts.json`)+ payload tampering 校验、§5.5 `on_retry` override + `cloned_for_run()` per-arun 隔离(ADR-006)、§5.6 cache-hit 回放规则、§5.7.1 unsupported 三层拦截(transient retry / router fallback / executor `_should_retry`)、§5.x SelectExecutor bare-approve 语义 + GenerateImageEdit cost_usd + parallel_candidates 同质性、§6.2 router fallback 异常分流、§6.4 hunyuan poll timeout clamp + 200/non-JSON 包装。回归 520 用例(基线 491 + `tests/unit/test_codex_audit_fixes.py` 29 个 fence)|
 | v1.2 | 2026-04-25 | 新增 §15 Run Comparison(`src/framework/comparison/`)接口签名级章节,含 6 个 Pydantic 类型 / 5 个公共函数 / exit code 契约 / 分层边界 / import-fence carve-out;老 §15-§17 顺延至 §16-§18(关键算法 / 异常类族 / 附录)。OpenSpec change `add-run-comparison-baseline-regression` 实装侧 6 个 Task 全部完成,Codex Review Gate 双轮 PASS,pytest -q 实测 848 通过(基线 549 + ~299 新用例)|
+| v1.3 | 2026-05-24 | Engine Bridge + Godot 4 headless import:补 `EngineTarget` / `EngineEvidence` / `EngineAdapterRegistry` / `UnrealAdapter` / `Godot4Adapter` 字段与行为说明;`ExportExecutor` 改为 EngineAdapter dispatcher;UE manifest 细节保留为 Unreal 文件契约小节。 |
