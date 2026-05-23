@@ -21,6 +21,12 @@ from framework.artifact_store import ArtifactRepository, get_backend_registry
 from framework.core.enums import RiskLevel, RunMode, RunStatus, StepType, TaskType
 from framework.core.policies import PreparedRoute, ProviderPolicy
 from framework.core.task import Step, Task, Workflow
+from framework.observability.event_bus import (
+    EventBus,
+    reset_current_event_bus,
+    set_current_event_bus,
+)
+from framework.providers.base import ProviderTimeout
 from framework.runtime.checkpoint_store import CheckpointStore
 from framework.runtime.executors.base import (
     ExecutorRegistry,
@@ -565,6 +571,72 @@ async def test_release_hang_is_bounded(monkeypatch, tmp_path):
         "run.metrics 未包含 lifecycle_release_failed — "
         "_spawn_stop 挂起时 bounded release 未记录失败留痕"
     )
+
+
+@pytest.mark.asyncio
+async def test_classified_step_failure_emits_step_failed_event(tmp_path):
+    """FOR-23:分类失败除写 failure_events 外,还必须 emit step_failed 事件。"""
+    bus = EventBus()
+    events = []
+    sub = bus.subscribe(lambda e: e.run_id == "r_step_failed")
+    token = set_current_event_bus(bus)
+
+    class _ProviderTimeoutExecutor(StepExecutor):
+        step_type = StepType.generate
+        capability_ref = "mock.timeout"
+
+        async def execute(self, ctx: StepContext) -> ExecutorResult:
+            raise ProviderTimeout("provider too slow")
+
+    executor = _ProviderTimeoutExecutor()
+    orch, _, _ = _build_orch_with_executor(
+        executor, tmp_path, capability_ref="mock.timeout",
+    )
+    task = Task(
+        task_id="t_failed_event",
+        task_type=TaskType.structured_extraction,
+        run_mode=RunMode.basic_llm,
+        title="failed event",
+        input_payload={},
+        expected_output={},
+        project_id="proj_failed_event",
+    )
+    step = Step(
+        step_id="s_timeout",
+        type=StepType.generate,
+        name="timeout",
+        risk_level=RiskLevel.low,
+        capability_ref="mock.timeout",
+    )
+    workflow = Workflow(
+        workflow_id="wf_failed_event",
+        name="failed event",
+        version="1.0",
+        entry_step_id="s_timeout",
+        step_ids=["s_timeout"],
+    )
+
+    try:
+        result = await orch.arun(
+            task=task,
+            workflow=workflow,
+            steps=[step],
+            run_id="r_step_failed",
+            skip_dry_run=True,
+        )
+        for _ in range(2):
+            events.append(await asyncio.wait_for(sub.__anext__(), timeout=1))
+    finally:
+        reset_current_event_bus(token)
+        await sub.aclose()
+
+    assert result.failure_events[0]["mode"] == "provider_timeout"
+    failed = [e for e in events if e.phase == "step_failed"]
+    assert len(failed) == 1
+    assert failed[0].step_id == "s_timeout"
+    assert failed[0].raw["exception_type"] == "ProviderTimeout"
+    assert failed[0].raw["failure_mode"] == "provider_timeout"
+    assert failed[0].raw["decision"] == "retry_same_step"
 
 
 @pytest.mark.asyncio

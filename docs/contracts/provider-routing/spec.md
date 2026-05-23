@@ -374,6 +374,22 @@ The system SHALL extend the dry-run pass (FR-LC-002) to validate ComfyUI reachab
 **When** `framework.run` invokes `DryRunPass.run(...)`
 **Then** the dry-run does NOT spawn `python (module flag) comfyui_api status` or otherwise touch `D:/AI/ComfyUI/scripts/`; the Run proceeds to scheduling normally even on a host where ComfyUI is not installed and `FORGEUE_COMFY_SCRIPTS_DIR` is unset
 
+## Requirement: Dry-run validates declared provider API key environment variables
+
+The system SHALL make `DryRunPass` validate provider credentials for routes that explicitly declare `api_key_env`. For each Step, if `ProviderPolicy.prepared_routes` is populated, every non-null `PreparedRoute.api_key_env` is required; otherwise the legacy `ProviderPolicy.api_key_env` is required when present. Missing env vars SHALL set `DryRunReport.checks["provider.api_keys_present"] = False`, append a redacted-by-construction error naming only env var names and affected step ids, and make `DryRunReport.passed = False` so `Orchestrator.arun` raises `DryRunFailed` before scheduling. The check SHALL NOT infer credentials from model ids, because custom OpenAI-compatible endpoints and local subprocess routes are represented by explicit route metadata.
+
+## Scenario: Missing provider API key blocks dry-run
+
+**Given** a Step whose resolved `provider_policy.prepared_routes` contains `PreparedRoute(model="fake/text-model", api_key_env="FORGEUE_TEST_MISSING_KEY", kind="text")`, and `FORGEUE_TEST_MISSING_KEY` is absent from `os.environ`
+**When** `DryRunPass.run(...)` executes
+**Then** `report.passed` is False, `report.checks["provider.api_keys_present"]` is False, and `report.errors` names `FORGEUE_TEST_MISSING_KEY` and the affected step id; `tests/unit/test_dry_run_pass.py::test_fails_when_prepared_route_api_key_missing` fences this.
+
+## Scenario: Present provider API key passes dry-run credential check
+
+**Given** a Step whose resolved `provider_policy.prepared_routes` contains `PreparedRoute(model="fake/text-model", api_key_env="FORGEUE_TEST_PRESENT_KEY", kind="text")`, and `FORGEUE_TEST_PRESENT_KEY` has a non-empty value in `os.environ`
+**When** `DryRunPass.run(...)` executes
+**Then** `report.checks["provider.api_keys_present"]` is True, the credential check does not add errors, and the secret value is not copied into `report.errors` or `report.warnings`; `tests/unit/test_dry_run_pass.py::test_passes_when_prepared_route_api_key_present` fences this.
+
 ## Requirement: ComfyUI subprocess failure modes map into the existing exception hierarchy
 
 The system SHALL map subprocess failures into the existing three-tier worker exception hierarchy, preserving the FR-RUNTIME-012 invariant that `*UnsupportedResponse` short-circuits same-step retries:

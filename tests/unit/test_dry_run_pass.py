@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from framework.core.enums import RunMode, StepType, TaskType
-from framework.core.policies import BudgetPolicy
+from framework.core.policies import BudgetPolicy, PreparedRoute, ProviderPolicy
 from framework.core.task import InputBinding, Step, Task, Workflow
 from framework.runtime.dry_run_pass import DryRunPass
 
@@ -129,6 +129,64 @@ async def test_budget_warn_skipped_for_basic_llm_mode():
     assert rep.passed
     assert rep.checks["budget.cap_declared"] is True
     assert not any("total_cost_cap_usd" in w for w in rep.warnings)
+
+
+@pytest.mark.asyncio
+async def test_fails_when_prepared_route_api_key_missing(monkeypatch):
+    """FOR-22:声明 api_key_env 的 route 缺 key 时,dry-run 必须阻断 Run。"""
+    monkeypatch.delenv("FORGEUE_TEST_MISSING_KEY", raising=False)
+    task = _task()
+    step = Step(
+        step_id="s1",
+        type=StepType.generate,
+        name="g",
+        capability_ref="text.completion",
+        provider_policy=ProviderPolicy(
+            capability_required="text.completion",
+            prepared_routes=[
+                PreparedRoute(
+                    model="fake/text-model",
+                    api_key_env="FORGEUE_TEST_MISSING_KEY",
+                    kind="text",
+                )
+            ],
+        ),
+    )
+
+    rep = await DryRunPass().run(task=task, workflow=_wf(), steps=[step])
+
+    assert not rep.passed
+    assert rep.checks["provider.api_keys_present"] is False
+    assert any("FORGEUE_TEST_MISSING_KEY" in e and "s1" in e for e in rep.errors)
+
+
+@pytest.mark.asyncio
+async def test_passes_when_prepared_route_api_key_present(monkeypatch):
+    """FOR-22:需要的 provider key 已注入时,dry-run 不应误阻断。"""
+    monkeypatch.setenv("FORGEUE_TEST_PRESENT_KEY", "secret-value")
+    task = _task()
+    step = Step(
+        step_id="s1",
+        type=StepType.generate,
+        name="g",
+        capability_ref="text.completion",
+        provider_policy=ProviderPolicy(
+            capability_required="text.completion",
+            prepared_routes=[
+                PreparedRoute(
+                    model="fake/text-model",
+                    api_key_env="FORGEUE_TEST_PRESENT_KEY",
+                    kind="text",
+                )
+            ],
+        ),
+    )
+
+    rep = await DryRunPass().run(task=task, workflow=_wf(), steps=[step])
+
+    assert rep.passed, rep.errors
+    assert rep.checks["provider.api_keys_present"] is True
+    assert "secret-value" not in "\n".join(rep.errors + rep.warnings)
 
 
 @pytest.mark.asyncio

@@ -722,6 +722,12 @@ class Orchestrator:
         except BaseException as exc:
             mode = classify_failure(exc)
             if mode is None:
+                publish_event(ProgressEvent(
+                    run_id=run_id,
+                    step_id=step.step_id,
+                    phase="step_failed",
+                    raw={"exception_type": exc.__class__.__name__},
+                ))
                 raise
             synth = synth_failure_verdict(step_id=step.step_id, exc=exc, mode=mode)
             event: dict = {
@@ -742,6 +748,19 @@ class Orchestrator:
             if ctx_extras:
                 event["context"] = ctx_extras
             result.failure_events.append(event)
+            failed_raw = {
+                "exception_type": exc.__class__.__name__,
+                "failure_mode": mode.value,
+                "decision": synth.decision.value,
+            }
+            if ctx_extras:
+                failed_raw["context"] = ctx_extras
+            publish_event(ProgressEvent(
+                run_id=run_id,
+                step_id=step.step_id,
+                phase="step_failed",
+                raw=failed_raw,
+            ))
             trans = transitions.on_verdict(
                 step=step, verdict=synth, default_next=default_next,
             )

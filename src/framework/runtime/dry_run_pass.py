@@ -7,8 +7,8 @@ Covers the MVP subset:
 - output_schema is a dict (MVP: not fully JSONSchema-validated yet)
 - UEOutputTarget.project_root is accessible (if declared)
 
-Provider reachability / budget estimate / secrets checks are stubbed with
-extension hooks so P1 can fill them without changing signatures.
+Provider reachability / budget sanity / explicit api_key_env checks run as
+zero-side-effect preflight; extra checks remain pluggable.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from framework.core.enums import RunMode, TaskType
 from framework.core.task import Step, Task, Workflow
+from framework.observability.secrets import missing_secrets
 from framework.providers.comfy_provider_config import (
     first_comfy_agent_route,
     resolve_comfy_agent_config,
@@ -100,6 +101,9 @@ class DryRunPass:
 
         # 5. Budget cap sanity(预算上限健全性检查,F1)
         self._check_budget_cap(report, task=task, steps=step_list)
+
+        # 5.25. Provider API key preflight(FOR-22 / NFR-SEC-004)
+        self._check_provider_api_keys(report, steps=step_list)
 
         # 5.5. ComfyUI agent CLI reachability(Step 6: 已 async 化,await aprobe)
         await self._check_comfy_reachability(report, steps=step_list)
@@ -211,6 +215,48 @@ class DryRunPass:
                 f"no total_cost_cap_usd on {task.run_mode.value} task with paid "
                 f"steps — run may spend unboundedly"
             )
+
+    def _check_provider_api_keys(
+        self,
+        report: DryRunReport,
+        *,
+        steps: list[Step],
+    ) -> None:
+        """校验 route 声明的 provider API key 已注入环境变量。
+
+        只信任 ProviderPolicy / PreparedRoute 显式给出的 api_key_env,避免
+        通过 model id 猜测 provider 时误伤本地 ComfyUI 或自定义兼容端口。
+        """
+        required_by_env: dict[str, set[str]] = {}
+        for step in steps:
+            policy = getattr(step, "provider_policy", None)
+            if policy is None:
+                continue
+            routes = list(getattr(policy, "prepared_routes", None) or [])
+            if routes:
+                env_names = [
+                    route.api_key_env for route in routes if route.api_key_env
+                ]
+            else:
+                env_names = [policy.api_key_env] if policy.api_key_env else []
+            for env_name in env_names:
+                required_by_env.setdefault(env_name, set()).add(step.step_id)
+
+        missing = missing_secrets(sorted(required_by_env))
+        if not missing:
+            self._record(report, "provider.api_keys_present", True)
+            return
+
+        detail = ", ".join(
+            f"{env}(steps={','.join(sorted(required_by_env[env]))})"
+            for env in missing
+        )
+        self._record(
+            report,
+            "provider.api_keys_present",
+            False,
+            error=f"missing provider API key env vars: {detail}",
+        )
 
     def _record(
         self,

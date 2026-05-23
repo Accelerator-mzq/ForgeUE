@@ -149,8 +149,8 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_audio_worker.py` (自 v1.7;FOR-13 delta) | AudioCandidate dataclass + AudioWorker ABC + 异常树 + FakeAudioWorker(6 fence)| FR-WORKER-011 | L1 | AudioCandidate 必填字段(data/format/metadata)+ optional source_path + format Literal whitelist + duration_seconds/sample_rate 默认 None + AudioWorkerError/Timeout/UnsupportedResponse 异常树 + FakeAudioWorker._build_minimal_flac 合成有效 FLAC bytes(`fLaC` magic + STREAMINFO) |
 | `test_video_worker.py` (自 v1.8;FOR-13 delta) | VideoCandidate dataclass + VideoWorker ABC + 异常树 + FakeVideoWorker(7 fence)| FR-WORKER-012 | L1 | VideoCandidate 必填字段(data/format/metadata)+ optional source_path + format Literal["mp4"] mp4-only round-2 F2 + round-3 PF3 sweep + duration_seconds/frame_count/width/height/fps 5 顶层 None defaults + VideoWorkerError/Timeout/UnsupportedResponse 异常树 + FakeVideoWorker._build_minimal_mp4 合成 32-byte BMFF strict 5-tuple-conformant ftyp box(`b"\x00\x00\x00\x20ftypisom..."`)|
 | `test_step_context.py` (自 v1.6;`executor-async-rewrite` delta) | StepContext 字段 | FR-RUNTIME-* | L1 | default factory Path('.') / explicit value preserved 2 fence + **`lifecycle` 字段**(default None + ExternalProcessLifecycle 注入后可访问 2 fence) |
-| `test_orchestrator.py` (自 v1.6;`executor-async-rewrite` delta) | Orchestrator 集成 | FR-RUNTIME-* | L1 | uses checkpoints._root NO extra date(round 3 H1 fix)/ falls back to Path('.') 2 fence + **lifecycle 注入**(arun 时 lifecycle manager 传入 / StepContext.lifecycle 字段填充)+ **try/finally release**(`arun` finally 分支调 `_release_lifecycle_bounded`)+ **`aclose()`**(disposal 钩子 release + cleanup)fence |
-| `test_dry_run_pass.py` (自 `executor-async-rewrite` TBD-010,2026-05-20) | DryRunPass.run async + aprobe | FR-LC-002, NFR-REL-005 | L1 | `DryRunPass.run` 为 `async def`(orchestrator `await dry_run_pass.run(...)` 路径)+ `aprobe` classmethod(asyncio.create_subprocess_exec + asyncio.wait_for;timeout → WorkerUnsupportedResponse)+ `probe_sync` shim 保留(sync 向后兼容;两个 classmethod 并存)+ dry-run async 集成(bundle 含 comfy/local* 时 dry-run 先 aprobe 再进主流程) |
+| `test_orchestrator.py` (自 v1.6;`executor-async-rewrite` delta;FOR-23 delta) | Orchestrator 集成 | FR-RUNTIME-*, NFR-OBS-002 | L1 | uses checkpoints._root NO extra date(round 3 H1 fix)/ falls back to Path('.') 2 fence + **lifecycle 注入**(arun 时 lifecycle manager 传入 / StepContext.lifecycle 字段填充)+ **try/finally release**(`arun` finally 分支调 `_release_lifecycle_bounded`)+ **`aclose()`**(disposal 钩子 release + cleanup)+ `step_failed` ProgressEvent 携带 `exception_type` / `failure_mode` / `decision` fence |
+| `test_dry_run_pass.py` (自 `executor-async-rewrite` TBD-010,2026-05-20;FOR-22 delta) | DryRunPass.run async + aprobe + API key preflight | FR-LC-002, NFR-REL-005, NFR-SEC-004 | L1 | `DryRunPass.run` 为 `async def`(orchestrator `await dry_run_pass.run(...)` 路径)+ `aprobe` classmethod(asyncio.create_subprocess_exec + asyncio.wait_for;timeout → WorkerUnsupportedResponse)+ `probe_sync` shim 保留(sync 向后兼容;两个 classmethod 并存)+ dry-run async 集成(bundle 含 comfy/local* 时 dry-run 先 aprobe 再进主流程)+ 声明 `api_key_env` 的 provider route 缺 key 时阻断 Run |
 | `test_fake_comfy_worker_schema.py` (自 v1.6) | FakeComfyWorker conditional v2 schema gate | FR-WORKER-001 | L1 | legacy passes / v2 missing comfy_params optional / non-string comfy_workflow / non-dict comfy_params / non-none lifecycle 5 fence |
 | `test_model_registry.py` (delta 自 v1.6) | comfy_api placeholder + comfy_local virtual id + image_local alias | FR-MODEL-001/007 | L1 | comfy_api placeholder parses / comfy_local id missing raises / image_local alias resolves 3 fence |
 | `test_tripo3d_unsupported.py` | Tripo3D 两处 unsupported | 同上 | L3 | /task 无 task_id / success 无 URL |
@@ -169,7 +169,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
 | `test_event_bus.py` | `event_bus.py` | FR-OBS-001, FR-OBS-002 | L2,L3 | Subscription 捕获 owning loop、跨线程 hop 通过 call_soon_threadsafe、threading.Lock 保护 _subs |
-| `test_progress_passthrough.py` | adapter → ProgressEvent | FR-OBS-002, NFR-OBS-004 | L2 | mesh/comfy poll 事件传递 |
+| `test_progress_passthrough.py` + `test_orchestrator.py` | adapter / orchestrator → ProgressEvent | FR-OBS-002, NFR-OBS-004 | L2 | mesh/comfy poll 事件传递;Step 异常失败 emit `step_failed` 并携带异常类型 |
 | `test_compactor.py` | `compactor.py` | FR-RUNTIME-003 | L1 | target_tokens 压缩、占位符插入 |
 | `test_secrets.py` | `secrets.py` | NFR-SEC-002, NFR-SEC-003 | L1 | API key 脱敏 |
 
@@ -419,7 +419,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | FR-WORKER(多模态) | test_cn_image_adapters, **test_comfy_subprocess(自 v1.6 替代 test_comfy_http_unsupported)**, test_tripo3d_unsupported, integration/test_l4 | ✅ |
 | FR-RUNTIME(工程化) | test_failure_mode_map, test_transition_engine, test_budget_tracker, test_cancellation, test_transient_retry, test_retry_async, test_cascade_cancel | ✅ |
 | FR-COST(定价) | test_registry_pricing, test_budget_tracker_pricing, test_router_pricing_stash, test_generate_mesh_cost, test_pricing_* | ✅ |
-| FR-OBS(观测) | test_event_bus, test_progress_passthrough, test_compactor, test_secrets, integration/test_ws_progress | ✅ |
+| FR-OBS(观测) | test_event_bus, test_progress_passthrough, test_orchestrator, test_compactor, test_secrets, integration/test_ws_progress | ✅ |
 
 ### 6.2 NFR 覆盖
 
@@ -428,8 +428,8 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | NFR-PERF | test_dag_concurrency(墙钟),test_chief_judge_parallel(并发),test_multi_candidate_parallel(N 候选) |
 | NFR-REL | test_failure_mode_map,test_cascade_cancel,test_transition_engine |
 | NFR-REPRO | test_checkpoint_store(hash verify),integration/test_p0(resume) |
-| NFR-SEC | test_secrets |
-| NFR-OBS | test_event_bus,test_progress_passthrough |
+| NFR-SEC | test_secrets,test_dry_run_pass |
+| NFR-OBS | test_event_bus,test_progress_passthrough,test_orchestrator |
 | NFR-MAINT | 所有 L3 fence 守门 + 历史基线 549 用例(491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收);**当前 2026-04-27 实测 1144 用例**(549 → 848 Run Comparison +299 → 1140 forgeue tooling +292 → 1144 lazy artifact_store +4) |
 | NFR-PORT | CI 能在 Linux 跑(2026-04-23 基线 549 全绿,stub unreal 覆盖 P4 + 真机 commandlet 覆盖 A1;2026-04-25 实测 848 全绿;2026-04-27 实测 1144 全绿) |
 
@@ -552,6 +552,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | v1.9 | 2026-05-22 | 加 Linear FOR-11 `blob-backend-streaming-implementation`:BlobBackend MVP 从 stub 升级为可注入 `BlobClient` protocol + 默认 `InMemoryBlobClient`;支持 value 与 source_path 写入、read/exists、blob resume drift 校验,并放开 `repo.put(source_path=..., payload_kind=blob)`。新增 / 更新 fence 覆盖 `test_payload_backends.py` 与 `test_artifact_repository.py`;总数以本地 `python -m pytest -q` 实测为准。 |
 | v1.10 | 2026-05-22 | 加 Linear FOR-8 `multi-mode-comfy-dag-warning`:ManagedProcessRegistry 扫描同一 run 内所有 managed subprocess selections,多个 Comfy step lifecycle mode 不一致时 fail-fast,不再静默采用第一个 mode。新增 `test_comfy_provider_config.py::test_default_managed_process_registry_rejects_conflicting_comfy_lifecycle_modes`;总数以本地 `python -m pytest -q` 实测为准。 |
 | v1.11 | 2026-05-23 | 加 Linear FOR-14 `metadata-corruption-detection`:ArtifactRepository 写 `_artifacts.integrity.json` 绑定 `_artifacts.json` sha256 / artifact_count / artifact_ids;resume 发现 integrity mismatch 时 `ArtifactMetadataIntegrityError` fail-fast,legacy 无 integrity 文件保持兼容。新增 fence 覆盖 `test_artifact_repository.py`;总数以本地 `python -m pytest -q` 实测为准。 |
+| v1.12 | 2026-05-23 | 加 Linear FOR-22 + FOR-23:DryRunPass 校验显式声明的 provider `api_key_env`,缺 key 时阻断 Run;Orchestrator Step 异常失败路径 emit `step_failed` ProgressEvent 并携带 `exception_type`。新增 / 更新 fence 覆盖 `test_dry_run_pass.py` 与 `test_orchestrator.py`;总数以本地 `python -m pytest -q` 实测为准。 |
 
 ### 10.3 未决事项
 

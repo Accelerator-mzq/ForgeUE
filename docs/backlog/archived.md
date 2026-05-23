@@ -3,6 +3,33 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-23 FOR-22 + FOR-23 completion
+
+### `docs/requirements/SRS.md::LR-0111`
+
+- **new_status**: completed
+- **reason**: `DryRunPass` 现在会读取每个 Step 的 `ProviderPolicy.prepared_routes[*].api_key_env`
+  (以及 legacy `provider_policy.api_key_env`),在 dry-run 阶段用 `missing_secrets()` 校验所需
+  provider API key 是否已注入;缺失时写入 `DryRunReport.errors` 并阻断 Run 启动。
+- **evidence**: `src/framework/runtime/dry_run_pass.py`,
+  `tests/unit/test_dry_run_pass.py::test_fails_when_prepared_route_api_key_missing`,
+  `tests/unit/test_dry_run_pass.py::test_passes_when_prepared_route_api_key_present`;
+  `python -m pytest tests/unit/test_dry_run_pass.py -q` → `11 passed`;
+  `demo_artifacts/2026-05-23/adhoc/for22_for23/evidence.md`
+- **archived_by**: FOR-22 dry-run-pass-api-key-validation 2026-05-23
+
+### `docs/requirements/SRS.md::LR-0114`
+
+- **new_status**: completed
+- **reason**: `Orchestrator._aexec_one_body` 现在在 Step 执行异常路径 emit
+  `ProgressEvent(phase="step_failed")`;分类失败事件携带 `exception_type` /
+  `failure_mode` / `decision`,未分类异常也至少携带 `exception_type` 后再 re-raise。
+- **evidence**: `src/framework/runtime/orchestrator.py`,
+  `tests/unit/test_orchestrator.py::test_classified_step_failure_emits_step_failed_event`;
+  `python -m pytest tests/unit/test_orchestrator.py -q` → `17 passed`;
+  `demo_artifacts/2026-05-23/adhoc/for22_for23/evidence.md`
+- **archived_by**: FOR-23 step-event-observability 2026-05-23
+
 ## 2026-05-23 FOR-14 completion
 
 ### `2026-05-21-repo-put-streaming-payload::metadata-corruption-detection`
