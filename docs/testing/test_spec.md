@@ -296,6 +296,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | Mesh download error fallthrough | 第二轮 | 同上 |
 | Mesh 空 ranked → unsupported | 第二轮 | 同上 |
 | Mesh ASCII FBX 识别 | 第二轮 | 同上 |
+| Mesh FBX self-containment | FOR-28 | `test_cn_image_adapters::TestHunyuanMeshFbxSelfContainment` |
 | Mesh glTF parse-fail double-guard | 第二轮 | 同上 |
 | `data:` URI 大小写 | 第二轮 | 同上 |
 | unsupported → abort_or_fallback | 第二轮 | `test_transition_engine::test_abort_or_fallback_honours_on_fallback` |
@@ -443,7 +444,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | bridge_execute 模式 | **未启动** | §G #1 |
 | Audio worker | **未启动** | §G #2 |
 | WS 鉴权 | **未启动** | 默认绑 127.0.0.1 |
-| FBX self-containment | **未启动** | 无 PyFBX 绑定 |
+| FBX self-containment | ✅ 已实施(FOR-28,dependency-free) | `TestHunyuanMeshFbxSelfContainment`:ASCII/Binary `FileName` / `RelativeFilename` sidecar 检测、普通模式 reject、geometry-only 放行、URL fallthrough |
 | DashScope / Tripo3D parser 实装 | **部分** | 8 model scaffold,实装待真实用例 |
 
 ---

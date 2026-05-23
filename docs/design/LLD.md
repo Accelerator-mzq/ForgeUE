@@ -1095,8 +1095,8 @@ ComfyAgentWorker(*, scripts_dir: Path, run_id: str, project_id: str,
 | glb | `data[:4] == b"glTF"` | 魔数,2KB 松检测 |
 | gltf | 自包含 JSON(`_is_self_contained_gltf`) | parse-fail → False |
 | obj | `o ` / `g ` / `vn` / `v ` 起头 | ASCII |
-| fbx(binary) | `Kaydara FBX Binary` | — |
-| fbx(ASCII) | `; FBX` 注释头 + `FBXHeaderExtension:` | 新增分支 |
+| fbx(binary) | `Kaydara FBX Binary` | FOR-28:扫描 `FileName` / `RelativeFilename` 附近贴图/媒体扩展名,发现 sidecar → 非自包含 |
+| fbx(ASCII) | `; FBX` 注释头 + `FBXHeaderExtension:` | FOR-28:同 binary 扫描策略;普通模式拒绝,geometry-only 可接受并标 `missing_materials=True` |
 | zip | PKZIP 魔数 | 多 mesh 打包 |
 
 **魔数 gate**
@@ -1779,6 +1779,8 @@ elif fmt == "fbx" or ...
 ```
 
 **双保险**:parse-fail 的 glTF,`_is_self_contained_gltf` 返回 False,`_gltf_has_external_geometry` 返回 True,即使进 geometry_only 分支也会 raise。
+
+**FOR-28 FBX self-containment**:`_is_self_contained_fbx(data)` 不引入 PyFBX / ufbx 硬依赖,只守 ForgeUE 单文件 Artifact 边界。它在 FBX 字节中扫描 `FileName` / `RelativeFilename` 附近的常见贴图/媒体扩展名(`.png` / `.jpg` / `.tga` / `.dds` 等);命中时普通模式 raise `MeshWorkerUnsupportedResponse` 让 Hunyuan URL fallthrough 尝试下一个候选,`spec.texture=False AND spec.pbr=False` 时保留几何并标记 `missing_materials=True`。
 
 ### 16.5 EventBus 跨线程 hop(event_bus.publish_nowait)
 

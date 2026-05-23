@@ -2005,6 +2005,137 @@ class TestHunyuanMeshFormatDetection:
         assert cands[0].metadata["detected_format"] == "glb"
 
 
+class TestHunyuanMeshFbxSelfContainment:
+    def test_ascii_fbx_without_texture_filename_is_self_contained(self):
+        from framework.providers.workers.mesh_worker import _is_self_contained_fbx
+        ascii_fbx = (
+            b"; FBX 7.4.0 project file\n"
+            b"FBXHeaderExtension:  {\n"
+            b"    FBXHeaderVersion: 1003\n"
+            b"}\n"
+            b"Objects:  {\n"
+            b"    Model: 1, \"Model::Cube\", \"Mesh\" {}\n"
+            b"}\n"
+        )
+        assert _is_self_contained_fbx(ascii_fbx) is True
+
+    def test_ascii_fbx_with_texture_filename_is_not_self_contained(self):
+        from framework.providers.workers.mesh_worker import _is_self_contained_fbx
+        ascii_fbx = (
+            b"; FBX 7.4.0 project file\n"
+            b"Objects:  {\n"
+            b"    Texture: 2, \"Texture::Wood\", \"\" {\n"
+            b"        FileName: \"C:\\\\textures\\\\wood_albedo.png\"\n"
+            b"        RelativeFilename: \"textures\\\\wood_albedo.png\"\n"
+            b"    }\n"
+            b"}\n"
+        )
+        assert _is_self_contained_fbx(ascii_fbx) is False
+
+    def test_binary_fbx_with_texture_filename_marker_is_not_self_contained(self):
+        from framework.providers.workers.mesh_worker import _is_self_contained_fbx
+        binary_fbx = (
+            b"Kaydara FBX Binary  \x00\x1a\x00"
+            + b"\x00" * 32
+            + b"RelativeFilename\x00textures/wood_normal.jpg\x00"
+            + b"\x00" * 32
+        )
+        assert _is_self_contained_fbx(binary_fbx) is False
+
+    def test_build_candidate_rejects_textured_fbx_in_normal_mode(self):
+        from framework.providers.workers.mesh_worker import (
+            MeshWorkerUnsupportedResponse,
+            _build_candidate,
+        )
+        textured_fbx = (
+            b"; FBX 7.4.0 project file\n"
+            b"FBXHeaderExtension:  {\n    FBXHeaderVersion: 1003\n}\n"
+            b"Texture: 2, \"Texture::Wood\", \"\" {\n"
+            b"    FileName: \"textures/wood.png\"\n"
+            b"}\n"
+        )
+        with pytest.raises(MeshWorkerUnsupportedResponse, match="non-self-contained .fbx"):
+            _build_candidate(
+                mesh_bytes=textured_fbx,
+                url="https://mock/model.fbx",
+                job_id="job_fbx_sidecar",
+                index=0,
+                requested_fmt="fbx",
+                geometry_only=False,
+            )
+
+    def test_build_candidate_accepts_textured_fbx_in_geometry_only_mode(self):
+        from framework.providers.workers.mesh_worker import _build_candidate
+        textured_fbx = (
+            b"; FBX 7.4.0 project file\n"
+            b"FBXHeaderExtension:  {\n    FBXHeaderVersion: 1003\n}\n"
+            b"Texture: 2, \"Texture::Wood\", \"\" {\n"
+            b"    RelativeFilename: \"textures/wood.png\"\n"
+            b"}\n"
+        )
+        cand = _build_candidate(
+            mesh_bytes=textured_fbx,
+            url="https://mock/model.fbx",
+            job_id="job_fbx_geometry_only",
+            index=0,
+            requested_fmt="fbx",
+            geometry_only=True,
+        )
+        assert cand.format == "fbx"
+        assert cand.metadata["missing_materials"] is True
+
+    def test_worker_falls_through_when_fbx_references_external_texture(self, monkeypatch):
+        import asyncio
+
+        from framework.providers.workers.mesh_worker import HunyuanMeshWorker
+
+        bad_fbx = (
+            b"; FBX 7.4.0 project file\n"
+            b"FBXHeaderExtension:  {\n    FBXHeaderVersion: 1003\n}\n"
+            b"Texture: 2, \"Texture::Wood\", \"\" {\n"
+            b"    FileName: \"textures/wood.png\"\n"
+            b"}\n"
+        )
+        good_glb = b"glTF" + b"\x02\x00\x00\x00" + b"\x00" * 100
+        url_to_bytes = {
+            "https://mock/model.fbx": bad_fbx,
+            "https://mock/signed-good-mesh": good_glb,
+        }
+        download_calls = []
+
+        async def fake_submit(self, body, *, timeout_s):
+            return "job_fbx_fallthrough"
+
+        async def fake_poll(self, *, job_id, budget_s, model_id, on_progress=None):
+            return {"status": "done", "result": {
+                "urls": [
+                    "https://mock/model.fbx",
+                    "https://mock/signed-good-mesh",
+                ]
+            }}
+
+        async def fake_download(self, url, *, timeout_s, on_progress=None):
+            download_calls.append(url)
+            return url_to_bytes[url]
+
+        monkeypatch.setattr(HunyuanMeshWorker, "_atokenhub_submit", fake_submit)
+        monkeypatch.setattr(HunyuanMeshWorker, "_atokenhub_poll", fake_poll)
+        monkeypatch.setattr(HunyuanMeshWorker, "_atokenhub_download", fake_download)
+
+        worker = HunyuanMeshWorker(api_key="sk-test", poll_interval_s=0.0)
+        cands = asyncio.run(worker.agenerate(
+            source_image_bytes=b"\x89PNG",
+            spec={"format": "fbx", "prompt": "fbx fallthrough"},
+            num_candidates=1,
+            timeout_s=30.0,
+        ))
+        assert [c.format for c in cands] == ["glb"]
+        assert download_calls == [
+            "https://mock/model.fbx",
+            "https://mock/signed-good-mesh",
+        ]
+
+
 def test_tokenhub_mixin_extract_url_variants():
     """Response shape varies; _extract_result_url walks several candidates."""
     assert TokenhubMixin._extract_result_url({"url": "https://a/1.png"}) == "https://a/1.png"
