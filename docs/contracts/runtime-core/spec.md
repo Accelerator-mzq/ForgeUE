@@ -247,6 +247,18 @@ The system SHALL register a new `(StepType.generate, "audio.t2a")` entry in the 
 **When** `loader.load_task_bundle(path)` parses the file (`src/framework/workflows/loader.py:36`)
 **Then** `Step.model_validate` accepts the dict (top-level `type`, `capability_ref`, `provider_policy`, `depends_on`, `config` keys per [task.py:30-43](src/framework/core/task.py#L30-L43)); the resulting `Step` instance has `step.type == StepType.generate` and `step.capability_ref == "audio.t2a"`; downstream `ExecutorRegistry.resolve(step)` returns `GenerateAudioExecutor`; `tests/integration/test_example_bundles_smoke.py::test_comfy_local_smoke_audio_loads_with_audio_local_alias` fences the loader-contract path (no worker invocation)
 
+## Scenario: Bundle JSON with audio_remote uses the same audio.t2a executor
+
+**Given** a bundle step with `type="generate"`, `capability_ref="audio.t2a"`, and `provider_policy.models_ref="audio_remote"`
+**When** the loader expands model refs
+**Then** the step still resolves to `GenerateAudioExecutor`; the resolved route has `model="remote/audio"` and `kind="audio"`; runtime worker construction is controlled by `framework.run` env wiring, not by a new step type.
+
+## Scenario: Bundle JSON with audio_minimax uses the same audio.t2a executor
+
+**Given** a bundle step with `type="generate"`, `capability_ref="audio.t2a"`, and `provider_policy.models_ref="audio_minimax"`
+**When** the loader expands model refs
+**Then** the step still resolves to `GenerateAudioExecutor`; the resolved route has `model="minimax/music-2.6"` and `kind="audio"`; runtime worker construction is controlled by `framework.run` env wiring, not by a new step type.
+
 ## Scenario: bundle loader rejects audio.t2a step that hardcodes provider model id (F-Plan-R4-C round-4 修订:Scenario 标题 "workflow loader rejects" → "bundle loader rejects" — 拒绝由 alias-resolution 链路实现,不是 step-kind 表)
 
 **Given** a bundle JSON with `step.type = "generate"`, `step.capability_ref = "audio.t2a"`, and `step.provider_policy.preferred_models = ["comfy/local-audio"]` (direct id reference, no alias)

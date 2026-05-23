@@ -1,0 +1,56 @@
+{
+  "task": {
+    "task_id": "remote_audio_smoke",
+    "task_type": "asset_generation",
+    "run_mode": "basic_llm",
+    "title": "Remote audio worker smoke",
+    "input_payload": {
+      "prompt": "A short orchestral success sting for a fantasy crafting UI"
+    },
+    "expected_output": {
+      "modality": "audio"
+    },
+    "project_id": "forgeue"
+  },
+  "workflow": {
+    "workflow_id": "remote_audio_smoke_wf",
+    "name": "Remote audio worker smoke",
+    "version": "1.0",
+    "entry_step_id": "step_audio",
+    "step_ids": ["step_audio"]
+  },
+  "steps": [
+    {
+      "step_id": "step_audio",
+      "type": "generate",
+      "name": "Generate remote audio",
+      "risk_level": "medium",
+      "capability_ref": "audio.t2a",
+      "provider_policy": {
+        "capability_required": "audio.t2a",
+        "models_ref": "audio_remote"
+      },
+      "retry_policy": {
+        "max_attempts": 1,
+        "backoff": "fixed",
+        "retry_on": ["timeout"]
+      },
+      "depends_on": [],
+      "input_bindings": [
+        {
+          "name": "prompt",
+          "source": "task.input_payload.prompt"
+        }
+      ],
+      "config": {
+        "num_candidates": 1,
+        "seed": 42,
+        "worker_timeout_s": 60,
+        "spec": {
+          "prompt": "A short orchestral success sting for a fantasy crafting UI",
+          "format": "mp3"
+        }
+      }
+    }
+  ]
+}

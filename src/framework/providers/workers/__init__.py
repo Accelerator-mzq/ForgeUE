@@ -5,6 +5,8 @@ from framework.providers.workers.audio_worker import (
     AudioWorkerTimeout,
     FakeAudioWorker,
 )
+from framework.providers.workers.minimax_music_worker import MiniMaxMusicWorker
+from framework.providers.workers.remote_audio_worker import RemoteHttpAudioWorker
 from framework.providers.workers.comfy_worker import (
     ComfyAgentWorker,
     ComfyWorker,
@@ -49,12 +51,14 @@ __all__ = [
     "MeshWorker",
     "MeshWorkerError",
     "MeshWorkerTimeout",
+    "MiniMaxMusicWorker",
     "Tripo3DWorker",
     "VideoCandidate",
     "VideoWorker",
     "VideoWorkerError",
     "VideoWorkerTimeout",
     "VideoWorkerUnsupportedResponse",
+    "RemoteHttpAudioWorker",
     "WorkerError",
     "WorkerTimeout",
     "WorkerUnsupportedResponse",
