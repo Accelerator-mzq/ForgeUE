@@ -45,10 +45,10 @@ from framework.ue_bridge.permission_policy import is_op_allowed
 
 
 class ExportExecutor(StepExecutor):
-    """Step(type=export, capability_ref='ue.export') — writes the manifest-only bundle."""
+    """Step(type=export) wildcard executor — writes the manifest-only bundle."""
 
     step_type = StepType.export
-    capability_ref = "ue.export"
+    capability_ref = None
 
     def __init__(
         self, *, permission_policy: PermissionPolicy | None = None,
