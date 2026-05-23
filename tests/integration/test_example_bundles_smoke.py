@@ -46,6 +46,7 @@ _PRODUCES_MODALITY: dict[str, str] = {
     "mesh.generation": "mesh",
     "review.judge": "report",          # report/verdict, not image/mesh
     "select.by_verdict": "bundle",
+    "engine.export": "bundle",
     "ue.export": "ue",
     "mock.generate": "text",
     "mock.validate": "report",
@@ -85,6 +86,13 @@ def test_bundle_loads(bundle_path: Path):
     assert loaded.workflow.entry_step_id in {s.step_id for s in loaded.steps}, (
         f"{bundle_path.name}: entry_step_id not in steps"
     )
+
+
+def test_godot4_export_smoke_bundle_loads():
+    bundle = load_task_bundle(EXAMPLES_DIR / "godot4_export_smoke.json")
+    assert bundle.task.engine_target is not None
+    assert bundle.task.engine_target.engine == "godot4"
+    assert bundle.steps[-1].capability_ref == "engine.export"
 
 
 @pytest.mark.asyncio

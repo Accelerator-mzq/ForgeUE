@@ -1,0 +1,40 @@
+{
+  "task": {
+    "task_id": "godot4_export_smoke",
+    "task_type": "ue_export",
+    "run_mode": "production",
+    "title": "Godot 4 headless import smoke",
+    "description": "Offline-friendly bundle documenting engine_target shape for Godot 4 adapter.",
+    "input_payload": {
+      "prompt": "Generate one small icon and export it to Godot 4."
+    },
+    "expected_output": {
+      "artifact_types": ["engine.export_bundle"]
+    },
+    "project_id": "proj_godot4",
+    "engine_target": {
+      "engine": "godot4",
+      "project_name": "ForgeGodotDemo",
+      "project_root": "D:/GodotProjects/ForgeGodotDemo",
+      "asset_root": "forgeue/generated",
+      "import_mode": "headless_import",
+      "executable_path": "C:/Godot/Godot_v4.exe"
+    }
+  },
+  "workflow": {
+    "workflow_id": "wf_godot4_export_smoke",
+    "name": "Godot 4 export smoke",
+    "version": "1.0",
+    "entry_step_id": "step_export",
+    "step_ids": ["step_export"]
+  },
+  "steps": [
+    {
+      "step_id": "step_export",
+      "type": "export",
+      "name": "Export to Godot 4",
+      "capability_ref": "engine.export",
+      "depends_on": []
+    }
+  ]
+}
