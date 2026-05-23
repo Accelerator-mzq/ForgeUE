@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -294,3 +296,206 @@ async def test_godot4_adapter_fails_fast_when_executable_missing(
         await Godot4Adapter(command_runner=fake_runner).export(
             ctx, target=task.engine_target,
         )
+
+
+@pytest.mark.asyncio
+async def test_godot4_adapter_records_failed_evidence_when_command_fails(tmp_path: Path):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    source = tmp_path / "source.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\nforge-godot")
+
+    repo.put(
+        artifact_id="art_png",
+        source_path=source,
+        artifact_type=ArtifactType(modality="image", shape="png", display_name="png"),
+        role=ArtifactRole.intermediate,
+        format="png",
+        mime_type="image/png",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+        file_suffix=".png",
+    )
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+            executable_path=str(tmp_path / "Godot_v4.exe"),
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_png"])
+
+    async def fake_runner(argv, *, cwd, log_path):
+        return 2
+
+    with pytest.raises(RuntimeError, match="return code 2"):
+        await Godot4Adapter(command_runner=fake_runner).export(
+            ctx, target=task.engine_target,
+        )
+
+    evidence_path = project / "forgeue" / "generated" / "run_godot" / "evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert not any(item["status"] == "success" for item in evidence)
+    assert evidence[0]["status"] == "failed"
+    assert "return code 2" in evidence[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_godot4_adapter_skips_supported_inline_payload_with_clear_evidence(
+    tmp_path: Path,
+):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    repo.put(
+        artifact_id="art_inline_png",
+        value={"not": "file"},
+        artifact_type=ArtifactType(modality="image", shape="png", display_name="png"),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+    )
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+            executable_path=str(tmp_path / "Godot_v4.exe"),
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_inline_png"])
+
+    async def fake_runner(argv, *, cwd, log_path):
+        raise AssertionError("inline payload 不应调用 Godot")
+
+    result = await Godot4Adapter(command_runner=fake_runner).export(
+        ctx, target=task.engine_target,
+    )
+
+    evidence_path = project / "forgeue" / "generated" / "run_godot" / "evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert result.metrics["staged"] == 0
+    assert evidence[0]["status"] == "skipped"
+    assert evidence[0]["error"] == "Godot4 import only supports file-backed artifacts"
+
+
+@pytest.mark.asyncio
+async def test_godot4_adapter_skips_unsupported_inline_payload_before_file_resolution(
+    tmp_path: Path,
+):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    repo.put(
+        artifact_id="art_inline_mp4",
+        value={"not": "file"},
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="mp4"),
+        role=ArtifactRole.intermediate,
+        format="json",
+        mime_type="application/json",
+        payload_kind=PayloadKind.inline,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+    )
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+            executable_path=str(tmp_path / "Godot_v4.exe"),
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_inline_mp4"])
+
+    result = await Godot4Adapter(command_runner=None).export(
+        ctx, target=task.engine_target,
+    )
+
+    evidence_path = project / "forgeue" / "generated" / "run_godot" / "evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert result.metrics["staged"] == 0
+    assert evidence[0]["status"] == "skipped"
+    assert evidence[0]["error"] == "unsupported godot4 artifact shape"
+
+
+@pytest.mark.asyncio
+async def test_godot4_adapter_rejects_stale_import_cache(tmp_path: Path):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    source = tmp_path / "source.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\nforge-godot")
+
+    repo.put(
+        artifact_id="art_png",
+        source_path=source,
+        artifact_type=ArtifactType(modality="image", shape="png", display_name="png"),
+        role=ArtifactRole.intermediate,
+        format="png",
+        mime_type="image/png",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+        file_suffix=".png",
+    )
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+            executable_path=str(tmp_path / "Godot_v4.exe"),
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_png"])
+
+    stage_root = project / "forgeue" / "generated" / "run_godot"
+    stage_root.mkdir(parents=True)
+    stale_sidecar = stage_root / "art_png.png.import"
+    stale_sidecar.write_text("stale", encoding="utf-8")
+    imported_dir = project / ".godot" / "imported"
+    imported_dir.mkdir(parents=True)
+    stale_imported = imported_dir / "art_png.png-old.import"
+    stale_imported.write_text("stale", encoding="utf-8")
+    old_time = time.time() - 120
+    os.utime(stale_sidecar, (old_time, old_time))
+    os.utime(stale_imported, (old_time, old_time))
+
+    async def fake_runner(argv, *, cwd, log_path):
+        return 0
+
+    with pytest.raises(RuntimeError, match="stale Godot"):
+        await Godot4Adapter(command_runner=fake_runner).export(
+            ctx, target=task.engine_target,
+        )
+
+    evidence_path = project / "forgeue" / "generated" / "run_godot" / "evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert not any(item["status"] == "success" for item in evidence)
+    assert evidence[0]["status"] == "failed"
+    assert "stale Godot" in evidence[0]["error"]

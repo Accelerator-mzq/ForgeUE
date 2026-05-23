@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Protocol
 
@@ -76,7 +77,6 @@ class Godot4Adapter:
         evidence_records: list[EngineEvidence] = []
 
         for art in self._collect_upstream(ctx):
-            source_path = file_backend.absolute_path(art.payload_ref)
             modality = art.artifact_type.modality.lower()
             shape = art.artifact_type.shape.lower()
             stage_ext = _SUPPORTED_SHAPES.get((modality, shape))
@@ -88,15 +88,30 @@ class Godot4Adapter:
                         engine=self.engine,
                         kind="godot_import",
                         status="skipped",
-                        source_uri=str(source_path),
+                        source_uri=art.payload_ref.file_path,
                         error="unsupported godot4 artifact shape",
                     )
                 )
                 continue
 
+            if art.payload_ref.kind != PayloadKind.file:
+                evidence_records.append(
+                    EngineEvidence(
+                        evidence_item_id=f"ev_{art.artifact_id}",
+                        op_id=f"op_{art.artifact_id}",
+                        engine=self.engine,
+                        kind="godot_import",
+                        status="skipped",
+                        source_uri=None,
+                        error="Godot4 import only supports file-backed artifacts",
+                    )
+                )
+                continue
+
+            source_path = file_backend.absolute_path(art.payload_ref)
             staged_path = run_dir / f"{art.artifact_id}.{stage_ext}"
             staged_path.parent.mkdir(parents=True, exist_ok=True)
-            await asyncio.to_thread(shutil.copy2, source_path, staged_path)
+            await asyncio.to_thread(shutil.copyfile, source_path, staged_path)
             staged_artifacts.append(
                 {
                     "artifact_id": art.artifact_id,
@@ -106,22 +121,11 @@ class Godot4Adapter:
                     "staged_uri": str(staged_path),
                 }
             )
-            evidence_records.append(
-                EngineEvidence(
-                    evidence_item_id=f"ev_{art.artifact_id}",
-                    op_id=f"op_{art.artifact_id}",
-                    engine=self.engine,
-                    kind="godot_import",
-                    status="success",
-                    source_uri=str(source_path),
-                    target_uri=str(staged_path),
-                )
-            )
 
         manifest_path = run_dir / "godot_manifest.json"
         plan_path = run_dir / "godot_import_plan.json"
+        evidence_path = run_dir / "evidence.json"
         if not staged_artifacts:
-            evidence_path = run_dir / "evidence.json"
             self._write_json(
                 evidence_path,
                 [item.model_dump(mode="json") for item in evidence_records],
@@ -167,32 +171,45 @@ class Godot4Adapter:
         self._write_json(manifest_path, manifest)
         self._write_json(plan_path, plan)
 
-        evidence_path = run_dir / "evidence.json"
-        self._write_json(
-            evidence_path,
-            [item.model_dump(mode="json") for item in evidence_records],
-        )
-
         argv = list(plan["command"])
         log_path = run_dir / "godot_command.log"
-        returncode = await self._command_runner(argv, cwd=project_root, log_path=log_path)
+        import_started_at = time.time()
+        try:
+            returncode = await self._command_runner(argv, cwd=project_root, log_path=log_path)
+        except Exception as exc:
+            error = f"godot command raised: {exc}"
+            evidence_records.extend(
+                self._failed_evidence(staged_artifacts, error=error)
+            )
+            self._write_evidence(evidence_path, evidence_records)
+            raise
         if returncode != 0:
+            error = f"godot command failed with return code {returncode}; log={log_path}"
+            evidence_records.extend(
+                self._failed_evidence(staged_artifacts, error=error)
+            )
+            self._write_evidence(evidence_path, evidence_records)
             raise RuntimeError(
-                f"godot command failed with return code {returncode}; log={log_path}"
+                error
             )
 
+        failures: list[EngineEvidence] = []
         for item in staged_artifacts:
-            staged_path = Path(item["staged_uri"])
-            import_sidecar = staged_path.with_name(staged_path.name + ".import")
-            if not import_sidecar.is_file():
-                raise RuntimeError(f"missing Godot .import file for staged asset: {staged_path}")
-            imported_dir = project_root / ".godot" / "imported"
-            if not imported_dir.is_dir():
-                raise RuntimeError(f"missing Godot imported directory for staged asset: {staged_path}")
-            if not any(imported_dir.glob(f"{staged_path.name}*")):
-                raise RuntimeError(
-                    f"missing Godot imported output for staged asset: {staged_path}"
-                )
+            error = self._validate_import_output(
+                item,
+                project_root=project_root,
+                import_started_at=import_started_at,
+            )
+            if error is not None:
+                failures.extend(self._failed_evidence([item], error=error))
+
+        if failures:
+            evidence_records.extend(failures)
+            self._write_evidence(evidence_path, evidence_records)
+            raise RuntimeError("; ".join(item.error or "" for item in failures))
+
+        evidence_records.extend(self._success_evidence(staged_artifacts))
+        self._write_evidence(evidence_path, evidence_records)
 
         return ExecutorResult(
             metrics={"engine": self.engine, "staged": len(staged_artifacts), "skipped": len(evidence_records) - len(staged_artifacts)}
@@ -221,6 +238,75 @@ class Godot4Adapter:
                 "engine_target.executable_path or GODOT4_EXE"
             )
         return str(value)
+
+    @staticmethod
+    def _success_evidence(items: list[dict[str, str]]) -> list[EngineEvidence]:
+        return [
+            EngineEvidence(
+                evidence_item_id=f"ev_{item['artifact_id']}",
+                op_id=f"op_{item['artifact_id']}",
+                engine=Godot4Adapter.engine,
+                kind="godot_import",
+                status="success",
+                source_uri=item["source_uri"],
+                target_uri=item["staged_uri"],
+            )
+            for item in items
+        ]
+
+    @staticmethod
+    def _failed_evidence(
+        items: list[dict[str, str]],
+        *,
+        error: str,
+    ) -> list[EngineEvidence]:
+        return [
+            EngineEvidence(
+                evidence_item_id=f"ev_{item['artifact_id']}",
+                op_id=f"op_{item['artifact_id']}",
+                engine=Godot4Adapter.engine,
+                kind="godot_import",
+                status="failed",
+                source_uri=item["source_uri"],
+                target_uri=item["staged_uri"],
+                error=error,
+            )
+            for item in items
+        ]
+
+    @staticmethod
+    def _validate_import_output(
+        item: dict[str, str],
+        *,
+        project_root: Path,
+        import_started_at: float,
+    ) -> str | None:
+        staged_path = Path(item["staged_uri"])
+        fresh_after = import_started_at - 2.0
+        import_sidecar = staged_path.with_name(staged_path.name + ".import")
+        if not import_sidecar.is_file():
+            return f"missing Godot .import file for staged asset: {staged_path}"
+        if import_sidecar.stat().st_mtime < fresh_after:
+            return f"stale Godot .import file for staged asset: {staged_path}"
+
+        imported_dir = project_root / ".godot" / "imported"
+        if not imported_dir.is_dir():
+            return f"missing Godot imported directory for staged asset: {staged_path}"
+        imported_outputs = [
+            path for path in imported_dir.glob(f"{staged_path.name}*") if path.is_file()
+        ]
+        if not imported_outputs:
+            return f"missing Godot imported output for staged asset: {staged_path}"
+        if not any(path.stat().st_mtime >= fresh_after for path in imported_outputs):
+            return f"stale Godot imported output for staged asset: {staged_path}"
+        return None
+
+    @staticmethod
+    def _write_evidence(path: Path, items: list[EngineEvidence]) -> None:
+        Godot4Adapter._write_json(
+            path,
+            [item.model_dump(mode="json") for item in items],
+        )
 
     @staticmethod
     def _write_json(path: Path, payload: object) -> None:
