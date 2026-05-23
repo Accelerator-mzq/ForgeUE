@@ -18,6 +18,13 @@ dependencies = [
     # loaded via framework.providers.__init__. Moving it under an optional
     # extra would break `pip install -e .` for every entry point.
     "httpx>=0.26",
+    # 运行时直接 import 的 YAML 解析库：model_registry 用 PyYAML，
+    # pricing_probe 的 round-trip writer 用 ruamel.yaml。
+    "PyYAML>=6.0",
+    "ruamel.yaml>=0.18",
+    # pricing_probe 的 parser 直接 import BeautifulSoup，Linux CI 需要
+    # 干净环境也能收集这些测试。
+    "beautifulsoup4>=4.12",
 ]
 
 [project.optional-dependencies]

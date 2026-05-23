@@ -360,8 +360,8 @@ async def test_executor_persists_video_candidate_source_path_without_using_data(
 
 async def test_executor_artifact_top_level_metadata_includes_format_5_video_metadata_fields(tmp_path, monkeypatch):
     """D8 single-source + FR-STORE-004 video metadata 6 件套(format + 5 video fields):
-    Artifact.metadata.format=cand.format("mp4");5 video metadata 顶层全 None always
-    (本 change scope ComfyUI agent CLI 不暴露 video metadata,follow-on `video-metadata-parser` 加 ffprobe / mutagen 解析)。"""
+    本测试使用 mock candidate(None 字段) 只验证 executor 会把 candidate 顶层字段
+    原样持久化到 Artifact.metadata。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path / "scripts"))
     (tmp_path / "scripts" / "comfyui_api").mkdir(parents=True)
     ctx, repo = _make_video_ctx(tmp_path)

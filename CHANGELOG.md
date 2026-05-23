@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Backlog closeout rule**: `AGENTS.md` / `CLAUDE.md` / `docs/backlog/README.md` 现在要求凡是源自 `docs/backlog/active.md` 的任务,收尾时必须显式处理 active→archived 状态,小 bugfix 也不例外,避免只改代码不结账。
+- **FOR-24 Linux runner CI**: 新增 `.github/workflows/linux-ci.yml` 的 `ubuntu-latest` job,安装 `.[dev,llm,server]` 后以 `python -m pytest -q` 作为唯一主门禁;同时把 `PyYAML` / `ruamel.yaml` / `beautifulsoup4` 显式列入运行时依赖,确保干净 Linux runner 能完整导入 `model_registry` 与 `pricing_probe`。
 - **FOR-22 + FOR-23 SRS backlog closeout**:`DryRunPass` 现在校验显式声明的 provider `api_key_env`,缺 key 时阻断 Run;`Orchestrator` Step 异常失败路径 emit `step_failed` ProgressEvent,并携带 `exception_type` / `failure_mode` / `decision`。同步 retired active backlog `LR-0111` 与 `LR-0114`。
 - **FOR-8 multi-mode comfy DAG warning**:`ManagedProcessRegistry.select` 不再只采用第一个
   managed subprocess lifecycle selection;同一 run 内多个 Comfy step 解析出不同 lifecycle mode

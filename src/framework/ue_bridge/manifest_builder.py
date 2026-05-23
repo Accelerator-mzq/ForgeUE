@@ -196,8 +196,8 @@ def build_manifest(
                 if k in {"width", "height", "duration_sec", "sample_rate",
                          "poly_count", "transparent_background", "tileable",
                          "texture_usage_hint", "color_space", "intended_use",
-                         # Phase 3 D1:video metadata fields(本 change scope 全 None,
-                         # follow-on `video-metadata-parser` 加 ffprobe 解析填充)
+                          # Phase 3 D1:video metadata fields(由 ffprobe 尽力回填,
+                          # 解析失败时允许 None)
                          "frame_count", "fps", "loop", "play_on_open"}
             },
         ))
@@ -275,9 +275,9 @@ def _default_import_options(kind: str, art: Artifact) -> dict:
         }
     if kind == "file_media_source":
         # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1:
-        # FileMediaSource import options;5 个 video metadata 字段本 change scope
-        # 全 None(ComfyUI agent CLI 不暴露,follow-on `video-metadata-parser` 解析填充);
-        # loop / play_on_open default False(用户在 bundle 显式 override 时 set)。
+        # FileMediaSource import options;5 个 video metadata 字段由 candidate
+        # 顶层字段传递;解析失败时可能为 None。loop / play_on_open default False
+        # (用户在 bundle 显式 override 时 set)。
         return {
             "loop": bool(md.get("loop", False)),
             "play_on_open": bool(md.get("play_on_open", False)),

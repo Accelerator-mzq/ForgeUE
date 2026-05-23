@@ -101,9 +101,7 @@ class VideoCandidate:
       **不**重复 `duration_seconds` / `frame_count` / `width` / `height` / `fps` /
       `format` 字段(避免双源冲突)
     - `duration_seconds` / `frame_count` / `width` / `height` / `fps` 顶层字段,
-      在本 change scope 始终 `None`(ComfyUI agent CLI `extract_outputs` 不暴露
-      video metadata;follow-on `video-metadata-parser` change 加 ffprobe / mutagen
-      解析)
+      由 `video-metadata-parser` 通过 ffprobe 尽力填充;解析失败时回退为 `None`
     - GenerateVideoExecutor 持久化时:`Artifact(modality="video", shape="mp4")`
       + `Artifact.metadata.format=cand.format`(实际格式信息 — UE
       `unreal.FileMediaSourceFactory` import 时按文件扩展名 dispatch)
@@ -116,11 +114,11 @@ class VideoCandidate:
     data: bytes
     format: Literal["mp4"]
     metadata: dict[str, Any] = field(default_factory=dict)
-    duration_seconds: float | None = None  # 本 change scope 始终 None
-    frame_count: int | None = None  # 本 change scope 始终 None
-    width: int | None = None  # 本 change scope 始终 None
-    height: int | None = None  # 本 change scope 始终 None
-    fps: float | None = None  # 本 change scope 始终 None
+    duration_seconds: float | None = None  # 默认 None,由 ffprobe 尽力回填
+    frame_count: int | None = None  # 默认 None,由 ffprobe 尽力回填
+    width: int | None = None  # 默认 None,由 ffprobe 尽力回填
+    height: int | None = None  # 默认 None,由 ffprobe 尽力回填
+    fps: float | None = None  # 默认 None,由 ffprobe 尽力回填
     source_path: str | None = None  # FOR-13:大视频由 ArtifactRepository 从文件路径流式落盘
 
 
@@ -282,6 +280,6 @@ class FakeVideoWorker(VideoWorker):
                 data=data,
                 format="mp4",
                 metadata={"is_fake": True, "fake_index": i},
-                # 5 个 metadata 字段 None defaults — ComfyUI agent CLI 不暴露,本 change scope 始终 None
+                # Fake worker 仍保留 5 个 metadata 字段的 None defaults,用于离线测试
             ))
         return results

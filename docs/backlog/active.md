@@ -2,7 +2,7 @@
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
 > 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 15 项 legacy requirements 待办(不计入上面待办计数)。
+> 另有 11 项 legacy requirements 待办(不计入上面待办计数)。
 
 ## Warnings (0)
 
@@ -76,7 +76,6 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 ### `ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)`
 
 - `LR-0136` **enhance-workflow-automation-handoff-persistence codex allowed-tools vs polling write 能力 mismatch 架构决策待定** — codex 命令 allowed-tools(只读 `Get-Content`)vs Polling Convention 写文件能力(写 counter / job_id / active_jobs.txt)mismatch 的 architectural 选择。当前用 controller 主 session 写状态 workaround,留 follow-on 决策"allowed-tools 加 Write/Edit vs controller 主 session 写状态" arch 路径。 (priority: low)
-- `LR-0138` **video-metadata-parser VideoCandidate 5-tuple ffprobe 解析填充** — VideoCandidate 5-tuple `duration_seconds` / `frame_count` / `width` / `height` / `fps` ffprobe 解析填充 (priority: low)
 - `LR-0139` **comfy-video-webm-adoption video webm 格式支持** — video webm format 支持(post mp4-only sweep 留 follow-on;Wan / 其他 video model 输出 webm 时启用) (priority: low)
 - `LR-0140` **comfy-video-v2v-adoption video-to-video 路径** — video-to-video 路径(beyond text-to-video baseline) (priority: low)
 - `LR-0141` **comfy-video-image-sequence-adoption image_sequence cinematic 高品质路径** — image_sequence cinematic 高品质路径(电影级 sequence 而非 mp4 single-file) (priority: low)
@@ -84,7 +83,6 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 
 ### `docs/requirements/SRS.md`
 
-- `LR-0123` **NFR-PORT-002 CI 能在 Linux runner 跑通全量测试** — CI 应能在 Linux runner 跑通全量测试(除 UE 真机冒烟外)
 - `LR-0126` **TBD-001 bridge_execute 模式启用** — `bridge_execute` 模式启用条件
 - `LR-0127` **TBD-002 远端 Audio worker 接入** — Audio worker(远端 AudioCraft / ElevenLabs 接入)
 - `LR-0128` **TBD-003 WS 鉴权 / 多租户 session** — WS 鉴权 / 多租户 session
