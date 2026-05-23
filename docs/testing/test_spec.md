@@ -558,7 +558,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 
 | 编号 | 事项 |
 | --- | --- |
-| TBD-T-001 | 接入 Linux CI(当前仅本地 Windows 验证) |
+| TBD-T-001 | GitHub Actions Linux CI runner(ubuntu-latest; 全量 pytest) |
 | TBD-T-002 | 覆盖率工具接入(`pytest-cov` 补量化指标) |
 | TBD-T-003 | Live LLM smoke 固化为可选 CI job |
 

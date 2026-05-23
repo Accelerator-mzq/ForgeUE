@@ -3,6 +3,17 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-23 FOR-24 completion
+
+### `LR-0123` **NFR-PORT-002 CI 能在 Linux runner 跑通全量测试**
+
+- **new_status**: completed
+- **reason**: 新增 `.github/workflows/linux-ci.yml` 的 `ubuntu-latest` job,用 `actions/checkout` / `actions/setup-python` 安装 Python 3.12,再执行 `pip install -e ".[dev,llm,server]"` 与 `python -m pytest -q` 作为唯一主门禁。为保证干净 runner 可完整导入 runtime,`pyproject.toml` 也显式声明了 `PyYAML` 与 `ruamel.yaml`。
+- **evidence**: `.github/workflows/linux-ci.yml`, `pyproject.toml`, `tests/unit/test_linux_ci_workflow.py`;
+  `python -m pytest -q tests/unit/test_linux_ci_workflow.py -v` → `2 passed`;
+  `python -m pytest -q` → `1287 passed, 4 skipped`
+- **archived_by**: FOR-24 linux-runner-ci 2026-05-23
+
 ## 2026-05-23 FOR-22 + FOR-23 completion
 
 ### `docs/requirements/SRS.md::LR-0111`
@@ -29,6 +40,25 @@
   `python -m pytest tests/unit/test_orchestrator.py -q` → `17 passed`;
   `demo_artifacts/2026-05-23/adhoc/for22_for23/evidence.md`
 - **archived_by**: FOR-23 step-event-observability 2026-05-23
+
+## 2026-05-23 FOR-17 completion
+
+### `LR-0138` **video-metadata-parser VideoCandidate 5-tuple ffprobe 解析填充**
+
+- **new_status**: completed
+- **reason**: `ComfyAgentWorker.agenerate_video` 现在在 mp4 / BMFF 校验后调用 `parse_video_metadata(src)`，
+  用 ffprobe 尽力回填 `VideoCandidate.duration_seconds` / `frame_count` / `width` / `height` / `fps`;
+  `GenerateVideoExecutor` 再把这些顶层字段写入 `Artifact.metadata`，解析失败时保留 `None` 回退。
+- **evidence**: `src/framework/providers/workers/video_metadata.py`,
+  `src/framework/providers/workers/comfy_worker.py`,
+  `src/framework/runtime/executors/generate_video.py`,
+  `src/framework/providers/workers/video_worker.py`,
+  `tests/unit/test_video_metadata.py`,
+  `tests/unit/test_comfy_subprocess_video.py`,
+  `tests/unit/test_generate_video_comfy.py`;
+  `python -m pytest tests/unit/test_video_metadata.py tests/unit/test_video_worker.py tests/unit/test_comfy_subprocess_video.py tests/unit/test_generate_video_comfy.py -q`
+  → `53 passed, 1 skipped`
+- **archived_by**: FOR-17 video-metadata-parser 2026-05-23
 
 ## 2026-05-23 FOR-14 completion
 

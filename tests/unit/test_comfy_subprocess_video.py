@@ -680,7 +680,7 @@ def test_generate_video_metadata_records_5_comfy_provenance_keys(tmp_path):
     assert cand.metadata["comfy_manifest"] == "Vedio/Wan2.1-T2V-1.3B_native_5sec"
     assert cand.metadata["comfy_capability"] == "video"
     assert cand.metadata["comfy_original_filename"] == "wan21_5sec_00001.mp4"
-    # D8 single-source:5 个 video metadata 顶层字段全 None
+    # 这个最小 mp4 fixture 可能没有可解析的完整视频流元数据，允许 fallback 为 None
     assert cand.duration_seconds is None
     assert cand.frame_count is None
     assert cand.width is None
@@ -709,6 +709,34 @@ def test_generate_video_metadata_snapshot_is_independent_copy(tmp_path):
     # snapshot 不受影响
     assert snapshot["positive_prompt"] == "original"
     assert "new_key" not in snapshot
+
+
+# ---------------------------------------------------------------------------
+# Video metadata parser integration(1 fence)
+# ---------------------------------------------------------------------------
+
+
+def test_generate_video_populates_top_level_metadata_from_video_parser(tmp_path):
+    """FOR-17:worker 应把 ffprobe 解析结果写回 VideoCandidate 顶层字段。"""
+    worker = _make_video_worker(tmp_path)
+    fake_video = tmp_path / "video.mp4"
+    _make_minimal_mp4(fake_video)
+    with patch(
+        "framework.providers.workers.comfy_worker.parse_video_metadata",
+        return_value=(3.375, 81, 832, 480, 24.0),
+        create=True,
+    ) as parse_mock, _patch_create_subprocess_exec(_make_async_completed(_ok_video_stdout([str(fake_video)]))) as run_mock:
+        candidates = worker.generate_video(
+            spec={"comfy_workflow": "x", "comfy_params": {}},
+            num_candidates=1,
+        )
+    cand = candidates[0]
+    assert parse_mock.call_count == 1
+    assert cand.duration_seconds == 3.375
+    assert cand.frame_count == 81
+    assert cand.width == 832
+    assert cand.height == 480
+    assert cand.fps == 24.0
 
 
 # ---------------------------------------------------------------------------

@@ -16,12 +16,11 @@ Persistence(D1 + D8 + round-2 F2 + round-3 PF3 sweep):
   — `shape="mp4"` 与 UE bridge `manifest_builder._KIND_MAP[("video", "mp4")] = "file_media_source"`
   唯一映射对齐(D1;若用 `shape=cand.format` 而 webm 还没扩 _KIND_MAP,manifest_builder
   静默 skip → file_media_source 不生成 → import_video 不触发 → L2 失败)
-- `Artifact.metadata.format` = `cand.format`(本 change scope post-F2 sweep 始终 "mp4";
+- `Artifact.metadata.format` = `cand.format`(worker 解析后保持实际编码格式；
   UE `unreal.FileMediaSourceFactory` import 时按文件扩展名 dispatch)
 - `Artifact.metadata.duration_seconds` / `.frame_count` / `.width` / `.height` / `.fps`
-  = `cand.<field>` 顶层字段读(D8 single-source;本 change scope 始终 None per
-  D8 — ComfyUI agent CLI 不暴露 video metadata;follow-on `video-metadata-parser`
-  用 ffprobe / mutagen 解析填充)
+  = `cand.<field>` 顶层字段读(D8 single-source;由 `video-metadata-parser`
+  通过 ffprobe 尽力回填,失败时回退为 None)
 
 Retry semantics(沿 audio F2 round-1 + F-Plan-R7-B round-7 同款):
 - 三 except 块:`ComfyWorkerTimeout` → wrap as `VideoWorkerTimeout` + 条件 retry
@@ -131,7 +130,7 @@ class GenerateVideoExecutor(StepExecutor):
                 f"or constructor-injected remote VideoWorker)"
             )
 
-        # 持久化 video artifacts(D1 + D8:shape="mp4" UE bridge dispatch + 5 metadata None)
+        # 持久化 video artifacts(D1 + D8:shape="mp4" UE bridge dispatch + 5 metadata top-level fields)
         video_arts: list = []
         video_ids: list[str] = []
         for i, cand in enumerate(candidates):
@@ -168,11 +167,11 @@ class GenerateVideoExecutor(StepExecutor):
                 # - worker_metadata 子树承载 provenance(只 5 个 comfy_* keys per D8)
                 metadata={
                     "format": cand.format,
-                    "duration_seconds": cand.duration_seconds,  # 本 change scope always None
-                    "frame_count": cand.frame_count,  # 本 change scope always None
-                    "width": cand.width,  # 本 change scope always None
-                    "height": cand.height,  # 本 change scope always None
-                    "fps": cand.fps,  # 本 change scope always None
+                    "duration_seconds": cand.duration_seconds,
+                    "frame_count": cand.frame_count,
+                    "width": cand.width,
+                    "height": cand.height,
+                    "fps": cand.fps,
                     "worker_metadata": dict(cand.metadata),
                 },
                 validation=ValidationRecord(

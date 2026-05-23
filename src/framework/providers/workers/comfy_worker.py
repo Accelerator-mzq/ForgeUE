@@ -98,6 +98,7 @@ _ABORT_TIMEOUT_S: float = 10.0
 from framework.providers.workers.audio_worker import AudioCandidate
 from framework.providers.workers.mesh_worker import MeshCandidate
 from framework.providers.workers.video_worker import VideoCandidate
+from framework.providers.workers.video_metadata import parse_video_metadata
 
 # 模块级 logger(R2-F4 fix:auxiliary outputs.images SHALL emit INFO via 此 logger,
 # fence 用 caplog.set_level(logging.INFO, logger="framework.providers.workers.comfy_worker") 抓)
@@ -1869,7 +1870,8 @@ class ComfyAgentWorker(ComfyWorker):
                     f"ComfyAgentWorker.agenerate_video: mp4 BMFF major_brand is empty / "
                     f"all-zeros / all-spaces: {major_brand!r} (file: {src.name})"
                 )
-            # D8 + D1:VideoCandidate format 硬编码 "mp4";5 个 video metadata 字段恒为 None
+            # ffprobe 解析视频 metadata，失败时静默回退为 None
+            duration_seconds, frame_count, width, height, fps = parse_video_metadata(src)
             candidates.append(VideoCandidate(
                 data=video_head,
                 format="mp4",
@@ -1885,11 +1887,11 @@ class ComfyAgentWorker(ComfyWorker):
                         "model_id": self.model_id,
                     },
                 },
-                duration_seconds=None,
-                frame_count=None,
-                width=None,
-                height=None,
-                fps=None,
+                duration_seconds=duration_seconds,
+                frame_count=frame_count,
+                width=width,
+                height=height,
+                fps=fps,
                 source_path=str(src),
             ))
         return candidates

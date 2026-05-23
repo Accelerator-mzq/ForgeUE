@@ -307,7 +307,7 @@
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
 | NFR-PORT-001 framework 纯 Python | 代码审阅 | ✅ |
-| NFR-PORT-002 Linux CI | 未建立 CI runner | ⏳ TBD-T-001 |
+| NFR-PORT-002 Linux CI | GitHub Actions ubuntu-latest | ✅ |
 | NFR-PORT-003 ue_scripts 最小依赖 | 代码审阅(仅 import unreal) | ✅ |
 | NFR-PORT-004 `/tmp` 禁用 | `.gitignore` + CLAUDE.md 约定 | ✅ |
 
@@ -702,7 +702,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3+4 | ✅ 已实施 + live 验证通过(2026-04-22 18:38)| 见 §6.5;代码 + 10 条 fence 就位,a2_mesh 从头跑全链通过(step_review_image GLM-4.6V approve + step_mesh Hunyuan 3D 真生成 30.6 MB .glb) |
 | ~~TBD-007~~ | ~~mesh 重试塌缩 + 失败 visibility~~ | NFR-COST-*, A2 顺序 4 | ✅ 已实施 + HYPOTHESIS probe 验证(2026-04-22) | 见 §6.6;Codex 独立 review 协助找出 4 层中第 2 层(executor 内部 retry);job_id 持久化暴露给 CLI;5 条 fence 就位 |
 | ~~TBD-008~~ | ~~visual review 契约质量分层(fixture + opt-in probe)~~ | FR-REVIEW-*, NFR-MAINT | ✅ 已实施(2026-04-22)| 见 §6.7;Codex 独立 review 指出 p2/p3/l4 伪字节盲区;fixture 真图驱动 offline + `probe_visual_review.py` opt-in live 抽检;1 新 fence + 3 翻转;a2_image/a2_review bundle 降级为 "schema smoke" 不再当视觉证据 |
-| TBD-T-001 | Linux CI runner | NFR-PORT-002 | ⏳ | 项目外部协作启动时 |
+| TBD-T-001 | GitHub Actions Linux CI runner | NFR-PORT-002 | ✅ | 已建立 |
 | TBD-T-002 | 覆盖率工具 | NFR-MAINT-* | ⏳ | 测试规模再增后 |
 | TBD-T-003 | Live LLM CI job | A2 | ⏳ | 有稳定付费账号后 |
 | TBD-013 | RemoteControl HTTP bridge(future bridge_execute) | FR-UE-001 | ⏳ | A1 立项(2026-04-23,原 TBD-009;2026-05-05 与 SRS §7.3 TBD-009 ComfyUI 编号冲突 re-indexed to TBD-013):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor。**适用**:长会话多次操作(免重启 editor)/ 实时反馈(PIE 截图回 review)/ 真正"agent 与 live editor 协同"。**关键约束**:UE editor 必须常驻进程(端口非独立 daemon)+ 30010 防火墙放通 + reflection 调用拼 ObjectPath/UFUNCTION 比 Python API 繁琐脆。**不在 A1 scope**:commandlet 冷启 20s 已够,无 GUI 依赖更稳。**ADR**:见 ADR-008 |
