@@ -14,7 +14,8 @@ def test_linux_ci_workflow_declares_ubuntu_and_pytest():
 
 
 def test_yaml_parsers_are_declared_as_runtime_dependencies():
-    """Linux CI 的干净环境必须装上项目实际 import 的 YAML 解析库。"""
+    """Linux CI 的干净环境必须装上项目实际 import 的解析库。"""
     text = Path("pyproject.toml").read_text(encoding="utf-8")
     assert "PyYAML" in text
     assert "ruamel.yaml" in text
+    assert "beautifulsoup4" in text
