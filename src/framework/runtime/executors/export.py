@@ -21,9 +21,12 @@ class ExportExecutor(StepExecutor):
         adapter_registry: EngineAdapterRegistry | None = None,
     ) -> None:
         if adapter_registry is None:
+            from framework.engine_bridge.godot4 import Godot4Adapter
+
             adapter_registry = EngineAdapterRegistry()
-            # 默认仅注册 Unreal,保持旧 ue_target 路径兼容且不提前引入 Godot 行为。
+            # 默认注册当前内置引擎 adapter；具体执行仍由 task.engine_target 决定。
             adapter_registry.register(UnrealAdapter(permission_policy=permission_policy))
+            adapter_registry.register(Godot4Adapter())
         self._adapter_registry = adapter_registry
 
     async def execute(self, ctx: StepContext) -> ExecutorResult:

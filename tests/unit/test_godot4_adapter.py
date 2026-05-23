@@ -14,6 +14,7 @@ from framework.core.enums import ArtifactRole, PayloadKind, RunMode, RunStatus, 
 from framework.core.task import Run, Step, Task
 from framework.engine_bridge.core import EngineTarget
 from framework.engine_bridge.godot4.adapter import Godot4Adapter
+from framework.runtime.executors.export import ExportExecutor
 from framework.runtime.executors.base import StepContext
 
 
@@ -499,3 +500,47 @@ async def test_godot4_adapter_rejects_stale_import_cache(tmp_path: Path):
     assert not any(item["status"] == "success" for item in evidence)
     assert evidence[0]["status"] == "failed"
     assert "stale Godot" in evidence[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_export_executor_default_registry_dispatches_godot4(tmp_path: Path):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"\x00\x00\x00\x18ftypmp42forge-godot")
+
+    repo.put(
+        artifact_id="art_mp4",
+        source_path=source,
+        artifact_type=ArtifactType(modality="video", shape="mp4", display_name="mp4"),
+        role=ArtifactRole.intermediate,
+        format="mp4",
+        mime_type="video/mp4",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+        file_suffix=".mp4",
+    )
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+            executable_path=str(tmp_path / "Godot_v4.exe"),
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_mp4"])
+
+    result = await ExportExecutor().execute(ctx)
+
+    assert result.metrics["engine"] == "godot4"
+    evidence_path = project / "forgeue" / "generated" / "run_godot" / "evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence[0]["status"] == "skipped"
+    assert evidence[0]["error"] == "unsupported godot4 artifact shape"
