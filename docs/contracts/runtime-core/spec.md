@@ -286,6 +286,7 @@ The system SHALL register a new `(StepType.generate, "video.t2v")` entry in the 
 - `LiteLLMAdapter` (wildcard) is registered LAST in the adapter chain (ADR-003); see `src/framework/run.py:62-73`.
 - Every exception path maps to a `FailureMode` (NFR-REL-001); no bare/un-classified raise escapes to the user.
 - `retry_same_step` in DAG mode must re-execute the step (`test_cascade_cancel::test_dag_retry_same_step_reexecutes` guards against the old `if next_id == current: break` silent-swallow bug).
+- Step execution failures MUST emit `ProgressEvent(phase="step_failed")`; classified failures include `exception_type`, `failure_mode`, and `decision`, while unclassified exceptions include at least `exception_type` before re-raise (`test_orchestrator.py::test_classified_step_failure_emits_step_failed_event`).
 - ChiefJudge always runs judges through `asyncio.gather`; no sequential fallback.
 - WS server binds `127.0.0.1` by default (NFR-SEC-005); exposing to the public network is an explicit deployment decision.
 - `disk_full` maps to `rollback → stop`; no further Artifact writes are allowed.
@@ -293,7 +294,7 @@ The system SHALL register a new `(StepType.generate, "video.t2v")` entry in the 
 
 ## Validation
 
-- Unit: `tests/unit/test_transition_engine.py`, `test_failure_mode_map.py`, `test_checkpoint_store.py`, `test_dry_run_pass.py`, `test_budget_tracker.py`, `test_event_bus.py`, `test_cascade_cancel.py`, `test_cancellation.py`, `test_codex_audit_fixes.py`, `test_scheduler_risk_ordering.py`, `test_progress_passthrough.py`, `test_compactor.py`
+- Unit: `tests/unit/test_transition_engine.py`, `test_failure_mode_map.py`, `test_checkpoint_store.py`, `test_dry_run_pass.py`, `test_budget_tracker.py`, `test_event_bus.py`, `test_cascade_cancel.py`, `test_cancellation.py`, `test_codex_audit_fixes.py`, `test_scheduler_risk_ordering.py`, `test_progress_passthrough.py`, `test_orchestrator.py`, `test_compactor.py`
 - Integration: `tests/integration/test_p0_mock_linear.py`, `tests/integration/test_dag_concurrency.py`, `tests/integration/test_ws_progress.py`
 - Offline smoke: `python -m framework.run --task examples/mock_linear.json --run-id demo --artifact-root ./artifacts`
 - Test totals: see `python -m pytest -q` actual output (do not hardcode).

@@ -280,7 +280,7 @@
 | NFR-SEC-001 key 不硬编码 | 代码审阅 + `.env.example` | ✅ |
 | NFR-SEC-002 secrets 脱敏 | test_secrets | ✅ |
 | NFR-SEC-003 trace / event 不泄 key | test_secrets + 代码审阅 | ✅ |
-| NFR-SEC-004 Dry-run 校验 secrets | test_dry_run_pass | ⚠️ `missing_secrets()`(`secrets.py:57`)存在但未接入 DryRunPass 主流程,缺 key 不阻断 Run |
+| NFR-SEC-004 Dry-run 校验 secrets | test_dry_run_pass | ✅ `DryRunPass` 已接入 `missing_secrets()`,对声明 `api_key_env` 的 route 缺 key 时阻断 Run |
 | NFR-SEC-005 WS 默认本地 | 代码审阅 `ws_server.py` | ✅ |
 
 ### 5.5 NFR-OBS 可观测
@@ -288,7 +288,7 @@
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
 | NFR-OBS-001 run_id 归档 | integration/test_p0 | ✅ |
-| NFR-OBS-002 step 事件 | test_progress_passthrough | ⚠️ step_start/step_done 已 emit;失败仅记入 `failure_events`,未 emit `step_failed` 事件 |
+| NFR-OBS-002 step 事件 | test_progress_passthrough + test_orchestrator | ✅ step_start/step_done 已 emit;Step 异常失败会 emit `step_failed` 并携带 `exception_type` |
 | NFR-OBS-003 budget_summary 汇总 | test_budget_tracker | ✅ |
 | NFR-OBS-004 worker_poll 事件 | test_progress_passthrough | ✅ |
 
@@ -786,6 +786,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.12 | 2026-05-22 | Linear FOR-13 `worker-candidate-source-path-migration`:FR-WORKER-001 / 011 / 012 验收证据补 source_path migration。Comfy image / mesh / audio / video worker 只读格式校验头并返回 `source_path`;四个 generator executor source_path 优先落盘,bytes 路径保留 fake / 远端兼容回退。对应 source_path fence 见 `docs/testing/test_spec.md` v1.8;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
 | v1.13 | 2026-05-22 | Linear FOR-11 `blob-backend-streaming-implementation`:FR-STORE-002 blob 载体从预留接口升级为 MVP。`BlobBackend` 提供 `BlobClient` protocol + 默认 `InMemoryBlobClient`,支持 value/source_path 写入、read/exists、blob resume drift 校验;`ArtifactRepository.put(source_path=...)` 允许 `PayloadKind.blob`。对应 fence 见 `docs/testing/test_spec.md` v1.9;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
 | v1.14 | 2026-05-23 | Linear FOR-14 `metadata-corruption-detection`:新增 `_artifacts.integrity.json` 伴生 checksum 文件;resume 校验 `_artifacts.json` hash / artifact_count / artifact_ids,metadata 损坏时 fail-fast。对应 fence 见 `docs/testing/test_spec.md` v1.11;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
+| v1.15 | 2026-05-23 | FOR-22 + FOR-23:关闭 LR-0111 / LR-0114。`DryRunPass` 现在校验显式声明的 provider `api_key_env`,缺 key 时阻断 Run;`Orchestrator` Step 异常失败路径 emit `step_failed` ProgressEvent,并携带异常类型。回归测试:`test_dry_run_pass.py` 新增缺 key / 有 key fence,`test_orchestrator.py` 新增 `step_failed` event fence。 | ForgeUE Team |
 
 ### 9.3 签收区
 
