@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import Protocol
@@ -133,6 +134,7 @@ class Godot4Adapter:
                 }
             )
 
+        godot_executable = self._resolve_godot_executable(target)
         manifest = {
             "schema_version": "1.0.0",
             "engine": self.engine,
@@ -148,7 +150,7 @@ class Godot4Adapter:
             "engine": self.engine,
             "run_id": run_id,
             "command": [
-                str(target.executable_path or "godot"),
+                godot_executable,
                 "--headless",
                 "--path",
                 str(project_root),
@@ -208,6 +210,17 @@ class Godot4Adapter:
             seen.add(artifact_id)
             out.append(ctx.repository.get(artifact_id))
         return out
+
+    @staticmethod
+    def _resolve_godot_executable(target: EngineTarget) -> str:
+        # Godot 真导入必须显式配置，避免静默命中 PATH 中的未知 godot。
+        value = target.executable_path or os.environ.get("GODOT4_EXE")
+        if not value:
+            raise RuntimeError(
+                "Godot 4 executable is not configured; set "
+                "engine_target.executable_path or GODOT4_EXE"
+            )
+        return str(value)
 
     @staticmethod
     def _write_json(path: Path, payload: object) -> None:

@@ -188,3 +188,109 @@ async def test_godot4_adapter_skips_video_mp4_first_phase(tmp_path: Path):
     assert evidence[0]["status"] == "skipped"
     assert evidence[0]["error"] == "unsupported godot4 artifact shape"
     assert result.metrics["engine"] == "godot4"
+
+
+@pytest.mark.asyncio
+async def test_godot4_adapter_uses_godot4_exe_env_when_target_executable_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    source = tmp_path / "source.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\nforge-godot")
+    env_exe = tmp_path / "Godot_from_env.exe"
+    monkeypatch.setenv("GODOT4_EXE", str(env_exe))
+
+    repo.put(
+        artifact_id="art_png",
+        source_path=source,
+        artifact_type=ArtifactType(modality="image", shape="png", display_name="png"),
+        role=ArtifactRole.intermediate,
+        format="png",
+        mime_type="image/png",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+        file_suffix=".png",
+    )
+
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_png"])
+    calls: list[list[str]] = []
+
+    async def fake_runner(argv, *, cwd, log_path):
+        calls.append(list(argv))
+        staged = project / "forgeue" / "generated" / "run_godot" / "art_png.png"
+        staged.with_name(staged.name + ".import").write_text("import", encoding="utf-8")
+        imported_dir = project / ".godot" / "imported"
+        imported_dir.mkdir(parents=True, exist_ok=True)
+        (imported_dir / "art_png.png-env.import").write_text("imported", encoding="utf-8")
+        return 0
+
+    result = await Godot4Adapter(command_runner=fake_runner).export(
+        ctx, target=task.engine_target,
+    )
+
+    assert calls[0][0] == str(env_exe)
+    assert result.metrics["engine"] == "godot4"
+
+
+@pytest.mark.asyncio
+async def test_godot4_adapter_fails_fast_when_executable_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    source = tmp_path / "source.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\nforge-godot")
+    monkeypatch.delenv("GODOT4_EXE", raising=False)
+
+    repo.put(
+        artifact_id="art_png",
+        source_path=source,
+        artifact_type=ArtifactType(modality="image", shape="png", display_name="png"),
+        role=ArtifactRole.intermediate,
+        format="png",
+        mime_type="image/png",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+        file_suffix=".png",
+    )
+
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_png"])
+
+    async def fake_runner(argv, *, cwd, log_path):
+        raise AssertionError("未配置 Godot 可执行文件时不应调用 command_runner")
+
+    with pytest.raises(RuntimeError, match="GODOT4_EXE"):
+        await Godot4Adapter(command_runner=fake_runner).export(
+            ctx, target=task.engine_target,
+        )
