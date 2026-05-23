@@ -133,6 +133,10 @@ async def test_godot4_adapter_stages_supported_artifacts_and_writes_plan(tmp_pat
     ]
     evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     assert any(item["status"] == "success" and item["kind"] == "godot_import" for item in evidence)
+    assert len(result.artifacts) == 1
+    assert result.artifacts[0].artifact_type.modality == "bundle"
+    assert result.artifacts[0].artifact_type.shape == "export_bundle"
+    assert result.artifacts[0].metadata["engine"] == "godot4"
     assert result.metrics["engine"] == "godot4"
 
 
@@ -190,6 +194,8 @@ async def test_godot4_adapter_skips_video_mp4_first_phase(tmp_path: Path):
     assert len(evidence) == 1
     assert evidence[0]["status"] == "skipped"
     assert evidence[0]["error"] == "unsupported godot4 artifact shape"
+    assert len(result.artifacts) == 1
+    assert result.artifacts[0].artifact_type.shape == "export_bundle"
     assert result.metrics["engine"] == "godot4"
 
 
@@ -297,6 +303,11 @@ async def test_godot4_adapter_fails_fast_when_executable_missing(
         await Godot4Adapter(command_runner=fake_runner).export(
             ctx, target=task.engine_target,
         )
+
+    evidence_path = project / "forgeue" / "generated" / "run_godot" / "evidence.json"
+    evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+    assert evidence[0]["status"] == "failed"
+    assert "GODOT4_EXE" in evidence[0]["error"]
 
 
 @pytest.mark.asyncio
@@ -500,6 +511,59 @@ async def test_godot4_adapter_rejects_stale_import_cache(tmp_path: Path):
     assert not any(item["status"] == "success" for item in evidence)
     assert evidence[0]["status"] == "failed"
     assert "stale Godot" in evidence[0]["error"]
+
+
+@pytest.mark.asyncio
+async def test_godot4_adapter_rejects_recent_preexisting_import_cache(tmp_path: Path):
+    project = tmp_path / "godot_project"
+    repo = _make_repo(tmp_path)
+    source = tmp_path / "source.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\nforge-godot")
+
+    repo.put(
+        artifact_id="art_png",
+        source_path=source,
+        artifact_type=ArtifactType(modality="image", shape="png", display_name="png"),
+        role=ArtifactRole.intermediate,
+        format="png",
+        mime_type="image/png",
+        payload_kind=PayloadKind.file,
+        producer=ProducerRef(run_id="run_godot", step_id="seed"),
+        file_suffix=".png",
+    )
+    task = Task(
+        task_id="task_godot",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="godot export",
+        project_id="proj_godot",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(project),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+            executable_path=str(tmp_path / "Godot_v4.exe"),
+        ),
+    )
+    ctx = _make_context(tmp_path, repo, task, upstream_artifact_ids=["art_png"])
+
+    stage_root = project / "forgeue" / "generated" / "run_godot"
+    stage_root.mkdir(parents=True)
+    preexisting_sidecar = stage_root / "art_png.png.import"
+    preexisting_sidecar.write_text("preexisting", encoding="utf-8")
+    imported_dir = project / ".godot" / "imported"
+    imported_dir.mkdir(parents=True)
+    preexisting_imported = imported_dir / "art_png.png-recent.import"
+    preexisting_imported.write_text("preexisting", encoding="utf-8")
+
+    async def fake_runner(argv, *, cwd, log_path):
+        return 0
+
+    with pytest.raises(RuntimeError, match="stale Godot"):
+        await Godot4Adapter(command_runner=fake_runner).export(
+            ctx, target=task.engine_target,
+        )
 
 
 @pytest.mark.asyncio

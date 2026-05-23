@@ -68,6 +68,17 @@ The system SHALL support Godot 4.x `headless_import` for file-backed `image/png`
 - AND `godot_exe` resolves as `engine_target.executable_path` first, then `GODOT4_EXE`, otherwise `RuntimeError`
 - AND `tests/unit/test_godot4_adapter.py::test_godot4_adapter_stages_supported_artifacts_and_writes_plan` and `::test_godot4_adapter_uses_godot4_exe_env_when_target_executable_missing` fence this
 
+## Requirement: Godot4Adapter returns an export bundle Artifact
+
+The system SHALL return one `bundle.export_bundle` Artifact from Godot export when the adapter completes without raising, including skipped-only exports. The bundle payload SHALL point to the run folder and evidence path, and include manifest / import plan paths when those files were written.
+
+## Scenario: Godot export result includes bundle artifact
+
+- GIVEN a Godot export with supported staged assets, or an unsupported `video/mp4` first-phase skip
+- WHEN `Godot4Adapter.export(...)` returns normally
+- THEN `ExecutorResult.artifacts` contains one `ArtifactType(modality="bundle", shape="export_bundle")`
+- AND `tests/unit/test_godot4_adapter.py::test_godot4_adapter_stages_supported_artifacts_and_writes_plan` and `::test_godot4_adapter_skips_video_mp4_first_phase` fence this
+
 ## Requirement: Godot success evidence requires fresh import outputs
 
 The system SHALL write `status="success"` Godot evidence only after the command returns 0 and Godot-created `.import` plus `.godot/imported` outputs are fresh relative to the command start time.

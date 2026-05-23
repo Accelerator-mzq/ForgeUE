@@ -5,12 +5,11 @@ import asyncio
 import json
 import os
 import shutil
-import time
 from pathlib import Path
 from typing import Protocol
 
-from framework.core.artifact import Artifact
-from framework.core.enums import PayloadKind
+from framework.core.artifact import Artifact, ArtifactType, Lineage, ProducerRef
+from framework.core.enums import ArtifactRole, PayloadKind
 from framework.engine_bridge.core import EngineEvidence, EngineTarget
 from framework.runtime.executors.base import ExecutorResult, StepContext
 
@@ -130,7 +129,17 @@ class Godot4Adapter:
                 evidence_path,
                 [item.model_dump(mode="json") for item in evidence_records],
             )
+            bundle_art = self._persist_bundle_artifact(
+                ctx,
+                run_dir=run_dir,
+                manifest_path=manifest_path,
+                plan_path=plan_path,
+                evidence_path=evidence_path,
+                staged_count=0,
+                skipped_count=len(evidence_records),
+            )
             return ExecutorResult(
+                artifacts=[bundle_art],
                 metrics={
                     "engine": self.engine,
                     "staged": 0,
@@ -138,7 +147,14 @@ class Godot4Adapter:
                 }
             )
 
-        godot_executable = self._resolve_godot_executable(target)
+        try:
+            godot_executable = self._resolve_godot_executable(target)
+        except RuntimeError as exc:
+            evidence_records.extend(
+                self._failed_evidence(staged_artifacts, error=str(exc))
+            )
+            self._write_evidence(evidence_path, evidence_records)
+            raise
         manifest = {
             "schema_version": "1.0.0",
             "engine": self.engine,
@@ -173,7 +189,10 @@ class Godot4Adapter:
 
         argv = list(plan["command"])
         log_path = run_dir / "godot_command.log"
-        import_started_at = time.time()
+        pre_import_state = self._snapshot_import_state(
+            staged_artifacts,
+            project_root=project_root,
+        )
         try:
             returncode = await self._command_runner(argv, cwd=project_root, log_path=log_path)
         except Exception as exc:
@@ -198,7 +217,7 @@ class Godot4Adapter:
             error = self._validate_import_output(
                 item,
                 project_root=project_root,
-                import_started_at=import_started_at,
+                pre_import_state=pre_import_state.get(item["artifact_id"], {}),
             )
             if error is not None:
                 failures.extend(self._failed_evidence([item], error=error))
@@ -210,8 +229,18 @@ class Godot4Adapter:
 
         evidence_records.extend(self._success_evidence(staged_artifacts))
         self._write_evidence(evidence_path, evidence_records)
+        bundle_art = self._persist_bundle_artifact(
+            ctx,
+            run_dir=run_dir,
+            manifest_path=manifest_path,
+            plan_path=plan_path,
+            evidence_path=evidence_path,
+            staged_count=len(staged_artifacts),
+            skipped_count=len(evidence_records) - len(staged_artifacts),
+        )
 
         return ExecutorResult(
+            artifacts=[bundle_art],
             metrics={"engine": self.engine, "staged": len(staged_artifacts), "skipped": len(evidence_records) - len(staged_artifacts)}
         )
 
@@ -275,18 +304,44 @@ class Godot4Adapter:
         ]
 
     @staticmethod
+    def _snapshot_import_state(
+        items: list[dict[str, str]],
+        *,
+        project_root: Path,
+    ) -> dict[str, dict[str, object]]:
+        state: dict[str, dict[str, object]] = {}
+        imported_dir = project_root / ".godot" / "imported"
+        for item in items:
+            staged_path = Path(item["staged_uri"])
+            import_sidecar = staged_path.with_name(staged_path.name + ".import")
+            imported_outputs = (
+                [path for path in imported_dir.glob(f"{staged_path.name}*") if path.is_file()]
+                if imported_dir.is_dir()
+                else []
+            )
+            state[item["artifact_id"]] = {
+                "sidecar_mtime": (
+                    import_sidecar.stat().st_mtime if import_sidecar.is_file() else None
+                ),
+                "imported_mtimes": {
+                    str(path): path.stat().st_mtime for path in imported_outputs
+                },
+            }
+        return state
+
+    @staticmethod
     def _validate_import_output(
         item: dict[str, str],
         *,
         project_root: Path,
-        import_started_at: float,
+        pre_import_state: dict[str, object],
     ) -> str | None:
         staged_path = Path(item["staged_uri"])
-        fresh_after = import_started_at - 2.0
         import_sidecar = staged_path.with_name(staged_path.name + ".import")
         if not import_sidecar.is_file():
             return f"missing Godot .import file for staged asset: {staged_path}"
-        if import_sidecar.stat().st_mtime < fresh_after:
+        sidecar_mtime = pre_import_state.get("sidecar_mtime")
+        if sidecar_mtime is not None and import_sidecar.stat().st_mtime <= sidecar_mtime:
             return f"stale Godot .import file for staged asset: {staged_path}"
 
         imported_dir = project_root / ".godot" / "imported"
@@ -297,9 +352,65 @@ class Godot4Adapter:
         ]
         if not imported_outputs:
             return f"missing Godot imported output for staged asset: {staged_path}"
-        if not any(path.stat().st_mtime >= fresh_after for path in imported_outputs):
+        imported_mtimes = pre_import_state.get("imported_mtimes")
+        if not isinstance(imported_mtimes, dict):
+            imported_mtimes = {}
+        if not any(
+            str(path) not in imported_mtimes
+            or path.stat().st_mtime > imported_mtimes[str(path)]
+            for path in imported_outputs
+        ):
             return f"stale Godot imported output for staged asset: {staged_path}"
         return None
+
+    def _persist_bundle_artifact(
+        self,
+        ctx: StepContext,
+        *,
+        run_dir: Path,
+        manifest_path: Path,
+        plan_path: Path,
+        evidence_path: Path,
+        staged_count: int,
+        skipped_count: int,
+    ) -> Artifact:
+        payload = {
+            "engine": self.engine,
+            "run_folder": str(run_dir),
+            "manifest_path": str(manifest_path) if manifest_path.is_file() else None,
+            "import_plan_path": str(plan_path) if plan_path.is_file() else None,
+            "evidence_path": str(evidence_path),
+        }
+        return ctx.repository.put(
+            artifact_id=f"{ctx.run.run_id}_{ctx.step.step_id}_godot_export_bundle",
+            value=payload,
+            artifact_type=ArtifactType(
+                modality="bundle",
+                shape="export_bundle",
+                display_name="engine_export_bundle",
+            ),
+            role=ArtifactRole.final,
+            format="json",
+            mime_type="application/json",
+            payload_kind=PayloadKind.inline,
+            producer=ProducerRef(
+                run_id=ctx.run.run_id,
+                step_id=ctx.step.step_id,
+                provider="engine_bridge",
+                model=self.engine,
+            ),
+            lineage=Lineage(
+                source_artifact_ids=list(ctx.upstream_artifact_ids),
+                source_step_ids=[ctx.step.step_id],
+            ),
+            metadata={
+                "engine": self.engine,
+                "run_folder": str(run_dir),
+                "evidence_path": str(evidence_path),
+                "staged": staged_count,
+                "skipped": skipped_count,
+            },
+        )
 
     @staticmethod
     def _write_evidence(path: Path, items: list[EngineEvidence]) -> None:
