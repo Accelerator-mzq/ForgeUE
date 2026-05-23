@@ -182,11 +182,11 @@ ForgeUE **不做**:
 | --- | --- |
 | FR-MODEL-001 | 系统应通过 `config/models.yaml` 三段式(providers / models / aliases)注册模型,作为单一真源 |
 | FR-MODEL-002 | TaskBundle 应通过 `provider_policy.models_ref: "<alias>"` 引用 alias,`loader` 展开为 `prepared_routes` |
-| FR-MODEL-003 | 系统应支持至少以下 provider 接入:OpenAI 兼容(GLM / DeepSeek / PackyCode)、Anthropic(via PackyCode)、DashScope(Qwen 系列)、Hunyuan(Image + 3D)、MiniMax(OpenAI 兼容文本 + music_generation 原生音频)、ComfyUI(agent CLI subprocess,自 v1.6 起;v1.5 及之前为 HTTP)、Tripo3D(预留) |
+| FR-MODEL-003 | 系统应支持至少以下 provider 接入:OpenAI 兼容(GLM / DeepSeek / PackyCode)、Anthropic(via PackyCode)、DashScope(Qwen 系列)、Hunyuan(Image + 3D)、MiniMax(OpenAI 兼容文本 + image_generation 原生图片 + music_generation 原生音频)、ComfyUI(agent CLI subprocess,自 v1.6 起;v1.5 及之前为 HTTP)、Tripo3D(预留) |
 | FR-MODEL-004 | 新增 OpenAI 兼容端口 provider 应仅需在 registry 填 `api_base` + `api_key_env`,bundle 写 `openai/<id>`,**零新代码** |
 | FR-MODEL-005 | 非 OpenAI 协议 provider 应通过在 `src/framework/providers/` 加 adapter 接入,路由按 `model.startswith(...)` 前缀匹配 |
 | FR-MODEL-006 | `CapabilityRouter` 应按注册顺序调用 `ProviderAdapter.supports(model)`,`LiteLLMAdapter`(wildcard)**必须最后**注册 |
-| FR-MODEL-007 | 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_edit / mesh_from_image / image_local / audio_local / audio_remote / audio_minimax`(`image_local` 自 v1.6 起,本地 ComfyUI agent CLI image manifest;`audio_local` 自 v1.7 起,本地 ComfyUI agent CLI audio manifest;`audio_remote` 自 FOR-26 起,通用 HTTP remote audio worker;`audio_minimax` 自 FOR-26 MiniMax follow-on 起,MiniMax music_generation 原生 worker)|
+| FR-MODEL-007 | 系统应支持能力别名:`text_cheap / text_strong / review_judge / review_judge_visual / ue5_api_assist / image_fast / image_strong / image_minimax / image_edit / mesh_from_image / image_local / audio_local / audio_remote / audio_minimax`(`image_minimax` 自 2026-05-23 起,MiniMax image_generation 原生 worker;`image_local` 自 v1.6 起,本地 ComfyUI agent CLI image manifest;`audio_local` 自 v1.7 起,本地 ComfyUI agent CLI audio manifest;`audio_remote` 自 FOR-26 起,通用 HTTP remote audio worker;`audio_minimax` 自 FOR-26 MiniMax follow-on 起,MiniMax music_generation 原生 worker)|
 | FR-MODEL-008 | ProviderPolicy 应支持 `fallback_models` 列表,首选失败时按序降级 |
 
 ### 3.4 结构化生成(FR-STRUCT)
@@ -513,6 +513,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | v1.11 | 2026-05-23 | Linear FOR-28 `fbx-self-containment-validation`:关闭 TBD-004。`mesh_worker._is_self_contained_fbx` 用 dependency-free `FileName` / `RelativeFilename` sidecar 扩展名扫描守住单文件 Artifact 边界;`_build_candidate` 在普通模式拒绝非自包含 `.fbx` 并沿既有 `MeshWorkerUnsupportedResponse` URL fallthrough / fallback 语义处理;geometry-only 模式保留可用几何并标记 `missing_materials=True`。 | ForgeUE Team |
 | v1.12 | 2026-05-23 | Linear FOR-26 `remote-audio-worker-integration`:关闭 TBD-002。新增通用 `RemoteHttpAudioWorker`(HTTP POST JSON 契约,支持 `bytes_base64` / `data_base64` / `audio_base64` 或 `url` 响应,格式白名单 `flac/mp3/wav` + magic bytes 二次校验);`framework.run` 在 `FORGEUE_REMOTE_AUDIO_URL` 存在时注入 `GenerateAudioExecutor(worker=...)`;新增 `remote/audio` virtual model + `audio_remote` alias + `examples/remote_audio_smoke.json`。厂商专用 ElevenLabs / AudioCraft adapter 不作为 TBD-002 blocker,可按真实需求另立 follow-on。 | ForgeUE Team |
 | v1.13 | 2026-05-23 | FOR-26 MiniMax music direct follow-on:新增 `MiniMaxMusicWorker`,直连 MiniMax `music_generation` 原生 API;`framework.run` 在未设置 `FORGEUE_REMOTE_AUDIO_URL` 且存在 `MINIMAX_KEY` 时注入 MiniMax worker;新增 `minimax/music-2.6` virtual model + `audio_minimax` alias + `examples/minimax_music_smoke.json`。请求体按 MiniMax 文档发送 `model/prompt/lyrics/audio_setting/output_format`,默认 endpoint `https://api.minimaxi.com/v1/music_generation`,可由 `FORGEUE_MINIMAX_MUSIC_URL` 覆盖。 | ForgeUE Team |
+| v1.14 | 2026-05-23 | MiniMax image direct follow-on:新增 `MiniMaxImageAdapter`,直连 MiniMax `image_generation` 原生 API;`framework.run` 在 live 路径注册其于 LiteLLM 之前;新增 `minimax/image-01` virtual model + `image_minimax` alias + `examples/minimax_image_smoke.json`。请求体按 MiniMax 文档发送 `model/prompt/aspect_ratio/subject_reference/response_format`,默认 endpoint `https://api.minimaxi.com/v1/image_generation`。 | ForgeUE Team |
 
 ### 7.3 未决事项
 

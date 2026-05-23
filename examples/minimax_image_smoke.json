@@ -1,0 +1,58 @@
+{
+  "task": {
+    "task_id": "minimax_image_smoke",
+    "task_type": "asset_generation",
+    "run_mode": "basic_llm",
+    "title": "MiniMax image worker smoke",
+    "input_payload": {
+      "prompt": "A small brass robot standing on a workbench, warm workshop light"
+    },
+    "expected_output": {
+      "modality": "image"
+    },
+    "project_id": "forgeue"
+  },
+  "workflow": {
+    "workflow_id": "minimax_image_smoke_wf",
+    "name": "MiniMax image worker smoke",
+    "version": "1.0",
+    "entry_step_id": "step_image",
+    "step_ids": ["step_image"]
+  },
+  "steps": [
+    {
+      "step_id": "step_image",
+      "type": "generate",
+      "name": "Generate MiniMax image",
+      "risk_level": "medium",
+      "capability_ref": "image.generation",
+      "provider_policy": {
+        "capability_required": "image.generation",
+        "models_ref": "image_minimax"
+      },
+      "retry_policy": {
+        "max_attempts": 1,
+        "backoff": "fixed",
+        "retry_on": ["timeout"]
+      },
+      "depends_on": [],
+      "input_bindings": [
+        {
+          "name": "prompt",
+          "source": "task.input_payload.prompt"
+        }
+      ],
+      "config": {
+        "num_candidates": 1,
+        "worker_timeout_s": 120,
+        "spec": {
+          "prompt_summary": "A small brass robot standing on a workbench, warm workshop light",
+          "width": 1024,
+          "height": 1024,
+          "color_space": "sRGB",
+          "intended_use": "concept_image"
+        }
+      }
+    }
+  ]
+}

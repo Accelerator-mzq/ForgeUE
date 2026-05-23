@@ -46,6 +46,13 @@ providers:
     api_key_env: MINIMAX_KEY
     api_base: "https://api.minimaxi.com/anthropic"
 
+  # MiniMax 图片生成原生 endpoint。与音乐生成分开注册，避免把
+  # text/audio 路由误导到同一条 base URL 上。
+  minimax_image:
+    kind: http
+    api_key_env: MINIMAX_KEY
+    api_base: "https://api.minimaxi.com/v1/image_generation"
+
   packycode:
     api_key_env: PACKYCODE_KEY
     api_base: "https://www.packyapi.com"
@@ -230,6 +237,11 @@ models:
       sourced_on: '2026-04-22'
       source_url: https://open.bigmodel.cn/pricing
       cny_original: ¥0.1/次
+  minimax_image_01:
+    id: "minimax/image-01"
+    provider: minimax_image
+    kind: image
+    pricing: null
   qwen3_6_plus:
     id: "openai/qwen-plus"           # DashScope compatible-mode 下的真实 id
     provider: dashscope_openai_compat
@@ -424,13 +436,19 @@ aliases:
 
   # 快速图生成
   image_fast:
-    preferred: [qwen_image_2]
+    preferred: [minimax_image_01,qwen_image_2]
     fallback: [glm_image]
 
   # 高质量图生成
   image_strong:
-    preferred: [qwen_image_2_pro]
+    preferred: [minimax_image_01,qwen_image_2_pro]
     fallback: [hunyuan_image_v3]
+
+  # MiniMax 原生图片生成别名。供 bundle / step 显式选择或覆盖；
+  # 是否替换 image_fast / image_strong，由用户决定。
+  image_minimax:
+    preferred: [minimax_image_01]
+    fallback: []
 
   # 图像编辑：prompt + 源图 → 编辑后图（L5-A 新能力）
   # CapabilityRouter.image_edit 同时接受 kind=image_edit 和 kind=image 路由

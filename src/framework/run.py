@@ -77,8 +77,10 @@ def _build_orchestrator(
         # to get first pick for their own prefixes.
         from framework.providers.qwen_multimodal_adapter import QwenMultimodalAdapter
         from framework.providers.hunyuan_tokenhub_adapter import HunyuanImageAdapter
+        from framework.providers.minimax_image_adapter import MiniMaxImageAdapter
         router.register(QwenMultimodalAdapter())
         router.register(HunyuanImageAdapter())
+        router.register(MiniMaxImageAdapter())
         router.register(LiteLLMAdapter())
 
     # OpenSpec change comfy-agent-cli-adoption (post 292420a):

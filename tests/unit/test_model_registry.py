@@ -394,7 +394,7 @@ def test_get_model_registry_reads_test_fixture_by_default():
     # All aliases are capability-named (no `_cn` / `_intl` etc. tier suffixes)
     expected = {
         "text_cheap", "text_strong", "review_judge", "ue5_api_assist",
-        "review_judge_visual", "image_fast", "image_strong",
+        "review_judge_visual", "image_fast", "image_strong", "image_minimax",
         "image_edit", "mesh_from_image",
     }
     assert expected.issubset(set(reg.names()))
@@ -828,6 +828,25 @@ def test_default_config_minimax_audio_model_resolves_via_audio_minimax_alias():
     assert route.provider_kind == "http"
     assert route.api_key_env == "MINIMAX_KEY"
     assert route.api_base == "https://api.minimaxi.com/v1/music_generation"
+    assert route.pricing is None
+
+
+def test_default_config_minimax_image_model_resolves_via_image_minimax_alias():
+    """MiniMax 图片生图走独立 alias,不抢 image_fast / image_strong 默认位。"""
+    repo_root = Path(__file__).resolve().parents[2]
+    reg = ModelRegistry.from_yaml(repo_root / "config" / "models.yaml")
+
+    alias = reg.resolve("image_minimax")
+
+    assert alias.name == "image_minimax"
+    assert alias.fallback == []
+    route = alias.preferred[0]
+    assert route.model == "minimax/image-01"
+    assert route.kind == "image"
+    assert route.provider_name == "minimax_image"
+    assert route.provider_kind == "http"
+    assert route.api_key_env == "MINIMAX_KEY"
+    assert route.api_base == "https://api.minimaxi.com/v1/image_generation"
     assert route.pricing is None
 
 

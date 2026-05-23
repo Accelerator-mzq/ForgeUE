@@ -12,6 +12,7 @@ from framework.providers.hunyuan_tokenhub_adapter import (
     HunyuanImageAdapter,
     TokenhubMixin,
 )
+from framework.providers.minimax_image_adapter import MiniMaxImageAdapter
 from framework.providers.qwen_multimodal_adapter import QwenMultimodalAdapter
 from framework.providers.model_registry import (
     ModelAlias,
@@ -34,6 +35,7 @@ __all__ = [
     "ModelAlias",
     "ModelDef",
     "ModelRegistry",
+    "MiniMaxImageAdapter",
     "ProviderAdapter",
     "ProviderCall",
     "ProviderDef",
