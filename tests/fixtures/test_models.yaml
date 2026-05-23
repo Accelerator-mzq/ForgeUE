@@ -33,6 +33,10 @@ providers:
     kind: http
     api_key_env: null
     api_base: "https://api.minimaxi.com/v1/music_generation"
+  minimax_image:
+    kind: http
+    api_key_env: null
+    api_base: "https://api.minimaxi.com/v1/image_generation"
 
 models:
   # text
@@ -79,6 +83,10 @@ models:
   imagen_3:
     id: "gemini/imagen-3.0-generate-001"
     provider: test_google
+    kind: image
+  minimax_image_01:
+    id: "minimax/image-01"
+    provider: minimax_image
     kind: image
   glm_image:
     id: "openai/cogview-3-plus"
@@ -187,6 +195,9 @@ aliases:
   image_strong:
     preferred: [dalle_3]
     fallback:  [imagen_3]
+  image_minimax:
+    preferred: [minimax_image_01]
+    fallback: []
   image_edit:
     preferred: [qwen_image_edit_plus]
     fallback:  [qwen_image_edit_max, hunyuan_image_style]

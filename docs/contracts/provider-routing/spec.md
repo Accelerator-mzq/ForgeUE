@@ -106,15 +106,27 @@ The system SHALL register `LiteLLMAdapter` (wildcard) LAST in the adapter chain 
 - WHEN a request targets `qwen/qwen-image-2.0`
 - THEN `QwenMultimodalAdapter.supports(model)` returns True first and the request goes through DashScope, not LiteLLM
 
+## Scenario: MiniMax model routed to the native image adapter
+
+- GIVEN a registry where `MiniMaxImageAdapter` precedes `LiteLLMAdapter`
+- WHEN a request targets `minimax/image-01`
+- THEN `MiniMaxImageAdapter.supports(model)` returns True first and the request goes through MiniMax image_generation, not LiteLLM
+
+## Requirement: MiniMax image-01 model and image_minimax alias register native image routing
+
+The system SHALL register `providers.minimax_image` with `kind: http`, `api_key_env: MINIMAX_KEY`, and `api_base: "https://api.minimaxi.com/v1/image_generation"`. The system SHALL register `models.minimax_image_01` with `id: "minimax/image-01"`, `provider: minimax_image`, `kind: image`, and `pricing: null`.
+
+`aliases.image_minimax` SHALL resolve to `[minimax_image_01]` with no fallback. `tests/unit/test_model_registry.py::test_default_config_minimax_image_model_resolves_via_image_minimax_alias` fences the production config.
+
 ## Requirement: Capability aliases drive provider selection
 
-The system SHALL expose the current capability alias set (`text_cheap`, `text_strong`, `review_judge`, `review_judge_visual`, `ue5_api_assist`, `image_fast`, `image_strong`, `image_edit`, `mesh_from_image`); bundles SHALL refer to aliases, not raw model ids, unless a bundle explicitly overrides via `preferred_models` / `fallback_models`.
+The system SHALL expose the current capability alias set (`text_cheap`, `text_strong`, `review_judge`, `review_judge_visual`, `ue5_api_assist`, `image_fast`, `image_strong`, `image_minimax`, `image_edit`, `mesh_from_image`); bundles SHALL refer to aliases, not raw model ids, unless a bundle explicitly overrides via `preferred_models` / `fallback_models`.
 
 ## Scenario: Registered aliases cover the documented capability surface and resolve through ModelRegistry
 
 - GIVEN the capability axes the framework supports today — text generation, structured / report review, vision review, UE5 API assist, image generation, image edit, image-to-3D mesh
 - WHEN the alias section of `config/models.yaml` is loaded through `ModelRegistry`
-- THEN every documented capability axis has at least one matching alias (current witnesses: `text_cheap` / `text_strong` for text, `review_judge` / `review_judge_visual` for report and vision review, `ue5_api_assist` for UE5 API queries, `image_fast` / `image_strong` for image generation, `image_edit` for image edits, `mesh_from_image` for 3D), each alias resolves to `kind`-tagged routes through the registry, and the cross-cutting properties of named-witness aliases are enforced by `tests/unit/test_model_registry.py::test_review_judge_visual_alias_is_vision_kind` / `::test_image_edit_alias_carries_image_edit_kind` / `::test_mesh_from_image_alias_is_cross_provider`; the alias set MAY grow over time, so the Scenario asserts capability coverage rather than a frozen alias-name list
+- THEN every documented capability axis has at least one matching alias (current witnesses: `text_cheap` / `text_strong` for text, `review_judge` / `review_judge_visual` for report and vision review, `ue5_api_assist` for UE5 API queries, `image_fast` / `image_strong` / `image_minimax` for image generation, `image_edit` for image edits, `mesh_from_image` for 3D), each alias resolves to `kind`-tagged routes through the registry, and the cross-cutting properties of named-witness aliases are enforced by `tests/unit/test_model_registry.py::test_review_judge_visual_alias_is_vision_kind` / `::test_default_config_minimax_image_model_resolves_via_image_minimax_alias` / `::test_image_edit_alias_carries_image_edit_kind` / `::test_mesh_from_image_alias_is_cross_provider`; the alias set MAY grow over time, so the Scenario asserts capability coverage rather than a frozen alias-name list
 
 ## Requirement: Route pricing is stashed on every ProviderResult
 

@@ -788,6 +788,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.14 | 2026-05-23 | Linear FOR-14 `metadata-corruption-detection`:新增 `_artifacts.integrity.json` 伴生 checksum 文件;resume 校验 `_artifacts.json` hash / artifact_count / artifact_ids,metadata 损坏时 fail-fast。对应 fence 见 `docs/testing/test_spec.md` v1.11;总数以本地 `python -m pytest -q` 实测为准。 | ForgeUE Team |
 | v1.15 | 2026-05-23 | FOR-22 + FOR-23:关闭 LR-0111 / LR-0114。`DryRunPass` 现在校验显式声明的 provider `api_key_env`,缺 key 时阻断 Run;`Orchestrator` Step 异常失败路径 emit `step_failed` ProgressEvent,并携带异常类型。回归测试:`test_dry_run_pass.py` 新增缺 key / 有 key fence,`test_orchestrator.py` 新增 `step_failed` event fence。 | ForgeUE Team |
 | v1.16 | 2026-05-23 | FOR-26 MiniMax music direct follow-on:`MiniMaxMusicWorker` 直连 MiniMax `music_generation`,在未设置通用 `FORGEUE_REMOTE_AUDIO_URL` 且存在 `MINIMAX_KEY` 时注入 `GenerateAudioExecutor`;新增 `audio_minimax` alias + `examples/minimax_music_smoke.json`;L1 离线 fence 覆盖 native payload、URL 下载、临时签名 URL metadata 去 query、hex response、provider error、timeout 和 run 注入优先级。 | ForgeUE Team |
+| v1.17 | 2026-05-23 | MiniMax image direct follow-on:`MiniMaxImageAdapter` 直连 MiniMax `image_generation`,在 live 路径注册于 LiteLLM 之前;新增 `minimax/image-01` virtual model + `image_minimax` alias + `examples/minimax_image_smoke.json`;L1 离线 fence 覆盖 native payload、n fan-out、subject_reference passthrough、base_resp error、missing image_base64 和 alias 解析。 | ForgeUE Team |
 
 ### 9.3 签收区
 
