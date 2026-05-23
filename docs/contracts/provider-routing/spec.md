@@ -180,7 +180,7 @@ The system SHALL validate mesh format magic bytes — `fmt == "glb"` MUST have `
 
 - GIVEN a candidate URL declared by the provider as `.glb` whose downloaded payload's first four bytes do NOT equal `b"glTF"` (e.g. an `.obj` ASCII header, an HTML error page, or a ZIP signature)
 - WHEN `_build_candidate(...)` (`src/framework/providers/workers/mesh_worker.py`) inspects the payload's magic bytes against the requested format
-- THEN `_build_candidate` raises `MeshWorkerUnsupportedResponse` rather than wrapping the bytes into a `MeshCandidate`, so the fallthrough loop in `_one(...)` advances to the next ranked URL; a text-glTF payload that references external `.bin` buffers without inlining them also raises (the `geometry_only` escape applies to external textures only, never to external geometry buffers), preventing the worker from silently delivering a candidate UE would later reject on import
+- THEN `_build_candidate` raises `MeshWorkerUnsupportedResponse` rather than wrapping the bytes into a `MeshCandidate`, so the fallthrough loop in `_one(...)` advances to the next ranked URL; a text-glTF payload that references external `.bin` buffers without inlining them also raises (the `geometry_only` escape applies to external textures only, never to external geometry buffers), and a `.fbx` payload whose `FileName` / `RelativeFilename` fields reference common texture/media sidecar extensions raises in normal mode while geometry-only mode may accept it with `missing_materials=True`, preventing the worker from silently delivering a candidate UE would later reject on import
 
 ## Requirement: Case-insensitive data: URI
 
@@ -191,6 +191,16 @@ The system SHALL treat `data:` URI scheme detection as case-insensitive (RFC 239
 - GIVEN a glTF / OBJ payload whose embedded resources are tagged with the `data:` URI scheme written in mixed case (`DATA:image/png;base64,...`, `Data:image/png;base64,...`, or `data:image/png;base64,...`)
 - WHEN the self-contained-payload detector runs (`src/framework/providers/workers/mesh_worker.py::_is_data_uri` at the helper layer, plus `_is_self_contained_obj` and `_is_self_contained_gltf` consumers) and applies `value.lstrip().lower().startswith("data:")`
 - THEN every casing variant is treated identically — RFC 2397 defines URI schemes as case-insensitive, and the historical bug where a mixed-case `DATA:` was rejected as non-self-contained is fenced by `tests/unit/test_cn_image_adapters.py::test_data_uri_check_is_case_insensitive` plus the peer fence `tests/unit/test_pr3_cleanup_fences.py::test_is_http_url_case_insensitive` for the analogous `_is_http_url` helper
+
+## Requirement: FBX sidecar references are rejected unless geometry-only
+
+The system SHALL reject FBX candidates that name external texture/media sidecars via `FileName` / `RelativeFilename` unless the caller explicitly requested geometry-only output.
+
+## Scenario: non-self-contained FBX falls through to the next URL
+
+- GIVEN a Hunyuan 3D response that ranks a `.fbx` URL before a no-extension URL, where the `.fbx` bytes contain `FileName: "textures/wood.png"` and the no-extension URL downloads valid GLB bytes
+- WHEN `_build_candidate(...)` evaluates the `.fbx` in normal mode
+- THEN it raises `MeshWorkerUnsupportedResponse`, the worker downloads the next URL, and the final `MeshCandidate` uses the GLB bytes; `tests/unit/test_cn_image_adapters.py::TestHunyuanMeshFbxSelfContainment` fences the predicate, normal-mode rejection, geometry-only acceptance, and fallthrough behavior
 
 ## Requirement: tokenhub poll timeout is clamped
 

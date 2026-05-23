@@ -697,7 +697,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | TBD-001 | bridge_execute 模式 | FR-UE-001 | ❌ | manifest_only 稳定 3 个月后评估 |
 | TBD-002 | Audio worker(远端 AudioCraft / ElevenLabs) | FR-WORKER-* | ⚠️ baseline | Audio worker baseline 已落地(`comfy-agent-cli-audio-adoption` 2026-05-03):`AudioWorker` ABC + `AudioCandidate` + `GenerateAudioExecutor` + `audio.t2a` capability_ref + ExecutorRegistry registration in `framework.run`;ComfyUI 第一客户(`comfy/local-audio`)。远端 AudioCraft 协议落地待独立 follow-on change |
 | TBD-003 | WS 鉴权 / 多租户 | NFR-SEC-005 | ❌ | 接入 UI 时 |
-| TBD-004 | FBX self-containment 校验 | FR-WORKER-* | ❌ | 引入 PyFBX / ufbx 后 |
+| ~~TBD-004~~ | ~~FBX self-containment 校验~~ | FR-WORKER-* | ✅ 已实施(FOR-28,2026-05-23) | dependency-free `FileName` / `RelativeFilename` sidecar 扩展名扫描;普通模式 reject + URL fallthrough / fallback,geometry-only 标记 `missing_materials=True` |
 | TBD-005 | Tripo3D parser 实装 | FR-COST-006 | ⚠️ scaffold(DashScope 已于 2026-04-22 前并入) | 有工作流真实使用时 |
 | ~~TBD-006~~ | ~~视觉 review 图像压缩~~ | FR-REVIEW-001, A2 顺序 3+4 | ✅ 已实施 + live 验证通过(2026-04-22 18:38)| 见 §6.5;代码 + 10 条 fence 就位,a2_mesh 从头跑全链通过(step_review_image GLM-4.6V approve + step_mesh Hunyuan 3D 真生成 30.6 MB .glb) |
 | ~~TBD-007~~ | ~~mesh 重试塌缩 + 失败 visibility~~ | NFR-COST-*, A2 顺序 4 | ✅ 已实施 + HYPOTHESIS probe 验证(2026-04-22) | 见 §6.6;Codex 独立 review 协助找出 4 层中第 2 层(executor 内部 retry);job_id 持久化暴露给 CLI;5 条 fence 就位 |

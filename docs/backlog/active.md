@@ -86,6 +86,5 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - `LR-0126` **TBD-001 bridge_execute 模式启用** — `bridge_execute` 模式启用条件
 - `LR-0127` **TBD-002 远端 Audio worker 接入** — Audio worker(远端 AudioCraft / ElevenLabs 接入)
 - `LR-0128` **TBD-003 WS 鉴权 / 多租户 session** — WS 鉴权 / 多租户 session
-- `LR-0129` **TBD-004 FBX self-containment 校验** — FBX self-containment 校验
 - `LR-0130` **TBD-005 DashScope / Tripo3D 下辖 parser 实装** — DashScope / Tripo3D 下辖 parser 实装
 - `LR-0135` **TBD-013 RemoteControl HTTP bridge** — RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor

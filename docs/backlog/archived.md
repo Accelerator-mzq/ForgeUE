@@ -3,6 +3,21 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-23 FOR-28 completion
+
+### `LR-0129` **TBD-004 FBX self-containment 校验**
+
+- **new_status**: completed
+- **reason**: `mesh_worker._is_self_contained_fbx` 现在用 dependency-free 扫描守住单文件 Artifact 边界:当 FBX `FileName` / `RelativeFilename` 附近出现常见贴图/媒体 sidecar 扩展名时,普通模式由 `_build_candidate` raise `MeshWorkerUnsupportedResponse` 触发 URL fallthrough / fallback;`spec.texture=False AND spec.pbr=False` geometry-only 模式保留几何并把 `missing_materials=True` 写入 candidate metadata。
+- **evidence**: `src/framework/providers/workers/mesh_worker.py`,
+  `tests/unit/test_cn_image_adapters.py::TestHunyuanMeshFbxSelfContainment`,
+  `docs/superpowers/plans/2026-05-23-for-28-fbx-self-containment.md`;
+  `python -m pytest tests/unit/test_cn_image_adapters.py::TestHunyuanMeshFbxSelfContainment -q`
+  → `6 passed`;
+  `python -m pytest tests/unit/test_cn_image_adapters.py -q` → `88 passed`;
+  `python -m pytest tests/unit/test_probe_framework.py -q` → `31 passed`
+- **archived_by**: FOR-28 fbx-self-containment-validation 2026-05-23
+
 ## 2026-05-23 FOR-24 completion
 
 ### `LR-0123` **NFR-PORT-002 CI 能在 Linux runner 跑通全量测试**

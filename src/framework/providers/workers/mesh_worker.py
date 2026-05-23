@@ -686,6 +686,34 @@ def _is_self_contained_obj(data: bytes) -> bool:
     return True
 
 
+_FBX_EXTERNAL_RESOURCE_EXTS = (
+    ".png", ".jpg", ".jpeg", ".tga", ".bmp", ".tif", ".tiff",
+    ".webp", ".exr", ".dds", ".hdr", ".psd",
+)
+
+
+def _is_self_contained_fbx(data: bytes) -> bool:
+    """Return False when FBX bytes name texture/media sidecar files.
+
+    FBX 的完整二进制结构不适合在这里手写解析器。当前目标只守住
+    ForgeUE 的单文件边界:如果 `FileName` / `RelativeFilename` 周围出现
+    常见贴图扩展名,就认为该 FBX 依赖外部 sidecar,交给 fallback 或
+    geometry-only 分支处理。
+    """
+    lower_text = data.decode("utf-8", errors="ignore").lower()
+    for marker in ("filename", "relativefilename"):
+        start = 0
+        while True:
+            pos = lower_text.find(marker, start)
+            if pos == -1:
+                break
+            window = lower_text[pos:pos + 512]
+            if any(ext in window for ext in _FBX_EXTERNAL_RESOURCE_EXTS):
+                return False
+            start = pos + len(marker)
+    return True
+
+
 def _is_data_uri(value: object) -> bool:
     """Return True when `value` is a string whose leading scheme is
     the `data:` data URI (RFC 2397). The RFC defines URI schemes as
@@ -906,6 +934,17 @@ def _build_candidate(
                 f"a provider that emits GLB, or set "
                 f"spec.texture=False AND spec.pbr=False for "
                 f"geometry-only output."
+            )
+    if detected_fmt == "fbx" and not _is_self_contained_fbx(mesh_bytes):
+        if geometry_only:
+            missing_materials = True
+        else:
+            raise MeshWorkerUnsupportedResponse(
+                f"tokenhub /3d returned a non-self-contained .fbx "
+                f"for job {job_id} — FBX references external texture/media "
+                f"files via FileName/RelativeFilename. Framework does not "
+                f"download mesh sidecars. Use GLB, embed FBX media, or set "
+                f"spec.texture=False AND spec.pbr=False for geometry-only output."
             )
     return MeshCandidate(
         data=mesh_bytes, format=detected_fmt,
