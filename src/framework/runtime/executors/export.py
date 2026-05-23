@@ -30,3 +30,10 @@ class ExportExecutor(StepExecutor):
         target = resolve_engine_target(ctx.task)
         adapter = self._adapter_registry.resolve(target.engine)
         return await adapter.export(ctx, target=target)
+
+    @staticmethod
+    def _is_importable(art) -> bool:
+        # 兼容既有 UE contract；实际过滤规则仍由 manifest_builder 单一真源决定。
+        from framework.ue_bridge.manifest_builder import is_manifest_importable
+
+        return is_manifest_importable(art)
