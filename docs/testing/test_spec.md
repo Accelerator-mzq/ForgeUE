@@ -147,6 +147,9 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_comfy_subprocess_audio.py` (自 v1.7;FOR-13 delta) | ComfyAgentWorker.generate_audio + _run_once_audio + 4-dict audio capability dispatch | FR-WORKER-001 / FR-WORKER-011 | L1 | capability guard(comfy/local-audio gate)+ outputs.audio missing → WorkerUnsupportedResponse + 扩展名 whitelist 拒(`flac`/`mp3`/`wav` only)+ magic bytes 二次校验(`fLaC` / `ID3` / MPEG sync / `RIFF`+`WAVE`)+ path trust-boundary(symlink / 非 file)+ AudioCandidate metadata 5 个 comfy_* 键 + per-candidate seed 偏移 + REJECTED keys(images/glb/video)互斥 + source_path 记录且不全读 payload |
 | `test_generate_audio_comfy.py` (自 v1.7;FOR-13 delta) | GenerateAudioExecutor + _generate_via_comfy_worker + F2 retry/wrap + step persistence | FR-WORKER-011 | L1 | (StepType.generate, audio.t2a) registry lookup + _should_use_comfy_worker_path 判定 comfy/local-audio + F2 三-except 块(WorkerTimeout retry honoring _should_retry / WorkerUnsupportedResponse immediate raise / WorkerError immediate raise)+ ArtifactType(modality=audio, shape=waveform) + file_suffix=f".{cand.format}" + Artifact.metadata 三键(format/duration_seconds/sample_rate)+ worker_metadata 嵌套(F-Plan-R7-A single-source)+ source_path 优先落盘 |
 | `test_audio_worker.py` (自 v1.7;FOR-13 delta) | AudioCandidate dataclass + AudioWorker ABC + 异常树 + FakeAudioWorker(6 fence)| FR-WORKER-011 | L1 | AudioCandidate 必填字段(data/format/metadata)+ optional source_path + format Literal whitelist + duration_seconds/sample_rate 默认 None + AudioWorkerError/Timeout/UnsupportedResponse 异常树 + FakeAudioWorker._build_minimal_flac 合成有效 FLAC bytes(`fLaC` magic + STREAMINFO) |
+| `test_remote_audio_worker.py` (FOR-26) | RemoteHttpAudioWorker 通用 HTTP JSON 协议 | FR-WORKER-011 / FR-MODEL-007 | L1 | 5 用例(POST body/Authorization header/base64 payload/url download/format whitelist/magic bytes mismatch/http timeout→AudioWorkerTimeout) |
+| `test_minimax_music_worker.py` (FOR-26 MiniMax follow-on) | MiniMaxMusicWorker 原生 music_generation 协议 | FR-WORKER-011 / FR-MODEL-007 | L1 | 4 用例(MiniMax 原生 payload + Bearer header + URL 下载且 metadata 去掉临时签名 query / hex 音频响应 / base_resp 非 0 → AudioWorkerUnsupportedResponse / HTTP timeout→AudioWorkerTimeout) |
+| `test_run_remote_audio.py` (FOR-26) | `framework.run` env-based remote audio worker 注入 | FR-WORKER-011 | L1 | 3 用例(`FORGEUE_REMOTE_AUDIO_URL` 存在时注入 `RemoteHttpAudioWorker` 且优先于 MiniMax;仅 `MINIMAX_KEY` 存在时注入 `MiniMaxMusicWorker`;两者都未设置时保持 `_worker is None`,本地 ComfyUI 分支不受影响) |
 | `test_video_worker.py` (自 v1.8;FOR-13 delta) | VideoCandidate dataclass + VideoWorker ABC + 异常树 + FakeVideoWorker(7 fence)| FR-WORKER-012 | L1 | VideoCandidate 必填字段(data/format/metadata)+ optional source_path + format Literal["mp4"] mp4-only round-2 F2 + round-3 PF3 sweep + duration_seconds/frame_count/width/height/fps 5 顶层 None defaults + VideoWorkerError/Timeout/UnsupportedResponse 异常树 + FakeVideoWorker._build_minimal_mp4 合成 32-byte BMFF strict 5-tuple-conformant ftyp box(`b"\x00\x00\x00\x20ftypisom..."`)|
 | `test_step_context.py` (自 v1.6;`executor-async-rewrite` delta) | StepContext 字段 | FR-RUNTIME-* | L1 | default factory Path('.') / explicit value preserved 2 fence + **`lifecycle` 字段**(default None + ExternalProcessLifecycle 注入后可访问 2 fence) |
 | `test_orchestrator.py` (自 v1.6;`executor-async-rewrite` delta;FOR-23 delta) | Orchestrator 集成 | FR-RUNTIME-*, NFR-OBS-002 | L1 | uses checkpoints._root NO extra date(round 3 H1 fix)/ falls back to Path('.') 2 fence + **lifecycle 注入**(arun 时 lifecycle manager 传入 / StepContext.lifecycle 字段填充)+ **try/finally release**(`arun` finally 分支调 `_release_lifecycle_bounded`)+ **`aclose()`**(disposal 钩子 release + cleanup)+ `step_failed` ProgressEvent 携带 `exception_type` / `failure_mode` / `decision` fence |
@@ -245,8 +248,11 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `tests/unit/test_generate_audio_comfy.py` | GenerateAudioExecutor + ExecutorRegistry registration + F2 retry/wrap + persistence | FR-WORKER-011 | L1 | 14 用例((StepType.generate, audio.t2a) lookup / _should_use_comfy_worker_path 判 comfy/local-audio / F2 三-except 块(timeout retry honoring _should_retry / unsupported immediate raise / error immediate raise) / ArtifactType(modality=audio, shape=waveform) / file_suffix=f".{cand.format}" / metadata 三键 + worker_metadata 嵌套(F-Plan-R7-A single-source) / RetryPolicy.retry_on 控制 honor) |
 | `tests/unit/test_failure_mode_map.py` (delta) | audio_worker_timeout / audio_worker_unsupported FailureMode + isinstance priority(audio 在 mesh / generic 之前) | FR-RUNTIME-007 / FR-WORKER-011 | L1 | +6 用例(AudioWorkerTimeout → audio_worker_timeout → abort_or_fallback / AudioWorkerUnsupportedResponse → audio_worker_unsupported → abort_or_fallback / AudioWorkerError → audio_worker_unsupported(generic 归类)/ 不命中 mesh / 不命中 generic worker_*) |
 | `tests/unit/test_probe_framework.py` (delta) | probe_comfy_audio.py 顶层零副作用 + opt-in skip(`FORGEUE_PROBE_COMFY_AUDIO != "1"` 默认 skip) | FR-OBSERV-* | L0 | +2 用例(import 不触 hydrate_env / mkdir,opt-in skip 输出 SKIP marker) |
-| `tests/unit/test_model_registry.py` (delta) | comfy/local-audio virtual id + audio_local alias + image_local 仍解析(回归保护) | FR-MODEL-001/007 | L0 | +2 用例(comfy/local-audio id 解析 / audio_local alias 解析为 [comfy/local-audio]) |
+| `tests/unit/test_minimax_music_worker.py` | MiniMax music_generation 原生 worker | FR-WORKER-011 / FR-MODEL-007 | L1 | 4 用例(native POST payload + URL 下载且 metadata 去掉临时签名 query / hex response / provider error / timeout) |
+| `tests/unit/test_model_registry.py` (delta) | comfy/local-audio virtual id + audio_local alias + remote/audio virtual id + audio_remote alias + minimax/music-2.6 virtual id + audio_minimax alias + image_local 仍解析(回归保护) | FR-MODEL-001/007 | L0 | audio_local 解析为 [comfy/local-audio];FOR-26 audio_remote 解析为 `ResolvedRoute(model="remote/audio", provider_kind="http", kind="audio", pricing=None)`;audio_minimax 解析为 `ResolvedRoute(model="minimax/music-2.6", provider_kind="http", api_key_env="MINIMAX_KEY")` |
 | `examples/comfy_local_smoke_audio.json` | bundle JSON 三段式(task / workflow / steps)+ step.config.spec.{comfy_workflow, comfy_params, comfy_lifecycle: "none"} | FR-WORKER-011 / FR-EXAMPLES | L1 (offline) / L2 (live ComfyUI) | offline:tests/integration/test_example_bundles_smoke 收;live L2:本机跑(DEFERRED post-archive,见 change notes/live_smoke_audio_blocked_20260503.md) |
+| `examples/remote_audio_smoke.json` (FOR-26) | 通用远端 audio smoke bundle(`audio.t2a` + `provider_policy.models_ref="audio_remote"`) | FR-WORKER-011 / FR-EXAMPLES | L1 offline | loader + DryRunPass 自动收;真实远端调用需用户提供 `FORGEUE_REMOTE_AUDIO_URL` / API key |
+| `examples/minimax_music_smoke.json` (FOR-26 MiniMax follow-on) | MiniMax 原生 audio smoke bundle(`audio.t2a` + `provider_policy.models_ref="audio_minimax"`) | FR-WORKER-011 / FR-EXAMPLES | L1 offline | loader + DryRunPass 自动收;真实 MiniMax 调用需用户提供 `MINIMAX_KEY` |
 
 ---
 
@@ -442,7 +448,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | Live LLM 端到端 | **手工验收** | 需 provider key,默认不在 CI 跑 |
 | Pricing probe `--apply` 真跑 | **手工验收** | playwright + chromium + 供应商页面可达 |
 | bridge_execute 模式 | **未启动** | §G #1 |
-| Audio worker | **未启动** | §G #2 |
+| Audio worker | ✅ baseline + remote HTTP + MiniMax direct 已实施 | 本地 ComfyUI audio 已 L2;FOR-26 通用 HTTP remote worker 与 MiniMax music_generation direct worker 已 L1 offline,厂商专用 ElevenLabs / AudioCraft adapter 按真实需求另立 follow-on |
 | WS 鉴权 | **未启动** | 默认绑 127.0.0.1 |
 | FBX self-containment | ✅ 已实施(FOR-28,dependency-free) | `TestHunyuanMeshFbxSelfContainment`:ASCII/Binary `FileName` / `RelativeFilename` sidecar 检测、普通模式 reject、geometry-only 放行、URL fallthrough |
 | DashScope / Tripo3D parser 实装 | **部分** | 8 model scaffold,实装待真实用例 |
@@ -494,7 +500,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | `HUNYUAN_3D_KEY` | Hunyuan 3D | ❌ | ✅ |
 | `GLM_API_KEY` | Zhipu | ❌ | ✅ |
 | `PACKYCODE_API_KEY` | Claude via Packy | ❌ | ✅ |
-| `MINIMAX_API_KEY` | MiniMax | ❌ | ✅ |
+| `MINIMAX_KEY` | MiniMax | ❌ | ✅ |
 | `FORGEUE_RUN_FOLDER` | UE 真机 run 目录 | ❌ | ❌(UE 侧) |
 
 ---

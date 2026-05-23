@@ -25,6 +25,14 @@ providers:
       default_lifecycle: none
       input_dir: null
       output_root: null
+  remote_audio:
+    kind: http
+    api_key_env: null
+    api_base: null
+  minimax_music:
+    kind: http
+    api_key_env: null
+    api_base: "https://api.minimaxi.com/v1/music_generation"
 
 models:
   # text
@@ -139,6 +147,16 @@ models:
     provider: comfy_api
     kind: audio
 
+  # FOR-26:通用 HTTP remote audio virtual model id
+  remote_audio_http:
+    id: "remote/audio"
+    provider: remote_audio
+    kind: audio
+  minimax_music_26:
+    id: "minimax/music-2.6"
+    provider: minimax_music
+    kind: audio
+
   # OpenSpec change comfy-agent-cli-video-adoption Phase 3 video
   comfy_local_video:
     id: "comfy/local-video"
@@ -186,6 +204,13 @@ aliases:
   # OpenSpec change comfy-agent-cli-audio-adoption Phase 2: local ComfyUI audio
   audio_local:
     preferred: [comfy_local_audio]
+    fallback: []
+  # FOR-26:通用远端 audio generation
+  audio_remote:
+    preferred: [remote_audio_http]
+    fallback: []
+  audio_minimax:
+    preferred: [minimax_music_26]
     fallback: []
   # OpenSpec change comfy-agent-cli-video-adoption Phase 3: local ComfyUI video
   video_local:

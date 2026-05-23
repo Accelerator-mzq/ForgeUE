@@ -109,6 +109,20 @@ providers:
       input_dir: "D:/AI/ComfyUI/apps/official-main-git-v092/input"
       output_root: "D:/AI/ComfyUI"
 
+  # FOR-26 通用远端 audio worker。真实 endpoint/key 不放 registry,由
+  # FORGEUE_REMOTE_AUDIO_URL / FORGEUE_REMOTE_AUDIO_API_KEY 在运行时注入。
+  remote_audio:
+    kind: http
+    api_key_env: null
+    api_base: null
+
+  # MiniMax music_generation 原生 audio worker。endpoint 可通过
+  # FORGEUE_MINIMAX_MUSIC_URL 覆盖;API key 使用 ForgeUE 本地约定 MINIMAX_KEY。
+  minimax_music:
+    kind: http
+    api_key_env: MINIMAX_KEY
+    api_base: "https://api.minimaxi.com/v1/music_generation"
+
 # ---------------------------------------------------------------------------
 # ② Models
 # ---------------------------------------------------------------------------
@@ -349,6 +363,22 @@ models:
     kind: audio
     pricing: null
 
+  # FOR-26 通用 HTTP remote audio virtual model id。远端服务费用/模型由用户
+  # 自建 endpoint 决定,框架不凭印象写价格,pricing 保持 null。
+  remote_audio_http:
+    id: "remote/audio"
+    provider: remote_audio
+    kind: audio
+    pricing: null
+
+  # MiniMax Music 2.6 原生 music_generation。价格/额度随 MiniMax 官方账号策略变化,
+  # 框架不凭印象写数字,pricing 保持 null。
+  minimax_music_26:
+    id: "minimax/music-2.6"
+    provider: minimax_music
+    kind: audio
+    pricing: null
+
   # 本地 ComfyUI video virtual model id(OpenSpec change comfy-agent-cli-video-adoption Phase 3)
   # 与 comfy_local / comfy_local_mesh / comfy_local_audio 平行,但 kind=video;真"workflow" 由 bundle
   # `step.config.spec.comfy_workflow` 指定的 video manifest 决定(默认 D3 `Vedio/Wan2.1-T2V-1.3B_native_5sec`
@@ -441,6 +471,19 @@ aliases:
   # 留 follow-on change `audio-worker-audiocraft-adoption`)
   audio_local:
     preferred: [comfy_local_audio]
+    fallback: []
+
+  # FOR-26 通用远端 audio generation。启用条件:
+  # FORGEUE_REMOTE_AUDIO_URL 指向用户自建/第三方 proxy 的 JSON endpoint;
+  # FORGEUE_REMOTE_AUDIO_API_KEY 可选,由 RemoteHttpAudioWorker 作为 Bearer token 发送。
+  audio_remote:
+    preferred: [remote_audio_http]
+    fallback: []
+
+  # MiniMax 原生音乐生成。启用条件:MINIMAX_KEY 存在;可选
+  # FORGEUE_MINIMAX_MUSIC_MODEL / FORGEUE_MINIMAX_MUSIC_URL 覆盖 model/endpoint。
+  audio_minimax:
+    preferred: [minimax_music_26]
     fallback: []
 
   # 本地 ComfyUI video generation(OpenSpec change comfy-agent-cli-video-adoption Phase 3)

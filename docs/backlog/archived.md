@@ -3,6 +3,23 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-23 FOR-26 completion
+
+### `LR-0127` **TBD-002 远端 Audio worker 接入**
+
+- **new_status**: completed
+- **reason**: 新增通用 `RemoteHttpAudioWorker`,通过 `FORGEUE_REMOTE_AUDIO_URL`
+  + 可选 `FORGEUE_REMOTE_AUDIO_API_KEY` / `FORGEUE_REMOTE_AUDIO_MODEL`
+  注入 `GenerateAudioExecutor(worker=...)`;远端 JSON 响应支持 base64 音频或 URL 下载,
+  并对 `flac/mp3/wav` 做格式白名单与 magic bytes 二次校验。`audio_remote`
+  alias 解析到 `remote/audio`,不绑定 ElevenLabs / AudioCraft 专有协议。
+- **evidence**: `src/framework/providers/workers/remote_audio_worker.py`,
+  `src/framework/run.py`, `config/models.yaml`, `examples/remote_audio_smoke.json`,
+  `tests/unit/test_remote_audio_worker.py`, `tests/unit/test_run_remote_audio.py`;
+  `python -m pytest tests/unit/test_remote_audio_worker.py tests/unit/test_run_remote_audio.py tests/unit/test_model_registry.py tests/integration/test_example_bundles_smoke.py tests/unit/test_audio_worker.py tests/unit/test_generate_audio_comfy.py tests/unit/test_comfy_subprocess_audio.py -q`
+  → `141 passed`
+- **archived_by**: FOR-26 remote-audio-worker-integration 2026-05-23
+
 ## 2026-05-23 FOR-28 completion
 
 ### `LR-0129` **TBD-004 FBX self-containment 校验**

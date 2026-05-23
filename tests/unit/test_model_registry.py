@@ -794,6 +794,43 @@ aliases:
     assert alias.preferred[0].kind == "audio"
 
 
+def test_default_config_remote_audio_model_resolves_via_audio_remote_alias():
+    """FOR-26:默认 registry 暴露通用远端 audio alias。"""
+    repo_root = Path(__file__).resolve().parents[2]
+    reg = ModelRegistry.from_yaml(repo_root / "config" / "models.yaml")
+
+    alias = reg.resolve("audio_remote")
+
+    assert alias.name == "audio_remote"
+    assert alias.fallback == []
+    route = alias.preferred[0]
+    assert route.model == "remote/audio"
+    assert route.kind == "audio"
+    assert route.provider_name == "remote_audio"
+    assert route.provider_kind == "http"
+    assert route.api_key_env is None
+    assert route.pricing is None
+
+
+def test_default_config_minimax_audio_model_resolves_via_audio_minimax_alias():
+    """FOR-26 MiniMax follow-on:默认 registry 暴露 MiniMax music alias。"""
+    repo_root = Path(__file__).resolve().parents[2]
+    reg = ModelRegistry.from_yaml(repo_root / "config" / "models.yaml")
+
+    alias = reg.resolve("audio_minimax")
+
+    assert alias.name == "audio_minimax"
+    assert alias.fallback == []
+    route = alias.preferred[0]
+    assert route.model == "minimax/music-2.6"
+    assert route.kind == "audio"
+    assert route.provider_name == "minimax_music"
+    assert route.provider_kind == "http"
+    assert route.api_key_env == "MINIMAX_KEY"
+    assert route.api_base == "https://api.minimaxi.com/v1/music_generation"
+    assert route.pricing is None
+
+
 def test_comfy_local_video_model_resolves_via_video_local_alias(tmp_path):
     """alias video_local → comfy/local-video 全链路解析:
     bundle 写 provider_policy.models_ref: "video_local"

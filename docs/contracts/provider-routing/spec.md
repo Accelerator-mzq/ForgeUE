@@ -61,10 +61,10 @@ The system SHALL let an operator add a new OpenAI-compatible provider by editing
 The system SHALL route non-OpenAI protocols via one of three patterns under `src/framework/providers/`:
 
 - (a) `CapabilityRouter` adapter chain with `model.startswith(...)` prefix matching — used by `qwen/`, `hunyuan/` image (DashScope, Hunyuan tokenhub image)
-- (b) **Worker injected at executor construction time** — used by remote mesh: `framework.run` selects `HunyuanTokenhubMeshWorker` (or future remote mesh worker) based on env / API keys and **injects** the instance into `GenerateMeshExecutor` (see `generate_mesh.py:194` "Mesh workers are injected directly into `GenerateMeshExecutor`"); `CapabilityRouter` is NOT involved. Future remote audio workers (e.g. AudioCraft) will extend pattern (b) to `GenerateAudioExecutor` (out of scope of this change; see follow-on `audio-worker-audiocraft-adoption` per design D3)
+- (b) **Worker injected at executor construction time** — used by remote mesh: `framework.run` selects `HunyuanTokenhubMeshWorker` (or future remote mesh worker) based on env / API keys and **injects** the instance into `GenerateMeshExecutor` (see `generate_mesh.py:194` "Mesh workers are injected directly into `GenerateMeshExecutor`"); `CapabilityRouter` is NOT involved. FOR-26 extends the same pattern to `GenerateAudioExecutor` via `RemoteHttpAudioWorker` when `FORGEUE_REMOTE_AUDIO_URL` is set, or `MiniMaxMusicWorker` when only `MINIMAX_KEY` is set.
 - (c) **Executor-side model-id exact-match branch** — used by ComfyUI agent CLI subprocess: `GenerateImageExecutor` checks `prepared_routes` for `model == "comfy/local"` (image), `GenerateMeshExecutor` checks for `model == "comfy/local-mesh"` (mesh), and `GenerateAudioExecutor` checks for `model == "comfy/local-audio"` (audio, NEW for `comfy-agent-cli-audio-adoption`); all three executors construct `ComfyAgentWorker` inline from env config + `StepContext`; `CapabilityRouter` is NOT involved. Future video capability (out of scope, see follow-on `comfy-agent-cli-video-adoption`) will extend pattern (c) to `GenerateVideoExecutor`
 
-Each non-OpenAI protocol family SHALL ship its own adapter / worker module: DashScope (`qwen_multimodal_adapter.py`), Hunyuan tokenhub image (`hunyuan_tokenhub_adapter.py`), Hunyuan 3D mesh (`providers/workers/mesh_worker.py`, dispatched via pattern (b)), audio worker baseline (`providers/workers/audio_worker.py` — the new ABC `AudioWorker` + `AudioCandidate` + exception tree established by this change; remote concrete implementations dispatched via pattern (b) in follow-on changes), and ComfyUI agent CLI (`providers/workers/comfy_worker.py::ComfyAgentWorker` — single class, capability-aware dispatch driven by resolved model id, currently supporting image + mesh + audio; image-mode dispatched via pattern (c) on `GenerateImageExecutor`, mesh-mode dispatched via pattern (c) on `GenerateMeshExecutor`, audio-mode dispatched via pattern (c) on `GenerateAudioExecutor`).
+Each non-OpenAI protocol family SHALL ship its own adapter / worker module: DashScope (`qwen_multimodal_adapter.py`), Hunyuan tokenhub image (`hunyuan_tokenhub_adapter.py`), Hunyuan 3D mesh (`providers/workers/mesh_worker.py`, dispatched via pattern (b)), audio worker baseline (`providers/workers/audio_worker.py` plus `remote_audio_worker.py` / `minimax_music_worker.py` concrete implementations dispatched via pattern (b)), and ComfyUI agent CLI (`providers/workers/comfy_worker.py::ComfyAgentWorker` — single class, capability-aware dispatch driven by resolved model id, currently supporting image + mesh + audio; image-mode dispatched via pattern (c) on `GenerateImageExecutor`, mesh-mode dispatched via pattern (c) on `GenerateMeshExecutor`, audio-mode dispatched via pattern (c) on `GenerateAudioExecutor`).
 
 ## Scenario: qwen/ and hunyuan/ prefixes route to their dedicated adapters via supports() prefix match (pattern a, regression)
 
@@ -801,6 +801,26 @@ The system SHALL register a third virtual ComfyUI model in `config/models.yaml` 
 **When** `ModelRegistry.from_yaml(path)` parses the file
 **Then** the resolved `ResolvedRoute(model="comfy/local-audio", api_key_env=None, api_base=None, kind="audio", pricing=None)` is exposed via `registry.resolve_alias("audio_local")`; the `providers.comfy_api` `ProviderDef` carries no new fields beyond the existing two; `tests/unit/test_model_registry.py::test_comfy_local_audio_model_resolves_via_audio_local_alias` and `::test_audio_local_alias_kind_is_audio` fence both directions
 
+## Requirement: remote/audio model and audio_remote alias register generic HTTP audio routing
+
+The system SHALL register `models.remote_audio_http` with `id: "remote/audio"`, `provider: remote_audio`, `kind: audio`, and `pricing: null`. The `providers.remote_audio` entry SHALL use `kind: http` with no hardcoded endpoint or API key; runtime endpoint/key/model values come from `FORGEUE_REMOTE_AUDIO_URL`, `FORGEUE_REMOTE_AUDIO_API_KEY`, and `FORGEUE_REMOTE_AUDIO_MODEL`.
+
+`aliases.audio_remote` SHALL resolve to `[remote_audio_http]` with no fallback. `tests/unit/test_model_registry.py::test_default_config_remote_audio_model_resolves_via_audio_remote_alias` fences the production config.
+
+## Requirement: framework.run injects RemoteHttpAudioWorker only when URL is configured
+
+When `FORGEUE_REMOTE_AUDIO_URL` is non-empty, `_build_orchestrator()` SHALL construct `RemoteHttpAudioWorker(endpoint_url=<env>, api_key=<optional env>, model=<optional env>)` and register `GenerateAudioExecutor(worker=<remote worker>)`. When the URL is unset, `_build_orchestrator()` SHALL not construct the generic remote worker; this leaves room for provider-native workers such as MiniMax and keeps the local `comfy/local-audio` branch available. `tests/unit/test_run_remote_audio.py` fences the URL-present and URL-absent cases.
+
+## Requirement: minimax/music-2.6 model and audio_minimax alias register MiniMax music_generation routing
+
+The system SHALL register `providers.minimax_music` with `kind: http`, `api_key_env: MINIMAX_KEY`, and `api_base: "https://api.minimaxi.com/v1/music_generation"`. The system SHALL register `models.minimax_music_26` with `id: "minimax/music-2.6"`, `provider: minimax_music`, `kind: audio`, and `pricing: null`.
+
+`aliases.audio_minimax` SHALL resolve to `[minimax_music_26]` with no fallback. `tests/unit/test_model_registry.py::test_default_config_minimax_audio_model_resolves_via_audio_minimax_alias` fences the production config.
+
+## Requirement: framework.run injects MiniMaxMusicWorker when only MINIMAX_KEY is configured
+
+When `FORGEUE_REMOTE_AUDIO_URL` is empty and `MINIMAX_KEY` is non-empty, `_build_orchestrator()` SHALL construct `MiniMaxMusicWorker(api_key=<env>, endpoint_url=<FORGEUE_MINIMAX_MUSIC_URL or default>, model=<FORGEUE_MINIMAX_MUSIC_MODEL or music-2.6>)` and register `GenerateAudioExecutor(worker=<minimax worker>)`. `FORGEUE_REMOTE_AUDIO_URL` SHALL remain higher priority, so existing generic remote deployments are not redirected by the presence of `MINIMAX_KEY`. `tests/unit/test_run_remote_audio.py::test_build_orchestrator_injects_minimax_music_worker_from_env` fences this behavior.
+
 ## Scenario: BundleLoader rejects unknown comfy/local-* model id
 
 **Given** a bundle whose `provider_policy.models_ref` resolves to an alias preferring `comfy/local-bogus` (not registered in `config/models.yaml`)
@@ -883,7 +903,7 @@ The system SHALL implement `ComfyAgentWorker.generate_audio(spec: dict, num_cand
 
 The system SHALL apply the ADR-007 premium-API boundary to local ComfyUI audio identically to local ComfyUI mesh: `comfy_local_audio.pricing` is null → `pricing.per_task_usd` resolves to None / 0 → the model is NOT premium → `GenerateAudioExecutor._generate_via_comfy_worker` SHALL run an internal retry loop bounded by `(ctx.step.retry_policy or RetryPolicy()).max_attempts` (default 2;F-Plan-R2-A round-2 plan 修订:`retry_policy` is top-level Step field per `task.py:30-42`,NOT under `step.config`;mirrors mesh impl `generate_mesh.py:146`+`:191`)without ADR-007 strict-single-attempt restrictions.
 
-In contrast, future remote audio workers (e.g. AudioCraft hosted endpoints registered with `pricing.per_task_usd > 0`) SHALL be premium and SHALL be subject to ADR-007's strict-single-attempt contract on the executor main path; this future behavior is NOT implemented by this change but the contract is preserved to avoid future drift.
+In contrast, provider-specific future remote audio workers with published `pricing.per_task_usd > 0` SHALL be premium and SHALL be subject to ADR-007's strict-single-attempt contract on the executor main path. FOR-26's generic `remote/audio` route keeps `pricing: null` because the endpoint is user-supplied and no authoritative public tariff exists.
 
 The wrapped `AudioWorkerTimeout` / `AudioWorkerUnsupportedResponse` exceptions SHALL still resolve through `FailureModeMap` to `audio_worker_timeout` / `audio_worker_unsupported` modes terminating in `Decision.abort_or_fallback` (NOT `retry_same_step`); the internal retry happens implicitly inside `_generate_via_comfy_worker` before the wrapper exception is raised, mirroring the Phase 1 mesh round-5 R4-F1 routing decision.
 
@@ -1308,7 +1328,7 @@ if isinstance(exc, AudioWorkerTimeout): ...
 
 ## Non-Goals
 
-- Audio worker (AudioCraft / other; SRS TBD-002).
+- Provider-native ElevenLabs / AudioCraft adapters beyond the FOR-26 generic HTTP contract.
 - Real-time streaming generation.
 - Tripo3D live pricing parser (waits for public tariff; SRS TBD-005).
 - Framework-managed ComfyUI process lifecycle (users own their ComfyUI).

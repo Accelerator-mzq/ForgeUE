@@ -293,6 +293,26 @@ The offline loader-contract test SHALL still pass without any of those precondit
 **When** `tests/integration/test_example_bundles_smoke.py` loads `examples/comfy_local_smoke_audio.json` through `load_task_bundle`
 **Then** the bundle parses cleanly into a `TaskBundle`, no subprocess is spawned, and the smoke test asserts only loader-level invariants (`comfy_workflow` is a string, `comfy_params` is a dict containing at least one prompt-like key, `audio_local` alias resolves to `comfy/local-audio`, no `workflow_graph` field, no `comfy_image_param_key` field, `depends_on` is empty); mirrors the existing fence pattern for `comfy_local_smoke.json` and `comfy_local_smoke_mesh.json`
 
+## Requirement: Remote audio smoke bundle uses audio_remote alias
+
+The system SHALL ship `examples/remote_audio_smoke.json` as an offline loader/dry-run smoke for FOR-26. The bundle SHALL contain one `StepType.generate` step with `capability_ref == "audio.t2a"` and `provider_policy.models_ref == "audio_remote"`. The bundle SHALL not embed a provider endpoint or API key; real endpoint selection remains runtime env (`FORGEUE_REMOTE_AUDIO_URL` / optional API key/model).
+
+## Scenario: examples/remote_audio_smoke.json loads and dry-runs without network I/O
+
+**Given** `examples/remote_audio_smoke.json`
+**When** `load_task_bundle(path)` and `DryRunPass.run(...)` execute in tests
+**Then** the bundle parses cleanly, `audio_remote` resolves to `remote/audio`, no network call is made, and `tests/integration/test_example_bundles_smoke.py` auto-discovers the bundle.
+
+## Requirement: MiniMax music smoke bundle uses audio_minimax alias
+
+The system SHALL ship `examples/minimax_music_smoke.json` as an offline loader/dry-run smoke for the FOR-26 MiniMax direct worker. The bundle SHALL contain one `StepType.generate` step with `capability_ref == "audio.t2a"` and `provider_policy.models_ref == "audio_minimax"`. The bundle SHALL not embed an API key; runtime auth comes from `MINIMAX_KEY`.
+
+## Scenario: examples/minimax_music_smoke.json loads and dry-runs without network I/O
+
+**Given** `examples/minimax_music_smoke.json`
+**When** `load_task_bundle(path)` and `DryRunPass.run(...)` execute in tests
+**Then** the bundle parses cleanly, `audio_minimax` resolves to `minimax/music-2.6`, no network call is made, and `tests/integration/test_example_bundles_smoke.py` auto-discovers the bundle.
+
 ## Scenario: Live audio smoke L2 evidence file is real audio bytes under in-tree artifact path
 
 **Given** a host with ComfyUI + Stable Audio Open model weights cached + `FORGEUE_COMFY_SCRIPTS_DIR` configured + `python -m factory_v3 serve` running

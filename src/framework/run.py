@@ -22,6 +22,12 @@ from framework.providers.workers.mesh_worker import (
     HunyuanMeshWorker,
     Tripo3DWorker,
 )
+from framework.providers.workers.minimax_music_worker import (
+    DEFAULT_MINIMAX_MUSIC_ENDPOINT,
+    DEFAULT_MINIMAX_MUSIC_MODEL,
+    MiniMaxMusicWorker,
+)
+from framework.providers.workers.remote_audio_worker import RemoteHttpAudioWorker
 from framework.runtime.executors import (
     ExecutorRegistry,
     ExportExecutor,
@@ -107,6 +113,31 @@ def _build_orchestrator(
     else:
         mesh_worker = FakeMeshWorker()
 
+    # FOR-26:通用远端 AudioWorker。URL 显式配置优先,用于用户自建 proxy。
+    # 若未配置通用 URL,但存在 MINIMAX_KEY,则启用 MiniMax 原生 music worker。
+    # 两者都没有时保持现状,让 comfy/local-audio 继续走 executor 内部 ComfyUI 分支。
+    remote_audio_url = (_os.environ.get("FORGEUE_REMOTE_AUDIO_URL") or "").strip()
+    if remote_audio_url:
+        audio_worker = RemoteHttpAudioWorker(
+            endpoint_url=remote_audio_url,
+            api_key=(_os.environ.get("FORGEUE_REMOTE_AUDIO_API_KEY") or None),
+            model=(_os.environ.get("FORGEUE_REMOTE_AUDIO_MODEL") or None),
+        )
+    elif minimax_key := (_os.environ.get("MINIMAX_KEY") or "").strip():
+        audio_worker = MiniMaxMusicWorker(
+            api_key=minimax_key,
+            endpoint_url=(
+                _os.environ.get("FORGEUE_MINIMAX_MUSIC_URL")
+                or DEFAULT_MINIMAX_MUSIC_ENDPOINT
+            ),
+            model=(
+                _os.environ.get("FORGEUE_MINIMAX_MUSIC_MODEL")
+                or DEFAULT_MINIMAX_MUSIC_MODEL
+            ),
+        )
+    else:
+        audio_worker = None
+
     execs = ExecutorRegistry()
     register_mock_executors(execs)
     execs.register(GenerateStructuredExecutor(router=router, schema_registry=schema_registry))
@@ -120,7 +151,7 @@ def _build_orchestrator(
     # `audio.t2a` capability_ref → ExecutorRegistry `(StepType.generate, "audio.t2a")` entry
     # (F1 round-1 + F-Plan-R4-C round-4:沿用 StepType.generate 已有枚举,**不**新增 step type;
     # ComfyUI dispatch via executor-side model-id branch per spec/provider-routing pattern c)
-    execs.register(GenerateAudioExecutor())
+    execs.register(GenerateAudioExecutor(worker=audio_worker))
     # OpenSpec change comfy-agent-cli-video-adoption Phase 3:
     # `video.t2v` capability_ref → ExecutorRegistry `(StepType.generate, "video.t2v")` entry
     # (沿 audio Phase 2 R3-A 模式:沿用 StepType.generate 已有枚举,**不**新增 step type;
