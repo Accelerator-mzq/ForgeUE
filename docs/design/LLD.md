@@ -33,7 +33,7 @@
 | `list[T]` | Python 列表 |
 | `dict[K, V]` | Python 字典 |
 | `Literal["a","b"]` | 枚举字符串 |
-| 文件路径 | 相对 `src/framework/` 或 `ue_scripts/` 的路径 |
+| 文件路径 | 相对 `src/framework/` 或 `engine_scripts/unreal/` 的路径 |
 
 ---
 
@@ -1350,7 +1350,7 @@ class EngineAdapter(Protocol):
 **UnrealAdapter(`engine_bridge/unreal/adapter.py`)**
 
 - `engine = "unreal"`。
-- adapter 边界接收 `EngineTarget`,内部 `target.to_ue_target()` 后复用 `framework.engine_bridge.unreal.contract` manifest-only 逻辑;`framework.ue_bridge` 是一个兼容周期内的 legacy alias。
+- adapter 边界接收 `EngineTarget`,内部 `target.to_ue_target()` 后复用 `framework.engine_bridge.unreal.contract` manifest-only 逻辑;`framework.ue_bridge` 是 FOR-32 人工删除清单中的 legacy prefix,新代码不得依赖它。
 - 保留 Verdict.reject 硬停、bare approve filter、D12 video path split、PermissionPolicy skipped evidence、manifest / plan / bundle Artifact 产出。
 
 **Godot4Adapter(`engine_bridge/godot4/adapter.py`)**
@@ -1365,7 +1365,7 @@ class EngineAdapter(Protocol):
 
 ### 9.2 Unreal 文件契约(`src/framework/engine_bridge/unreal/contract/`)
 
-当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。`src/framework/ue_bridge/` / `framework.ue_bridge` 保留为一个兼容周期的 legacy compatibility alias。
+当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。`src/framework/ue_bridge/` / `framework.ue_bridge` 是 FOR-32 人工删除清单中的 legacy path,不再作为当前契约入口。
 
 ### 9.2.1 ManifestBuilder(`manifest_builder.py`)
 
@@ -1436,7 +1436,7 @@ def append(path: Path, record: dict) -> None    # 原子追加
 
 **原子写**:临时文件 + `os.replace`,避免半行写入。
 
-**`skip_reason` 字段**(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08):`Literal["permission_denied", "no_handler"] | None = None`。区分 skipped record 的来源类型,使 `ue_scripts/run_import.py` pre-scan filter 可精确仅过滤 `permission_denied`(framework 端 `PermissionPolicy` 拒绝)而不误吞 `no_handler`(UE 端无 handler dispatch)skipped。default `None` 后向兼容旧 evidence(legacy fixture Pydantic load 走 None 路径)。
+**`skip_reason` 字段**(自 OpenSpec change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08):`Literal["permission_denied", "no_handler"] | None = None`。区分 skipped record 的来源类型,使 `engine_scripts/unreal/run_import.py` pre-scan filter 可精确仅过滤 `permission_denied`(framework 端 `PermissionPolicy` 拒绝)而不误吞 `no_handler`(UE 端无 handler dispatch)skipped。default `None` 后向兼容旧 evidence(legacy fixture Pydantic load 走 None 路径)。
 
 ### 9.2.6 validate_manifest
 
@@ -1647,7 +1647,7 @@ workflow template library 占位目录(未启动)。
 
 ---
 
-## 14. UE Scripts(`ue_scripts/`)
+## 14. UE Scripts(`engine_scripts/unreal/`)
 
 ### 14.1 run_import.py
 
@@ -1669,7 +1669,7 @@ def import_static_mesh_entry(unreal_module, bundle, op, entry) -> dict
 def import_audio_entry(unreal_module, bundle, op, entry) -> dict
 ```
 
-- 第一参数 `unreal` 模块,允许 stub 单测(`test_p4_ue_scripts_run_import_with_stub_unreal`)
+- 第一参数 `unreal` 模块,允许 stub 单测(`test_p4_engine_scripts_unreal_run_import_with_stub_unreal`)
 
 ### 14.3 evidence_writer.append
 
@@ -1775,7 +1775,7 @@ CLI 默认 `output_dir = ./demo_artifacts/<YYYY-MM-DD>/comparison/<safe-baseline
 
 ### 15.5 Import-fence 与 transitive carve-out
 
-CLI / loader 的 import-fence 一致禁止 10 个执行链路前缀(runtime / providers / review_engine / ue_bridge / engine_bridge.unreal.contract / workflows / observability / server / schemas / pricing_probe)。`framework.ue_bridge` 仍保留在清单中,因为它是同一个 Unreal execution contract 的 legacy compatibility alias。**允许**的 transitive:`framework.artifact_store.{repository, payload_backends}` —— 这是 `framework.artifact_store.hashing` 触发包级 `__init__.py` eager-import 的副产品,**不**代表 CLI / loader 可调写路径。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"` 与未来 change `lazy-artifact-store-package-exports`。
+CLI / loader 的 import-fence 一致禁止 10 个执行链路前缀(runtime / providers / review_engine / ue_bridge legacy prefix / engine_bridge.unreal.contract / workflows / observability / server / schemas / pricing_probe)。`framework.ue_bridge` 仍保留在清单中,因为旧目录尚待用户按 FOR-32 人工删除清单处理。**允许**的 transitive:`framework.artifact_store.{repository, payload_backends}` —— 这是 `framework.artifact_store.hashing` 触发包级 `__init__.py` eager-import 的副产品,**不**代表 CLI / loader 可调写路径。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"` 与未来 change `lazy-artifact-store-package-exports`。
 
 ### 15.6 真源
 

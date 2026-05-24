@@ -571,7 +571,7 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 - `test_comfyui_runner_extract_outputs_video_falls_back_to_subfolder_filename_when_fullpath_missing` (verify `gifs[].fullpath` 缺失时走 `out_root / subfolder / filename` fallback)
 
 **P4 真机 stub fence (test_p4_ue_manifest_only.py extension):**
-- `test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video` (sweep-mirror of audio / mesh / image P4 stub fence: substitute `unreal` module with stub, run `run_import.run()` against a manifest containing one `file_media_source` entry, assert `domain_video.import_video_entry` is invoked + Evidence record appended with `status="success"`)
+- `test_p4_engine_scripts_unreal_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video` (sweep-mirror of audio / mesh / image P4 stub fence: substitute `unreal` module with stub, run `run_import.run()` against a manifest containing one `file_media_source` entry, assert `domain_video.import_video_entry` is invoked + Evidence record appended with `status="success"`)
 - `test_p4_domain_video_copies_mp4_to_content_movies_subdir` (D12: assert `domain_video` copy target path is `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4`, NOT `Content/Generated/<run_id>/...`)
 - `test_p4_domain_video_creates_file_media_source_uasset_in_content_generated_subdir` (D12: assert FileMediaSource `.uasset` lands in `<project_root>/Content/Generated/<run_id>/MS_<base>.uasset` per asset_root convention)
 

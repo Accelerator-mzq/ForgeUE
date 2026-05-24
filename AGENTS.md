@@ -13,7 +13,7 @@
 
 - `engine_target` 是新的 Task 级引擎交付入口;旧 `ue_target` 仍 legacy 兼容,由 `EngineTarget.from_ue_target(...)` 转成 `engine="unreal"`。
 - `ExportExecutor` 是 wildcard dispatcher,通过 `EngineAdapterRegistry` 分发到 `UnrealAdapter` 或 `Godot4Adapter`。
-- Unreal adapter 保留 `manifest_only` 文件契约:`manifest.json` / `import_plan.json` / `evidence.json` + `ue_scripts/run_import.py`。
+- Unreal adapter 保留 `manifest_only` 文件契约:`manifest.json` / `import_plan.json` / `evidence.json` + `engine_scripts/unreal/run_import.py`。
 - Godot 4 adapter 第一阶段是 `headless_import`:stage 到 `<project_root>/<asset_root>/<run_id>/`,写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`,再执行 `[godot_exe, "--headless", "--path", project_root, "--import"]`。
 - Godot 4 真导入必须配置 `engine_target.executable_path` 或 `GODOT4_EXE`;解析顺序为 `engine_target.executable_path` → `GODOT4_EXE` → `RuntimeError`。
 - Godot 4 MVP 支持 `image/png` / `image/jpg` / `image/jpeg` / `audio/wav` / `audio/mp3` / `mesh/glb`;`video/mp4` 先写 skipped evidence,不自动映射为 Godot runtime asset。
@@ -159,9 +159,9 @@ python -m pytest <test> --basetemp=./demo_artifacts/<name>
 P4 真实 UE 冒烟(acceptance_report §6.1)必须在装了 UE 5.x 的机器上手跑一次:
 ```
 UE Python Console:
-    exec(open('<repo>/ue_scripts/run_import.py').read())
+    exec(open('<repo>/engine_scripts/unreal/run_import.py').read())
 ```
-`tests/integration/test_p4_ue_manifest_only.py::test_p4_ue_scripts_run_import_with_stub_unreal`
+`tests/integration/test_p4_ue_manifest_only.py::test_p4_engine_scripts_unreal_run_import_with_stub_unreal`
 用 stub 的 `unreal` 模块跑通,覆盖框架侧交付,但不替代真机验证。
 
 ## 常踩的失败模式映射

@@ -47,26 +47,20 @@ def test_unreal_contract_new_public_surface_imports():
     assert _default_import_options("file_media_source", type("A", (), {"metadata": {}, "format": "mp4"})())["source_format"] == "mp4"
 
 
-def test_legacy_ue_bridge_reexports_match_new_contract():
-    from framework.engine_bridge.unreal.contract import build_manifest as new_build_manifest
-    from framework.engine_bridge.unreal.contract.evidence import new_evidence_id as new_id
+def test_unreal_contract_public_imports_use_current_package():
+    from framework.engine_bridge.unreal.contract import build_manifest
+    from framework.engine_bridge.unreal.contract.evidence import new_evidence_id
     from framework.engine_bridge.unreal.contract.import_plan_builder import (
-        _IMPORT_OP_KIND as new_import_op_kind,
+        _IMPORT_OP_KIND,
     )
     from framework.engine_bridge.unreal.contract.manifest_builder import (
-        _KIND_MAP as new_kind_map,
+        _KIND_MAP,
     )
-    from framework.ue_bridge import build_manifest as legacy_build_manifest
-    from framework.ue_bridge.evidence import new_evidence_id as legacy_id
-    from framework.ue_bridge.import_plan_builder import (
-        _IMPORT_OP_KIND as legacy_import_op_kind,
-    )
-    from framework.ue_bridge.manifest_builder import _KIND_MAP as legacy_kind_map
 
-    assert legacy_build_manifest is new_build_manifest
-    assert legacy_id is new_id
-    assert legacy_import_op_kind is new_import_op_kind
-    assert legacy_kind_map is new_kind_map
+    assert callable(build_manifest)
+    assert new_evidence_id().startswith("ev_")
+    assert _IMPORT_OP_KIND["texture"] == "import_texture"
+    assert _KIND_MAP[("image", "raster")] == "texture"
 
 
 def test_unreal_adapter_uses_new_contract_imports():

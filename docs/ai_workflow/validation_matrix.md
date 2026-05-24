@@ -299,7 +299,7 @@ PYTHONPATH=src python -m framework.run \
 FORGEUE_RUN_FOLDER="<artifact_root>/<today>/a1_demo/Content/Generated/a1_demo" \
 "<UE>/Engine/Binaries/Win64/UnrealEditor-Cmd.exe" \
     "<project>.uproject" \
-    -ExecutePythonScript="<repo>/ue_scripts/a1_run.py"
+    -ExecutePythonScript="<repo>/engine_scripts/unreal/a1_run.py"
 ```
 
 ```powershell
@@ -316,7 +316,7 @@ python -m framework.run `
 $env:FORGEUE_RUN_FOLDER="<artifact_root>/<today>/a1_demo/Content/Generated/a1_demo"
 & "<UE>/Engine/Binaries/Win64/UnrealEditor-Cmd.exe" `
     "<project>.uproject" `
-    -ExecutePythonScript="<repo>/ue_scripts/a1_run.py"
+    -ExecutePythonScript="<repo>/engine_scripts/unreal/a1_run.py"
 ```
 
 期望:
@@ -327,7 +327,7 @@ $env:FORGEUE_RUN_FOLDER="<artifact_root>/<today>/a1_demo/Content/Generated/a1_de
 
 ```python
 # UE GUI 里打开 Python Console
-exec(open('<repo>/ue_scripts/run_import.py').read())
+exec(open('<repo>/engine_scripts/unreal/run_import.py').read())
 ```
 
 ### Level 2 通过条件

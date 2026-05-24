@@ -8,7 +8,8 @@ The CLI is a pure orchestration layer over the already-tested loader,
 diff engine, and reporter modules. It MUST NOT:
 
 - import or call `framework.runtime` / `framework.providers` /
-  `framework.review_engine` / `framework.ue_bridge` / `framework.workflows`
+  `framework.review_engine` / `framework.ue_bridge` legacy prefix /
+  `framework.engine_bridge.unreal.contract` / `framework.workflows`
 - DIRECTLY import or call `framework.artifact_store` write-side APIs:
   `ArtifactRepository.put`, `load_run_metadata`, any payload-backend
   write operation, `CheckpointStore` write paths, etc.
