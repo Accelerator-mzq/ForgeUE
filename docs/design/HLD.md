@@ -83,6 +83,7 @@
 │  对象与合约层 (src/framework/core/, src/framework/schemas/)                  │
 │  Task / Run / Workflow / Step / Artifact                            │
 │  EngineTarget / UEOutputTarget(legacy) / UEAssetManifest / Evidence │
+│  GameBuildContract / GameBuildGraph / GameBuildIR / GameBuildHandoff│
 │  ReviewReport / Verdict / Checkpoint / Policies                     │
 ├────────────────────────────────────────────────────────────────────┤
 │  存储层 (src/framework/artifact_store/)                                  │
@@ -114,6 +115,7 @@
 | 能力路由层 | Provider 抽象与选型 | 不感知 Workflow 语义 |
 | 评审引擎 | Rubric 加载 + LLM judge 并发 | 被 ReviewExecutor 调用 |
 | 对象与合约层 | Pydantic schema 定义 | 无运行时逻辑 |
+| Game Build Compiler planning contract | GDD → Contract → Graph → Build IR → Handoff 的结构化边界 | Phase A 不生成 workflow bundle,不写 UE/Godot 工程文件 |
 | 存储层 | Artifact 落盘 + 血缘 | 不决定内容 |
 | Engine Bridge 层 | `StepType.export` 引擎分发 + adapter 边界 | 不包含生成 / review / provider 逻辑 |
 | Unreal 文件契约层 | Manifest / Plan 构建 + 权限 | 只作为 Unreal adapter 下游契约,不直接调 UE API |
@@ -172,6 +174,7 @@
 | --- | --- | --- | --- |
 | Core | `src/framework/core/` | Pydantic schema | 对象模型 + 枚举 + Policy |
 | Schemas | `src/framework/schemas/` | `registry.py` | 业务 schema 注册 |
+| Game Build Compiler schemas | `src/framework/schemas/game_build_compiler.py` | `game_build.*` schema refs | GDD-to-game-build planning artifact 契约 |
 | Workflows | `src/framework/workflows/` | `load_task_bundle` | Bundle JSON 解析 |
 | Providers | `src/framework/providers/` | `ProviderAdapter` / `CapabilityRouter` | 模型接入 + 路由 |
 | Runtime | `src/framework/runtime/` | `Orchestrator.arun` | 生命周期编排 |
@@ -281,6 +284,10 @@ engine_scripts/unreal/: 完全独立,不 import framework.*;仅依赖 import unr
 | Checkpoint | Step 完成后的 hash 快照 | 支持 resume |
 | EngineTarget | 通用引擎交付目标 | `engine="unreal"|"godot4"`,legacy `ue_target` 可转换 |
 | EngineEvidence | 通用引擎操作审计 | Godot 4 adapter 使用 |
+| GameBuildContract | GDD 提炼后的构建契约 | 记录约束、variants、capabilities、target_engines |
+| GameBuildGraph | Contract 展开的语义图 | 节点覆盖 gameplay / asset / ui / audio / validation / engine |
+| GameBuildIR | engine-neutral build plan | Phase A 拒绝具体 UE/Godot 路径 |
+| GameBuildHandoff | 后续 lowering 交接包 | 指向 Contract / Graph / IR |
 | UEAssetManifest | 声明式资产清单 | 交付 UE 侧 |
 | UEImportPlan | 执行式导入计划 | UE 侧消费 |
 | Evidence | UE 侧操作审计 | seeded by framework + appended by UE |
@@ -676,6 +683,7 @@ payload: { status, elapsed_s?, progress?, cost_usd?, ... }
 | v1.0 | 2026-04-22 | 初始基线,从 plan_v1 §A-C+E+L+N 拆分重组 |
 | v1.1 | 2026-04-27 | OpenSpec change `lazy-artifact-store-package-exports`:`framework.artifact_store` 包 init 由 eager re-export 改 PEP 562 lazy `__getattr__` + `__dir__`。**架构层无变化**:子系统边界(§3.1 子系统清单 / §3.2 依赖方向)、对象模型(§4)、Workflow 调度(§5)、subsystem topology 全保留;仅 packaging 机制(包公共 API 表面如何 lazy 暴露 ArtifactRepository / PayloadBackend* / LineageIndex / VariantTracker)被改。`__all__` byte-identical 9 名;30+ 既有 callsite 透明兼容。详见 `CHANGELOG.md [Unreleased].Changed` 与 `docs/acceptance/acceptance_report.md` §6.9 |
 | v1.2 | 2026-05-24 | Engine Bridge + Godot 4 headless import:在 runtime executor 与具体引擎之间加入 `src/framework/engine_bridge/`;`ue_bridge` 降为 Unreal adapter 下游文件契约;新增 Godot 4 headless import 进程拓扑与 adapter 边界。 |
+| v1.3 | 2026-05-24 | Game Build Compiler Phase A:在对象与合约层补 GDD-to-game-build planning contract,新增 `GameBuildContract` / `GameBuildGraph` / `GameBuildIR` / `GameBuildHandoff` 架构职责;明确 Phase A 只定义 engine-neutral schema,不承担 executor、workflow bundle 或引擎工程写入。 |
 
 ### 14.2 参考
 

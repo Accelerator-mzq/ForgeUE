@@ -35,7 +35,7 @@
 - **与具体引擎集成**既要避免把业务逻辑塞进编辑器进程,又要保留可编程导入路径;Unreal 与 Godot 4.x 需要共享 runtime,但交付动作应由引擎 adapter 隔离
 - **可复现性**要求:seed / 模型版本 / 输入哈希三者锁定
 
-ForgeUE 是多引擎内容交付框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 EngineAdapter 实现。Unreal 是默认 adapter;Godot 4.x 通过 headless import adapter 支持。
+ForgeUE 是多引擎内容交付框架。Game Build Compiler Phase A 提供 engine-neutral GDD-to-game-build planning contract;核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 EngineAdapter 实现。Unreal 是默认 adapter;Godot 4.x 通过 headless import adapter 支持。
 
 ### 1.3 读者对象
 
@@ -63,6 +63,11 @@ ForgeUE 是多引擎内容交付框架。核心 runtime 负责多模型生成、
 | EngineTarget | Task 层通用引擎交付目标对象,`engine` 当前支持 `unreal` / `godot4` |
 | EngineAdapter | 具体引擎交付 adapter protocol,由 `EngineAdapterRegistry` 按 `EngineTarget.engine` 分发 |
 | EngineEvidence | 通用引擎导出 evidence 对象,记录 adapter 操作状态 |
+| Game Build Compiler | GDD-to-game-build planning contract 层,Phase A 只定义结构化 schema 与 handoff 边界 |
+| GameBuildContract | 从 GDD 提炼出的跨引擎构建契约,记录约束、变量、capability 与目标引擎 |
+| GameBuildGraph | Contract 展开的玩法 / UI / asset / validation / engine 语义图 |
+| GameBuildIR | Graph 编译后的 engine-neutral build plan;禁止携带具体 Unreal / Godot 工程路径 |
+| GameBuildHandoff | Phase A 交给后续 Workflow smoke / EngineAdapter lowering 的交接包 |
 | UEOutputTarget | legacy UE 目标对象;通过 `EngineTarget.from_ue_target` 兼容为 `engine="unreal"` |
 | UEAssetManifest | 声明式资产清单,交付给 UE 侧消费 |
 | UEImportPlan | 执行式导入计划 |
@@ -97,7 +102,7 @@ ForgeUE 是多引擎内容交付框架。核心 runtime 负责多模型生成、
 
 ForgeUE 是**多引擎内容交付多模型框架**,一句话定位:
 
-> 以 Task/Run/Workflow/Artifact 为一等公民、Review 为合法节点、EngineTarget 为通用交付入口、EngineAdapter 分发具体引擎交付、5 类 Policy 分离、Dry-run + Checkpoint 保障可复现的多模型运行时;基础层(LiteLLM / Instructor)直接用,StateGraph 与 rubric 仅借语义,多模态生成工具(ComfyUI / AudioCraft / TRELLIS / TripoSR)外挂为 worker,Unreal / Godot 等引擎交付边界与运行时工程化部分全自研。
+> 以 GameBuildContract / GameBuildGraph / GameBuildIR / GameBuildHandoff 承接 GDD-to-game-build planning,以 Task/Run/Workflow/Artifact 为一等公民、Review 为合法节点、EngineTarget 为通用交付入口、EngineAdapter 分发具体引擎交付、5 类 Policy 分离、Dry-run + Checkpoint 保障可复现的多模型运行时;基础层(LiteLLM / Instructor)直接用,StateGraph 与 rubric 仅借语义,多模态生成工具(ComfyUI / AudioCraft / TRELLIS / TripoSR)外挂为 worker,Unreal / Godot 等引擎交付边界与运行时工程化部分全自研。
 
 #### 2.1.1 分工边界
 
@@ -105,6 +110,7 @@ ForgeUE 是**多引擎内容交付多模型框架**,一句话定位:
 | --- | --- |
 | 基础设施层(LiteLLM / Instructor / httpx) | **直接用**,不包装 |
 | 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D) | **外挂**,按协议接入 |
+| 上层 planning contract(Game Build Compiler Phase A) | **全自研**,只定义 GDD → Contract → Graph → Build IR → Handoff 的 engine-neutral schema |
 | 引擎交付边界(EngineTarget / EngineAdapter / Unreal Manifest / Godot import plan / Evidence) | **全自研** |
 | 运行时工程化(Orchestrator / Scheduler / Policy / EventBus) | **全自研** |
 
@@ -201,6 +207,7 @@ ForgeUE **不做**:
 | FR-STRUCT-002 | Schema 应注册到 `src/framework/schemas/registry.py`,至少包括:`UECharacter` / `ImageSpec` / `MeshSpec` / `UEApiAnswer` |
 | FR-STRUCT-003 | Schema 验证失败应映射到 `FailureMode.schema_validation_fail`,触发 `Decision.retry_same_step`(默认 ≤ 2 次) |
 | FR-STRUCT-004 | LiteLLM 调用应开启 `drop_params=True`,绕过 Anthropic 不认识的 `seed` 参数 |
+| FR-STRUCT-005 | Game Build Compiler Phase A 应注册 `game_build.contract` / `game_build.clarification_report` / `game_build.graph` / `game_build.build_ir` / `game_build.handoff` 五个 schema refs;`GameBuildIR` 必须保持 engine-neutral,不得携带具体 Unreal / Godot 工程路径 |
 
 ### 3.5 评审引擎(FR-REVIEW)
 
@@ -537,6 +544,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | v1.13 | 2026-05-23 | FOR-26 MiniMax music direct follow-on:新增 `MiniMaxMusicWorker`,直连 MiniMax `music_generation` 原生 API;`framework.run` 在未设置 `FORGEUE_REMOTE_AUDIO_URL` 且存在 `MINIMAX_KEY` 时注入 MiniMax worker;新增 `minimax/music-2.6` virtual model + `audio_minimax` alias + `examples/minimax_music_smoke.json`。请求体按 MiniMax 文档发送 `model/prompt/lyrics/audio_setting/output_format`,默认 endpoint `https://api.minimaxi.com/v1/music_generation`,可由 `FORGEUE_MINIMAX_MUSIC_URL` 覆盖。 | ForgeUE Team |
 | v1.14 | 2026-05-23 | MiniMax image direct follow-on:新增 `MiniMaxImageAdapter`,直连 MiniMax `image_generation` 原生 API;`framework.run` 在 live 路径注册其于 LiteLLM 之前;新增 `minimax/image-01` virtual model + `image_minimax` alias + `examples/minimax_image_smoke.json`。请求体按 MiniMax 文档发送 `model/prompt/aspect_ratio/subject_reference/response_format`,默认 endpoint `https://api.minimaxi.com/v1/image_generation`。 | ForgeUE Team |
 | v1.15 | 2026-05-24 | Engine Bridge + Godot 4 headless import:新增 FR-ENGINE-001~004,把 export 从 runtime 直接 UE 文件契约改为 `EngineTarget` + `EngineAdapter` dispatch;Unreal adapter 保持 `manifest_only`;Godot 4 adapter 支持 png/jpg/jpeg/wav/mp3/glb stage + headless import + fresh evidence 验证;`video/mp4` 第一阶段 skipped。 | ForgeUE Team |
+| v1.16 | 2026-05-24 | Game Build Compiler Phase A 框架级需求补登记:新增 GDD-to-game-build planning contract 术语与 FR-STRUCT-005,明确五个 `game_build.*` schema refs 只提供 engine-neutral Contract / Graph / Build IR / Handoff,不生成 workflow bundle、UE/Godot 工程文件或可玩 demo。 | ForgeUE Team |
 
 ### 7.3 未决事项
 
