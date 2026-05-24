@@ -331,3 +331,13 @@ def test_register_builtin_schemas_adds_game_build_schema_refs():
         "game_build.build_ir",
         "game_build.handoff",
     }.issubset(names)
+
+
+def test_cli_orchestrator_registers_game_build_compiler_schemas(tmp_path):
+    from framework.run import _build_orchestrator
+
+    _build_orchestrator(tmp_path)
+    names = set(get_schema_registry().names())
+    assert "game_build.contract" in names
+    assert "game_build.graph" in names
+    assert "game_build.build_ir" in names
