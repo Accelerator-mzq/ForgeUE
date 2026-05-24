@@ -115,6 +115,7 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | `test_artifact_repository.py` | `artifact_store/repository.py` | FR-STORE-001, FR-STORE-002, FR-LC-009 | L1 | put / get / by_run / by_lineage + blob resume / blob drift skip / repo.put blob source_path / FOR-14 `_artifacts.integrity.json` metadata integrity fail-fast |
 | `test_checkpoint_store.py` | `runtime/checkpoint_store.py` | FR-LC-004, FR-LC-005 | L1,L2 | save/load/hash verify on resume |
 | `test_engine_target.py` | `engine_bridge/core.py` + `core/task.py` | FR-ENGINE-001 | L1,L2 | `EngineTarget(engine="godot4")` 接受、未知 engine 拒绝、legacy `UEOutputTarget` → `EngineTarget(engine="unreal")` 兼容、Unreal options roundtrip、缺 target fail-fast |
+| `test_game_build_compiler_schemas.py` / `test_game_build_compiler_fixtures.py` / `test_game_build_compiler_contract_doc.py` | `schemas/game_build_compiler.py` + `docs/contracts/game-build-compiler/spec.md` | Game Build Compiler Phase A | L1,L2 | GameBuildContract / GameBuildGraph / GameBuildIR / GameBuildHandoff schema refs、graph edge closure、engine-neutral path fence、fixture validation、contract doc fence |
 
 ### 3.2 Runtime
 
