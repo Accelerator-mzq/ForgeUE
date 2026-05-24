@@ -1,6 +1,19 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
+
+
+def _imported_modules(path: Path) -> set[str]:
+    # 只收集真实 import 节点，避免注释或 docstring 里的包名误伤边界测试。
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+    return modules
 
 
 def test_unreal_contract_new_public_surface_imports():
@@ -57,23 +70,32 @@ def test_legacy_ue_bridge_reexports_match_new_contract():
 
 def test_unreal_adapter_uses_new_contract_imports():
     adapter_path = Path("src/framework/engine_bridge/unreal/adapter.py")
-    source = adapter_path.read_text(encoding="utf-8")
+    modules = _imported_modules(adapter_path)
 
-    assert "framework.engine_bridge.unreal.contract" in source
-    assert "framework.ue_bridge" not in source
+    assert any(
+        module.startswith("framework.engine_bridge.unreal.contract")
+        for module in modules
+    )
+    assert not any(module.startswith("framework.ue_bridge") for module in modules)
 
 
 def test_export_executor_uses_new_unreal_contract_importable_shim():
     export_path = Path("src/framework/runtime/executors/export.py")
-    source = export_path.read_text(encoding="utf-8")
+    modules = _imported_modules(export_path)
 
-    assert "framework.engine_bridge.unreal.contract.manifest_builder" in source
-    assert "framework.ue_bridge" not in source
+    assert any(
+        module.startswith("framework.engine_bridge.unreal.contract.manifest_builder")
+        for module in modules
+    )
+    assert not any(module.startswith("framework.ue_bridge") for module in modules)
 
 
 def test_godot4_adapter_does_not_import_unreal_contracts():
     godot_path = Path("src/framework/engine_bridge/godot4/adapter.py")
-    source = godot_path.read_text(encoding="utf-8")
+    modules = _imported_modules(godot_path)
 
-    assert "framework.engine_bridge.unreal.contract" not in source
-    assert "framework.ue_bridge" not in source
+    assert not any(
+        module.startswith("framework.engine_bridge.unreal.contract")
+        or module.startswith("framework.ue_bridge")
+        for module in modules
+    )
