@@ -13,30 +13,23 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 TargetEngine = Literal["unreal", "godot4"]
 CapabilityActivation = Literal["required", "optional", "deferred", "blocked"]
 RealizationClass = Literal["presence_only", "realization_eligible"]
-ClarificationDecision = Literal["accept_default", "needs_human", "defer", "block"]
-RiskLevel = Literal["low", "medium", "high", "blocking"]
-GraphDomain = Literal[
-    "baseline",
-    "gameplay",
-    "ui",
-    "asset",
-    "audio",
-    "video",
-    "text",
-    "system",
-    "validation",
+ClarificationDecision = Literal[
+    "accept_as_explicit",
+    "accept_with_safe_default",
+    "send_to_design_space_discovery",
+    "clarification_required",
 ]
-GraphEdgeType = Literal["dependency", "coupling", "ordering", "validation"]
+RiskLevel = Literal["low", "medium", "high", "critical"]
+GraphDomain = Literal["gameplay", "baseline", "asset", "ui", "audio", "validation", "engine"]
+GraphEdgeType = Literal["dependency", "coupling", "convergence_order"]
 BuildActionType = Literal[
-    "create_rule_system",
-    "create_ui_screen",
-    "create_asset_request",
-    "create_validation_check",
-    "create_input_mapping",
     "create_scene",
-    "create_audio_system",
-    "create_video_sequence",
-    "create_text_content",
+    "create_ui_screen",
+    "create_rule_system",
+    "create_asset_request",
+    "create_audio_request",
+    "create_validation_check",
+    "compose_workflow_bundle",
 ]
 
 
@@ -51,7 +44,7 @@ class GameBuildGameIdentity(BaseModel):
     """游戏身份只保留跨引擎语义,不含实现路径。"""
 
     genre: str = Field(min_length=1)
-    subgenre: str | None = None
+    subgenre: str = Field(min_length=1)
     camera: str = Field(min_length=1)
     session_length_minutes: list[int] = Field(min_length=2, max_length=2)
 
@@ -60,7 +53,7 @@ class GameBuildGameIdentity(BaseModel):
     def _validate_session_range(cls, value: list[int]) -> list[int]:
         # 约定为 [min, max],避免 fixture 后续把范围倒置传给 compiler。
         if len(value) == 2 and value[0] > value[1]:
-            raise ValueError("session_length_minutes must be ordered [min, max]")
+            raise ValueError("session_length_minutes must be [min, max]")
         return value
 
 
@@ -99,7 +92,7 @@ class GameBuildCapability(BaseModel):
 class GameBuildContract(BaseModel):
     """从 GDD 提炼出的跨引擎构建契约。"""
 
-    contract_version: str = Field(min_length=1)
+    contract_version: str = "1.0"
     contract_id: str = Field(min_length=1)
     source_gdd: GameBuildGDDSource
     game_identity: GameBuildGameIdentity
@@ -117,15 +110,15 @@ class GameBuildClarificationItem(BaseModel):
     topic: str = Field(min_length=1)
     decision: ClarificationDecision
     risk_level: RiskLevel
-    reason: str = Field(min_length=1)
+    reason: str | None = None
     default_value: Any | None = None
-    provisional: bool = True
+    provisional: bool = False
 
 
 class GameBuildClarificationReport(BaseModel):
     """GDD 信息不足时的澄清报告。"""
 
-    report_version: str = Field(min_length=1)
+    report_version: str = "1.0"
     report_id: str = Field(min_length=1)
     source_contract_id: str = Field(min_length=1)
     items: list[GameBuildClarificationItem] = Field(default_factory=list)
@@ -149,13 +142,13 @@ class GameBuildGraphEdge(BaseModel):
     from_node: str = Field(min_length=1)
     to_node: str = Field(min_length=1)
     type: GraphEdgeType
-    reason: str | None = None
+    reason: str = Field(min_length=1)
 
 
 class GameBuildGraph(BaseModel):
     """Contract 展开的中间设计图。"""
 
-    graph_version: str = Field(min_length=1)
+    graph_version: str = "1.0"
     graph_id: str = Field(min_length=1)
     source_contract_id: str = Field(min_length=1)
     nodes: list[GameBuildGraphNode] = Field(min_length=1)
@@ -220,7 +213,7 @@ class GameBuildValidationCheck(BaseModel):
 class GameBuildIR(BaseModel):
     """Graph 编译后的 engine-neutral build plan。"""
 
-    ir_version: str = Field(min_length=1)
+    ir_version: str = "1.0"
     ir_id: str = Field(min_length=1)
     source_graph_id: str = Field(min_length=1)
     actions: list[GameBuildAction] = Field(default_factory=list)
@@ -231,7 +224,7 @@ class GameBuildIR(BaseModel):
 class GameBuildHandoff(BaseModel):
     """Phase A 交给后续 engine adapter / workflow 的交接包。"""
 
-    handoff_version: str = Field(min_length=1)
+    handoff_version: str = "1.0"
     handoff_id: str = Field(min_length=1)
     source_contract_id: str = Field(min_length=1)
     source_graph_id: str = Field(min_length=1)

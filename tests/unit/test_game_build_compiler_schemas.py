@@ -5,6 +5,7 @@ from pydantic import ValidationError
 
 from framework.schemas.game_build_compiler import (
     GameBuildIR,
+    GameBuildClarificationReport,
     GameBuildContract,
     GameBuildGraph,
     register_builtin_schemas,
@@ -96,6 +97,116 @@ def test_game_build_graph_rejects_edges_to_missing_nodes():
                         "to_node": "ui-hud",
                         "type": "coupling",
                         "reason": "HUD exposes loop state",
+                    }
+                ],
+            }
+        )
+
+
+def test_game_build_clarification_report_accepts_phase_a_decisions():
+    report = GameBuildClarificationReport.model_validate(
+        {
+            "report_id": "clarify.shop.phase_a",
+            "source_contract_id": "game_build.shop_management.phase_a.20260524",
+            "items": [
+                {
+                    "item_id": "clarify-camera",
+                    "topic": "camera",
+                    "decision": "accept_as_explicit",
+                    "risk_level": "critical",
+                    "default_value": "top_down",
+                }
+            ],
+        }
+    )
+
+    assert report.report_version == "1.0"
+    assert report.items[0].reason is None
+    assert report.items[0].provisional is False
+
+
+def test_game_build_graph_accepts_convergence_order_and_engine_domain():
+    graph = GameBuildGraph.model_validate(
+        {
+            "graph_id": "graph.shop.phase_a",
+            "source_contract_id": "game_build.shop_management.phase_a.20260524",
+            "nodes": [
+                {
+                    "node_id": "gameplay-core-loop",
+                    "domain": "gameplay",
+                    "kind": "rule_system",
+                    "priority": 1,
+                },
+                {
+                    "node_id": "engine-handoff",
+                    "domain": "engine",
+                    "kind": "adapter_boundary",
+                    "priority": 2,
+                },
+            ],
+            "edges": [
+                {
+                    "from_node": "gameplay-core-loop",
+                    "to_node": "engine-handoff",
+                    "type": "convergence_order",
+                    "reason": "engine handoff waits for gameplay graph",
+                }
+            ],
+        }
+    )
+
+    assert graph.graph_version == "1.0"
+    assert graph.nodes[1].domain == "engine"
+    assert graph.edges[0].type == "convergence_order"
+
+
+def test_game_build_ir_rejects_plan_extra_action_type():
+    with pytest.raises(ValidationError):
+        GameBuildIR.model_validate(
+            {
+                "ir_id": "ir.shop.phase_a",
+                "source_graph_id": "graph.shop.phase_a",
+                "actions": [
+                    {
+                        "action_id": "act-input",
+                        "action_type": "create_input_mapping",
+                        "domain": "gameplay",
+                        "inputs": ["gameplay-core-loop"],
+                        "engine_requirements": {},
+                    }
+                ],
+                "asset_requests": [],
+                "validation_checks": [],
+            }
+        )
+
+
+def test_game_build_graph_rejects_plan_extra_edge_type():
+    with pytest.raises(ValidationError):
+        GameBuildGraph.model_validate(
+            {
+                "graph_id": "graph.shop.phase_a",
+                "source_contract_id": "game_build.shop_management.phase_a.20260524",
+                "nodes": [
+                    {
+                        "node_id": "gameplay-core-loop",
+                        "domain": "gameplay",
+                        "kind": "rule_system",
+                        "priority": 1,
+                    },
+                    {
+                        "node_id": "ui-hud",
+                        "domain": "ui",
+                        "kind": "screen",
+                        "priority": 2,
+                    },
+                ],
+                "edges": [
+                    {
+                        "from_node": "gameplay-core-loop",
+                        "to_node": "ui-hud",
+                        "type": "ordering",
+                        "reason": "plan-extra value",
                     }
                 ],
             }
