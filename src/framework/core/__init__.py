@@ -45,6 +45,7 @@ from framework.core.ue import (
     UEImportPlan,
     UEOutputTarget,
 )
+from framework.engine_bridge.core import EngineEvidence, EngineTarget
 from framework.core.runtime import Checkpoint
 
 __all__ = [
@@ -61,6 +62,8 @@ __all__ = [
     # policies
     "BudgetPolicy", "DeterminismPolicy", "EscalationPolicy", "PermissionPolicy",
     "ProviderPolicy", "RetryPolicy", "ReviewPolicy", "TransitionPolicy",
+    # engine bridge
+    "EngineEvidence", "EngineTarget",
     # ue
     "Evidence", "UEAssetEntry", "UEAssetManifest", "UEDependency",
     "UEImportOperation", "UEImportPlan", "UEOutputTarget",

@@ -27,15 +27,15 @@
 
 ### 1.2 项目背景
 
-UE5 生产链当前痛点:
+多引擎内容生产链当前痛点:
 
 - **多模态资产(贴图、网格、音频)生成**需串联 LLM、图像扩散、3D 重建、音频合成等异构 AI 服务,工具链碎片化
 - **多 provider 并存**(OpenAI / Anthropic / 国内 Qwen / Hunyuan / GLM / 自建 ComfyUI / Tripo3D)需统一路由、失败恢复、成本核算
 - **生成后的评审流程**(单 judge / 多 judge panel / 人工介入)缺少标准化对象模型
-- **与 UE 编辑器集成**既要避免把业务逻辑塞进 UE 进程,又要保留可编程导入路径
+- **与具体引擎集成**既要避免把业务逻辑塞进编辑器进程,又要保留可编程导入路径;Unreal 与 Godot 4.x 需要共享 runtime,但交付动作应由引擎 adapter 隔离
 - **可复现性**要求:seed / 模型版本 / 输入哈希三者锁定
 
-ForgeUE 是一套以 Task/Run/Workflow/Artifact 为一等公民、Review 为合法节点、UE Output Target 前置、双模 UE Bridge、5 类 Policy 分离、Dry-run + Checkpoint 保障可复现的**多模型运行时**。
+ForgeUE 是多引擎内容交付框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 EngineAdapter 实现。Unreal 是默认 adapter;Godot 4.x 通过 headless import adapter 支持。
 
 ### 1.3 读者对象
 
@@ -46,7 +46,7 @@ ForgeUE 是一套以 Task/Run/Workflow/Artifact 为一等公民、Review 为合�
 | 开发工程师 | §3 功能需求、§5 外部接口 |
 | 测试工程师 | §3 功能需求、§4 非功能需求(对应测试覆盖) |
 | 运维 / DevOps | §4.4 安全、§4.5 可观测、§5 外部接口、§6 约束 |
-| UE 技术美术 / TA | §3.6 UE Bridge、§5.4 UE Python 接口 |
+| 引擎集成工程师 / TA | §3.7 Engine Bridge、§3.8 Unreal adapter、§5.4 Engine / UE / Godot 接口 |
 
 ### 1.4 术语与缩略语
 
@@ -60,10 +60,13 @@ ForgeUE 是一套以 Task/Run/Workflow/Artifact 为一等公民、Review 为合�
 | Candidate / CandidateSet | 高发散生成的候选族与容器 |
 | Review | 评审步骤,产出 `ReviewReport` + `Verdict` 两对象 |
 | Verdict | 流程控制结论对象,9 种 `decision` 枚举 |
-| UEOutputTarget | Task 层前置的 UE 目标对象 |
+| EngineTarget | Task 层通用引擎交付目标对象,`engine` 当前支持 `unreal` / `godot4` |
+| EngineAdapter | 具体引擎交付 adapter protocol,由 `EngineAdapterRegistry` 按 `EngineTarget.engine` 分发 |
+| EngineEvidence | 通用引擎导出 evidence 对象,记录 adapter 操作状态 |
+| UEOutputTarget | legacy UE 目标对象;通过 `EngineTarget.from_ue_target` 兼容为 `engine="unreal"` |
 | UEAssetManifest | 声明式资产清单,交付给 UE 侧消费 |
 | UEImportPlan | 执行式导入计划 |
-| Evidence | UE Bridge 每次操作的审计证据对象 |
+| Evidence | 引擎交付审计证据对象;Unreal 文件契约沿用 `Evidence`,Godot 4 使用 `EngineEvidence` |
 | Checkpoint | Step 完成后的 `artifact_hash` 快照,支持 resume |
 | DryRunPass | Run 启动前零副作用预检阶段 |
 | PayloadRef | Artifact 载体三态:`inline` / `file` / `blob` |
@@ -92,9 +95,9 @@ ForgeUE 是一套以 Task/Run/Workflow/Artifact 为一等公民、Review 为合�
 
 ### 2.1 产品定位
 
-ForgeUE 是**UE 生产链多模型框架**,一句话定位:
+ForgeUE 是**多引擎内容交付多模型框架**,一句话定位:
 
-> 以 Task/Run/Workflow/Artifact 为一等公民、Review 为合法节点、UEOutputTarget 前置、双模 UE Bridge、5 类 Policy 分离、Dry-run + Checkpoint 保障可复现的多模型运行时;基础层(LiteLLM / Instructor)直接用,StateGraph 与 rubric 仅借语义,多模态生成工具(ComfyUI / AudioCraft / TRELLIS / TripoSR)外挂为 worker,UE 领域与运行时工程化部分全自研。
+> 以 Task/Run/Workflow/Artifact 为一等公民、Review 为合法节点、EngineTarget 为通用交付入口、EngineAdapter 分发具体引擎交付、5 类 Policy 分离、Dry-run + Checkpoint 保障可复现的多模型运行时;基础层(LiteLLM / Instructor)直接用,StateGraph 与 rubric 仅借语义,多模态生成工具(ComfyUI / AudioCraft / TRELLIS / TripoSR)外挂为 worker,Unreal / Godot 等引擎交付边界与运行时工程化部分全自研。
 
 #### 2.1.1 分工边界
 
@@ -102,14 +105,14 @@ ForgeUE 是**UE 生产链多模型框架**,一句话定位:
 | --- | --- |
 | 基础设施层(LiteLLM / Instructor / httpx) | **直接用**,不包装 |
 | 多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D) | **外挂**,按协议接入 |
-| UE 领域对象(Manifest / Plan / Evidence) | **全自研** |
+| 引擎交付边界(EngineTarget / EngineAdapter / Unreal Manifest / Godot import plan / Evidence) | **全自研** |
 | 运行时工程化(Orchestrator / Scheduler / Policy / EventBus) | **全自研** |
 
 ### 2.2 目标用户与角色
 
 | 用户角色 | 典型场景 |
 | --- | --- |
-| UE 技术美术(TA) | 写 TaskBundle JSON,运行生成管线,在 UE Python Console 导入资产 |
+| 引擎技术美术(TA) | 写 TaskBundle JSON,运行生成管线,在 Unreal Python Console 或 Godot headless import 导入资产 |
 | 游戏开发工程师 | 集成到工具链 CI,批量生成占位资产 |
 | AI 研发 | 扩展 provider、新增 capability、调 rubric |
 | 运维 | 配置 API key、监控 Run 状态、审核成本 |
@@ -125,6 +128,7 @@ ForgeUE 是**UE 生产链多模型框架**,一句话定位:
 | 关键三方库 | `litellm`、`instructor`、`pydantic`、`httpx`、`ruamel.yaml`、`playwright`(pricing probe) |
 | UE 版本(交付目标) | UE 5.3+(Python 3.11 引擎内置) |
 | UE 项目类型 | Blueprint 或 C++ 项目均可;需启用 Python Editor Script Plugin |
+| Godot 版本(交付目标) | Godot 4.x;headless import 需配置 `engine_target.executable_path` 或 `GODOT4_EXE` |
 | 网络 | 可外连各 provider API(Hunyuan / DashScope / GLM / Anthropic via PackyCode / MiniMax 等) |
 
 ### 2.4 假设与依赖
@@ -133,15 +137,15 @@ ForgeUE 是**UE 生产链多模型框架**,一句话定位:
 - **A2**:`config/models.yaml` 保持单一真源,使用方不绕过 `ModelRegistry` 直接硬编码 model id
 - **A3**:TaskBundle JSON 使用 UTF-8 编码,通过 `framework.workflows.loader.load_task_bundle` 读取(Windows stdin 默认 gbk,不能直接 `json.load`)
 - **A4**:文件型 Artifact 落盘路径在项目树内(`./artifacts/` 或 `./demo_artifacts/`),不落 `C:` 系统目录
-- **A5**:UE 侧执行在装有 UE 5.x 的本机或同网络机器,通过文件契约(manifest + plan + evidence)交付,**不需要** UE 在线
+- **A5**:引擎侧执行在装有目标引擎的本机或同网络机器;Unreal 通过文件契约(manifest + plan + evidence)交付,Godot 4.x 通过 headless import 命令交付
 
 ### 2.5 边界与非目标
 
 ForgeUE **不做**:
 
-- 提供 UE 插件形态(见 `docs/requirements/NFR` §4.8 架构决策 ADR-001)
+- 提供 Unreal / Godot 插件形态(见 `docs/requirements/NFR` §4.8 架构决策 ADR-001)
 - 渲染 / 动画 / 物理仿真
-- UE 工程本身的构建与打包
+- 引擎工程本身的构建与打包
 - 资产的语义级质量决断(由 LLM judge + 人工 review 承担)
 - 多租户权限系统(`project_id` 仅作逻辑隔离)
 - 实时通信协议(当前 WS 仅用于进度推送,不做双向控制)
@@ -167,7 +171,7 @@ ForgeUE **不做**:
 | 编号 | 需求 |
 | --- | --- |
 | FR-LC-001 | Run 应严格按 9 阶段执行:Task ingestion → Workflow resolution → Dry-run Pass → Scheduling plan → Step execution → Verdict dispatching → Validation gates → Export → Run finalize |
-| FR-LC-002 | Dry-run Pass 应做零副作用预检,包括 manifest 解析、schema 合法性、provider 可达性、input_bindings 解析、UEOutputTarget 可访问、budget 估算、secrets 齐全、resume 时 hash 一致性 |
+| FR-LC-002 | Dry-run Pass 应做零副作用预检,包括 manifest 解析、schema 合法性、provider 可达性、input_bindings 解析、`EngineTarget` / legacy `UEOutputTarget` 可访问、budget 估算、secrets 齐全、resume 时 hash 一致性 |
 | FR-LC-003 | Dry-run Pass 失败应直接置 Run 为 `failed`,不进入执行阶段 |
 | FR-LC-004 | 每个 Step 完成后应计算 `artifact_hash` 并写 Checkpoint |
 | FR-LC-005 | Run resume 时应校验 Checkpoint 的 `artifact_hash` 与现存 Artifact 一致;不一致则 Run 直接失败 |
@@ -221,14 +225,23 @@ ForgeUE **不做**:
 | FR-STORE-003 | `inline` 载体上限 64 KB,`file` 载体上限 500 MB |
 | FR-STORE-004 | 各 modality 应有专属 metadata:image(width/height/color_space/...)、audio(`format` ∈ {`flac`,`mp3`,`wav`} + `duration_seconds` + `sample_rate`,自 v1.7 起,three-key whitelist;source-of-truth=`Artifact.metadata` 顶层,**不**在 `worker_metadata` 嵌套内重复)、mesh(format/poly_count/scale_unit/...)、text.structured(schema_name/version/language)、**video**(`format` ∈ {`mp4`} 自 v1.8 起,one-element whitelist round-2 F2 + round-3 PF3 sweep;webm follow-on `comfy-video-webm-adoption`)+ `duration_seconds` + `frame_count` + `width` + `height` + `fps`(5 顶层 None defaults — ComfyUI agent CLI 不暴露,follow-on `video-metadata-parser` 加 ffprobe 解析填充;source-of-truth=`Artifact.metadata` 顶层,**不**在 `worker_metadata` 嵌套内重复) |
 | FR-STORE-005 | 系统应维护 Lineage 血缘:`source_artifact_ids` / `source_step_ids` / `transformation_kind` / `selected_by_verdict_id` / `variant_group_id` |
-| FR-STORE-006 | Artifact 入 Store 前应通过四层校验:文件层(路径/格式签名/大小)、元数据层(必填齐全)、业务层(Step 约束)、UE 层(命名/路径/格式,在 export step 做) |
+| FR-STORE-006 | Artifact 入 Store 前应通过四层校验:文件层(路径/格式签名/大小)、元数据层(必填齐全)、业务层(Step 约束)、引擎交付层(命名/路径/格式,在 export step / adapter 做) |
 
-### 3.7 UE Bridge(FR-UE)
+### 3.7 Engine Export Bridge(FR-ENGINE)
 
 | 编号 | 需求 |
 | --- | --- |
-| FR-UE-001 | UE Bridge 应支持双模:`manifest_only`(MVP 默认)和 `bridge_execute`(后置,未启用) |
-| FR-UE-002 | `manifest_only` 模式下,框架应产出 `UEAssetManifest` + `UEImportPlan` + `Evidence` 到 `<UE项目>/Content/Generated/<run_id>/`;框架不直接调 UE API |
+| FR-ENGINE-001 | Task 应支持通用 `engine_target: EngineTarget | None`,`EngineTarget.engine` 当前限定为 `unreal` / `godot4`;legacy `ue_target` 必须通过 `EngineTarget.from_ue_target` 兼容解析为 `engine="unreal"` |
+| FR-ENGINE-002 | `ExportExecutor` 应作为 `StepType.export` wildcard dispatcher,通过 `resolve_engine_target(task)` 获取目标并由 `EngineAdapterRegistry.resolve(target.engine)` 分发到具体 adapter |
+| FR-ENGINE-003 | Unreal adapter 应保持既有 `manifest_only` 行为,继续产出 `UEAssetManifest` / `UEImportPlan` / `Evidence`,并保留 `ue_scripts/run_import.py` 文件契约 |
+| FR-ENGINE-004 | Godot 4 adapter MVP 应支持 `headless_import`,对 `image/png`、`image/jpg`、`image/jpeg`、`audio/wav`、`audio/mp3`、`mesh/glb` stage 到 `<project_root>/<asset_root>/<run_id>/`,写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`,执行 `[godot_exe, "--headless", "--path", project_root, "--import"]`,并仅在命令成功且 `.import` / `.godot/imported` fresh 验证通过后写 success evidence |
+
+### 3.8 Unreal Adapter / UE Bridge(FR-UE)
+
+| 编号 | 需求 |
+| --- | --- |
+| FR-UE-001 | Unreal adapter 下游 UE Bridge 应支持双模:`manifest_only`(MVP 默认)和 `bridge_execute`(后置,未启用);新入口为 `engine_target(engine="unreal")`,旧 `ue_target` 为 legacy input |
+| FR-UE-002 | `manifest_only` 模式下,Unreal adapter 应产出 `UEAssetManifest` + `UEImportPlan` + `Evidence` 到 `<UE项目>/Content/Generated/<run_id>/`;框架不直接调 UE API |
 | FR-UE-003 | UE 侧应通过 `ue_scripts/run_import.py` 在 UE Python Console 执行导入,支持贴图(`import_texture`)、静态网格(`import_static_mesh`)、音频(`import_audio`) |
 | FR-UE-004 | Manifest 应通过 `target_object_path` / `target_package_path` 声明 UE 资产位置,遵循 `asset_naming_policy`(gdd_mandated / house_rules / gdd_preferred_then_house_rules) |
 | FR-UE-005 | 导入拓扑应通过 `depends_on` 声明,UE 侧按拓扑序执行 |
@@ -236,7 +249,7 @@ ForgeUE **不做**:
 | FR-UE-007 | Bridge 不得:决定资产应该长什么样、自己生成资产、修改已有关键资产、绕过 Verdict、改 GameMode / 默认地图、跨项目操作 |
 | FR-UE-008 | Phase C 操作(创建材质 / 音频 cue)默认通过 `permission_policy` 拒绝,显式 allow_flag 开启 |
 
-### 3.8 多模态 Worker(FR-WORKER)
+### 3.9 多模态 Worker(FR-WORKER)
 
 | 编号 | 需求 |
 | --- | --- |
@@ -253,7 +266,7 @@ ForgeUE **不做**:
 | FR-WORKER-011 | 系统应支持 audio worker baseline:`AudioWorker` ABC + `AudioCandidate(data, format, duration_seconds, sample_rate, metadata)` + 异常树(`AudioWorkerError` / `AudioWorkerTimeout` / `AudioWorkerUnsupportedResponse`);`GenerateAudioExecutor` via `(StepType.generate, capability_ref="audio.t2a")` 注册到 `ExecutorRegistry`(自 v1.7 起,OpenSpec change `comfy-agent-cli-audio-adoption`;ComfyUI 第一客户走 `comfy/local-audio` model id + `audio_local` alias;FOR-26 第二客户走通用 `RemoteHttpAudioWorker` + `audio_remote` alias,运行时由 `FORGEUE_REMOTE_AUDIO_URL` / `FORGEUE_REMOTE_AUDIO_API_KEY` / `FORGEUE_REMOTE_AUDIO_MODEL` 注入;FOR-26 MiniMax follow-on 走 `MiniMaxMusicWorker` + `audio_minimax` alias,未设置通用 remote URL 且存在 `MINIMAX_KEY` 时注入,可选 `FORGEUE_MINIMAX_MUSIC_URL` / `FORGEUE_MINIMAX_MUSIC_MODEL` 覆盖 endpoint/model)|
 | FR-WORKER-012 | 系统应支持 video worker baseline:`VideoWorker` ABC + `VideoCandidate(data, format, metadata, duration_seconds, frame_count, width, height, fps)` + 异常树(`VideoWorkerError` / `VideoWorkerTimeout` / `VideoWorkerUnsupportedResponse`);`GenerateVideoExecutor` via `(StepType.generate, capability_ref="video.t2v")` 注册到 `ExecutorRegistry`;ComfyUI 第一客户走 `comfy/local-video` model id + `video_local` alias + `Vedio/Wan2.1-T2V-1.3B_native_5sec` 默认 manifest(D5 上游 `Vedio/` 拼写照实跟随);format mp4-only(round-2 F2 + round-3 PF3 sweep;webm follow-on `comfy-video-webm-adoption`)+ BMFF strict 5-tuple header validation(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject==1 + major_brand non-empty);UE bridge `_KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + `Content/Movies/<run_id>/` packaging path 分流(D12);自 v1.8 起,OpenSpec change `comfy-agent-cli-video-adoption`;远端 video worker(Runway / Pika / Sora)协议落地待独立 follow-on `video-worker-remote-adoption` |
 
-### 3.9 运行时工程化(FR-RUNTIME)
+### 3.10 运行时工程化(FR-RUNTIME)
 
 | 编号 | 需求 |
 | --- | --- |
@@ -270,7 +283,7 @@ ForgeUE **不做**:
 | FR-RUNTIME-011 | Cache-hit 路径(`find_hit` 命中)在 `task.budget_policy` 非 None 时,应把 `cp.metrics["cost_usd"]` 重新 `record` 到 BudgetTracker,按 `spend.by_step` 去重(同进程重入不双计,跨进程 fresh tracker 自动回放) |
 | FR-RUNTIME-012 | `*UnsupportedResponse` 异常必须在三层显式 short-circuit:(1)`with_transient_retry_async` 的 `transient_check` 排除;(2)`CapabilityRouter` 4 方法在 `except ProviderError` **之前**单独 `except ProviderUnsupportedResponse: raise`;(3)4 个 executor 的 `_should_retry` 首行返回 False。任何一层漏写都会引发额外计费调用 |
 
-### 3.10 成本追踪与定价(FR-COST)
+### 3.11 成本追踪与定价(FR-COST)
 
 | 编号 | 需求 |
 | --- | --- |
@@ -284,7 +297,7 @@ ForgeUE **不做**:
 | FR-COST-008 | 所有付费 executor(`generate_image_edit` / `generate_image` / `generate_mesh` / `generate_structured` / review)必须在 `metrics["cost_usd"]` 字段写入估算成本;早期 `generate_image_edit` 漏写导致 image edit 调用按 $0 计费 |
 | FR-COST-009 | `parallel_candidates=True` 的并发候选必须落在同一 route(同 `chosen_model` + 同 `_route_pricing`),异质 → executor 显式 raise;否则 `metrics["chosen_model"]` 单值表达失效,producer/cost 记账失真 |
 
-### 3.11 可观测(FR-OBS)
+### 3.12 可观测(FR-OBS)
 
 | 编号 | 需求 |
 | --- | --- |
@@ -435,7 +448,16 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 
 详细 API 契约见 `docs/api_des/*.md`。
 
-### 5.4 UE Python 接口
+### 5.4 Engine / UE / Godot 接口
+
+| 入口 | 用途 |
+| --- | --- |
+| `engine_target` | TaskBundle 新通用入口,声明 `engine` / `project_root` / `asset_root` / `import_mode` / 可选 `executable_path` |
+| legacy `ue_target` | 旧 Unreal bundle 入口,由 `EngineTarget.from_ue_target` 转成 `engine="unreal"` |
+| `EngineAdapterRegistry` | 按 `EngineTarget.engine` 解析 `UnrealAdapter` / `Godot4Adapter` |
+| `GODOT4_EXE` | Godot 4 真导入可执行文件环境变量;优先级低于 `engine_target.executable_path` |
+
+### 5.5 UE Python 接口
 
 | 入口 | 用途 |
 | --- | --- |
@@ -449,7 +471,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 
 约定:UE 侧脚本**仅依赖 `import unreal`**,不 import `framework.*`。
 
-### 5.5 配置接口
+### 5.6 配置接口
 
 | 文件 | 格式 | 用途 |
 | --- | --- | --- |
@@ -474,7 +496,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 
 ### 6.2 业务约束
 
-- **C-006**:UE 侧交付通过文件契约,不做双向 RPC
+- **C-006**:引擎侧交付通过 EngineAdapter 隔离;Unreal 侧交付通过文件契约,Godot 4 侧交付通过 headless import 命令;默认不做双向 RPC
 - **C-007**:`manifest_only` 为 MVP 唯一模式,`bridge_execute` 后置
 - **C-008**:Phase C 操作(创建材质 / 音频 cue)需显式权限
 - **C-009**:Review 必须产出 `ReviewReport` + `Verdict` 两独立对象
@@ -514,6 +536,7 @@ python -m framework.pricing_probe [--only <provider>] [--apply]
 | v1.12 | 2026-05-23 | Linear FOR-26 `remote-audio-worker-integration`:关闭 TBD-002。新增通用 `RemoteHttpAudioWorker`(HTTP POST JSON 契约,支持 `bytes_base64` / `data_base64` / `audio_base64` 或 `url` 响应,格式白名单 `flac/mp3/wav` + magic bytes 二次校验);`framework.run` 在 `FORGEUE_REMOTE_AUDIO_URL` 存在时注入 `GenerateAudioExecutor(worker=...)`;新增 `remote/audio` virtual model + `audio_remote` alias + `examples/remote_audio_smoke.json`。厂商专用 ElevenLabs / AudioCraft adapter 不作为 TBD-002 blocker,可按真实需求另立 follow-on。 | ForgeUE Team |
 | v1.13 | 2026-05-23 | FOR-26 MiniMax music direct follow-on:新增 `MiniMaxMusicWorker`,直连 MiniMax `music_generation` 原生 API;`framework.run` 在未设置 `FORGEUE_REMOTE_AUDIO_URL` 且存在 `MINIMAX_KEY` 时注入 MiniMax worker;新增 `minimax/music-2.6` virtual model + `audio_minimax` alias + `examples/minimax_music_smoke.json`。请求体按 MiniMax 文档发送 `model/prompt/lyrics/audio_setting/output_format`,默认 endpoint `https://api.minimaxi.com/v1/music_generation`,可由 `FORGEUE_MINIMAX_MUSIC_URL` 覆盖。 | ForgeUE Team |
 | v1.14 | 2026-05-23 | MiniMax image direct follow-on:新增 `MiniMaxImageAdapter`,直连 MiniMax `image_generation` 原生 API;`framework.run` 在 live 路径注册其于 LiteLLM 之前;新增 `minimax/image-01` virtual model + `image_minimax` alias + `examples/minimax_image_smoke.json`。请求体按 MiniMax 文档发送 `model/prompt/aspect_ratio/subject_reference/response_format`,默认 endpoint `https://api.minimaxi.com/v1/image_generation`。 | ForgeUE Team |
+| v1.15 | 2026-05-24 | Engine Bridge + Godot 4 headless import:新增 FR-ENGINE-001~004,把 export 从 runtime 直接 UE 文件契约改为 `EngineTarget` + `EngineAdapter` dispatch;Unreal adapter 保持 `manifest_only`;Godot 4 adapter 支持 png/jpg/jpeg/wav/mp3/glb stage + headless import + fresh evidence 验证;`video/mp4` 第一阶段 skipped。 | ForgeUE Team |
 
 ### 7.3 未决事项
 

@@ -7,6 +7,7 @@ import pytest
 from framework.core.enums import RunMode, StepType, TaskType
 from framework.core.policies import BudgetPolicy, PreparedRoute, ProviderPolicy
 from framework.core.task import InputBinding, Step, Task, Workflow
+from framework.engine_bridge.core import EngineTarget
 from framework.runtime.dry_run_pass import DryRunPass
 
 
@@ -198,3 +199,29 @@ async def test_step_lookup_accepts_upstream_reference():
               depends_on=["s1"])
     rep = await DryRunPass().run(task=task, workflow=_wf(entry="s1", ids=("s1", "s2")), steps=[s1, s2])
     assert rep.passed, rep.errors
+
+
+@pytest.mark.asyncio
+async def test_engine_target_project_root_checked_as_warning(tmp_path):
+    task = Task(
+        task_id="t",
+        task_type=TaskType.ue_export,
+        run_mode=RunMode.production,
+        title="engine export",
+        expected_output={},
+        project_id="p",
+        engine_target=EngineTarget(
+            engine="godot4",
+            project_name="ForgeGodotDemo",
+            project_root=str(tmp_path / "missing_godot_project"),
+            asset_root="forgeue/generated",
+            import_mode="headless_import",
+        ),
+    )
+    step = Step(step_id="s1", type=StepType.export, name="e", capability_ref="engine.export")
+
+    rep = await DryRunPass().run(task=task, workflow=_wf(), steps=[step])
+
+    assert rep.passed
+    assert rep.checks["engine.project_root_exists"] is False
+    assert any("project_root does not exist" in w for w in rep.warnings)

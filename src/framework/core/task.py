@@ -60,6 +60,7 @@ class Workflow(BaseModel):
 
 
 # Late import to avoid circular refs in Task
+from framework.engine_bridge.core import EngineTarget  # noqa: E402
 from framework.core.ue import UEOutputTarget  # noqa: E402
 
 
@@ -73,6 +74,7 @@ class Task(BaseModel):
     constraints: dict = Field(default_factory=dict)
     expected_output: dict = Field(default_factory=dict)
     review_policy: ReviewPolicy | None = None
+    engine_target: EngineTarget | None = None
     ue_target: UEOutputTarget | None = None
     determinism_policy: DeterminismPolicy | None = None
     budget_policy: BudgetPolicy | None = None

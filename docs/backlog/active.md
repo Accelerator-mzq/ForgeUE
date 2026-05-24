@@ -1,16 +1,16 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
-> 另有 11 项 legacy requirements 待办(不计入上面待办计数)。
+> 待办计 1 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 另有 9 项 legacy requirements 待办(不计入上面待办计数)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (0)
+## Future Work (1)
 
-(无)
+- `LR-0143` **unreal-bridge-package-rename Unreal 文件契约包路径命名清理** — 将当前 Unreal-only `src/framework/ue_bridge/` 迁移到更符合 Engine Bridge 新边界的命名/路径(候选:`src/framework/engine_bridge/unreal/contract/` 或 `src/framework/unreal_bridge/`),并保留 `framework.ue_bridge` 兼容 re-export 层一个周期;同步更新 imports / tests / docs / archive references,确保 `UnrealAdapter` 行为零变化、Godot4Adapter 仍不依赖 Unreal 契约层。验收:UE manifest_only 自动化 + 真实 commandlet smoke 仍通过,Godot4 L2 smoke 不回归。Linear: `FOR-31`。 (priority: medium)
 
 ## Out of Scope (0)
 
@@ -71,7 +71,7 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - **triggered_by**: (无)
 
 
-## Legacy Requirements (15)
+## Legacy Requirements (9)
 
 ### `ForgeUE follow-on(原 docs/followon_backlog/,2026-05-19 并入)`
 
@@ -86,4 +86,4 @@ import / disk 占用 / 网络传输影响,scope 完全不重叠。
 - `LR-0126` **TBD-001 bridge_execute 模式启用** — `bridge_execute` 模式启用条件
 - `LR-0128` **TBD-003 WS 鉴权 / 多租户 session** — WS 鉴权 / 多租户 session
 - `LR-0130` **TBD-005 DashScope / Tripo3D 下辖 parser 实装** — DashScope / Tripo3D 下辖 parser 实装
-- `LR-0135` **TBD-013 RemoteControl HTTP bridge** — RemoteControl HTTP bridge(future bridge_execute):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor
+- `LR-0135` **TBD-013 RemoteControl HTTP bridge** — Unreal RemoteControl adapter follow-on(future `bridge_execute`):启用 UE 自带 `RemoteControl` + `WebRemoteControl` plugin,Claude 通过 `PUT :30010/remote/object/call` 控制运行中 editor。FOR-30 中 RemoteControl / `bridge_execute` 部分保留为该 follow-on;本轮 Engine Bridge + Godot 4 headless import 不关闭 LR-0135。

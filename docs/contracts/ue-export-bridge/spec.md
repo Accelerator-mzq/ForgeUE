@@ -2,13 +2,14 @@
 
 ## Purpose
 
-UE Export Bridge is the contract between ForgeUE (a pure-Python process) and an Unreal Engine 5.x editor instance. Rather than run business logic inside UE, ForgeUE emits three files — `UEAssetManifest`, `UEImportPlan`, `Evidence` — into `<UE project>/Content/Generated/<run_id>/`, and a thin UE-side Python agent (`ue_scripts/run_import.py`) executes the import plan under a strict permission policy. This separation is fixed by ADR-001: no ForgeUE-authored UE plugin, ever.
+UE Export Bridge is now the Unreal adapter contract under the generic Engine Export Bridge. ForgeUE's runtime dispatches export through `EngineAdapter`; when `engine_target.engine == "unreal"` (or legacy `ue_target` is present), `UnrealAdapter` emits three files — `UEAssetManifest`, `UEImportPlan`, `Evidence` — into `<UE project>/Content/Generated/<run_id>/`, and a thin UE-side Python agent (`ue_scripts/run_import.py`) executes the import plan under a strict permission policy. This separation is fixed by ADR-001: no ForgeUE-authored UE plugin, ever.
 
 ## Source Documents
 
-- `docs/requirements/SRS.md` §3.7 (FR-UE-001~008), §4.7 (NFR-PORT-001~004), §4.8 ADR-001 / ADR-008, §5.4 UE Python interface
-- `docs/design/HLD.md` §3 subsystem (ue_bridge)
+- `docs/requirements/SRS.md` §3.7 (FR-ENGINE-001~004), §3.8 (FR-UE-001~008), §4.7 (NFR-PORT-001~004), §4.8 ADR-001 / ADR-008, §5.4 UE Python interface
+- `docs/design/HLD.md` §3 subsystem (engine_bridge / ue_bridge)
 - `docs/acceptance/acceptance_report.md` §6.1 (A1 real-hardware acceptance on UE 5.7.4, 2026-04-23 commandlet path)
+- Source: `src/framework/engine_bridge/unreal/adapter.py`
 - Source: `src/framework/ue_bridge/manifest_builder.py`, `import_plan_builder.py`, `permission_policy.py`, `evidence.py`
 - Source: `src/framework/ue_bridge/inspect/`, `plan/`, `execute/` (execute reserved, not implemented)
 - Source: `src/framework/core/ue.py` (UEOutputTarget, UEAssetManifest, UEImportPlan, Evidence schemas)
@@ -16,7 +17,7 @@ UE Export Bridge is the contract between ForgeUE (a pure-Python process) and an 
 
 ## Current Behavior
 
-`UEOutputTarget` is declared on the Task level and carries `import_mode` plus `project_root`. Two modes exist: `manifest_only` (the MVP default) and `bridge_execute` (reserved under `ue_bridge/execute/`, not implemented). In `manifest_only` mode the framework writes three files per Run to `<project_root>/Content/Generated/<run_id>/`: a declarative manifest listing each asset with `target_object_path`, `target_package_path`, `asset_naming_policy` (one of `gdd_mandated` / `house_rules` / `gdd_preferred_then_house_rules`), and `depends_on`; an import plan with the topologically ordered operations; and a seeded `Evidence` file.
+`engine_target(engine="unreal")` is the new Task-level entry for Unreal delivery. Legacy `UEOutputTarget` remains accepted as `ue_target` and is converted by `EngineTarget.from_ue_target(...)`, so existing bundles keep working. Two Unreal import modes exist: `manifest_only` (the MVP default) and `bridge_execute` (reserved under `ue_bridge/execute/`, not implemented). In `manifest_only` mode `UnrealAdapter` writes three files per Run to `<project_root>/Content/Generated/<run_id>/`: a declarative manifest listing each asset with `target_object_path`, `target_package_path`, `asset_naming_policy` (one of `gdd_mandated` / `house_rules` / `gdd_preferred_then_house_rules`), and `depends_on`; an import plan with the topologically ordered operations; and a seeded `Evidence` file.
 
 The UE-side agent is intentionally minimal: `ue_scripts/` is a standalone Python package whose only third-party dependency is `import unreal`. `run_import.py` (or `a1_run.py` for commandlet execution) reads the three files via `manifest_reader.discover_bundle()`, topologically sorts operations via `manifest_reader.topological_ops()`, and dispatches each operation to `domain_texture.import_texture_entry`, `domain_mesh.import_static_mesh_entry`, or `domain_audio.import_audio_entry`. Every operation produces an Evidence record that is atomically appended to `evidence.json` via `evidence_writer.append()`.
 
@@ -24,13 +25,13 @@ The UE-side agent is intentionally minimal: `ue_scripts/` is a standalone Python
 ## Requirements
 ## Requirement: Dual-mode bridge, manifest_only shipped
 
-The system SHALL support two `UEOutputTarget.import_mode` values — `manifest_only` (MVP default) and `bridge_execute` (reserved). `bridge_execute` is not implemented in this spec's scope.
+The system SHALL support two Unreal import-mode values — `manifest_only` (MVP default) and `bridge_execute` (reserved). New bundles SHOULD use `engine_target(engine="unreal")`; legacy bundles MAY use `ue_target`.
 
 ## Scenario: ImportMode enum exposes manifest_only and bridge_execute, but bridge_execute is reserved with no executor wiring
 
-- GIVEN `framework.core.enums.ImportMode(str, Enum)` declaring `manifest_only = "manifest_only"` and `bridge_execute = "bridge_execute"` (`src/framework/core/enums.py:91-93`); `UEOutputTarget.import_mode: ImportMode = ImportMode.manifest_only` (`src/framework/core/ue.py:24`); the `src/framework/ue_bridge/execute/` directory is empty — no executor module, not even an `__init__.py` (verified 2026-04-26 via `ls -la` and PowerShell `Get-ChildItem -Force` returning empty; `Test-Path "<dir>\__init__.py"` returns False); ADR-008 plus the main spec's Invariants section state that `bridge_execute` remains reserved
-- WHEN a Run with `ue_target.import_mode = "manifest_only"` reaches the export Step versus a hypothetical Run with `import_mode = "bridge_execute"`
-- THEN the `manifest_only` path runs end-to-end through `ExportExecutor` (writing the three deliverable files) and the framework completes the export Step normally; the `bridge_execute` path has no executor wiring (the `execute/` directory is empty), so it cannot be exercised today — moving `bridge_execute` to "implemented" requires a separate future change with an updated HLD/LLD per the main spec's Invariants
+- GIVEN `framework.core.enums.ImportMode(str, Enum)` declaring `manifest_only = "manifest_only"` and `bridge_execute = "bridge_execute"`; `UEOutputTarget.import_mode: ImportMode = ImportMode.manifest_only`; `EngineTarget.from_ue_target(...)` preserves the legacy import mode as a string; the `src/framework/ue_bridge/execute/` directory remains reserved
+- WHEN a Run with `engine_target(engine="unreal", import_mode="manifest_only")` or legacy `ue_target.import_mode = "manifest_only"` reaches the export Step versus a hypothetical Run with `import_mode = "bridge_execute"`
+- THEN the `manifest_only` path runs end-to-end through `ExportExecutor` → `UnrealAdapter` (writing the three deliverable files) and the framework completes the export Step normally; the `bridge_execute` path has no executor wiring, so it cannot be exercised today — moving `bridge_execute` to "implemented" requires a separate future change with updated Engine Bridge and Unreal contract docs
 
 ## Requirement: Three-file deliverable
 
@@ -38,8 +39,8 @@ The system SHALL write `UEAssetManifest`, `UEImportPlan`, and `Evidence` to `<pr
 
 ## Scenario: ExportExecutor writes manifest.json + import_plan.json + evidence.json under <project_root>/Content/Generated/<run_id>/ for every successful export
 
-- GIVEN a Run with a populated `Task.ue_target` (`UEOutputTarget` carrying `project_root` + `asset_root`) and an upstream artifact set whose modalities map to `texture` / `static_mesh` / `audio` kinds; `ExportExecutor` reaches the export Step with `import_mode = manifest_only`
-- WHEN the executor invokes `manifest_builder.build_manifest(...)`, `import_plan_builder.build_import_plan(...)`, and `EvidenceWriter.append(...)` for the seeded file-drop / permission-skip events
+- GIVEN a Run with a populated `Task.engine_target(engine="unreal")` or legacy `Task.ue_target` carrying `project_root` + `asset_root`, and an upstream artifact set whose modalities map to `texture` / `static_mesh` / `audio` kinds; `ExportExecutor` reaches the export Step with `import_mode = manifest_only`
+- WHEN `ExportExecutor` dispatches to `UnrealAdapter`, and the adapter invokes `manifest_builder.build_manifest(...)`, `import_plan_builder.build_import_plan(...)`, and `EvidenceWriter.append(...)` for the seeded file-drop / permission-skip events
 - THEN three files materialise under `<project_root>/Content/Generated/<run_id>/`: `manifest.json` (the `UEAssetManifest`), `import_plan.json` (the `UEImportPlan` with topologically-orderable operations), and `evidence.json` (seeded with framework-side drop / skip records); `tests/integration/test_p4_ue_manifest_only.py::test_p4_full_pipeline_writes_manifest_plan_and_evidence` (line 170) is the canonical fence covering all three file paths and structural validity, and `::test_p4_verdict_reject_skips_file_drop` (line 328) confirms a rejected Verdict gates this delivery so no files leak when the run terminates upstream of export
 
 ## Requirement: UE-side agent supports three domains
@@ -58,7 +59,7 @@ The system SHALL declare `asset_naming_policy` per asset as one of `gdd_mandated
 
 ## Scenario: UEOutputTarget.asset_naming_policy is one of the three Literal values and is applied per asset by manifest_builder._derive_ue_name
 
-- GIVEN `UEOutputTarget.asset_naming_policy: Literal["gdd_mandated", "house_rules", "gdd_preferred_then_house_rules"] = "gdd_preferred_then_house_rules"` (`src/framework/core/ue.py:20-22`); production bundles such as `examples/image_to_3d_pipeline_live.json` declare `ue_target.asset_naming_policy: "house_rules"` to set the per-target effective policy
+- GIVEN `UEOutputTarget.asset_naming_policy: Literal["gdd_mandated", "house_rules", "gdd_preferred_then_house_rules"] = "gdd_preferred_then_house_rules"` (`src/framework/core/ue.py:20-22`); legacy production bundles such as `examples/image_to_3d_pipeline_live.json` may declare `ue_target.asset_naming_policy: "house_rules"` to set the per-target effective policy
 - WHEN a Pydantic-validated `UEOutputTarget` reaches `manifest_builder.build_manifest(...)`
 - THEN any string outside the three Literal values fails Pydantic validation at `UEOutputTarget` construction time (so an invalid policy never reaches the manifest builder); for a validated target, `manifest_builder._derive_ue_name(art, kind=kind, policy=target.asset_naming_policy)` (`src/framework/ue_bridge/manifest_builder.py:101 / 113 / 150 / 164`) is invoked once per asset to compute the asset's UE name under that single declared policy, so every asset entry in the manifest carries a derived name consistent with the target's policy choice
 
@@ -145,7 +146,7 @@ def _is_importable(art: Artifact) -> bool:
 
 ## Scenario: ExportExecutor passes video Artifact through _is_importable to manifest_builder
 
-**Given** a `Run` with `upstream_artifact_ids` referencing one video Artifact `Artifact(artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"), payload_ref=PayloadRef(kind=file, file_path="<artifact_root>/<run_id>/<artifact_id>.mp4"), metadata={"format": "mp4", ...})` produced by `GenerateVideoExecutor`; `Task.ue_target` populated with `UEOutputTarget`; `ExportExecutor` reaches export Step with `import_mode = manifest_only`
+**Given** a `Run` with `upstream_artifact_ids` referencing one video Artifact `Artifact(artifact_type=ArtifactType(modality="video", shape="mp4", display_name="video_asset"), payload_ref=PayloadRef(kind=file, file_path="<artifact_root>/<run_id>/<artifact_id>.mp4"), metadata={"format": "mp4", ...})` produced by `GenerateVideoExecutor`; `Task.engine_target(engine="unreal")` or legacy `Task.ue_target` populated with Unreal target data; `ExportExecutor` reaches export Step with `import_mode = manifest_only`
 **When** `ExportExecutor.execute` runs and processes upstream artifacts via `importable = [a for a in upstream_artifacts if self._is_importable(a)]`
 **Then** the video Artifact passes the filter (modality `"video"` is in the post-change whitelist + payload_kind is file); `manifest_builder.build_manifest(...)` receives the video Artifact in its iterable; the resulting `UEAssetManifest.assets` contains exactly one `UEAssetEntry` with `asset_kind == "file_media_source"`; `tests/integration/test_p4_ue_manifest_only.py::test_p4_export_executor_passes_video_artifact_through_is_importable_to_manifest_builder` fences this end-to-end (NOT just `_is_importable` direct unit fence — the integration fence covers the gate-to-manifest_builder full path)
 
@@ -309,7 +310,7 @@ The system SHALL split video mp4 drop path from other modalities according to D1
   - For `art.artifact_type.modality == "video"` and `_KIND_MAP[(modality, shape)] == "file_media_source"` (currently mp4-only via `comfy-agent-cli-video-adoption` Phase 3 D7 mp4 sweep): returns `(<target.project_root>/Content/Movies/<run_id>, MS_<base>.mp4)` where `MS_<base>` is computed via `_derive_ue_name(art, kind="file_media_source", policy=target.asset_naming_policy)`.
   - For all other importable modalities (`image` / `mesh` / `audio` / `material`): returns `(<target.project_root>/Content/Generated/<run_id>, raw_basename)` where `raw_basename = Path(art.payload_ref.file_path).name` — preserving today's exact filename behaviour (sup design D1 NG1: 本 change 不改非 video 文件名).
   - Precondition: caller MUST pre-filter with `is_manifest_importable(art)`. If `_KIND_MAP.get((modality, shape))` returns None (defensive — caller missed the precondition), the helper falls through to the non-video branch and returns `(Generated/<run_id>, raw_basename)` — does NOT raise (round 1 codex F1: avoid surprising export crash for unsupported shape paths).
-- `ExportExecutor.execute` drop loop SHALL invoke `derive_drop_target(art, target=ctx.task.ue_target, run_id=ctx.run.run_id)` per importable artifact, ensure the returned `drop_dir` exists via `mkdir(parents=True, exist_ok=True)`, then `shutil.copy2` the source file to `drop_dir / target_filename`. The Evidence `target_object_path` field SHALL be `target_fs.relative_to(Path(target.project_root)).as_posix()` (POSIX-style relative path to project_root;round 3 codex F1 修订:统一 `.as_posix()` 跨平台与 manifest source_uri 一致,消除 Windows backslash 与 manifest forward slash 不对齐 audit 隐患).
+- `UnrealAdapter.export` drop loop SHALL invoke `derive_drop_target(art, target=ue_target, run_id=ctx.run.run_id)` per importable artifact, ensure the returned `drop_dir` exists via `mkdir(parents=True, exist_ok=True)`, then `shutil.copy2` the source file to `drop_dir / target_filename`. The Evidence `target_object_path` field SHALL be `target_fs.relative_to(Path(target.project_root)).as_posix()` (POSIX-style relative path to project_root;round 3 codex F1 修订:统一 `.as_posix()` 跨平台与 manifest source_uri 一致,消除 Windows backslash 与 manifest forward slash 不对齐 audit 隐患).
 - `manifest_builder.build_manifest` SHALL also invoke `derive_drop_target(art, target=target, run_id=run_id)` to compute `UEAssetEntry.source_uri` so it matches the framework drop physical location:
   - For video: `source_uri = "Content/Movies/<run_id>/MS_<base>.mp4"`
   - For other modalities: `source_uri = "Content/Generated/<run_id>/<raw_basename>"` (preserves current raw artifact basename — round 1 codex F2: 不改非 video filename, avoid silent collision when two artifacts share `display_name`)
@@ -318,7 +319,7 @@ This is the **single source of truth** for "where does the framework drop physic
 
 ## Scenario: ExportExecutor drops video mp4 to Content/Movies/<run_id>/MS_<base>.mp4 and image to Content/Generated/<run_id>/<raw_basename>
 
-**Given** a `Run` with two upstream importable artifacts:(1) a video Artifact with `modality="video"`, `shape="mp4"`, `payload_ref.file_path = "<artifact_root>/<run_id>/abc123.mp4"`, `metadata={"display_name": "OpeningScene", ...}`;(2) an image Artifact with `modality="image"`, `shape="png"`, `payload_ref.file_path = "<artifact_root>/<run_id>/def456.png"`, `metadata={"display_name": "Tavern", ...}`;`Task.ue_target` populated with `UEOutputTarget`;`ExportExecutor` reaches export Step with `import_mode=manifest_only` and `Verdict.decision=approve`
+**Given** a `Run` with two upstream importable artifacts:(1) a video Artifact with `modality="video"`, `shape="mp4"`, `payload_ref.file_path = "<artifact_root>/<run_id>/abc123.mp4"`, `metadata={"display_name": "OpeningScene", ...}`;(2) an image Artifact with `modality="image"`, `shape="png"`, `payload_ref.file_path = "<artifact_root>/<run_id>/def456.png"`, `metadata={"display_name": "Tavern", ...}`;`Task.engine_target(engine="unreal")` or legacy `Task.ue_target` populated with Unreal target data;`ExportExecutor` reaches export Step with `import_mode=manifest_only` and `Verdict.decision=approve`
 **When** `ExportExecutor.execute(ctx)` runs end-to-end through the drop loop
 **Then** the on-disk layout under `<project_root>/Content/` is:
   - `Content/Movies/<run_id>/MS_OpeningScene.mp4` (video mp4 dropped here per D12, ue_name `MS_OpeningScene`)
@@ -404,6 +405,8 @@ This SHALL preserve the original intent (honour framework-side `PermissionPolicy
 
 - `ue_scripts/` MUST NOT `import framework.*`; its only third-party dependency is `import unreal` (NFR-PORT-003).
 - ADR-001 forbids ForgeUE from authoring its own UE plugin; ADR-008 clarifies that enabling Epic-maintained plugins (e.g. `PythonScriptPlugin`) does not violate ADR-001.
+- This contract is downstream of `engine-export-bridge`; runtime export enters here only through `UnrealAdapter(engine="unreal")`.
+- `engine_target(engine="unreal")` is the preferred Task input; `ue_target` is legacy compatibility input.
 - `bridge_execute` remains reserved; moving it to "implemented" requires a new change and an updated HLD/LLD.
 - File-contract delivery is one-way: ForgeUE writes, UE appends Evidence, ForgeUE reads Evidence after the fact. No RPC.
 

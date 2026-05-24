@@ -1,12 +1,20 @@
 # ForgeUE — Claude 项目上下文
 
-项目:UE 生产链多模型框架。基础设施层(LiteLLM / Instructor / httpx)直接用,
-多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,UE 领域与运行时工程化全自研。
+项目:多引擎内容交付多模型框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现;Unreal 是默认 adapter,Godot 4.x 通过 headless import adapter 支持。基础设施层(LiteLLM / Instructor / httpx)直接用,多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,引擎交付边界与运行时工程化全自研。
 
 **ComfyUI 项目级配置主入口**:`config/models.yaml` 里的 `providers.comfy_api.subprocess`。
 `FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` /
 `FORGEUE_COMFY_LIFECYCLE` / `FORGEUE_COMFY_INPUT_DIR` /
 `FORGEUE_COMFY_OUTPUT_ROOT` 仍保留为本机覆盖层。
+
+## Engine Bridge / Godot 4 快查
+
+- `engine_target` 是新的 Task 级引擎交付入口;旧 `ue_target` 仍 legacy 兼容,由 `EngineTarget.from_ue_target(...)` 转成 `engine="unreal"`。
+- `ExportExecutor` 是 wildcard dispatcher,通过 `EngineAdapterRegistry` 分发到 `UnrealAdapter` 或 `Godot4Adapter`。
+- Unreal adapter 保留 `manifest_only` 文件契约:`manifest.json` / `import_plan.json` / `evidence.json` + `ue_scripts/run_import.py`。
+- Godot 4 adapter 第一阶段是 `headless_import`:stage 到 `<project_root>/<asset_root>/<run_id>/`,写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`,再执行 `[godot_exe, "--headless", "--path", project_root, "--import"]`。
+- Godot 4 真导入必须配置 `engine_target.executable_path` 或 `GODOT4_EXE`;解析顺序为 `engine_target.executable_path` → `GODOT4_EXE` → `RuntimeError`。
+- Godot 4 MVP 支持 `image/png` / `image/jpg` / `image/jpeg` / `audio/wav` / `audio/mp3` / `mesh/glb`;`video/mp4` 先写 skipped evidence,不自动映射为 Godot runtime asset。
 
 ## ComfyUI 接入(自 SRS v1.6 + v1.7 + v1.8,forge change `comfy-agent-cli-adoption` + Phase 1 mesh `comfy-agent-cli-mesh-audio-video-adoption` + Phase 2 audio `comfy-agent-cli-audio-adoption` + Phase 3 video `comfy-agent-cli-video-adoption` — TBD-009 全 phase closed)
 
@@ -66,18 +74,18 @@ ComfyUI 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**
 - `docs/requirements/SRS.md` — 需求规格说明书(FR/NFR 基线)
 - `docs/design/HLD.md` — 概要设计(分层 / 子系统 / 协作)
 - `docs/design/LLD.md` — 详细设计(字段 / 方法 / 算法 / 异常)
-- `docs/testing/test_spec.md` — 系统测试用例规格(549 用例索引 + fence 清单)
+- `docs/testing/test_spec.md` — 系统测试用例规格(测试索引 + fence 清单;用例数以实测为准)
 - `docs/acceptance/acceptance_report.md` — 验收报告(FR/NFR 状态矩阵)
 
 - 入口导航见 `docs/INDEX.md`
 - 原 plan_v1(§A-§N 完整史料)迁至 `docs/archive/claude_unified_architecture_plan_v1.md`,不再更新
 - 对象模型 / Workflow / Bridge / Policy / Failure mode 讨论以 HLD/LLD 为准,不重开辩论
-- 当前 P0–P4 + L1–L4 + F1–F5 + Plan C 全绿(549 用例;基线 491 + Codex audit fence 29 + src-layout / router-obs 根因定位 fence 6 + TBD-006 视觉 review 图像压缩 fence 10 + TBD-007 mesh 重试塌缩 fence 5 + TBD-008 visual review contract fence 2 + A1 + a2_mesh live bundle parametrize 6 自动收);P4 UE 真机 2026-04-23 通过(UE 5.7.4 commandlet),验收状态见 acceptance_report §3-§5
+- 当前 P0–P4 + L1–L4 + F1–F5 + Plan C 已有自动化与真机验收基线;全量用例数以 `python -m pytest -q` 实测为准。P4 Unreal 真机 2026-04-23 通过(UE 5.7.4 commandlet);Godot 4 L0/L1 adapter 与 example smoke 已有自动化覆盖,L2 真 Godot 4 smoke 待本机配置 `GODOT4_EXE` 后执行。验收状态见 acceptance_report §3-§5。
 
 ## 开发命令
 
 ```bash
-# 全量测试(549 绿)
+# 全量测试(用例数以实测为准)
 python -m pytest -q
 
 # 单阶段验收

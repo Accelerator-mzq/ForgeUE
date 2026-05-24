@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Artifact-contract defines how ForgeUE produces, stores, and tracks intermediate and final products of every Run. An Artifact is a first-class citizen with a two-segment type, a three-state payload reference, modality-specific metadata, lineage pointers, and cross-process persistence. Everything downstream (review, select, export, UE bridge) reads Artifacts, not raw bytes.
+Artifact-contract defines how ForgeUE produces, stores, and tracks intermediate and final products of every Run. An Artifact is a first-class citizen with a two-segment type, a three-state payload reference, modality-specific metadata, lineage pointers, and cross-process persistence. Everything downstream (review, select, export, EngineAdapter implementations, and Unreal `ue_bridge`) reads Artifacts, not raw bytes.
 
 ## Source Documents
 
@@ -115,8 +115,8 @@ The system SHALL layer validation responsibility across pipeline stages, and SHA
 
 - **Pre-flight (zero-side-effect)**: `framework.runtime.dry_run_pass.DryRunPass` (`src/framework/runtime/dry_run_pass.py`) — workflow structure, input-binding resolvability, output_schema shape, UEOutputTarget.project_root accessibility, budget cap declaration.
 - **Executor-side per-modality**: each generator executor populates a modality-specific metadata dict and MAY attach a `ValidationRecord` to the Artifact (e.g. `generate_mesh.py:152-156` runs a `mesh.bytes_nonempty` check and marks `validation.status = "passed"`).
-- **Manifest build (export step)**: `framework.ue_bridge.manifest_builder.build_manifest` filters inline-payload Artifacts and `raise ManifestBuildError` (`manifest_builder.py:128`) when an Artifact cannot become a UE asset; the export executor (`framework.runtime.executors.export.ExportExecutor`) then calls `validate_manifest(...)` (`executors/export.py:161`) for cross-asset checks.
-- **UE bridge inspection**: `framework.ue_bridge.inspect` — `inspect_project / inspect_content_path / inspect_asset_exists / validate_manifest` (`src/framework/ue_bridge/inspect/project.py`) run pre-import checks at the UE bridge boundary.
+- **Engine export (export step)**: `framework.runtime.executors.export.ExportExecutor` resolves `engine_target` / legacy `ue_target` and dispatches through `EngineAdapterRegistry`; each adapter owns its downstream validation. `UnrealAdapter` reuses `framework.ue_bridge.manifest_builder.build_manifest` and `validate_manifest(...)`; `Godot4Adapter` validates supported file-backed shapes plus fresh `.import` / `.godot/imported` outputs.
+- **Unreal bridge inspection**: `framework.ue_bridge.inspect` — `inspect_project / inspect_content_path / inspect_asset_exists / validate_manifest` (`src/framework/ue_bridge/inspect/project.py`) run pre-import checks at the Unreal adapter boundary.
 
 The Requirement title `Four-layer validation on store entry` is preserved as a historical name from earlier design drafts; the authoritative description is the layered pipeline above.
 
@@ -126,11 +126,11 @@ The Requirement title `Four-layer validation on store entry` is preserved as a h
 **When** `put(...)` runs (`src/framework/artifact_store/repository.py:55-97`)
 **Then** it executes exactly three responsibilities in order: (1) `self._registry.write(payload_kind, value, run_id, artifact_id, suffix)` writes the payload via the matching backend (inline / file); (2) `Artifact(... hash=hash_payload(value), ...)` constructs the Pydantic Artifact model with the canonical content hash; (3) `self._artifacts[artifact_id] = art` plus `self._lineage.register(art)` and `self._variants.register(art)` register the Artifact in the in-process indices; **no format-signature / magic-bytes / metadata-required-fields / business-rule / UE-naming gate runs inside `put`** — those validations live at upstream (executor) and downstream (export / `ue_bridge.inspect`) stages per the layered pipeline described in this Requirement
 
-## Scenario: Validation is layered across pipeline stages — dry-run preflight, executor-side per-modality, export manifest build, ue_bridge inspection
+## Scenario: Validation is layered across pipeline stages — dry-run preflight, executor-side per-modality, EngineAdapter export, Unreal/Godot adapter checks
 
 **Given** a Run that progresses through the standard 9-stage pipeline producing Artifacts that eventually flow into a UE export step
 **When** each pipeline stage runs
-**Then** `framework.runtime.dry_run_pass.DryRunPass.run(...)` reports workflow structure / output_schema / input_bindings / UE project_root / budget cap **before any executor runs** (`src/framework/runtime/dry_run_pass.py:49-106`); each generator executor populates per-modality metadata and may set `Artifact.validation` with passed/failed checks (`generate_mesh.py:152-156` — `ValidationCheck(name="mesh.bytes_nonempty")`); on export, `ExportExecutor.execute(...)` calls `manifest_builder.build_manifest(...)` which `raise ManifestBuildError` on inline-payload mismatches (`manifest_builder.py:128`) and `validate_manifest(...)` for cross-asset rules (`executors/export.py:161`); `framework.ue_bridge.inspect.{inspect_project, inspect_content_path, inspect_asset_exists, validate_manifest}` (`src/framework/ue_bridge/inspect/project.py`) run pre-import checks at the UE bridge boundary; the layered design lets each stage surface failures at the level closest to the failing concern, rather than concentrating all checks at `ArtifactRepository.put`
+**Then** `framework.runtime.dry_run_pass.DryRunPass.run(...)` reports workflow structure / output_schema / input_bindings / engine project_root / budget cap **before any executor runs**; each generator executor populates per-modality metadata and may set `Artifact.validation` with passed/failed checks; on export, `ExportExecutor.execute(...)` dispatches through `EngineAdapterRegistry`; `UnrealAdapter` calls `manifest_builder.build_manifest(...)` and `validate_manifest(...)` for Unreal cross-asset rules; `Godot4Adapter` stages supported file-backed Artifacts and only writes success evidence after Godot's fresh import outputs are present; the layered design lets each stage surface failures at the level closest to the failing concern, rather than concentrating all checks at `ArtifactRepository.put`
 
 ## Requirement: Cross-process artifact metadata persistence
 

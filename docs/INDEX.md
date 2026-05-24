@@ -9,7 +9,7 @@
 | 需求 | [`requirements/SRS.md`](requirements/SRS.md) | FORGEUE-SRS-001 | 功能 + 非功能 + 接口 + 约束基线(IEEE 830) |
 | 概要设计 | [`design/HLD.md`](design/HLD.md) | FORGEUE-HLD-001 | 分层 / 子系统 / 对象模型概览 / 协作 |
 | 详细设计 | [`design/LLD.md`](design/LLD.md) | FORGEUE-LLD-001 | 字段 / 方法 / 算法 / 异常体系 |
-| 测试 | [`testing/test_spec.md`](testing/test_spec.md) | FORGEUE-TEST-001 | 549 用例索引 + fence 清单 + 覆盖矩阵 |
+| 测试 | [`testing/test_spec.md`](testing/test_spec.md) | FORGEUE-TEST-001 | 测试索引 + fence 清单 + 覆盖矩阵(用例数以实测为准) |
 | 验收 | [`acceptance/acceptance_report.md`](acceptance/acceptance_report.md) | FORGEUE-ACC-001 | FR/NFR 验收状态 + 待执行项清单 |
 
 ## 层级关系
@@ -45,6 +45,8 @@ acceptance_report   对应 SRS + test_spec 状态
 | 位置 | 用途 |
 | --- | --- |
 | [`ai_workflow/validation_matrix.md`](ai_workflow/validation_matrix.md) | Level 0/1/2 验证命令矩阵 |
+| [`contracts/engine-export-bridge/spec.md`](contracts/engine-export-bridge/spec.md) | Engine Bridge / Godot 4 / Unreal adapter 分发契约 |
+| [`contracts/ue-export-bridge/spec.md`](contracts/ue-export-bridge/spec.md) | Unreal adapter 下游 UE 文件契约 |
 | [`backlog/`](backlog/) | Backlog —— 项目当前待办集合 |
 | [`api_des/`](api_des/) | 五家 provider 的 API 契约参考(GLM / Qwen / Qwen-Image(-Edit) / HunYuan) |
 | [`archive/`](archive/) | 历史文档归档(plan_v1 + 评审报告 + 早期方案),仅作史料 |

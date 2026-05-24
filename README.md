@@ -1,12 +1,13 @@
 # forgeue
 
-> UE 生产链多模型运行时框架 · vNext
+> 多引擎内容交付多模型运行时框架 · vNext
 
-以 `Task / Run / Workflow / Artifact` 为一等公民，把"**多模型生成 + 评审闸门 + UE 落地**"串成一条可复现、可审计、可重放的生产链。
+ForgeUE 是多引擎内容交付框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现。Unreal 是默认 adapter；Godot 4.x 通过 headless import adapter 支持。
 
 - **三种运行模式**：`basic_llm`（结构化问答）· `production`（多模态生成 + 内嵌评审）· `standalone_review`（独立评审链）
-- **UE Bridge（manifest-only）**：产出 `UEAssetManifest + UEImportPlan + Evidence`，UE 侧 Python 脚本一键执行导入
-- **基础层直接用开源**：[LiteLLM](https://github.com/BerriAI/litellm) 统一 provider 调用 + [Instructor](https://github.com/567-labs/instructor) 做结构化输出；**运行时、评审、UE 领域全自研**
+- **Engine Bridge / Godot 4**：`ExportExecutor` 按 `engine_target / legacy ue_target` dispatch 到引擎 adapter；Godot 4.x 支持 `headless_import`
+- **Unreal adapter（manifest-only）**：沿用 `UEAssetManifest + UEImportPlan + Evidence` 文件契约，UE 侧 Python 脚本执行导入
+- **基础层直接用开源**：[LiteLLM](https://github.com/BerriAI/litellm) 统一 provider 调用 + [Instructor](https://github.com/567-labs/instructor) 做结构化输出；**运行时、评审、多引擎交付边界全自研**
 - **测试驱动**：覆盖 P0–P4 全阶段 + 单元级断言，全部可离线跑（`FakeAdapter` + `FakeComfyWorker`）；测试数量以 `pytest -q` 实测为准
 
 ---
@@ -72,7 +73,7 @@ python -m framework.run --task examples/character_extract.json --run-id run_demo
 
 ## 架构概览
 
-权威设计文档：[`docs/claude_unified_architecture_plan_v1.md`](docs/claude_unified_architecture_plan_v1.md)
+权威设计文档见 [`docs/INDEX.md`](docs/INDEX.md) 与五件套;旧 plan_v1 仅作归档史料。
 
 ### 核心对象（§B）
 
@@ -84,7 +85,7 @@ Task ──▶ Run ──▶ Workflow ──▶ Step[*]
                                   └─▶ 评审步额外产出 ReviewReport + Verdict
 ```
 
-- **`Task`**：用户意图（含 `task_type` / `run_mode` / `ue_target` / `review_policy`）
+- **`Task`**：用户意图（含 `task_type` / `run_mode` / `engine_target` / legacy `ue_target` / `review_policy`）
 - **`Run`**：一次执行实例，带 OTel `trace_id` + metrics
 - **`Workflow`**：有控制语义的 Step 图（MVP 线性 + 一级分支）
 - **`Step`**：11 种类型，每个带 `risk_level` + 5 类 Policy（Transition/Retry/Provider/Budget/Escalation）
@@ -108,7 +109,8 @@ Task ──▶ Run ──▶ Workflow ──▶ Step[*]
 | **P1** `basic_llm` 模式 | LiteLLM 接入 · Instructor 结构化抽取 · CapabilityRouter · RetryPolicy · Secrets | `examples/character_extract.json` |
 | **P2** `standalone_review` 模式 | 5 维 rubric scoring · single_judge / chief_judge · ReviewReport + Verdict 分离 · Select step | `examples/review_3_images.json` |
 | **P3** `production` + 内嵌 review | ComfyUI 外挂 worker · `generate(image)` · `risk_level` 调度 · revise 回环 + `revision_hint` · FailureModeMap | `examples/image_pipeline.json` |
-| **P4** UE Bridge `manifest_only` | `UEAssetManifest` · `UEImportPlan` · `PermissionPolicy` · Inspect 只读工具 · `EvidenceWriter` · `ue_scripts/*` | `examples/ue_export_pipeline.json` |
+| **P4** Engine Bridge + Unreal adapter `manifest_only` | `EngineTarget` · `EngineAdapterRegistry` · `UnrealAdapter` · `UEAssetManifest` · `UEImportPlan` · `EvidenceWriter` · `ue_scripts/*` | `examples/ue_export_pipeline.json` |
+| **P4-Godot** Godot 4 `headless_import` MVP | `Godot4Adapter` · staging · `godot_manifest.json` · `godot_import_plan.json` · `EngineEvidence` | `examples/godot4_export_smoke.json` |
 
 ---
 
@@ -117,7 +119,7 @@ Task ──▶ Run ──▶ Workflow ──▶ Step[*]
 ```
 D:\ClaudeProject\ForgeUE_claude\
 ├── src/framework/                   # 运行时主包
-│   ├── core/                    # 对象模型（Task / Run / Artifact / Policies / Review / UE）
+│   ├── core/                    # 对象模型（Task / Run / Artifact / Policies / Review / Engine / UE）
 │   ├── artifact_store/          # PayloadRef 三态后端 + Repository + Lineage + VariantTracker
 │   ├── runtime/                 # Orchestrator / Scheduler / TransitionEngine / DryRunPass / CheckpointStore
 │   │   ├── executors/           # generate_structured / generate_image / validate / review / select / export / mock
@@ -126,7 +128,8 @@ D:\ClaudeProject\ForgeUE_claude\
 │   │   └── workers/             # ComfyWorker（FakeComfyWorker + HTTPComfyWorker）
 │   ├── review_engine/           # LLMJudge / ChiefJudge / ReportVerdictEmitter + rubric YAML
 │   ├── schemas/                 # Pydantic 业务 schema（UECharacter / ImageSpec）注册
-│   ├── ue_bridge/               # manifest_builder / import_plan_builder / permission / inspect / evidence
+│   ├── engine_bridge/           # EngineTarget / EngineAdapter / UnrealAdapter / Godot4Adapter
+│   ├── ue_bridge/               # Unreal adapter 下游 manifest_builder / import_plan_builder / permission / inspect / evidence
 │   ├── workflows/               # load_task_bundle
 │   ├── observability/           # OTel tracing + secrets 管理
 │   └── run.py                   # CLI 入口
@@ -143,14 +146,17 @@ D:\ClaudeProject\ForgeUE_claude\
 ├── config/
 │   └── models.yaml              # 模型别名注册表（见下文）
 │
-├── examples/                    # 5 个 TaskBundle JSON（Task + Workflow + Steps）
+├── examples/                    # TaskBundle JSON（Task + Workflow + Steps）
 │
-├── docs/                        # 架构文档
-│   ├── claude_unified_architecture_plan_v1.md      # 唯一权威设计
-│   ├── unified_architecture_vNext.md               # 精简版
-│   ├── claude_cross_review_report_v1.md            # 交叉评审
-│   ├── claude_independent_plan_v1.md               # 独立方案 v1
-│   └── assistant_plan_bundle/                      # 详细分章节设计
+├── docs/                        # 当前文档入口与架构权威
+│   ├── INDEX.md                  # 文档导航入口
+│   ├── requirements/SRS.md       # 需求规格
+│   ├── design/HLD.md             # 概要设计
+│   ├── design/LLD.md             # 详细设计
+│   ├── testing/test_spec.md      # 测试规格
+│   ├── acceptance/acceptance_report.md
+│   ├── contracts/                # 当前行为契约
+│   └── archive/                  # 历史 plan_v1 等归档史料
 │
 ├── tests/
 │   ├── integration/             # 阶段闭环 + 场景级 + Run Comparison 集成测试
@@ -177,7 +183,8 @@ D:\ClaudeProject\ForgeUE_claude\
 | `examples/character_extract.json` | P1 | prompt → `UECharacter` 20 字段结构化 | ✅ |
 | `examples/review_3_images.json` | P2 | 3 内联候选 → single_judge → Verdict | ✅ |
 | `examples/image_pipeline.json` | P3 | prompt → ImageSpec → ComfyUI 候选 → review → export | ✅ |
-| `examples/ue_export_pipeline.json` | P4 | 同 P3 + 尾端 UE manifest-only 导出 | ✅ + UE 路径 |
+| `examples/ue_export_pipeline.json` | P4 | 同 P3 + 尾端 Unreal manifest-only 导出 | ✅ + Unreal 路径 |
+| `examples/godot4_export_smoke.json` | P4-Godot | `engine_target.engine="godot4"` 的 headless import bundle shape | ❌（离线 loader / dry-run smoke）|
 
 跑任意 bundle：
 
@@ -252,14 +259,30 @@ bundle 立即能 `"models_ref": "image_fast"`。注册表是进程单例，热�
 | **Verdict ↔ TransitionPolicy 引擎** | 共识 | `src/framework/runtime/transition_engine.py` · 支持 9 种 Decision |
 | **`revision_hint` 回环** | §F3-4 | 评审 `revise` → 自动注入下一 step 的 `inputs["revision_hint"]` |
 | **FailureModeMap**（§C.6）| 交叉评审新增 | exception → Decision → transition · `src/framework/runtime/failure_mode_map.py` |
+| **Engine Bridge dispatch** | Engine Bridge 抽象 | `src/framework/engine_bridge/` · `ExportExecutor` wildcard dispatch |
 | **`risk_level` 调度** | Claude 原创 | `Scheduler.runnable_after` 按 low→medium→high 排序 |
 | **DeterminismPolicy**（seed 传递 + 模型版本锁）| 共识 | `Task.determinism_policy` |
 | **OTel tracing**（Run → Step → Provider）| 共识 | `src/framework/observability/tracing.py` |
 
-### UE Bridge 边界（§E）
+### Engine Bridge / Unreal Adapter 边界
 
 ```
-双模式（由 UEOutputTarget.import_mode 选择）：
+ExportExecutor
+  → resolve_engine_target(task.engine_target or legacy task.ue_target)
+  → EngineAdapterRegistry.resolve(target.engine)
+  → adapter.export(ctx, target=target)
+```
+
+内置 adapter：
+
+| Adapter | engine | import_mode | 交付方式 |
+|---|---|---|---|
+| `UnrealAdapter` | `unreal` | `manifest_only` | 产出 `manifest.json + import_plan.json + evidence.json`，`ue_scripts/run_import.py` 在 UE 侧导入 |
+| `Godot4Adapter` | `godot4` | `headless_import` | stage 到 `<project_root>/<asset_root>/<run_id>/`，写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`，调用 Godot `--headless --path <project_root> --import` |
+
+Godot 4.x 第一阶段支持 `image/png`、`image/jpg`、`image/jpeg`、`audio/wav`、`audio/mp3`、`mesh/glb`；`video/mp4` 先写 `skipped` evidence，不自动映射为 runtime asset。Godot 可执行文件解析顺序为 `engine_target.executable_path` → `GODOT4_EXE` → fail-fast。
+
+Unreal adapter 继续使用旧 UE 文件契约：
 
 manifest_only  ← MVP 默认
   框架 → 产出 manifest.json + import_plan.json + evidence.json 到 <UE>/Content/Generated/<run_id>/
@@ -287,7 +310,8 @@ python -m pytest -v -k p3           # 关键字过滤
 - **测试全部离线可跑**（无 API key、无 UE 工程、无 ComfyUI）；当前数量以 `pytest -q` 实测为准
 - 真实 LLM 调用路径被 `FakeAdapter`（`framework.providers.fake_adapter`）替换
 - ComfyUI 路径被 `FakeComfyWorker`（`framework.providers.workers.comfy_worker`）替换
-- UE 侧导入路径用 `sys.modules` 注入的 `unreal` stub 驱通
+- Unreal 侧导入路径用 `sys.modules` 注入的 `unreal` stub 驱通
+- Engine Bridge / Godot 4 路径用 `test_engine_target.py`、`test_engine_adapter_registry.py`、`test_godot4_adapter.py` 与 example smoke 覆盖
 
 ### 覆盖分布
 
@@ -298,7 +322,8 @@ python -m pytest -v -k p3           # 关键字过滤
 | `test_p2_standalone_review.py` | 4 | single_judge · chief_judge 分歧 · select 按 Verdict 过滤 |
 | `test_p3_production_pipeline.py` | 6 | happy · revise 收敛 · max_revise 封顶 · worker timeout 恢复 · 失败映射 · risk 排序 |
 | `test_p4_ue_manifest_only.py` | 5 | 落盘 · PermissionPolicy skip · Verdict.reject 短路 · UE stub 驱通 · builder 纯函数 |
-| `test_*.py`（unit，多个）| 以 `pytest -q` 实测为准 | schema / artifact / checkpoint / policies / judges / bridge / failure_mode / registry / Run Comparison ... |
+| `test_engine_target.py` / `test_engine_adapter_registry.py` / `test_godot4_adapter.py` | 以 `pytest -q` 实测为准 | `EngineTarget` legacy 兼容 · adapter registry · Godot staging / evidence / fresh import guard |
+| `test_*.py`（unit，多个）| 以 `pytest -q` 实测为准 | schema / artifact / checkpoint / policies / judges / engine bridge / failure_mode / registry / Run Comparison ... |
 
 ---
 
@@ -311,11 +336,12 @@ python -m pytest -v -k p3           # 关键字过滤
 | **1** | `python -m pytest` | 全用例通过 = 全逻辑正确(以 `pytest -q` 实测为准)|
 | **2** | `pip install -e ".[llm]"` + `python -c "import litellm, instructor"` | 开源包装好，版本 ≥ pyproject 声明 |
 | **3** | `python -m framework.run --task examples/character_extract.json --run-id r1 --live-llm` | `.env` 密钥 + LiteLLM 真实调用 OK |
-| **4** | `python -m framework.run --task examples/ue_export_pipeline.json --run-id r2 --live-llm`（改 `ue_target.project_root` 到临时目录）| 全链 + 产 manifest + evidence |
-| **5** | ComfyUI agent CLI live smoke:默认 `lifecycle=none` 时先确保 ComfyUI server running(本机推荐 `python -m factory_v3 serve` 作为启停 helper),再跑 `examples/comfy_local_smoke*.json`;也可设 `ensure_running` / `ensure_release` / `self_managed_session` 由框架托管 | 真实 image / mesh / audio / video 产物;ForgeUE 生成仍走 `python -m comfyui_api run`(manifest 名,不再 inline `workflow_graph`;不再用 `--comfy-url`)|
-| **6** | 空白 UE 5.x 工程 → 跑档 4 → UE Python Console `exec(open('ue_scripts/run_import.py').read())` | `Content Browser` 出资产 + `evidence.json` 完整追溯 |
+| **4** | `python -m framework.run --task examples/ue_export_pipeline.json --run-id r2 --live-llm`（改 `engine_target.project_root` 或 legacy `ue_target.project_root` 到临时目录）| 全链 + 产 Unreal manifest + evidence |
+| **5** | `python -m framework.run --task examples/godot4_export_smoke.json --run-id r_godot`（真实导入前设置 `GODOT4_EXE` 或 `engine_target.executable_path`）| Godot 4 bundle shape + headless import 交付路径 |
+| **6** | ComfyUI agent CLI live smoke:默认 `lifecycle=none` 时先确保 ComfyUI server running(本机推荐 `python -m factory_v3 serve` 作为启停 helper),再跑 `examples/comfy_local_smoke*.json`;也可设 `ensure_running` / `ensure_release` / `self_managed_session` 由框架托管 | 真实 image / mesh / audio / video 产物;ForgeUE 生成仍走 `python -m comfyui_api run`(manifest 名,不再 inline `workflow_graph`;不再用 `--comfy-url`)|
+| **7** | 空白 UE 5.x 工程 → 跑档 4 → UE Python Console `exec(open('ue_scripts/run_import.py').read())` | `Content Browser` 出资产 + `evidence.json` 完整追溯 |
 
-详见 [`docs/claude_unified_architecture_plan_v1.md` §K](docs/claude_unified_architecture_plan_v1.md)。
+当前文档入口见 [`docs/INDEX.md`](docs/INDEX.md)；历史 plan_v1 已归档到 [`docs/archive/claude_unified_architecture_plan_v1.md`](docs/archive/claude_unified_architecture_plan_v1.md)。
 
 ### 常见错误速查
 
@@ -362,7 +388,7 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 | 入口 | 用途 |
 |---|---|
 | [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
-| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:8 个 capability contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
+| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:9 个 capability contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
 | [`docs/archive/forge_changes/`](docs/archive/forge_changes/) | 历史 forge change evidence 归档,只读参考 |
 | [`docs/backlog/active.md`](docs/backlog/active.md) | Backlog —— 项目当前待办集合 |
 | [`.agents/skills/document-release/SKILL.md`](.agents/skills/document-release/SKILL.md) | 项目级文档发布 / 归档 / backlog 同步 skill |
@@ -375,7 +401,7 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 
 按优先级排序（§G）：
 
-1. **Bridge `bridge_execute` 模式** —— 框架直调 UE Python Editor API（`ue_bridge/execute/` 目录已占位）
+1. **Unreal RemoteControl adapter / `bridge_execute` 模式** —— 在 Engine Bridge 下新增 Unreal live editor adapter，旧 `ue_bridge/execute/` 仍为占位
 2. **多模态扩展** —— AudioCraft / TRELLIS / TripoSR worker（`providers/workers/` 已留位）
 3. **DAG Workflow** —— 非线性 + 分支 + merge（`Step.depends_on` 已支持多依赖）
 4. **Workflow 模板继承** —— `Workflow.template_ref` 字段已预留
@@ -396,4 +422,4 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 
 ## 一句话定位
 
-> **以 `Task/Run/Workflow/Artifact` 为一等公民、`Review` 为合法节点、`UEOutputTarget` 前置、双模 UE Bridge、5 类 Policy 分离、`Dry-run + Checkpoint` 保障可复现的多模型运行时**；基础层（LiteLLM / Instructor）直接用，多模态生成工具（ComfyUI / AudioCraft / TRELLIS / TripoSR）外挂为 worker，UE 领域与运行时工程化部分全自研。
+> **以 `Task/Run/Workflow/Artifact` 为一等公民、`Review` 为合法节点、`EngineTarget` 为通用交付入口、`EngineAdapter` 分发具体引擎交付、5 类 Policy 分离、`Dry-run + Checkpoint` 保障可复现的多模型运行时**；基础层（LiteLLM / Instructor）直接用，多模态生成工具（ComfyUI / AudioCraft / TRELLIS / TripoSR）外挂为 worker，Unreal / Godot 等引擎交付边界与运行时工程化部分全自研。

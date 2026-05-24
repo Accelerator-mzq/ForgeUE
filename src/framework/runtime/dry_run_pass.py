@@ -5,7 +5,7 @@ Covers the MVP subset:
 - entry_step exists
 - every InputBinding can be resolved (task input or upstream step exists)
 - output_schema is a dict (MVP: not fully JSONSchema-validated yet)
-- UEOutputTarget.project_root is accessible (if declared)
+- EngineTarget / legacy UEOutputTarget project_root is accessible (if declared)
 
 Provider reachability / budget sanity / explicit api_key_env checks run as
 zero-side-effect preflight; extra checks remain pluggable.
@@ -85,7 +85,17 @@ class DryRunPass:
         self._record(report, "step.input_bindings_resolved", not unresolved,
                      error=f"unresolved bindings: {unresolved}" if unresolved else None)
 
-        # 4. UEOutputTarget path accessibility(UE 项目根路径可访问性,production/ue_export)
+        # 4. EngineTarget / UEOutputTarget path accessibility(项目根路径可访问性)
+        if task.engine_target:
+            root = Path(task.engine_target.project_root)
+            exists = root.is_dir()
+            self._record(
+                report, "engine.project_root_exists", exists,
+                error=None if exists else f"project_root does not exist: {root}",
+                warning_only=True,
+            )
+
+        # 4.1. Legacy UEOutputTarget path accessibility(UE 项目根路径可访问性)
         if task.ue_target:
             root = Path(task.ue_target.project_root)
             exists = root.is_dir()
