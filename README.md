@@ -389,7 +389,7 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 | 入口 | 用途 |
 |---|---|
 | [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
-| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:9 个 capability contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
+| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:10 个 contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance` / `game-build-compiler`) |
 | [`docs/archive/forge_changes/`](docs/archive/forge_changes/) | 历史 forge change evidence 归档,只读参考 |
 | [`docs/backlog/active.md`](docs/backlog/active.md) | Backlog —— 项目当前待办集合 |
 | [`.agents/skills/document-release/SKILL.md`](.agents/skills/document-release/SKILL.md) | 项目级文档发布 / 归档 / backlog 同步 skill |

@@ -201,7 +201,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 ### 与 docs 五件套的关系
 
 - `docs/` 五件套仍是长期权威(需求 / 设计 / 测试 / 验收)。
-- `docs/contracts/` 是从原 forge specs 迁移来的精简当前行为契约层,9 个 capability:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`。
+- `docs/contracts/` 是从原 forge specs 迁移来的精简当前行为契约层,10 个 contract:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance` / `game-build-compiler`。
 - `docs/archive/forge_changes/` 是历史 forge change evidence,只读参考,不作为新变更入口。
 - **禁止**把 docs 整篇搬入 contracts,只做契约抽取。
 
