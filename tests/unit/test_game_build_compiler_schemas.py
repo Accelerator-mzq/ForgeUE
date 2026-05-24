@@ -333,8 +333,11 @@ def test_register_builtin_schemas_adds_game_build_schema_refs():
     }.issubset(names)
 
 
-def test_cli_orchestrator_registers_game_build_compiler_schemas(tmp_path):
+def test_cli_orchestrator_registers_game_build_compiler_schemas(tmp_path, monkeypatch):
     from framework.run import _build_orchestrator
+    import framework.schemas.registry as registry
+
+    monkeypatch.setattr(registry, "_default_registry", registry.SchemaRegistry())
 
     _build_orchestrator(tmp_path)
     names = set(get_schema_registry().names())
