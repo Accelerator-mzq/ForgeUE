@@ -196,7 +196,7 @@
 }
 ```
 
-`format`/`duration_seconds`/`sample_rate` 三键 **不**重复进 `worker_metadata`(F-Plan-R7-A single-source 决策)。manifest_builder dispatch 走 `(modality="audio", shape="waveform") → "sound_wave"`(LLD §X.Y UE bridge),`shape` 字段值 `"waveform"` 是 UE bridge 唯一识别值,不用 `cand.format`。
+`format`/`duration_seconds`/`sample_rate` 三键 **不**重复进 `worker_metadata`(F-Plan-R7-A single-source 决策)。manifest_builder dispatch 走 `(modality="audio", shape="waveform") → "sound_wave"`(LLD §9 Unreal 文件契约),`shape` 字段值 `"waveform"` 是 Unreal contract 唯一识别值,不用 `cand.format`。
 
 **mesh**
 
@@ -1345,12 +1345,12 @@ class EngineAdapter(Protocol):
 - `step_type = StepType.export`,`capability_ref = None`,作为 wildcard export executor。
 - 默认 registry 注册 `UnrealAdapter(permission_policy=...)` 与 `Godot4Adapter()`。
 - `execute(ctx)` 调 `resolve_engine_target(ctx.task)`;优先 `task.engine_target`,否则 legacy `task.ue_target` 转 `EngineTarget(engine="unreal")`;再按 `target.engine` 分发。
-- `_is_importable(art)` 仅作旧 UE contract 兼容 shim,实际过滤仍 defer `ue_bridge.manifest_builder.is_manifest_importable`。
+- `_is_importable(art)` 仅作兼容 shim,实际过滤仍 defer `framework.engine_bridge.unreal.contract.manifest_builder.is_manifest_importable`。
 
 **UnrealAdapter(`engine_bridge/unreal/adapter.py`)**
 
 - `engine = "unreal"`。
-- adapter 边界接收 `EngineTarget`,内部 `target.to_ue_target()` 后复用旧 `ue_bridge` manifest-only 逻辑。
+- adapter 边界接收 `EngineTarget`,内部 `target.to_ue_target()` 后复用 `framework.engine_bridge.unreal.contract` manifest-only 逻辑;`framework.ue_bridge` 是一个兼容周期内的 legacy alias。
 - 保留 Verdict.reject 硬停、bare approve filter、D12 video path split、PermissionPolicy skipped evidence、manifest / plan / bundle Artifact 产出。
 
 **Godot4Adapter(`engine_bridge/godot4/adapter.py`)**
@@ -1363,7 +1363,9 @@ class EngineAdapter(Protocol):
 - 仅在命令返回 0 且 staged asset 的 `.import` 文件与 `<project_root>/.godot/imported/` 输出都 fresh 后写 success evidence;命令失败或 stale cache 写 failed evidence 并 raise。
 - `video/mp4` 第一阶段不调用 Godot,只写 skipped evidence,避免把 mp4 自动解释成 Godot runtime asset。
 
-### 9.2 Unreal 文件契约(`src/framework/ue_bridge/`)
+### 9.2 Unreal 文件契约(`src/framework/engine_bridge/unreal/contract/`)
+
+当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。`src/framework/ue_bridge/` / `framework.ue_bridge` 保留为一个兼容周期的 legacy compatibility alias。
 
 ### 9.2.1 ManifestBuilder(`manifest_builder.py`)
 
@@ -1758,7 +1760,7 @@ CLI 默认 `output_dir = ./demo_artifacts/<YYYY-MM-DD>/comparison/<safe-baseline
 | `loader` | 读 `run_summary.json` + `_artifacts.json` + 按需 recompute payload byte hash;构造 `RunSnapshot` | 不调 `ArtifactRepository.put` / `load_run_metadata`,不写文件 |
 | `diff_engine` | 纯函数 `compare()`,artifact / verdict / metric / step / run 五层 diff;artifact_id 字典序;sparse summary_counts | 无 I/O,无网络,无对 snapshot mutation,**不**重新调 judge / hash |
 | `reporter` | `render_json` / `render_markdown` 纯渲染;`write_reports` 唯一 I/O 边界(UTF-8 + LF) | 不重 diff,不重 hash;Markdown ASCII-only(`_ascii_safe` / `_line_safe` / `_escape_cell`)守门 Windows GBK |
-| `cli` | argparse → loader → compare → reporter 编排;exit code 映射;stdout / stderr 走 `_console_safe`(ASCII + 可见 `\\r` / `\\n`) | **直接** import / call `framework.runtime` / `providers` / `review_engine` / `ue_bridge` / `engine_bridge.unreal.contract` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`;不直接调 `ArtifactRepository.put` / payload backend 写路径 |
+| `cli` | argparse → loader → compare → reporter 编排;exit code 映射;stdout / stderr 走 `_console_safe`(ASCII + 可见 `\\r` / `\\n`) | **直接** import / call `framework.runtime` / `providers` / `review_engine` / `ue_bridge` legacy alias / `engine_bridge.unreal.contract` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`;不直接调 `ArtifactRepository.put` / payload backend 写路径 |
 
 ### 15.4 Exit code 契约(对应 runtime-core delta spec)
 

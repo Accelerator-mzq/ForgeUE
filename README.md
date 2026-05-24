@@ -129,7 +129,8 @@ D:\ClaudeProject\ForgeUE_claude\
 │   ├── review_engine/           # LLMJudge / ChiefJudge / ReportVerdictEmitter + rubric YAML
 │   ├── schemas/                 # Pydantic 业务 schema（UECharacter / ImageSpec）注册
 │   ├── engine_bridge/           # EngineTarget / EngineAdapter / UnrealAdapter / Godot4Adapter
-│   ├── ue_bridge/               # Unreal adapter 下游 manifest_builder / import_plan_builder / permission / inspect / evidence
+│   │   └── unreal/contract/     # Unreal manifest-only 文件契约主实现
+│   ├── ue_bridge/               # legacy compatibility alias: 一个周期内 re-export Unreal contract
 │   ├── workflows/               # load_task_bundle
 │   ├── observability/           # OTel tracing + secrets 管理
 │   └── run.py                   # CLI 入口
@@ -401,7 +402,7 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 
 按优先级排序（§G）：
 
-1. **Unreal RemoteControl adapter / `bridge_execute` 模式** —— 在 Engine Bridge 下新增 Unreal live editor adapter，旧 `ue_bridge/execute/` 仍为占位
+1. **Unreal RemoteControl adapter / `bridge_execute` 模式** —— future bridge_execute reserved follow-on,不在当前 `framework.engine_bridge.unreal.contract` manifest_only 主实现中启用
 2. **多模态扩展** —— AudioCraft / TRELLIS / TripoSR worker（`providers/workers/` 已留位）
 3. **DAG Workflow** —— 非线性 + 分支 + merge（`Step.depends_on` 已支持多依赖）
 4. **Workflow 模板继承** —— `Workflow.template_ref` 字段已预留

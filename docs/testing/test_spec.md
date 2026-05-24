@@ -184,13 +184,14 @@ python -m framework.run --task examples/image_pipeline.json --live-llm ...
 | --- | --- | --- | --- | --- |
 | `test_engine_adapter_registry.py` | `engine_bridge/registry.py` + `runtime/executors/export.py` | FR-ENGINE-002 | L1 | registry register/resolve/missing engine、`ExportExecutor` 按 `engine_target.engine` dispatch 到 adapter |
 | `test_godot4_adapter.py` | `engine_bridge/godot4/adapter.py` | FR-ENGINE-004 | L1,L2 | 支持 png stage + manifest/plan/evidence、`GODOT4_EXE` fallback、缺可执行文件 fail-fast、command fail 写 failed evidence、inline/unsupported skipped evidence、fresh `.import` / `.godot/imported` 验证、`video/mp4` first-phase skipped |
+| `test_unreal_contract_package.py` | `engine_bridge/unreal/contract/*` + legacy `framework.ue_bridge` alias | FR-ENGINE-003, FR-UE-001 | L1 | Unreal contract package-boundary fence:新主路径可导入、legacy alias thin re-export、Godot4Adapter 不依赖 Unreal contract |
 | `test_example_bundles_smoke.py::test_godot4_export_smoke_bundle_loads` | `examples/godot4_export_smoke.json` | FR-ENGINE-001, FR-ENGINE-004 | L0 | Godot 4 bundle 可由 `load_task_bundle` 解析,`engine_target.engine == "godot4"`,末 step `capability_ref == "engine.export"` |
 
 ### 3.7 UE Bridge
 
 | 文件 | 覆盖 | 对应需求 | Level | 关键用例 |
 | --- | --- | --- | --- | --- |
-| `test_ue_bridge.py` | `ue_bridge/*` + `engine_bridge/unreal/adapter.py` | FR-ENGINE-003, FR-UE-001 ~ FR-UE-008 | L1,L2 | Unreal manifest-only contract、ManifestBuilder modality 映射、PlanBuilder depends_on、Permission Phase C 默认拒绝、inspect_project / asset_exists、validate_manifest 重复路径、evidence 原子追加 |
+| `test_ue_bridge.py` | `engine_bridge/unreal/contract/*` + `engine_bridge/unreal/adapter.py` | FR-ENGINE-003, FR-UE-001 ~ FR-UE-008 | L1,L2 | Unreal manifest-only contract、legacy `framework.ue_bridge` alias、ManifestBuilder modality 映射、PlanBuilder depends_on、Permission Phase C 默认拒绝、inspect_project / asset_exists、validate_manifest 重复路径、evidence 原子追加 |
 
 ### 3.8 Mesh / Generate
 

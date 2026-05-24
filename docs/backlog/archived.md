@@ -3,6 +3,15 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-05-24 FOR-31 completion
+
+### `LR-0143` **unreal-bridge-package-rename Unreal 文件契约包路径命名清理**
+
+- **new_status**: completed
+- **reason**: Unreal manifest-only 文件契约主实现迁到 `framework.engine_bridge.unreal.contract`;`framework.ue_bridge` 保留为一个兼容周期的 compatibility alias。`UnrealAdapter` / `ExportExecutor._is_importable` 已切到新路径,Godot4Adapter 仍不依赖 Unreal 契约层。
+- **evidence**: `src/framework/engine_bridge/unreal/contract/`, `src/framework/ue_bridge/` compatibility shims, `tests/unit/test_unreal_contract_package.py`, `tests/unit/test_ue_bridge.py`, `tests/unit/test_export_video_path_split.py`, `tests/integration/test_p4_ue_manifest_only.py`; `python -m pytest tests/unit/test_unreal_contract_package.py tests/unit/test_ue_bridge.py tests/unit/test_export_video_path_split.py tests/integration/test_p4_ue_manifest_only.py -q` → `51 passed, 2 skipped`; run-comparison import fences `python -m pytest tests/unit/test_run_comparison_cli.py tests/unit/test_run_comparison_loader.py tests/unit/test_run_comparison_models.py tests/unit/test_run_comparison_diff_engine.py tests/unit/test_run_comparison_reporter.py -q` → `301 passed`
+- **archived_by**: FOR-31 unreal-bridge-package-rename 2026-05-24
+
 ## 2026-05-23 FOR-26 completion
 
 ### `LR-0127` **TBD-002 远端 Audio worker 接入**

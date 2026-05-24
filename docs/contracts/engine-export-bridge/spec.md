@@ -47,7 +47,7 @@ The system SHALL keep `ExportExecutor` engine-agnostic. It SHALL resolve the tas
 
 ## Requirement: UnrealAdapter preserves manifest_only behavior
 
-The system SHALL keep the previous Unreal manifest-only file contract behind `UnrealAdapter(engine="unreal")`. The adapter SHALL convert `EngineTarget` back to `UEOutputTarget`, then reuse `ue_bridge` builders and `ue_scripts/` deliverables.
+The system SHALL keep the previous Unreal manifest-only file contract behind `UnrealAdapter(engine="unreal")`. The adapter SHALL convert `EngineTarget` back to `UEOutputTarget`, then reuse `framework.engine_bridge.unreal.contract` builders and `ue_scripts/` deliverables. `framework.ue_bridge` remains a one-cycle legacy compatibility alias.
 
 ## Scenario: unreal delivery remains the ue-export-bridge contract
 

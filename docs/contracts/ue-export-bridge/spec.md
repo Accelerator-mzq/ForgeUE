@@ -7,17 +7,17 @@ UE Export Bridge is now the Unreal adapter contract under the generic Engine Exp
 ## Source Documents
 
 - `docs/requirements/SRS.md` §3.7 (FR-ENGINE-001~004), §3.8 (FR-UE-001~008), §4.7 (NFR-PORT-001~004), §4.8 ADR-001 / ADR-008, §5.4 UE Python interface
-- `docs/design/HLD.md` §3 subsystem (engine_bridge / ue_bridge)
+- `docs/design/HLD.md` §3 subsystem (engine_bridge / Unreal contract)
 - `docs/acceptance/acceptance_report.md` §6.1 (A1 real-hardware acceptance on UE 5.7.4, 2026-04-23 commandlet path)
 - Source: `src/framework/engine_bridge/unreal/adapter.py`
-- Source: `src/framework/ue_bridge/manifest_builder.py`, `import_plan_builder.py`, `permission_policy.py`, `evidence.py`
-- Source: `src/framework/ue_bridge/inspect/`, `plan/`, `execute/` (execute reserved, not implemented)
+- Source: `src/framework/engine_bridge/unreal/contract/manifest_builder.py`, `import_plan_builder.py`, `permission_policy.py`, `evidence.py`
+- Source: `src/framework/engine_bridge/unreal/contract/inspect/`;`src/framework/ue_bridge/` is a one-cycle legacy compatibility alias
 - Source: `src/framework/core/ue.py` (UEOutputTarget, UEAssetManifest, UEImportPlan, Evidence schemas)
 - Source: `ue_scripts/run_import.py`, `a1_run.py`, `manifest_reader.py`, `domain_texture.py`, `domain_mesh.py`, `domain_audio.py`, `domain_material.py`, `evidence_writer.py`
 
 ## Current Behavior
 
-`engine_target(engine="unreal")` is the new Task-level entry for Unreal delivery. Legacy `UEOutputTarget` remains accepted as `ue_target` and is converted by `EngineTarget.from_ue_target(...)`, so existing bundles keep working. Two Unreal import modes exist: `manifest_only` (the MVP default) and `bridge_execute` (reserved under `ue_bridge/execute/`, not implemented). In `manifest_only` mode `UnrealAdapter` writes three files per Run to `<project_root>/Content/Generated/<run_id>/`: a declarative manifest listing each asset with `target_object_path`, `target_package_path`, `asset_naming_policy` (one of `gdd_mandated` / `house_rules` / `gdd_preferred_then_house_rules`), and `depends_on`; an import plan with the topologically ordered operations; and a seeded `Evidence` file.
+`engine_target(engine="unreal")` is the new Task-level entry for Unreal delivery. Legacy `UEOutputTarget` remains accepted as `ue_target` and is converted by `EngineTarget.from_ue_target(...)`, so existing bundles keep working. Current Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`;`src/framework/ue_bridge/` / `framework.ue_bridge` 保留为一个兼容周期的 legacy compatibility alias。Two Unreal import modes exist: `manifest_only` (the MVP default) and `bridge_execute` (future bridge_execute reserved follow-on, not enabled in the current `framework.engine_bridge.unreal.contract` manifest_only implementation). In `manifest_only` mode `UnrealAdapter` writes three files per Run to `<project_root>/Content/Generated/<run_id>/`: a declarative manifest listing each asset with `target_object_path`, `target_package_path`, `asset_naming_policy` (one of `gdd_mandated` / `house_rules` / `gdd_preferred_then_house_rules`), and `depends_on`; an import plan with the topologically ordered operations; and a seeded `Evidence` file.
 
 The UE-side agent is intentionally minimal: `ue_scripts/` is a standalone Python package whose only third-party dependency is `import unreal`. `run_import.py` (or `a1_run.py` for commandlet execution) reads the three files via `manifest_reader.discover_bundle()`, topologically sorts operations via `manifest_reader.topological_ops()`, and dispatches each operation to `domain_texture.import_texture_entry`, `domain_mesh.import_static_mesh_entry`, or `domain_audio.import_audio_entry`. Every operation produces an Evidence record that is atomically appended to `evidence.json` via `evidence_writer.append()`.
 
@@ -29,7 +29,7 @@ The system SHALL support two Unreal import-mode values — `manifest_only` (MVP 
 
 ## Scenario: ImportMode enum exposes manifest_only and bridge_execute, but bridge_execute is reserved with no executor wiring
 
-- GIVEN `framework.core.enums.ImportMode(str, Enum)` declaring `manifest_only = "manifest_only"` and `bridge_execute = "bridge_execute"`; `UEOutputTarget.import_mode: ImportMode = ImportMode.manifest_only`; `EngineTarget.from_ue_target(...)` preserves the legacy import mode as a string; the `src/framework/ue_bridge/execute/` directory remains reserved
+- GIVEN `framework.core.enums.ImportMode(str, Enum)` declaring `manifest_only = "manifest_only"` and `bridge_execute = "bridge_execute"`; `UEOutputTarget.import_mode: ImportMode = ImportMode.manifest_only`; `EngineTarget.from_ue_target(...)` preserves the legacy import mode as a string; `bridge_execute` is a future reserved follow-on and is not enabled in the current `framework.engine_bridge.unreal.contract` manifest_only implementation
 - WHEN a Run with `engine_target(engine="unreal", import_mode="manifest_only")` or legacy `ue_target.import_mode = "manifest_only"` reaches the export Step versus a hypothetical Run with `import_mode = "bridge_execute"`
 - THEN the `manifest_only` path runs end-to-end through `ExportExecutor` → `UnrealAdapter` (writing the three deliverable files) and the framework completes the export Step normally; the `bridge_execute` path has no executor wiring, so it cannot be exercised today — moving `bridge_execute` to "implemented" requires a separate future change with updated Engine Bridge and Unreal contract docs
 
@@ -61,7 +61,7 @@ The system SHALL declare `asset_naming_policy` per asset as one of `gdd_mandated
 
 - GIVEN `UEOutputTarget.asset_naming_policy: Literal["gdd_mandated", "house_rules", "gdd_preferred_then_house_rules"] = "gdd_preferred_then_house_rules"` (`src/framework/core/ue.py:20-22`); legacy production bundles such as `examples/image_to_3d_pipeline_live.json` may declare `ue_target.asset_naming_policy: "house_rules"` to set the per-target effective policy
 - WHEN a Pydantic-validated `UEOutputTarget` reaches `manifest_builder.build_manifest(...)`
-- THEN any string outside the three Literal values fails Pydantic validation at `UEOutputTarget` construction time (so an invalid policy never reaches the manifest builder); for a validated target, `manifest_builder._derive_ue_name(art, kind=kind, policy=target.asset_naming_policy)` (`src/framework/ue_bridge/manifest_builder.py:101 / 113 / 150 / 164`) is invoked once per asset to compute the asset's UE name under that single declared policy, so every asset entry in the manifest carries a derived name consistent with the target's policy choice
+- THEN any string outside the three Literal values fails Pydantic validation at `UEOutputTarget` construction time (so an invalid policy never reaches the manifest builder); for a validated target, `manifest_builder._derive_ue_name(art, kind=kind, policy=target.asset_naming_policy)` (`src/framework/engine_bridge/unreal/contract/manifest_builder.py`) is invoked once per asset to compute the asset's UE name under that single declared policy, so every asset entry in the manifest carries a derived name consistent with the target's policy choice
 
 ## Requirement: Dependencies drive topological order
 
@@ -70,7 +70,7 @@ The system SHALL encode import-side dependencies via `depends_on` on each manife
 ## Scenario: ImportPlanBuilder records depends_on edges between operations, and ue_scripts.manifest_reader.topological_ops returns a UE-side execution order honouring those edges
 
 - GIVEN a `UEAssetManifest` whose import naturally depends on a `create_folder` operation preceding the asset imports (and, when present, intra-plan dependencies between asset entries)
-- WHEN `import_plan_builder.build_import_plan(...)` (`src/framework/ue_bridge/import_plan_builder.py:3-73`) constructs `UEImportPlan` operations and records their `depends_on` edges (e.g. each `import_texture` / `import_static_mesh` / `import_audio` op carries `depends_on=[folder_op_id]`), and `ue_scripts/run_import.py:53` calls `manifest_reader.topological_ops(bundle.plan)` to flatten the plan into UE-side execution order
+- WHEN `import_plan_builder.build_import_plan(...)` (`src/framework/engine_bridge/unreal/contract/import_plan_builder.py`) constructs `UEImportPlan` operations and records their `depends_on` edges (e.g. each `import_texture` / `import_static_mesh` / `import_audio` op carries `depends_on=[folder_op_id]`), and `ue_scripts/run_import.py:53` calls `manifest_reader.topological_ops(bundle.plan)` to flatten the plan into UE-side execution order
 - THEN the returned operation sequence respects every recorded `depends_on` edge: an operation never appears before any operation it depends on, the `create_folder` op precedes all import ops that name it as a parent, and `tests/unit/test_ue_bridge.py::test_plan_builder_adds_create_folder_and_dependencies` (line 149) fences the edge construction; the UE-side dispatch loop then invokes the domain handlers in this topologically valid order
 
 ## Requirement: Evidence is append-only and atomic
@@ -79,7 +79,7 @@ The system SHALL append one Evidence record per UE-side operation via `evidence_
 
 ## Scenario: Successful UE-side import appends one Evidence record per operation via tmp + rename atomic write
 
-- GIVEN a UE-side import session running through `ue_scripts/run_import.py` against a topologically-sorted plan with N executable operations (mix of `create_folder`, `import_texture`, `import_static_mesh`, `import_audio`); `evidence.json` was seeded by the framework's `EvidenceWriter._write_all` (`src/framework/ue_bridge/evidence.py:53-57`) and is read by the UE-side `ue_scripts/evidence_writer.append` (`ue_scripts/evidence_writer.py:19-27`)
+- GIVEN a UE-side import session running through `ue_scripts/run_import.py` against a topologically-sorted plan with N executable operations (mix of `create_folder`, `import_texture`, `import_static_mesh`, `import_audio`); `evidence.json` was seeded by the framework's `EvidenceWriter._write_all` (`src/framework/engine_bridge/unreal/contract/evidence.py`) and is read by the UE-side `ue_scripts/evidence_writer.append` (`ue_scripts/evidence_writer.py:19-27`)
 - WHEN each operation completes (`success`, `skipped`, or `failed`) and `run_import.run()` calls `evidence_writer.append(bundle.evidence_path, evidence_writer.make_record(...))` per the loop at lines 55-94
 - THEN every call reads the current `evidence.json` content, appends one record, writes the merged list to a sibling `evidence.json.tmp` via `tmp.write_text(...)`, then commits via `tmp.replace(p)` — so the final `evidence.json` carries exactly one new record per operation in the order operations completed; `tests/unit/test_ue_bridge.py::test_evidence_writer_appends_atomically` (line 260) fences the append + atomic-rename contract on the framework-side writer (the UE-side writer mirrors the same tmp + rename mechanism)
 
@@ -93,7 +93,7 @@ The system SHALL append one Evidence record per UE-side operation via `evidence_
 
 The system SHALL enforce `PermissionPolicy`: default allow for `create_folder` / `import_texture` / `import_audio` / `import_static_mesh` / `import_file_media_source` (D1: video import added as default-allow alongside the other three import kinds — read-only, content-creating, no destructive side effects); default deny for `create_material` / `create_sound_cue` (requires explicit allow flag); permanent deny for modifications of existing assets / blueprints / maps / configs / deletions.
 
-The video import default-allow SHALL be carried by a new `PermissionPolicy.allow_import_file_media_source: bool = True` field on `framework.core.policies.PermissionPolicy` (`src/framework/core/policies.py:93-95` already declares `allow_import_texture` / `allow_import_audio` / `allow_import_static_mesh`; this change adds the fourth allow_import_* attribute) AND a corresponding `_OP_ALLOW_ATTR["import_file_media_source"] = "allow_import_file_media_source"` entry in `framework.ue_bridge.permission_policy._OP_ALLOW_ATTR` (`src/framework/ue_bridge/permission_policy.py:14-19`). Without both, `permission_policy.is_op_allowed(policy, op)` would default to deny, and `ExportExecutor.execute` (`src/framework/runtime/executors/export.py:157`) would emit an Evidence record `status="skipped"` with `skip_reason="permission_denied"` + `error="PermissionPolicy does not grant this op kind"` for every video import operation, breaking the L2 + a2_video P4 contract. (round-2 F1 codex finding accepted-codex 2026-05-04 + cluster 2 fix:round-1 design / spec / tasks 漏掉这两处的同步 sweep — 仅扩 `_OP_HANDLERS["import_file_media_source"] = domain_video.import_video_entry` 不够,permission tier 与 attr 映射必须同步;cluster-2 加 `skip_reason="permission_denied"` 字段使 Evidence 区分明确)
+The video import default-allow SHALL be carried by a new `PermissionPolicy.allow_import_file_media_source: bool = True` field on `framework.core.policies.PermissionPolicy` (`src/framework/core/policies.py` already declares `allow_import_texture` / `allow_import_audio` / `allow_import_static_mesh`; this change adds the fourth allow_import_* attribute) AND a corresponding `_OP_ALLOW_ATTR["import_file_media_source"] = "allow_import_file_media_source"` entry in `framework.engine_bridge.unreal.contract.permission_policy._OP_ALLOW_ATTR` (`src/framework/engine_bridge/unreal/contract/permission_policy.py`). Without both, `permission_policy.is_op_allowed(policy, op)` would default to deny, and `ExportExecutor.execute` would emit an Evidence record `status="skipped"` with `skip_reason="permission_denied"` + `error="PermissionPolicy does not grant this op kind"` for every video import operation, breaking the L2 + a2_video P4 contract. (round-2 F1 codex finding accepted-codex 2026-05-04 + cluster 2 fix:round-1 design / spec / tasks 漏掉这两处的同步 sweep — 仅扩 `_OP_HANDLERS["import_file_media_source"] = domain_video.import_video_entry` 不够,permission tier 与 attr 映射必须同步;cluster-2 加 `skip_reason="permission_denied"` 字段使 Evidence 区分明确)
 
 ## Scenario: Material creation is denied by default
 
@@ -158,7 +158,7 @@ def _is_importable(art: Artifact) -> bool:
 
 ## Requirement: PermissionPolicy.allow_import_file_media_source default True + permission_policy._OP_ALLOW_ATTR mapping (round-2 F1 修订)
 
-The system SHALL extend `framework.core.policies.PermissionPolicy` to declare `allow_import_file_media_source: bool = True` (default allow per the MODIFIED Permission tiers Requirement above). The `framework.ue_bridge.permission_policy._OP_ALLOW_ATTR` dict SHALL gain a corresponding `"import_file_media_source": "allow_import_file_media_source"` entry. Without **both** changes:
+The system SHALL extend `framework.core.policies.PermissionPolicy` to declare `allow_import_file_media_source: bool = True` (default allow per the MODIFIED Permission tiers Requirement above). The `framework.engine_bridge.unreal.contract.permission_policy._OP_ALLOW_ATTR` dict SHALL gain a corresponding `"import_file_media_source": "allow_import_file_media_source"` entry. Without **both** changes:
 
 1. If `PermissionPolicy` lacks the field but `_OP_ALLOW_ATTR` has the entry → `getattr(policy, "allow_import_file_media_source")` raises `AttributeError`
 2. If `PermissionPolicy` has the field but `_OP_ALLOW_ATTR` lacks the entry → `_OP_ALLOW_ATTR.get("import_file_media_source")` returns `None` → `is_op_allowed` falls through to deny → `ExportExecutor.execute:157` emits Evidence `status="skipped"` with `error="PermissionPolicy does not grant this op kind"`
@@ -185,7 +185,7 @@ Both changes MUST land together in the same commit to maintain `is_op_allowed(po
 
 ## Requirement: Video Artifact maps to file_media_source asset kind via _KIND_MAP
 
-The system SHALL extend `framework.ue_bridge.manifest_builder._KIND_MAP` with `("video", "mp4"): "file_media_source"` (D1):
+The system SHALL extend `framework.engine_bridge.unreal.contract.manifest_builder._KIND_MAP` with `("video", "mp4"): "file_media_source"` (D1):
 
 ```python
 _KIND_MAP: dict[tuple[str, str], str] = {
@@ -407,7 +407,7 @@ This SHALL preserve the original intent (honour framework-side `PermissionPolicy
 - ADR-001 forbids ForgeUE from authoring its own UE plugin; ADR-008 clarifies that enabling Epic-maintained plugins (e.g. `PythonScriptPlugin`) does not violate ADR-001.
 - This contract is downstream of `engine-export-bridge`; runtime export enters here only through `UnrealAdapter(engine="unreal")`.
 - `engine_target(engine="unreal")` is the preferred Task input; `ue_target` is legacy compatibility input.
-- `bridge_execute` remains reserved; moving it to "implemented" requires a new change and an updated HLD/LLD.
+- `bridge_execute` remains a future reserved follow-on and is not enabled in the current `framework.engine_bridge.unreal.contract` manifest_only implementation; moving it to "implemented" requires a new change and an updated HLD/LLD.
 - File-contract delivery is one-way: ForgeUE writes, UE appends Evidence, ForgeUE reads Evidence after the fact. No RPC.
 
 ## Validation
