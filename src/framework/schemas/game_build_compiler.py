@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 TargetEngine = Literal["unreal", "godot4"]
@@ -33,14 +33,20 @@ BuildActionType = Literal[
 ]
 
 
-class GameBuildGDDSource(BaseModel):
+class GameBuildBaseModel(BaseModel):
+    """Game Build Compiler schema base：拒绝未知字段,避免结构化输出拼写错误被吞掉。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class GameBuildGDDSource(GameBuildBaseModel):
     """GDD 来源证据,用于把 contract 追溯回输入文档。"""
 
     file_path: str = Field(min_length=1)
     hash: str = Field(pattern=r"^sha256:[A-Za-z0-9._-]+$")
 
 
-class GameBuildGameIdentity(BaseModel):
+class GameBuildGameIdentity(GameBuildBaseModel):
     """游戏身份只保留跨引擎语义,不含实现路径。"""
 
     genre: str = Field(min_length=1)
@@ -57,7 +63,7 @@ class GameBuildGameIdentity(BaseModel):
         return value
 
 
-class GameBuildConstraintField(BaseModel):
+class GameBuildConstraintField(GameBuildBaseModel):
     """必须满足的 GDD 约束。"""
 
     type: Literal["constraint"] = "constraint"
@@ -65,14 +71,14 @@ class GameBuildConstraintField(BaseModel):
     source_ref: str = Field(min_length=1)
 
 
-class GameBuildVariantBounds(BaseModel):
+class GameBuildVariantBounds(GameBuildBaseModel):
     """允许探索的设计空间边界。"""
 
     must_satisfy: list[str] = Field(default_factory=list)
     must_not: list[str] = Field(default_factory=list)
 
 
-class GameBuildVariantField(BaseModel):
+class GameBuildVariantField(GameBuildBaseModel):
     """可变设计项,由 bounds 约束探索范围。"""
 
     type: Literal["variant"] = "variant"
@@ -80,7 +86,7 @@ class GameBuildVariantField(BaseModel):
     source_ref: str = Field(min_length=1)
 
 
-class GameBuildCapability(BaseModel):
+class GameBuildCapability(GameBuildBaseModel):
     """baseline / gameplay capability 的公共最小形状。"""
 
     capability_id: str = Field(min_length=1)
@@ -89,7 +95,7 @@ class GameBuildCapability(BaseModel):
     allows_design_space_discovery: bool = False
 
 
-class GameBuildContract(BaseModel):
+class GameBuildContract(GameBuildBaseModel):
     """从 GDD 提炼出的跨引擎构建契约。"""
 
     contract_version: str = "1.0"
@@ -103,7 +109,7 @@ class GameBuildContract(BaseModel):
     target_engines: list[TargetEngine] = Field(min_length=1)
 
 
-class GameBuildClarificationItem(BaseModel):
+class GameBuildClarificationItem(GameBuildBaseModel):
     """Contract 生成前需要人确认的问题。"""
 
     item_id: str = Field(min_length=1)
@@ -115,7 +121,7 @@ class GameBuildClarificationItem(BaseModel):
     provisional: bool = False
 
 
-class GameBuildClarificationReport(BaseModel):
+class GameBuildClarificationReport(GameBuildBaseModel):
     """GDD 信息不足时的澄清报告。"""
 
     report_version: str = "1.0"
@@ -124,7 +130,7 @@ class GameBuildClarificationReport(BaseModel):
     items: list[GameBuildClarificationItem] = Field(default_factory=list)
 
 
-class GameBuildGraphNode(BaseModel):
+class GameBuildGraphNode(GameBuildBaseModel):
     """设计图节点:玩法 / UI / 资产 / 系统等语义单元。"""
 
     node_id: str = Field(min_length=1)
@@ -136,7 +142,7 @@ class GameBuildGraphNode(BaseModel):
     allows_design_space_discovery: bool = False
 
 
-class GameBuildGraphEdge(BaseModel):
+class GameBuildGraphEdge(GameBuildBaseModel):
     """节点之间的语义依赖或耦合关系。"""
 
     from_node: str = Field(min_length=1)
@@ -145,7 +151,7 @@ class GameBuildGraphEdge(BaseModel):
     reason: str = Field(min_length=1)
 
 
-class GameBuildGraph(BaseModel):
+class GameBuildGraph(GameBuildBaseModel):
     """Contract 展开的中间设计图。"""
 
     graph_version: str = "1.0"
@@ -175,11 +181,14 @@ def _contains_engine_concrete_path(value: Any) -> bool:
     if isinstance(value, list):
         return any(_contains_engine_concrete_path(item) for item in value)
     if isinstance(value, str):
-        return value.startswith(("Source/", "/Game/")) or value.endswith(blocked_suffixes)
+        normalized = value.replace("\\", "/")
+        return normalized.startswith(
+            ("Source/", "/Game/", "Content/", "res://")
+        ) or normalized.endswith(blocked_suffixes)
     return False
 
 
-class GameBuildAction(BaseModel):
+class GameBuildAction(GameBuildBaseModel):
     """Build IR 的动作节点,保持跨引擎意图而非具体资产路径。"""
 
     action_id: str = Field(min_length=1)
@@ -195,7 +204,7 @@ class GameBuildAction(BaseModel):
         return self
 
 
-class GameBuildAssetRequest(BaseModel):
+class GameBuildAssetRequest(GameBuildBaseModel):
     """IR 中对多模态资产的语义请求。"""
 
     request_id: str = Field(min_length=1)
@@ -203,14 +212,14 @@ class GameBuildAssetRequest(BaseModel):
     description: str = Field(min_length=1)
 
 
-class GameBuildValidationCheck(BaseModel):
+class GameBuildValidationCheck(GameBuildBaseModel):
     """生成项目必须满足的验收检查。"""
 
     check_id: str = Field(min_length=1)
     description: str = Field(min_length=1)
 
 
-class GameBuildIR(BaseModel):
+class GameBuildIR(GameBuildBaseModel):
     """Graph 编译后的 engine-neutral build plan。"""
 
     ir_version: str = "1.0"
@@ -221,7 +230,7 @@ class GameBuildIR(BaseModel):
     validation_checks: list[GameBuildValidationCheck] = Field(default_factory=list)
 
 
-class GameBuildHandoff(BaseModel):
+class GameBuildHandoff(GameBuildBaseModel):
     """Phase A 交给后续 engine adapter / workflow 的交接包。"""
 
     handoff_version: str = "1.0"

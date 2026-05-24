@@ -76,6 +76,13 @@ def test_game_build_contract_rejects_empty_target_engines():
         GameBuildContract.model_validate(payload)
 
 
+def test_game_build_contract_rejects_nested_unknown_fields():
+    payload = _valid_contract_payload()
+    payload["baseline_capabilities"][0]["activaton"] = "blocked"
+    with pytest.raises(ValidationError):
+        GameBuildContract.model_validate(payload)
+
+
 def test_game_build_graph_rejects_edges_to_missing_nodes():
     with pytest.raises(ValidationError, match="unknown edge endpoint"):
         GameBuildGraph.model_validate(
@@ -247,6 +254,8 @@ def test_game_build_ir_rejects_unreal_concrete_paths():
         "Content/Generated/Foo.uasset",
         "res://ui/hud.tscn",
         "scripts/customer_loop.gd",
+        "res://textures/player.png",
+        "/Game\\Demo\\WBP_HUD",
     ],
 )
 def test_game_build_ir_rejects_nested_engine_concrete_paths(concrete_path: str):
