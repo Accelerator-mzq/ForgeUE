@@ -374,8 +374,8 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 **Single-source AudioCandidate metadata (F-Plan-R7-A round-7 plan, test_audio_worker.py extension):**
 - `test_audio_candidate_metadata_does_not_duplicate_top_level_audio_fields` (assert that `AudioCandidate.metadata` dict does NOT contain keys `duration_seconds` / `sample_rate` / `format` / `format_detected`; those values live on the top-level dataclass fields per F3 round-1 design D5 single-source decision; this fence prevents double-source bugs where executor `repo.put` would not know whether to read `cand.duration_seconds` or `cand.metadata['duration_seconds']`)
 
-**UE bridge integration (F-Plan-R6-A round-6 plan, test_generate_audio_comfy.py extension; mirrors image / mesh artifact-to-manifest_builder fences):**
-- `test_audio_artifact_shape_waveform_routes_to_sound_wave_in_manifest_builder` (given `Artifact(artifact_type=ArtifactType(modality="audio", shape="waveform"), payload_ref=PayloadRef(kind=file, file_path=...))` produced by `GenerateAudioExecutor.execute`, run through `manifest_builder.build_manifest(...)`; assert resulting `UEAssetEntry.asset_kind == "sound_wave"` per the existing `_KIND_MAP[("audio", "waveform")] = "sound_wave"` lookup at `src/framework/ue_bridge/manifest_builder.py:45`; NOT skipped by the `_KIND_MAP.get(...) is None` silent-skip branch at `manifest_builder.py:87-89`)
+**Unreal contract integration (F-Plan-R6-A round-6 plan, test_generate_audio_comfy.py extension; mirrors image / mesh artifact-to-manifest_builder fences):**
+- `test_audio_artifact_shape_waveform_routes_to_sound_wave_in_manifest_builder` (given `Artifact(artifact_type=ArtifactType(modality="audio", shape="waveform"), payload_ref=PayloadRef(kind=file, file_path=...))` produced by `GenerateAudioExecutor.execute`, run through `manifest_builder.build_manifest(...)`; assert resulting `UEAssetEntry.asset_kind == "sound_wave"` per the existing `_KIND_MAP[("audio", "waveform")] = "sound_wave"` lookup at `src/framework/engine_bridge/unreal/contract/manifest_builder.py`; NOT skipped by the `_KIND_MAP.get(...) is None` silent-skip branch)
 - `test_audio_artifact_with_format_shape_does_not_route_to_sound_wave` (negative regression: given `Artifact(artifact_type=ArtifactType(modality="audio", shape="flac"))` — which would happen if implementer mistakenly used `shape=cand.format` — assert `manifest_builder.build_manifest(...)` skips this artifact entirely, producing zero `UEAssetEntry` for it; this fence guards against the F-Plan-R6-A regression class where audio file is produced but UE silently drops the import)
 
 **Audio executor dispatch (test_generate_audio_comfy.py, NEW file):**
@@ -558,7 +558,7 @@ The system SHALL extend `tests/unit/test_comfy_subprocess.py` (and add `tests/un
 **ArtifactType modality Literal extension (test_artifact.py extension):**
 - `test_artifact_type_modality_literal_accepts_video` (D2: post-change, Pydantic accepts `modality="video"`; pre-change Literal Union does NOT include "video")
 
-**UE bridge manifest_builder video mapping (test_manifest_builder.py extension; D1 + D12):**
+**Unreal contract manifest_builder video mapping (test_manifest_builder.py extension; D1 + D12):**
 - `test_kind_map_video_mp4_routes_to_file_media_source` (assert `_KIND_MAP[("video", "mp4")] == "file_media_source"`)
 - `test_prefix_by_kind_file_media_source_is_MS_underscore` (assert `_PREFIX_BY_KIND["file_media_source"] == "MS_"`)
 - `test_default_import_options_for_file_media_source_kind_returns_video_keys` (assert dict contains `loop` / `play_on_open` / `duration_seconds` / `frame_count` / `width` / `height` / `fps` / `source_format` keys)

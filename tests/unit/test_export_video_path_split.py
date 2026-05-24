@@ -20,7 +20,7 @@ from framework.core.artifact import (
 )
 from framework.core.enums import ArtifactRole, PayloadKind
 from framework.core.ue import UEOutputTarget
-from framework.ue_bridge.manifest_builder import is_manifest_importable
+from framework.engine_bridge.unreal.contract.manifest_builder import is_manifest_importable
 
 
 def _mkart(modality, shape, payload_kind=PayloadKind.file, file_path="/tmp/x.png"):
@@ -85,7 +85,7 @@ def test_is_manifest_importable_returns_true_for_image_raster():
 
 # ---- A.3:derive_drop_target helper -----------------------------------------
 
-from framework.ue_bridge.manifest_builder import derive_drop_target  # noqa: E402
+from framework.engine_bridge.unreal.contract.manifest_builder import derive_drop_target  # noqa: E402
 
 
 def test_derive_drop_target_video_mp4():
@@ -125,7 +125,7 @@ def test_derive_drop_target_falls_through_for_unmapped_shape():
 
 # ---- A.4:build_manifest source_uri via derive_drop_target -----------------
 
-from framework.ue_bridge.manifest_builder import build_manifest  # noqa: E402
+from framework.engine_bridge.unreal.contract.manifest_builder import build_manifest  # noqa: E402
 
 
 def test_manifest_entry_source_uri_matches_framework_drop_path():

@@ -236,17 +236,17 @@ ForgeUE **不做**:
 | FR-ENGINE-003 | Unreal adapter 应保持既有 `manifest_only` 行为,继续产出 `UEAssetManifest` / `UEImportPlan` / `Evidence`,并保留 `ue_scripts/run_import.py` 文件契约 |
 | FR-ENGINE-004 | Godot 4 adapter MVP 应支持 `headless_import`,对 `image/png`、`image/jpg`、`image/jpeg`、`audio/wav`、`audio/mp3`、`mesh/glb` stage 到 `<project_root>/<asset_root>/<run_id>/`,写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`,执行 `[godot_exe, "--headless", "--path", project_root, "--import"]`,并仅在命令成功且 `.import` / `.godot/imported` fresh 验证通过后写 success evidence |
 
-### 3.8 Unreal Adapter / UE Bridge(FR-UE)
+### 3.8 Unreal Adapter / Unreal 文件契约(FR-UE)
 
 | 编号 | 需求 |
 | --- | --- |
-| FR-UE-001 | Unreal adapter 下游 UE Bridge 应支持双模:`manifest_only`(MVP 默认)和 `bridge_execute`(后置,未启用);新入口为 `engine_target(engine="unreal")`,旧 `ue_target` 为 legacy input |
+| FR-UE-001 | Unreal adapter 下游 Unreal 文件契约主实现位于 `framework.engine_bridge.unreal.contract`,支持双模:`manifest_only`(MVP 默认)和 `bridge_execute`(后置,未启用);`framework.ue_bridge` 保留为一个兼容周期的 legacy compatibility alias;新入口为 `engine_target(engine="unreal")`,旧 `ue_target` 为 legacy input |
 | FR-UE-002 | `manifest_only` 模式下,Unreal adapter 应产出 `UEAssetManifest` + `UEImportPlan` + `Evidence` 到 `<UE项目>/Content/Generated/<run_id>/`;框架不直接调 UE API |
 | FR-UE-003 | UE 侧应通过 `ue_scripts/run_import.py` 在 UE Python Console 执行导入,支持贴图(`import_texture`)、静态网格(`import_static_mesh`)、音频(`import_audio`) |
 | FR-UE-004 | Manifest 应通过 `target_object_path` / `target_package_path` 声明 UE 资产位置,遵循 `asset_naming_policy`(gdd_mandated / house_rules / gdd_preferred_then_house_rules) |
 | FR-UE-005 | 导入拓扑应通过 `depends_on` 声明,UE 侧按拓扑序执行 |
 | FR-UE-006 | 每次 UE 侧操作应追加一条 `Evidence`,记录 `op_id` / `kind` / `status` / 错误信息 |
-| FR-UE-007 | Bridge 不得:决定资产应该长什么样、自己生成资产、修改已有关键资产、绕过 Verdict、改 GameMode / 默认地图、跨项目操作 |
+| FR-UE-007 | Unreal 文件契约不得:决定资产应该长什么样、自己生成资产、修改已有关键资产、绕过 Verdict、改 GameMode / 默认地图、跨项目操作 |
 | FR-UE-008 | Phase C 操作(创建材质 / 音频 cue)默认通过 `permission_policy` 拒绝,显式 allow_flag 开启 |
 
 ### 3.9 多模态 Worker(FR-WORKER)

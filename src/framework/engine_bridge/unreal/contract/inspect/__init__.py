@@ -1,6 +1,6 @@
-"""Unreal contract inspection helpers 的兼容 alias。"""
+"""只读 Unreal project inspection helpers。"""
 
-from framework.engine_bridge.unreal.contract.inspect import (
+from framework.engine_bridge.unreal.contract.inspect.project import (
     PathStatus,
     ProjectReadiness,
     inspect_asset_exists,

@@ -62,9 +62,17 @@ from framework.runtime.orchestrator import Orchestrator
 from framework.schemas.image_spec import register_builtin_schemas as register_image_spec_schema
 from framework.schemas.registry import get_schema_registry
 from framework.schemas.ue_character import register_builtin_schemas
-from framework.ue_bridge import EvidenceWriter, build_import_plan, build_manifest
-from framework.ue_bridge.evidence import load_evidence
-from framework.ue_bridge.inspect import inspect_content_path, inspect_project, validate_manifest
+from framework.engine_bridge.unreal.contract import (
+    EvidenceWriter,
+    build_import_plan,
+    build_manifest,
+)
+from framework.engine_bridge.unreal.contract.evidence import load_evidence
+from framework.engine_bridge.unreal.contract.inspect import (
+    inspect_content_path,
+    inspect_project,
+    validate_manifest,
+)
 from framework.workflows import load_task_bundle
 
 

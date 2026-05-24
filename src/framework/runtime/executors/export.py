@@ -5,7 +5,6 @@ from framework.core.enums import StepType
 from framework.core.policies import PermissionPolicy
 from framework.engine_bridge.core import resolve_engine_target
 from framework.engine_bridge.registry import EngineAdapterRegistry
-from framework.engine_bridge.unreal import UnrealAdapter
 from framework.runtime.executors.base import ExecutorResult, StepContext, StepExecutor
 
 
@@ -22,6 +21,7 @@ class ExportExecutor(StepExecutor):
     ) -> None:
         if adapter_registry is None:
             from framework.engine_bridge.godot4 import Godot4Adapter
+            from framework.engine_bridge.unreal import UnrealAdapter
 
             adapter_registry = EngineAdapterRegistry()
             # 默认注册当前内置引擎 adapter；具体执行仍由 task.engine_target 决定。
@@ -36,7 +36,9 @@ class ExportExecutor(StepExecutor):
 
     @staticmethod
     def _is_importable(art) -> bool:
-        # 兼容既有 UE contract；实际过滤规则仍由 manifest_builder 单一真源决定。
-        from framework.ue_bridge.manifest_builder import is_manifest_importable
+        # 兼容既有 Unreal contract;实际过滤规则仍由 manifest_builder 单一真源决定。
+        from framework.engine_bridge.unreal.contract.manifest_builder import (
+            is_manifest_importable,
+        )
 
         return is_manifest_importable(art)

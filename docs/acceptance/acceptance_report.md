@@ -176,7 +176,9 @@
 
 已验证事实:Engine Bridge focused suite 上一轮为 `34 passed`;Task 6 example smoke 为 `59 passed`。本报告不把这些数字作为全量测试总数。
 
-### 4.8 FR-UE Unreal Adapter / UE Bridge
+### 4.8 FR-UE Unreal Adapter / Unreal 文件契约
+
+当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。`src/framework/ue_bridge/` / `framework.ue_bridge` 保留为一个兼容周期的 legacy compatibility alias。
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |

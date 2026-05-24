@@ -1,16 +1,16 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 1 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
 > 另有 9 项 legacy requirements 待办(不计入上面待办计数)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (1)
+## Future Work (0)
 
-- `LR-0143` **unreal-bridge-package-rename Unreal 文件契约包路径命名清理** — 将当前 Unreal-only `src/framework/ue_bridge/` 迁移到更符合 Engine Bridge 新边界的命名/路径(候选:`src/framework/engine_bridge/unreal/contract/` 或 `src/framework/unreal_bridge/`),并保留 `framework.ue_bridge` 兼容 re-export 层一个周期;同步更新 imports / tests / docs / archive references,确保 `UnrealAdapter` 行为零变化、Godot4Adapter 仍不依赖 Unreal 契约层。验收:UE manifest_only 自动化 + 真实 commandlet smoke 仍通过,Godot4 L2 smoke 不回归。Linear: `FOR-31`。 (priority: medium)
+(无)
 
 ## Out of Scope (0)
 

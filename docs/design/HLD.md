@@ -92,7 +92,7 @@
 │  Engine Bridge 层 (src/framework/engine_bridge/)                         │
 │  EngineTarget / EngineAdapterRegistry / UnrealAdapter / Godot4Adapter│
 ├────────────────────────────────────────────────────────────────────┤
-│  Unreal 文件契约层 (src/framework/ue_bridge/)                            │
+│  Unreal 文件契约层 (src/framework/engine_bridge/unreal/contract/)        │
 │  Inspect → Plan → (Execute 预留) → Evidence                         │
 │  ManifestBuilder / ImportPlanBuilder / PermissionPolicy             │
 ├────────────────────────────────────────────────────────────────────┤
@@ -178,7 +178,7 @@
 | Review Engine | `src/framework/review_engine/` | `ChiefJudge.ajudge_with_panel` | 评审与决策 |
 | Artifact Store | `src/framework/artifact_store/` | `Repository.put / get` | Artifact 持久化 |
 | Engine Bridge | `src/framework/engine_bridge/` | `EngineAdapter.export` / `EngineAdapterRegistry.resolve` | 具体引擎导出分发 |
-| UE Bridge | `src/framework/ue_bridge/` | `ManifestBuilder` / `ImportPlanBuilder` | Unreal adapter 下游文件契约构建 |
+| Unreal contract | `src/framework/engine_bridge/unreal/contract/` | `ManifestBuilder` / `ImportPlanBuilder` | Unreal adapter 下游文件契约构建;`src/framework/ue_bridge/` 为 legacy compatibility alias |
 | Observability | `src/framework/observability/` | `EventBus.publish` / `compact_messages` | 事件 + 追踪 + 密钥 |
 | Server | `src/framework/server/` | `/ws/run` / `/ws/step` | WS 进度推送 |
 | Pricing Probe | `src/framework/pricing_probe/` | CLI `--apply` | 定价自动化 |
@@ -202,7 +202,7 @@ server ──► runtime ──► providers ──► core
    │      engine_bridge ────────────────┤
    │         │                          │
    │         ▼                          │
-   │      ue_bridge(unreal only) ───────┘
+   │      engine_bridge.unreal.contract ─┘
    │
    └──► observability (横切,所有层可调)
 
@@ -409,7 +409,7 @@ task.engine_target or legacy task.ue_target
 
 | Adapter | engine | 交付模式 | 责任 |
 | --- | --- | --- | --- |
-| `UnrealAdapter` | `unreal` | `manifest_only` | 把旧 UE manifest-only 行为收敛到 Unreal adapter,继续调用 `ue_bridge` 构建 manifest / plan / evidence |
+| `UnrealAdapter` | `unreal` | `manifest_only` | 调用 `framework.engine_bridge.unreal.contract` 构建 manifest / plan / evidence;`framework.ue_bridge` 仅作为 legacy compatibility alias |
 | `Godot4Adapter` | `godot4` | `headless_import` | stage 支持的文件型 Artifact,写 Godot manifest / plan / evidence,调用 Godot headless import 并验证 fresh `.import` / `.godot/imported` |
 
 ### 7.2 Unreal adapter 双模并存
@@ -648,7 +648,7 @@ payload: { status, elapsed_s?, progress?, cost_usd?, ... }
 | WebSocket | JSON over WS | `src/framework/server/ws_server.py` |
 | HTTPS(Provider) | 各 provider REST | `src/framework/providers/*` |
 | Engine export | JSON / 资产文件 / headless command | `src/framework/engine_bridge/*` |
-| File(Unreal 契约) | JSON / 资产文件 | `src/framework/ue_bridge/*` + `ue_scripts/*` |
+| File(Unreal 契约) | JSON / 资产文件 | `src/framework/engine_bridge/unreal/contract/*` + `ue_scripts/*`;`src/framework/ue_bridge/*` 为兼容 alias |
 | YAML / JSON 配置 | 文件读 | `config/models.yaml` / `examples/*.json` |
 
 详细字段见 LLD §9 与 SRS §5。
