@@ -1,4 +1,7 @@
-"""Unit tests for src/framework/ue_bridge/* (§F4-1, F4-4, F4-5, F4-6)."""
+"""Unit tests for src/framework/engine_bridge/unreal/contract/* (§F4-1, F4-4, F4-5, F4-6).
+
+中文注释:legacy `framework.ue_bridge` 仅作为兼容 alias,主实现测试使用 Unreal contract 新路径。
+"""
 from __future__ import annotations
 
 from pathlib import Path
