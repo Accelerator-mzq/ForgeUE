@@ -175,8 +175,9 @@ def _contains_engine_concrete_path(value: Any) -> bool:
 
     blocked_suffixes = (".uasset", ".umap", ".h", ".cpp", ".gd", ".tscn")
     if isinstance(value, dict):
-        for child in value.values():
-            if _contains_engine_concrete_path(child):
+        # dict key 也可能夹带具体引擎路径,例如 engine_requirements 的自由字符串键。
+        for key, child in value.items():
+            if _contains_engine_concrete_path(key) or _contains_engine_concrete_path(child):
                 return True
     if isinstance(value, list):
         return any(_contains_engine_concrete_path(item) for item in value)

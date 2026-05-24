@@ -269,6 +269,30 @@ def test_game_build_ir_rejects_concrete_paths_in_action_inputs():
         )
 
 
+def test_game_build_ir_rejects_concrete_paths_in_action_requirement_keys():
+    with pytest.raises(ValidationError, match="engine-specific concrete path"):
+        GameBuildIR.model_validate(
+            {
+                "ir_version": "1.0",
+                "ir_id": "ir.shop.phase_a",
+                "source_graph_id": "graph.shop.phase_a",
+                "actions": [
+                    {
+                        "action_id": "act-ui",
+                        "action_type": "create_ui_screen",
+                        "domain": "ui",
+                        "inputs": ["ui-hud"],
+                        "engine_requirements": {
+                            "unreal": {"/Game/Demo/UI/WBP_HUD": "widget"}
+                        },
+                    }
+                ],
+                "asset_requests": [],
+                "validation_checks": [],
+            }
+        )
+
+
 @pytest.mark.parametrize(
     "concrete_path",
     [
