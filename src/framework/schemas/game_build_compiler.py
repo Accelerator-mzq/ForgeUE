@@ -199,7 +199,8 @@ class GameBuildAction(GameBuildBaseModel):
 
     @model_validator(mode="after")
     def _reject_concrete_engine_paths(self) -> "GameBuildAction":
-        if _contains_engine_concrete_path(self.engine_requirements):
+        # Phase A 的 action 任意字段都只能表达跨引擎意图,不能夹带具体引擎路径。
+        if _contains_engine_concrete_path(self.model_dump()):
             raise ValueError("engine-specific concrete path")
         return self
 

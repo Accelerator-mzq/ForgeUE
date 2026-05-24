@@ -49,6 +49,7 @@ def test_game_build_compiler_fixtures_stay_engine_neutral():
         "res://",
         ".uasset",
         ".umap",
+        ".h",
         ".cpp",
         ".gd",
         ".tscn",
