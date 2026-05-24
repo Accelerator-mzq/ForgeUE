@@ -129,6 +129,42 @@ def test_game_build_ir_rejects_unreal_concrete_paths():
         )
 
 
+@pytest.mark.parametrize(
+    "concrete_path",
+    [
+        "Source/MyGame/UI/WBP_HUD.h",
+        "Content/Generated/Foo.uasset",
+        "res://ui/hud.tscn",
+        "scripts/customer_loop.gd",
+    ],
+)
+def test_game_build_ir_rejects_nested_engine_concrete_paths(concrete_path: str):
+    with pytest.raises(ValidationError, match="engine-specific concrete path"):
+        GameBuildIR.model_validate(
+            {
+                "ir_version": "1.0",
+                "ir_id": "ir.shop.phase_a",
+                "source_graph_id": "graph.shop.phase_a",
+                "actions": [
+                    {
+                        "action_id": "act-ui",
+                        "action_type": "create_ui_screen",
+                        "domain": "ui",
+                        "inputs": ["ui-hud"],
+                        "engine_requirements": {
+                            "unreal": {
+                                "preferred_layer": "blueprint_or_cpp",
+                                "notes": ["engine neutral", concrete_path],
+                            }
+                        },
+                    }
+                ],
+                "asset_requests": [],
+                "validation_checks": [],
+            }
+        )
+
+
 def test_game_build_ir_accepts_engine_neutral_requirements():
     build_ir = GameBuildIR.model_validate(
         {

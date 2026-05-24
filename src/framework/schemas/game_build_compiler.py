@@ -7,17 +7,44 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
-EngineTarget = Literal["unreal", "godot4"]
+TargetEngine = Literal["unreal", "godot4"]
+CapabilityActivation = Literal["required", "optional", "deferred", "blocked"]
+RealizationClass = Literal["presence_only", "realization_eligible"]
+ClarificationDecision = Literal["accept_default", "needs_human", "defer", "block"]
+RiskLevel = Literal["low", "medium", "high", "blocking"]
+GraphDomain = Literal[
+    "baseline",
+    "gameplay",
+    "ui",
+    "asset",
+    "audio",
+    "video",
+    "text",
+    "system",
+    "validation",
+]
+GraphEdgeType = Literal["dependency", "coupling", "ordering", "validation"]
+BuildActionType = Literal[
+    "create_rule_system",
+    "create_ui_screen",
+    "create_asset_request",
+    "create_validation_check",
+    "create_input_mapping",
+    "create_scene",
+    "create_audio_system",
+    "create_video_sequence",
+    "create_text_content",
+]
 
 
 class GameBuildGDDSource(BaseModel):
     """GDD 来源证据,用于把 contract 追溯回输入文档。"""
 
     file_path: str = Field(min_length=1)
-    hash: str = Field(min_length=1)
+    hash: str = Field(pattern=r"^sha256:[A-Za-z0-9._-]+$")
 
 
 class GameBuildGameIdentity(BaseModel):
@@ -26,7 +53,15 @@ class GameBuildGameIdentity(BaseModel):
     genre: str = Field(min_length=1)
     subgenre: str | None = None
     camera: str = Field(min_length=1)
-    session_length_minutes: list[int] = Field(min_length=1)
+    session_length_minutes: list[int] = Field(min_length=2, max_length=2)
+
+    @field_validator("session_length_minutes")
+    @classmethod
+    def _validate_session_range(cls, value: list[int]) -> list[int]:
+        # 约定为 [min, max],避免 fixture 后续把范围倒置传给 compiler。
+        if len(value) == 2 and value[0] > value[1]:
+            raise ValueError("session_length_minutes must be ordered [min, max]")
+        return value
 
 
 class GameBuildConstraintField(BaseModel):
@@ -56,8 +91,8 @@ class GameBuildCapability(BaseModel):
     """baseline / gameplay capability 的公共最小形状。"""
 
     capability_id: str = Field(min_length=1)
-    activation: Literal["required", "optional"] = "required"
-    realization_class: str | None = None
+    activation: CapabilityActivation = "required"
+    realization_class: RealizationClass | None = None
     allows_design_space_discovery: bool = False
 
 
@@ -72,17 +107,19 @@ class GameBuildContract(BaseModel):
     variants: dict[str, GameBuildVariantField] = Field(default_factory=dict)
     baseline_capabilities: list[GameBuildCapability] = Field(default_factory=list)
     gameplay_capabilities: list[GameBuildCapability] = Field(default_factory=list)
-    target_engines: list[EngineTarget] = Field(min_length=1)
+    target_engines: list[TargetEngine] = Field(min_length=1)
 
 
 class GameBuildClarificationItem(BaseModel):
     """Contract 生成前需要人确认的问题。"""
 
     item_id: str = Field(min_length=1)
-    question: str = Field(min_length=1)
-    reason: str | None = None
-    source_ref: str | None = None
-    blocking: bool = True
+    topic: str = Field(min_length=1)
+    decision: ClarificationDecision
+    risk_level: RiskLevel
+    reason: str = Field(min_length=1)
+    default_value: Any | None = None
+    provisional: bool = True
 
 
 class GameBuildClarificationReport(BaseModel):
@@ -90,7 +127,7 @@ class GameBuildClarificationReport(BaseModel):
 
     report_version: str = Field(min_length=1)
     report_id: str = Field(min_length=1)
-    source_gdd: GameBuildGDDSource
+    source_contract_id: str = Field(min_length=1)
     items: list[GameBuildClarificationItem] = Field(default_factory=list)
 
 
@@ -98,9 +135,12 @@ class GameBuildGraphNode(BaseModel):
     """设计图节点:玩法 / UI / 资产 / 系统等语义单元。"""
 
     node_id: str = Field(min_length=1)
-    domain: str = Field(min_length=1)
+    domain: GraphDomain
     kind: str = Field(min_length=1)
-    priority: int = Field(ge=0)
+    priority: int = Field(ge=1)
+    depends_on: list[str] = Field(default_factory=list)
+    couples_with: list[str] = Field(default_factory=list)
+    allows_design_space_discovery: bool = False
 
 
 class GameBuildGraphEdge(BaseModel):
@@ -108,7 +148,7 @@ class GameBuildGraphEdge(BaseModel):
 
     from_node: str = Field(min_length=1)
     to_node: str = Field(min_length=1)
-    type: str = Field(min_length=1)
+    type: GraphEdgeType
     reason: str | None = None
 
 
@@ -118,7 +158,7 @@ class GameBuildGraph(BaseModel):
     graph_version: str = Field(min_length=1)
     graph_id: str = Field(min_length=1)
     source_contract_id: str = Field(min_length=1)
-    nodes: list[GameBuildGraphNode] = Field(default_factory=list)
+    nodes: list[GameBuildGraphNode] = Field(min_length=1)
     edges: list[GameBuildGraphEdge] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -134,16 +174,15 @@ class GameBuildGraph(BaseModel):
 def _contains_engine_concrete_path(value: Any) -> bool:
     """递归检测 adapter 阶段才允许出现的具体引擎路径。"""
 
+    blocked_suffixes = (".uasset", ".umap", ".h", ".cpp", ".gd", ".tscn")
     if isinstance(value, dict):
-        for key, child in value.items():
-            if isinstance(key, str) and key.endswith("_path"):
-                return True
+        for child in value.values():
             if _contains_engine_concrete_path(child):
                 return True
     if isinstance(value, list):
         return any(_contains_engine_concrete_path(item) for item in value)
     if isinstance(value, str):
-        return value.startswith(("/Game/", "res://", "Content/"))
+        return value.startswith(("Source/", "/Game/")) or value.endswith(blocked_suffixes)
     return False
 
 
@@ -151,10 +190,10 @@ class GameBuildAction(BaseModel):
     """Build IR 的动作节点,保持跨引擎意图而非具体资产路径。"""
 
     action_id: str = Field(min_length=1)
-    action_type: str = Field(min_length=1)
-    domain: str = Field(min_length=1)
+    action_type: BuildActionType
+    domain: GraphDomain
     inputs: list[str] = Field(default_factory=list)
-    engine_requirements: dict[EngineTarget, dict[str, Any]] = Field(default_factory=dict)
+    engine_requirements: dict[TargetEngine, dict[str, Any]] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _reject_concrete_engine_paths(self) -> "GameBuildAction":
@@ -167,7 +206,7 @@ class GameBuildAssetRequest(BaseModel):
     """IR 中对多模态资产的语义请求。"""
 
     request_id: str = Field(min_length=1)
-    modality: str = Field(min_length=1)
+    modality: Literal["image", "audio", "mesh", "video", "text"]
     description: str = Field(min_length=1)
 
 
@@ -194,10 +233,12 @@ class GameBuildHandoff(BaseModel):
 
     handoff_version: str = Field(min_length=1)
     handoff_id: str = Field(min_length=1)
-    contract: GameBuildContract
-    graph: GameBuildGraph
+    source_contract_id: str = Field(min_length=1)
+    source_graph_id: str = Field(min_length=1)
+    source_ir_id: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
     build_ir: GameBuildIR
-    target_engines: list[EngineTarget] = Field(min_length=1)
+    warnings: list[str] = Field(default_factory=list)
 
 
 def register_builtin_schemas() -> None:
