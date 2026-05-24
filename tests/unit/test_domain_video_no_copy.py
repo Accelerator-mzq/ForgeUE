@@ -72,10 +72,10 @@ def stub_unreal(monkeypatch):
 
 @pytest.fixture
 def domain_video(stub_unreal):
-    """加 ue_scripts/ 到 sys.path + 清缓存 + 返 domain_video 模块"""
-    ue_scripts_dir = Path(__file__).resolve().parent.parent.parent / "ue_scripts"
-    if str(ue_scripts_dir) not in sys.path:
-        sys.path.insert(0, str(ue_scripts_dir))
+    """加 engine_scripts/unreal/ 到 sys.path + 清缓存 + 返 domain_video 模块"""
+    engine_scripts_dir = Path(__file__).resolve().parents[2] / "engine_scripts" / "unreal"
+    if str(engine_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(engine_scripts_dir))
     sys.modules.pop("domain_video", None)
     import domain_video as dv
     yield dv
@@ -175,3 +175,4 @@ def test_domain_video_returns_failed_when_source_mp4_missing(tmp_path, stub_unre
     result = domain_video.import_video_entry(entry, project_root=str(tmp_path))
     assert result["status"] == "failed"
     assert "not found" in result.get("error", "").lower() or "missing" in result.get("error", "").lower()
+

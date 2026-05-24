@@ -14,10 +14,10 @@ import pytest
 
 @pytest.fixture
 def evidence_writer():
-    """加 ue_scripts/ 到 sys.path 并返 evidence_writer 模块"""
-    ue_scripts_dir = Path(__file__).resolve().parent.parent.parent / "ue_scripts"
-    if str(ue_scripts_dir) not in sys.path:
-        sys.path.insert(0, str(ue_scripts_dir))
+    """加 engine_scripts/unreal/ 到 sys.path 并返 evidence_writer 模块"""
+    engine_scripts_dir = Path(__file__).resolve().parents[2] / "engine_scripts" / "unreal"
+    if str(engine_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(engine_scripts_dir))
     # 清缓存,确保拿到最新模块
     sys.modules.pop("evidence_writer", None)
     import evidence_writer as ew
@@ -50,3 +50,4 @@ def test_make_record_without_skip_reason_yields_null_or_omitted_field(evidence_w
         op_id="op_X", kind="import_texture", status="success",
     )
     assert rec.get("skip_reason") is None
+

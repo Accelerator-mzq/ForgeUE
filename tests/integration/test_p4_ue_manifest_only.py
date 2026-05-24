@@ -10,7 +10,7 @@ and asserts:
 - denied ops get a skipped Evidence record (PermissionPolicy)
 - export-bundle / manifest / plan Artifacts land in the repo
 - Verdict decision gates export (reject → bridge does not execute)
-- ue_scripts.run_import drives a stubbed `unreal` module through the plan
+- engine_scripts/unreal.run_import drives a stubbed `unreal` module through the plan
 """
 from __future__ import annotations
 
@@ -403,10 +403,10 @@ async def test_p4_verdict_reject_skips_file_drop(tmp_path: Path):
     assert any(e.kind == "rejected" for e in ev)
 
 
-# ---- T4 ue_scripts.run_import walks the plan via stubbed unreal -------------
+# ---- T4 engine_scripts/unreal.run_import walks the plan via stubbed unreal -------------
 
-async def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeypatch):
-    """Simulate the UE-side Python entry (ue_scripts/run_import.py) by
+async def test_p4_engine_scripts_unreal_run_import_with_stub_unreal(tmp_path: Path, monkeypatch):
+    """Simulate the UE-side Python entry (engine_scripts/unreal/run_import.py) by
     injecting a stub `unreal` module. Asserts that:
     - domain_texture.import_texture_entry calls AssetImportTask the expected
       number of times (one per texture entry)
@@ -458,7 +458,7 @@ async def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeyp
     drops_before = [e for e in evidence_before if e.kind == "drop_file"]
     assert len(drops_before) == 1
 
-    # Stub the `unreal` module so ue_scripts can import it
+    # Stub the `unreal` module so engine_scripts/unreal can import it
     unreal_stub = types.ModuleType("unreal")
     class _FakeAssetImportTask:
         def __init__(self):
@@ -508,9 +508,9 @@ async def test_p4_ue_scripts_run_import_with_stub_unreal(tmp_path: Path, monkeyp
     unreal_stub.TextureFactory = _FakeTextureFactory
     monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
 
-    # Inject ue_scripts path; import run_import and call run() with the real folder
-    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
-    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    # Inject engine_scripts/unreal path; import run_import and call run() with the real folder
+    engine_scripts_dir = Path(__file__).parents[2] / "engine_scripts" / "unreal"
+    monkeypatch.syspath_prepend(str(engine_scripts_dir))
     # Ensure a fresh import regardless of prior test runs
     for mod in [
         "run_import", "manifest_reader", "evidence_writer",
@@ -613,14 +613,14 @@ def test_p4_manifest_and_plan_builders_pure(tmp_path: Path):
 # ---------------------------------------------------------------------------
 
 
-async def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video(
+async def test_p4_engine_scripts_unreal_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video(
     tmp_path: Path, monkeypatch
 ):
     """D1 P4 真机 stub:`file_media_source` operation kind dispatch 到
     `domain_video.import_video_entry`,evidence record `status="success"`,
     UE-side AssetTools.create_asset 调用 1 次。
 
-    本 fence 走 stub `unreal` 模块(不需要真 UE 安装)— 验证 ue_scripts/ run_import
+    本 fence 走 stub `unreal` 模块(不需要真 UE 安装)— 验证 engine_scripts/unreal/ run_import
     dispatch 协议 + domain_video 内部行为骨架 + commit 8c F1 export gate sweep
     (`_is_importable` whitelist + `PermissionPolicy.allow_import_file_media_source` +
     `_OP_ALLOW_ATTR["import_file_media_source"]`)端到端联通。
@@ -728,9 +728,9 @@ async def test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_s
     unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
     monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
 
-    # Inject ue_scripts path + reset modules
-    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
-    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    # Inject engine_scripts/unreal path + reset modules
+    engine_scripts_dir = Path(__file__).parents[2] / "engine_scripts" / "unreal"
+    monkeypatch.syspath_prepend(str(engine_scripts_dir))
     for mod in [
         "run_import", "manifest_reader", "evidence_writer",
         "domain_texture", "domain_audio", "domain_mesh", "domain_video",
@@ -858,8 +858,8 @@ async def test_p4_run_import_skips_permission_denied_file_media_source_op(tmp_pa
     unreal_stub.EditorAssetLibrary = _FakeEditorAssetLibrary
     monkeypatch.setitem(sys.modules, "unreal", unreal_stub)
 
-    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
-    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    engine_scripts_dir = Path(__file__).parents[2] / "engine_scripts" / "unreal"
+    monkeypatch.syspath_prepend(str(engine_scripts_dir))
     for mod in [
         "run_import", "manifest_reader", "evidence_writer",
         "domain_texture", "domain_audio", "domain_mesh", "domain_video",
@@ -960,8 +960,8 @@ def test_p4_domain_video_consumes_d12_mp4_in_place_no_copy(tmp_path: Path, monke
     monkeypatch.setattr(_shutil, "copy2", lambda *a, **kw: copy2_calls.append((a, kw)))
 
     # Import domain_video freshly
-    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
-    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    engine_scripts_dir = Path(__file__).parents[2] / "engine_scripts" / "unreal"
+    monkeypatch.syspath_prepend(str(engine_scripts_dir))
     sys.modules.pop("domain_video", None)
     import domain_video  # noqa: E402
 
@@ -996,10 +996,10 @@ def test_p4_domain_video_consumes_d12_mp4_in_place_no_copy(tmp_path: Path, monke
 
 
 def test_p4_domain_video_does_not_import_framework_module():
-    """NFR-PORT-003:`ue_scripts/domain_video.py` 只 `import unreal` + stdlib;
+    """NFR-PORT-003:`engine_scripts/unreal/domain_video.py` 只 `import unreal` + stdlib;
     不 `import framework.*`(沿 audio / mesh / image domain 守门)。
     """
-    domain_video_path = Path(__file__).parents[2] / "ue_scripts" / "domain_video.py"
+    domain_video_path = Path(__file__).parents[2] / "engine_scripts" / "unreal" / "domain_video.py"
     assert domain_video_path.is_file()
     source = domain_video_path.read_text(encoding="utf-8")
     # 严格检查:no `import framework` / `from framework`
@@ -1278,9 +1278,9 @@ def _build_video_stub_unreal(monkeypatch) -> tuple[types.ModuleType, list]:
 
 
 def _import_run_import_fresh(monkeypatch):
-    """加 ue_scripts/ 到 sys.path + 清缓存 + 返 run_import 模块。"""
-    ue_scripts_dir = Path(__file__).parents[2] / "ue_scripts"
-    monkeypatch.syspath_prepend(str(ue_scripts_dir))
+    """加 engine_scripts/unreal/ 到 sys.path + 清缓存 + 返 run_import 模块。"""
+    engine_scripts_dir = Path(__file__).parents[2] / "engine_scripts" / "unreal"
+    monkeypatch.syspath_prepend(str(engine_scripts_dir))
     for mod in [
         "run_import", "manifest_reader", "evidence_writer",
         "domain_texture", "domain_audio", "domain_mesh", "domain_video",
@@ -1369,7 +1369,7 @@ async def test_p4_domain_video_returns_failed_when_mp4_missing(tmp_path: Path, m
     movies_mp4.unlink()
     assert not movies_mp4.exists()
 
-    # Stub unreal + 加 ue_scripts 路径 + 跑 run_import.run
+    # Stub unreal + 加 engine_scripts/unreal 路径 + 跑 run_import.run
     _, create_asset_calls = _build_video_stub_unreal(monkeypatch)
     # 监听 evidence baseline(framework seed 已写 drop_file + create_folder)
     evidence_before = load_evidence(run_folder / "evidence.json")
@@ -1512,3 +1512,4 @@ async def test_p4_domain_video_returns_failed_on_source_target_mismatch(tmp_path
     assert create_asset_calls == [], (
         f"mismatch 校验失败时不应调 create_asset,实际 calls={create_asset_calls}"
     )
+

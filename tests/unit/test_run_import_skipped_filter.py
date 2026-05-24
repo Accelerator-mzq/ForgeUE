@@ -24,11 +24,11 @@ def stub_unreal(monkeypatch):
 
 
 @pytest.fixture
-def ue_scripts_path():
-    """加 ue_scripts/ 到 sys.path 并清缓存(避免跨 test 污染)"""
-    ue_scripts_dir = Path(__file__).resolve().parent.parent.parent / "ue_scripts"
-    if str(ue_scripts_dir) not in sys.path:
-        sys.path.insert(0, str(ue_scripts_dir))
+def engine_scripts_path():
+    """加 engine_scripts/unreal/ 到 sys.path 并清缓存(避免跨 test 污染)"""
+    engine_scripts_dir = Path(__file__).resolve().parents[2] / "engine_scripts" / "unreal"
+    if str(engine_scripts_dir) not in sys.path:
+        sys.path.insert(0, str(engine_scripts_dir))
     for mod in ["run_import", "manifest_reader", "evidence_writer",
                 "domain_texture", "domain_audio", "domain_mesh", "domain_video"]:
         sys.modules.pop(mod, None)
@@ -73,7 +73,7 @@ def _build_minimal_bundle(tmp_path: Path):
     return tmp_path
 
 
-def test_pre_skipped_only_includes_permission_denied(tmp_path, stub_unreal, ue_scripts_path):
+def test_pre_skipped_only_includes_permission_denied(tmp_path, stub_unreal, engine_scripts_path):
     """三 AND filter 只 pre-skip permission_denied;empty plan 跑通 + evidence 不变。"""
     folder = _build_minimal_bundle(tmp_path)
     import run_import
@@ -83,7 +83,7 @@ def test_pre_skipped_only_includes_permission_denied(tmp_path, stub_unreal, ue_s
     assert len(evidence_after) == 3  # 原 3 条不变(empty plan 不 emit 新 record)
 
 
-def test_no_handler_skipped_does_not_pre_filter(tmp_path, stub_unreal, ue_scripts_path):
+def test_no_handler_skipped_does_not_pre_filter(tmp_path, stub_unreal, engine_scripts_path):
     """no_handler skipped 不被 pre-scan 吞 — 模拟 plan 含一 op,该 op 在 evidence 已是 no_handler skipped;
     新 run_import 应该不把它加入 pre_skipped(三 AND filter 排除 no_handler)+ 又会再 dispatch handler;
     因 plan 含 unknown_kind op → handler is None → 又 emit 新 no_handler skipped record。
@@ -104,3 +104,4 @@ def test_no_handler_skipped_does_not_pre_filter(tmp_path, stub_unreal, ue_script
     assert new_record["status"] == "skipped"
     # 新 record 应该有 skip_reason='no_handler'(B.2.3 实施 + B.1 make_record kwarg)
     assert new_record.get("skip_reason") == "no_handler"
+
