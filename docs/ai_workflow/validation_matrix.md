@@ -218,7 +218,8 @@ python -m framework.pricing_probe --apply
 
 前提:
 - 本地 ComfyUI 或 Tencent Hunyuan 3D key;
-- 装有 UE 5.x 的机器 + 空白或已有 UE 工程 + `.uproject` 启用 `PythonScriptPlugin`。
+- 装有 UE 5.x 的机器 + 空白或已有 UE 工程 + `.uproject` 启用 `PythonScriptPlugin`;
+- Godot 4.x headless import smoke 需配置 `engine_target.executable_path` 或 `GODOT4_EXE`。
 
 ### 3.1 ComfyUI agent CLI pipeline(image / mesh / audio / video,真实出图)
 
@@ -330,11 +331,28 @@ $env:FORGEUE_RUN_FOLDER="<artifact_root>/<today>/a1_demo/Content/Generated/a1_de
 exec(open('<repo>/engine_scripts/unreal/run_import.py').read())
 ```
 
+### 3.5 Godot 4 headless import
+
+当前本机 Godot 4.6.2 L2 smoke 已通过,证据路径:
+
+```text
+demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md
+```
+
+该轮验证使用 `Godot4Adapter` stage 一个 PNG Artifact,调用 Godot 4.6.2 console exe:
+
+```text
+E:/Godot/Godot_v4.6.2/Godot_v4.6.2-stable_win64_console.exe --headless --path <ForgeGodotDemo> --import
+```
+
+通过标准:命令 returncode 为 0,Godot stdout 含 `reimport | art_godot4_pixel.png`,`.import` 与 `.godot/imported/` 产物 fresh 验证通过,`evidence.json` 写 `engine=godot4 / kind=godot_import / status=success`。
+
 ### Level 2 通过条件
 
 - ComfyUI 路径产出真实 image / mesh / audio / video Artifact(`file` 载体)
 - Hunyuan 3D 路径产出 `.glb` Artifact(magic bytes `glTF` 校验通过)
 - UE commandlet 或 Console 导入成功,`evidence.json` 记录齐全
+- Godot 4 headless import 成功,`.import` / `.godot/imported/` fresh 验证通过,`evidence.json` 记录齐全
 - 任何失败都走 FailureModeMap 分类,不静默重试、不双扣
 
 ---

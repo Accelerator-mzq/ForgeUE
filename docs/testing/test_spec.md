@@ -434,7 +434,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | FR-STRUCT(结构化) | integration/test_p1 | ✅ |
 | FR-REVIEW(评审) | integration/test_p2, test_chief_judge_parallel, test_review_budget | ✅ |
 | FR-STORE(Artifact) | test_core_schemas, test_artifact_repository, test_payload_backends | ✅ |
-| FR-ENGINE(Engine Bridge) | test_engine_target, test_engine_adapter_registry, test_godot4_adapter, test_example_bundles_smoke | ✅(L0/L1 自动化;Godot 4 真机 L2 待配置 `GODOT4_EXE`) |
+| FR-ENGINE(Engine Bridge) | test_engine_target, test_engine_adapter_registry, test_godot4_adapter, test_example_bundles_smoke | ✅(L0/L1 自动化;Godot 4 真机 L2 已通过,证据:`demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`) |
 | FR-UE(Unreal adapter / UE Bridge) | test_ue_bridge, integration/test_p4 | ✅(stub + UE 5.7.4 真机历史验收) |
 | FR-WORKER(多模态) | test_cn_image_adapters, **test_comfy_subprocess(自 v1.6 替代 test_comfy_http_unsupported)**, test_tripo3d_unsupported, integration/test_l4 | ✅ |
 | FR-RUNTIME(工程化) | test_failure_mode_map, test_transition_engine, test_budget_tracker, test_cancellation, test_transient_retry, test_retry_async, test_cascade_cancel | ✅ |
@@ -573,6 +573,7 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 | v1.10 | 2026-05-22 | 加 Linear FOR-8 `multi-mode-comfy-dag-warning`:ManagedProcessRegistry 扫描同一 run 内所有 managed subprocess selections,多个 Comfy step lifecycle mode 不一致时 fail-fast,不再静默采用第一个 mode。新增 `test_comfy_provider_config.py::test_default_managed_process_registry_rejects_conflicting_comfy_lifecycle_modes`;总数以本地 `python -m pytest -q` 实测为准。 |
 | v1.11 | 2026-05-23 | 加 Linear FOR-14 `metadata-corruption-detection`:ArtifactRepository 写 `_artifacts.integrity.json` 绑定 `_artifacts.json` sha256 / artifact_count / artifact_ids;resume 发现 integrity mismatch 时 `ArtifactMetadataIntegrityError` fail-fast,legacy 无 integrity 文件保持兼容。新增 fence 覆盖 `test_artifact_repository.py`;总数以本地 `python -m pytest -q` 实测为准。 |
 | v1.12 | 2026-05-23 | 加 Linear FOR-22 + FOR-23:DryRunPass 校验显式声明的 provider `api_key_env`,缺 key 时阻断 Run;Orchestrator Step 异常失败路径 emit `step_failed` ProgressEvent 并携带 `exception_type`。新增 / 更新 fence 覆盖 `test_dry_run_pass.py` 与 `test_orchestrator.py`;总数以本地 `python -m pytest -q` 实测为准。 |
+| v1.13 | 2026-05-24 | Godot 4 headless import L2 evidence 补登记:真实 Godot 4.6.2 console exe 运行 `--headless --path <project> --import` returncode 0;`evidence.json` 记录 `engine=godot4 / kind=godot_import / status=success`;FR-ENGINE 覆盖矩阵同步为“L2 已通过”。 |
 
 ### 10.3 未决事项
 

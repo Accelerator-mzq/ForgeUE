@@ -105,4 +105,4 @@ The system SHALL NOT auto-map `video/mp4` into a Godot runtime asset in the firs
 
 - Unit: `python -m pytest tests/unit/test_engine_target.py tests/unit/test_engine_adapter_registry.py tests/unit/test_godot4_adapter.py -q`
 - Example smoke: `python -m pytest tests/integration/test_example_bundles_smoke.py -q`
-- Real Godot 4 L2 smoke: pending until a host configures `GODOT4_EXE` or `engine_target.executable_path`
+- Real Godot 4 L2 smoke: passed on 2026-05-24 with Godot 4.6.2 console exe; evidence at `demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`
