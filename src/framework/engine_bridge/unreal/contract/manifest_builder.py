@@ -51,9 +51,10 @@ _KIND_MAP: dict[tuple[str, str], str] = {
     ("material", "definition"): "material",
     # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1:
     # video.mp4 → file_media_source(`unreal.FileMediaSourceFactory` 一行 import,
+    # D12 drop target 由 framework contract 层 derive_drop_target 统一决定:
     # mp4 文件落 Content/Movies/<run_id>/ packaging 外挂,.uasset 落
-    # Content/Generated/<run_id>/ asset_root 沿用 — D12 路径分流由 domain_video.py
-    # 内部决定)。webm follow-on `comfy-video-webm-adoption` 时扩 ("video","webm") entry。
+    # Content/Generated/<run_id>/ asset_root 沿用)。webm follow-on
+    # `comfy-video-webm-adoption` 时扩 ("video","webm") entry。
     ("video", "mp4"): "file_media_source",
 }
 
