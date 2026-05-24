@@ -2,10 +2,9 @@
 
 > 多引擎内容交付多模型运行时框架 · vNext
 
-ForgeUE 是多引擎内容交付框架。Game Build Compiler Phase A 提供 engine-neutral GDD-to-game-build planning contract；核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现。Unreal 是默认 adapter；Godot 4.x 通过 headless import adapter 支持。
+ForgeUE 是多引擎内容交付框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现。Unreal 是默认 adapter；Godot 4.x 通过 headless import adapter 支持。
 
 - **三种运行模式**：`basic_llm`（结构化问答）· `production`（多模态生成 + 内嵌评审）· `standalone_review`（独立评审链）
-- **Game Build Compiler Phase A**：把 GDD 提炼为 `Contract → Graph → Build IR → Handoff` 的结构化 planning artifact；当前为 contract-only，不生成 workflow bundle、UE/Godot 工程文件或可玩 demo
 - **Engine Bridge / Godot 4**：`ExportExecutor` 按 `engine_target / legacy ue_target` dispatch 到引擎 adapter；Godot 4.x 支持 `headless_import`
 - **Unreal adapter（manifest-only）**：沿用 `UEAssetManifest + UEImportPlan + Evidence` 文件契约，UE 侧 Python 脚本执行导入
 - **基础层直接用开源**：[LiteLLM](https://github.com/BerriAI/litellm) 统一 provider 调用 + [Instructor](https://github.com/567-labs/instructor) 做结构化输出；**运行时、评审、多引擎交付边界全自研**
@@ -79,10 +78,6 @@ python -m framework.run --task examples/character_extract.json --run-id run_demo
 ### 核心对象（§B）
 
 ```
-GameBuildContract ─▶ GameBuildGraph ─▶ GameBuildIR ─▶ GameBuildHandoff
-       │                  │                  │                  │
-       └────── engine-neutral GDD-to-game-build planning contract ┘
-
 Task ──▶ Run ──▶ Workflow ──▶ Step[*]
                                   │
                                   ├─▶ 产出 Artifact[*]   （text / image / audio / mesh / bundle / ue / report）
@@ -97,12 +92,6 @@ Task ──▶ Run ──▶ Workflow ──▶ Step[*]
 - **`Artifact`**：一等公民产物，`PayloadRef` 三态（`inline` / `file` / `blob`），带 `Lineage` + `Validation`
 - **`ReviewNode / ReviewReport / Verdict`**：评审三件套，**分析对象与流程控制对象分离**
 - **`Verdict.decision`**：9 种枚举（`approve_one` / `revise` / `retry_same_step` / `fallback_model` / `human_review_required` / ...）
-
-### Game Build Compiler（Phase A）
-
-Game Build Compiler 是 runtime 上方的 planning contract 层，来源于 AGENT_UE5 Design Compiler 中可泛化的设计编译语义。当前 Phase A 只落五个结构化 schema refs：`game_build.contract` / `game_build.clarification_report` / `game_build.graph` / `game_build.build_ir` / `game_build.handoff`。`GameBuildIR` 会拒绝 `Source/`、`/Game/`、`Content/`、`res://`、`.uasset`、`.umap`、`.h`、`.cpp`、`.gd`、`.tscn` 等具体引擎路径，确保后续 lowering 仍由 Unreal / Godot adapter 接管。
-
-完整契约见 [`docs/contracts/game-build-compiler/spec.md`](docs/contracts/game-build-compiler/spec.md)。
 
 ### 9 阶段 Run 生命周期（§C.2）
 
@@ -138,7 +127,7 @@ D:\ClaudeProject\ForgeUE_claude\
 │   ├── providers/               # LiteLLM + Fake adapters + CapabilityRouter + ModelRegistry
 │   │   └── workers/             # ComfyWorker（FakeComfyWorker + HTTPComfyWorker）
 │   ├── review_engine/           # LLMJudge / ChiefJudge / ReportVerdictEmitter + rubric YAML
-│   ├── schemas/                 # Pydantic 业务 schema（UECharacter / ImageSpec / Game Build Compiler）注册
+│   ├── schemas/                 # Pydantic 业务 schema（UECharacter / ImageSpec）注册
 │   ├── engine_bridge/           # EngineTarget / EngineAdapter / UnrealAdapter / Godot4Adapter
 │   │   └── unreal/contract/     # Unreal manifest-only 文件契约主实现
 │   ├── ue_bridge/               # FOR-32 人工删除清单中的 legacy path,不作为当前入口
@@ -272,7 +261,6 @@ bundle 立即能 `"models_ref": "image_fast"`。注册表是进程单例，热�
 | **`revision_hint` 回环** | §F3-4 | 评审 `revise` → 自动注入下一 step 的 `inputs["revision_hint"]` |
 | **FailureModeMap**（§C.6）| 交叉评审新增 | exception → Decision → transition · `src/framework/runtime/failure_mode_map.py` |
 | **Engine Bridge dispatch** | Engine Bridge 抽象 | `src/framework/engine_bridge/` · `ExportExecutor` wildcard dispatch |
-| **Game Build Compiler Phase A** | AGENT_UE5 Design Compiler 可泛化迁移 | `src/framework/schemas/game_build_compiler.py` · `docs/contracts/game-build-compiler/spec.md` |
 | **`risk_level` 调度** | Claude 原创 | `Scheduler.runnable_after` 按 low→medium→high 排序 |
 | **DeterminismPolicy**（seed 传递 + 模型版本锁）| 共识 | `Task.determinism_policy` |
 | **OTel tracing**（Run → Step → Provider）| 共识 | `src/framework/observability/tracing.py` |
@@ -401,7 +389,7 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 | 入口 | 用途 |
 |---|---|
 | [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
-| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:10 个 contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance` / `game-build-compiler`) |
+| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:9 个 capability contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
 | [`docs/archive/forge_changes/`](docs/archive/forge_changes/) | 历史 forge change evidence 归档,只读参考 |
 | [`docs/backlog/active.md`](docs/backlog/active.md) | Backlog —— 项目当前待办集合 |
 | [`.agents/skills/document-release/SKILL.md`](.agents/skills/document-release/SKILL.md) | 项目级文档发布 / 归档 / backlog 同步 skill |
@@ -424,7 +412,6 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 8. **Human-in-the-loop 标准协议** —— `human_gate` Step.type + `EscalationPolicy.notify_channel`
 9. **Schema Registry + 演化规则**
 10. **多租户/多项目隔离** —— `Task.project_id` + Artifact Store 按 project 分目录已做
-11. **Game Build Compiler lowering** —— Phase A 只提供 planning contract；后续再把 `GameBuildIR` lowering 为 Workflow bundle 与 Unreal / Godot adapter handoff
 
 明确放弃：聊天式 agent 框架接入 · UE 反向控制 · 非 Pydantic 对象模型 · PydanticAI 作主力。
 
@@ -436,4 +423,4 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 
 ## 一句话定位
 
-> **以 `GameBuildContract → GameBuildGraph → GameBuildIR → GameBuildHandoff` 承接 GDD-to-game-build planning，以 `Task/Run/Workflow/Artifact` 为一等公民、`Review` 为合法节点、`EngineTarget` 为通用交付入口、`EngineAdapter` 分发具体引擎交付、5 类 Policy 分离、`Dry-run + Checkpoint` 保障可复现的多模型运行时**；基础层（LiteLLM / Instructor）直接用，多模态生成工具（ComfyUI / AudioCraft / TRELLIS / TripoSR）外挂为 worker，Unreal / Godot 等引擎交付边界与运行时工程化部分全自研。
+> **以 `Task/Run/Workflow/Artifact` 为一等公民、`Review` 为合法节点、`EngineTarget` 为通用交付入口、`EngineAdapter` 分发具体引擎交付、5 类 Policy 分离、`Dry-run + Checkpoint` 保障可复现的多模型运行时**；基础层（LiteLLM / Instructor）直接用，多模态生成工具（ComfyUI / AudioCraft / TRELLIS / TripoSR）外挂为 worker，Unreal / Godot 等引擎交付边界与运行时工程化部分全自研。

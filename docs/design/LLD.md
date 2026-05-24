@@ -479,25 +479,11 @@
 | `ImageSpec` | 图像生成规格 |
 | `MeshSpec` | 网格生成规格 |
 
-### 4.2 Game Build Compiler schemas
-
-`src/framework/schemas/game_build_compiler.py` 定义 Game Build Compiler Phase A 的 GDD-to-game-build planning artifact。Phase A 是 contract-only:只提供 schema、registry wiring、fixture 与契约文档,不新增 executor,不生成 workflow bundle,不写 UE/Godot 工程文件。
-
-| schema_ref | Pydantic model | 用途 |
-| --- | --- | --- |
-| `game_build.contract` | `GameBuildContract` | 从 GDD 提炼跨引擎构建契约 |
-| `game_build.clarification_report` | `GameBuildClarificationReport` | 记录需要人工确认或安全默认的 GDD 信息缺口 |
-| `game_build.graph` | `GameBuildGraph` | 展开 gameplay / baseline / asset / ui / audio / validation / engine 语义图 |
-| `game_build.build_ir` | `GameBuildIR` | 编译后的 engine-neutral build plan |
-| `game_build.handoff` | `GameBuildHandoff` | 交给后续 Workflow smoke / EngineAdapter lowering 的交接包 |
-
-`GameBuildGraph` 校验所有 edge endpoint 必须存在于 `nodes[*].node_id`。`GameBuildIR` 通过 `GameBuildAction._reject_concrete_engine_paths()` 递归扫描 action 任意字段、list/dict value 与 nested dict key,拒绝 adapter 阶段才允许出现的具体引擎路径信号:`Source/`、`/Game/`、`Content/`、`res://`、`.uasset`、`.umap`、`.h`、`.cpp`、`.gd`、`.tscn`。
-
-### 4.3 Instructor 接入
+### 4.2 Instructor 接入
 
 所有结构化生成走 `instructor.from_litellm(litellm.acompletion)`。schema 校验失败 → `FailureMode.schema_validation_fail` → `Decision.retry_same_step`。
 
-### 4.4 UECharacter 容错分支
+### 4.3 UECharacter 容错分支
 
 `_accept_json_string` 在 MiniMax-M2.x 的 stringified-object 场景下原样返回 str,下游 Pydantic `Stats` 强类型 int 字段做 fail-closed。**不**改为 fail-fast,避免破该场景(权衡见 plan_v1 §M "未平移项")。
 
@@ -1949,7 +1935,6 @@ Exception
 
 - `src/framework/core/*.py`(Pydantic schema + docstring)
 - `src/framework/schemas/*.py`(业务 schema)
-- `docs/contracts/game-build-compiler/spec.md`(Game Build Compiler Phase A 行为契约)
 - `src/framework/providers/base.py`(异常类族)
 
 ### 18.2 算法真源
@@ -1968,4 +1953,3 @@ Exception
 | v1.1 | 2026-04-22 | Codex 21 条 audit 修复落实装契约:§5.4 find_hit 长度校验 + cost_usd 持久化 + ArtifactRepository 跨进程持久化(`_artifacts.json`)+ payload tampering 校验、§5.5 `on_retry` override + `cloned_for_run()` per-arun 隔离(ADR-006)、§5.6 cache-hit 回放规则、§5.7.1 unsupported 三层拦截(transient retry / router fallback / executor `_should_retry`)、§5.x SelectExecutor bare-approve 语义 + GenerateImageEdit cost_usd + parallel_candidates 同质性、§6.2 router fallback 异常分流、§6.4 hunyuan poll timeout clamp + 200/non-JSON 包装。回归 520 用例(基线 491 + `tests/unit/test_codex_audit_fixes.py` 29 个 fence)|
 | v1.2 | 2026-04-25 | 新增 §15 Run Comparison(`src/framework/comparison/`)接口签名级章节,含 6 个 Pydantic 类型 / 5 个公共函数 / exit code 契约 / 分层边界 / import-fence carve-out;老 §15-§17 顺延至 §16-§18(关键算法 / 异常类族 / 附录)。OpenSpec change `add-run-comparison-baseline-regression` 实装侧 6 个 Task 全部完成,Codex Review Gate 双轮 PASS,pytest -q 实测 848 通过(基线 549 + ~299 新用例)|
 | v1.3 | 2026-05-24 | Engine Bridge + Godot 4 headless import:补 `EngineTarget` / `EngineEvidence` / `EngineAdapterRegistry` / `UnrealAdapter` / `Godot4Adapter` 字段与行为说明;`ExportExecutor` 改为 EngineAdapter dispatcher;UE manifest 细节保留为 Unreal 文件契约小节。 |
-| v1.4 | 2026-05-24 | Game Build Compiler Phase A:新增 §4.2 schema 细节,登记五个 `game_build.*` refs、graph edge closure 与 `GameBuildIR` engine-neutral concrete path guard;明确 Phase A 不新增 executor、不生成 workflow bundle、不写 UE/Godot 工程文件。 |

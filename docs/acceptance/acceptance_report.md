@@ -56,7 +56,7 @@
 
 ## 3. 主线进度验收
 
-### 3.1 阶段完成度(P0–P4 + planning contract)
+### 3.1 阶段完成度(P0–P4)
 
 | 阶段 | 范围 | 自动化 | CLI 冒烟 | 手工验收 | 状态 |
 | --- | --- | --- | --- | --- | --- |
@@ -66,7 +66,6 @@
 | P3 | production + 内嵌 review | `integration/test_p3_production_pipeline.py` | ✅ `examples/image_pipeline.json` | — | ✅ |
 | P4 | Engine Bridge + Unreal adapter manifest_only | `integration/test_p4_ue_manifest_only.py`(stub unreal) | ✅ `examples/ue_export_pipeline.json` | ✅ UE 5.7.4 真机(2026-04-23 commandlet) | ✅ |
 | P4-Godot | Godot 4 headless import MVP | `test_engine_target.py` / `test_engine_adapter_registry.py` / `test_godot4_adapter.py` + `test_example_bundles_smoke.py` | ✅ `examples/godot4_export_smoke.json` | ✅ Godot 4.6.2 headless import L2(2026-05-24,`demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`) | ✅ |
-| Game Build Compiler Phase A | engine-neutral GDD-to-game-build planning contract | `test_game_build_compiler_schemas.py` / `test_game_build_compiler_fixtures.py` / `test_game_build_compiler_contract_doc.py` | — contract-only | — 不调用 UE/Godot/ComfyUI/provider APIs | ✅ |
 
 ### 3.2 L 层能力
 
@@ -76,7 +75,6 @@
 | L2 | 图像生成 API 路径 | FR-WORKER-001(ComfyUI agent CLI subprocess,自 v1.6) + `image.*` capability | ✅ |
 | L3 | 视觉 QA | FR-REVIEW-* + rubric `ue_visual_quality` | ✅ |
 | L4 | image → 3D mesh | `integration/test_l4_image_to_3d.py` + Hunyuan 3D + UE 5.7 真 import(2026-04-23 a2_mesh_0423)| ✅ |
-| GBC-A | Game build planning handoff contract | FR-STRUCT-005 + `docs/contracts/game-build-compiler/spec.md` | ✅ |
 
 ### 3.3 F 附加能力
 
@@ -141,7 +139,6 @@
 | FR-STRUCT-002 schema registry | `src/framework/schemas/registry.py` | ✅ |
 | FR-STRUCT-003 validation_fail → retry | test_failure_mode_map | ✅ |
 | FR-STRUCT-004 drop_params=True | 代码审阅 `litellm_adapter.py` | ✅ |
-| FR-STRUCT-005 Game Build Compiler schema refs | `test_game_build_compiler_schemas.py` / `test_game_build_compiler_fixtures.py` / `test_game_build_compiler_contract_doc.py` | ✅ |
 
 ### 4.5 FR-REVIEW 评审引擎
 
@@ -808,7 +805,6 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.16 | 2026-05-23 | FOR-26 MiniMax music direct follow-on:`MiniMaxMusicWorker` 直连 MiniMax `music_generation`,在未设置通用 `FORGEUE_REMOTE_AUDIO_URL` 且存在 `MINIMAX_KEY` 时注入 `GenerateAudioExecutor`;新增 `audio_minimax` alias + `examples/minimax_music_smoke.json`;L1 离线 fence 覆盖 native payload、URL 下载、临时签名 URL metadata 去 query、hex response、provider error、timeout 和 run 注入优先级。 | ForgeUE Team |
 | v1.17 | 2026-05-23 | MiniMax image direct follow-on:`MiniMaxImageAdapter` 直连 MiniMax `image_generation`,在 live 路径注册于 LiteLLM 之前;新增 `minimax/image-01` virtual model + `image_minimax` alias + `examples/minimax_image_smoke.json`;L1 离线 fence 覆盖 native payload、n fan-out、subject_reference passthrough、base_resp error、missing image_base64 和 alias 解析。 | ForgeUE Team |
 | v1.18 | 2026-05-24 | Godot 4 headless import L2 evidence 补登记:本机 Godot 4.6.2 console exe 执行 `--headless --path <ForgeGodotDemo> --import` returncode 0;`Godot4Adapter` metrics `engine=godot4, staged=1, skipped=0`;`.import` 与 `.godot/imported/` 产物 fresh 验证通过;`evidence.json` 写 `godot_import: success`。状态同步 P4-Godot 与 FR-ENGINE-004 为 ✅。Evidence:`demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`。 | ForgeUE Team |
-| v1.19 | 2026-05-24 | Game Build Compiler Phase A 框架级验收补登记:新增 planning contract 阶段行、GBC-A 能力行与 FR-STRUCT-005 验收行;明确当前验收对象是五个 `game_build.*` schema refs、fixture 与 contract doc fence,不是 playable demo、workflow bundle 或 UE/Godot 工程写入。 | ForgeUE Team |
 
 ### 9.3 签收区
 
