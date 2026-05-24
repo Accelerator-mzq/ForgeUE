@@ -31,6 +31,12 @@ def test_game_build_compiler_json_fixtures_validate():
     GameBuildHandoff.model_validate(_load_json("game_build_handoff.example.json"))
 
 
+def test_game_build_handoff_embeds_canonical_ir_fixture():
+    handoff = _load_json("game_build_handoff.example.json")
+    build_ir = _load_json("game_build_ir.example.json")
+    assert handoff["build_ir"] == build_ir
+
+
 def test_game_build_compiler_fixtures_stay_engine_neutral():
     combined = "\n".join(
         path.read_text(encoding="utf-8")
@@ -39,6 +45,8 @@ def test_game_build_compiler_fixtures_stay_engine_neutral():
     forbidden_fragments = [
         "Source/",
         "/Game/",
+        "Content/",
+        "res://",
         ".uasset",
         ".umap",
         ".cpp",

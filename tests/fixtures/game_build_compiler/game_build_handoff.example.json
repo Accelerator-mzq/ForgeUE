@@ -19,6 +19,23 @@
           "unreal": {"preferred_layer": "blueprint_or_cpp"},
           "godot4": {"preferred_layer": "scene_plus_gdscript"}
         }
+      },
+      {
+        "action_id": "act-hud",
+        "action_type": "create_ui_screen",
+        "domain": "ui",
+        "inputs": ["ui-hud"],
+        "engine_requirements": {
+          "unreal": {"preferred_layer": "widget_blueprint"},
+          "godot4": {"preferred_layer": "control_scene"}
+        }
+      },
+      {
+        "action_id": "act-counter-asset",
+        "action_type": "create_asset_request",
+        "domain": "asset",
+        "inputs": ["asset-shop-counter"],
+        "engine_requirements": {}
       }
     ],
     "asset_requests": [
