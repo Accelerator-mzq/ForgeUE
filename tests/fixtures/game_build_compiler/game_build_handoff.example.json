@@ -1,0 +1,39 @@
+{
+  "handoff_version": "1.0",
+  "handoff_id": "handoff.shop_management.phase_a.20260524",
+  "source_contract_id": "game_build.shop_management.phase_a.20260524",
+  "source_graph_id": "graph.shop_management.phase_a.20260524",
+  "source_ir_id": "ir.shop_management.phase_a.20260524",
+  "summary": "Build a 5 minute shop management vertical-slice plan with one complete customer order loop.",
+  "build_ir": {
+    "ir_version": "1.0",
+    "ir_id": "ir.shop_management.phase_a.20260524",
+    "source_graph_id": "graph.shop_management.phase_a.20260524",
+    "actions": [
+      {
+        "action_id": "act-core-loop",
+        "action_type": "create_rule_system",
+        "domain": "gameplay",
+        "inputs": ["gameplay-customer-order-loop"],
+        "engine_requirements": {
+          "unreal": {"preferred_layer": "blueprint_or_cpp"},
+          "godot4": {"preferred_layer": "scene_plus_gdscript"}
+        }
+      }
+    ],
+    "asset_requests": [
+      {
+        "request_id": "asset-shop-counter",
+        "modality": "mesh",
+        "description": "low-poly shop counter with readable silhouette"
+      }
+    ],
+    "validation_checks": [
+      {
+        "check_id": "check-first-order",
+        "description": "player can complete one customer order and see coins increase"
+      }
+    ]
+  },
+  "warnings": ["Phase A handoff is a plan artifact and does not modify an engine project."]
+}
