@@ -47,20 +47,20 @@ AGENT_UE5 当前事实：
 
 ## 3. 产品定位
 
-迁移后，ForgeUE 应新增一个上层产品能力：**Demo Compiler**。
+迁移后，ForgeUE 应新增一个上层产品能力：**Game Build Compiler**。
 
-Demo Compiler 的第一性原理：
+Game Build Compiler 的第一性原理：
 
 1. GDD 不是执行计划，只是意图和约束来源。
-2. 高质量 demo 不是资产堆叠，而是玩法、UI、反馈、规则、引擎交付和可验证证据的闭环。
+2. 高质量 playable build 不是资产堆叠，而是玩法、UI、反馈、规则、引擎交付和可验证证据的闭环。
 3. ForgeUE 当前最强的底座是 Workflow + Artifact + Review + EngineAdapter，所以新能力应把 GDD 编译成 ForgeUE 可消费的结构化产物，而不是绕过 runtime 直接写 UE/Godot 工程。
 
 目标产品承诺分三层：
 
 | 层级 | 用户感知 | 系统输出 |
 | --- | --- | --- |
-| L1 Demo Plan | 丢 GDD，得到可审查 demo 方案 | `DemoContract` / `DemoTaskGraph` / 资产清单 / 风险问题 |
-| L2 Demo Handoff | 丢 GDD，得到可执行交接物 | `DemoBuildIR` / `DemoHandoff` / ForgeUE Workflow bundle 草案 |
+| L1 Game Build Plan | 丢 GDD，得到可审查 game build 方案 | `GameBuildContract` / `GameBuildGraph` / 资产清单 / 风险问题 |
+| L2 Game Build Handoff | 丢 GDD，得到可执行交接物 | `GameBuildIR` / `GameBuildHandoff` / ForgeUE Workflow bundle 草案 |
 | L3 Playable Slice | 丢 GDD，得到可运行 demo | EngineAdapter 产物 + runtime evidence + review report |
 
 本迁移设计只覆盖 L1-L2 的基础形态，为 L3 留接口，不在第一阶段承诺完整 playable slice。
@@ -71,12 +71,12 @@ Demo Compiler 的第一性原理：
 
 | AGENT_UE5 概念 | ForgeUE 目标名 | 迁移方式 |
 | --- | --- | --- |
-| Root Skill Contract | `DemoContract` | 抽象为 GDD 约束、变量空间、baseline 能力、玩法能力 |
-| Clarification Gate | `DemoClarificationReport` | 保留四类决策和 provisional 传播 |
-| Skill Graph | `DemoTaskGraph` | 保留 dependency / coupling / convergence_order，但不绑定 SkillTemplate 目录 |
-| Design Space Discovery | `DemoDesignSpaceReport` | 作为 LLM / heuristic 生成阶段的中间 Artifact |
-| Build IR v2 | `DemoBuildIR` | 改成 engine-neutral action，不直接生成 UE 路径 |
-| Reviewed Handoff v3 | `DemoHandoff` | 作为 Demo Compiler 到 ForgeUE Workflow / EngineAdapter 的唯一边界 |
+| Root Skill Contract | `GameBuildContract` | 抽象为 GDD 约束、变量空间、baseline 能力、玩法能力 |
+| Clarification Gate | `GameBuildClarificationReport` | 保留四类决策和 provisional 传播 |
+| Skill Graph | `GameBuildGraph` | 保留 dependency / coupling / convergence_order，但不绑定 SkillTemplate 目录 |
+| Design Space Discovery | `GameBuildDesignSpaceReport` | 作为 LLM / heuristic 生成阶段的中间 Artifact |
+| Build IR v2 | `GameBuildIR` | 改成 engine-neutral action，不直接生成 UE 路径 |
+| Reviewed Handoff v3 | `GameBuildHandoff` | 作为 Game Build Compiler 到 ForgeUE Workflow / EngineAdapter 的唯一边界 |
 | Run Isolation / compare / promote | 复用 ForgeUE Run + comparison | 只迁移语义，不迁移 `ProjectState/` 目录结构 |
 
 ### 4.2 需要改造后迁移
@@ -99,17 +99,17 @@ Demo Compiler 的第一性原理：
 
 ## 5. 目标架构
 
-新增上层子系统建议名：`demo_compiler`。
+新增上层子系统建议名：`game_build_compiler`。
 
 ```text
 GDD / Design Doc
-  -> DemoCompiler
-       -> DemoContract
-       -> DemoClarificationReport
-       -> DemoTaskGraph
-       -> DemoDesignSpaceReport
-       -> DemoBuildIR
-       -> DemoHandoff
+  -> GameBuildCompiler
+       -> GameBuildContract
+       -> GameBuildClarificationReport
+       -> GameBuildGraph
+       -> GameBuildDesignSpaceReport
+       -> GameBuildIR
+       -> GameBuildHandoff
   -> ForgeUE Workflow Bundle
        -> generate text / image / audio / mesh / video
        -> review
@@ -122,8 +122,8 @@ GDD / Design Doc
 
 边界要求：
 
-- `demo_compiler` 只产结构化 Artifact，不直接写 UE/Godot 项目。
-- `DemoBuildIR` 使用 engine-neutral action，例如 `create_scene`, `create_ui_screen`, `create_rule_system`, `create_asset_request`, `create_validation_check`。
+- `game_build_compiler` 只产结构化 Artifact，不直接写 UE/Godot 项目。
+- `GameBuildIR` 使用 engine-neutral action，例如 `create_scene`, `create_ui_screen`, `create_rule_system`, `create_asset_request`, `create_validation_check`。
 - 引擎差异只在 lower 到 `engine_target` 或 adapter-specific plan 时出现。
 - Review 仍走 ForgeUE 的 Review Engine。
 - 资产生成仍走 ForgeUE provider / worker 体系。
@@ -131,24 +131,24 @@ GDD / Design Doc
 
 ## 6. 第一阶段 MVP
 
-第一阶段目标：**GDD -> Demo Plan + Demo Task Graph + Demo Handoff**。
+第一阶段目标：**GDD -> Game Build Plan + Game Build Graph + Game Build Handoff**。
 
 输入：
 
 - 一份 Markdown / text GDD。
 - 目标引擎：`unreal` 或 `godot4`。
-- demo 目标：默认 5 分钟 vertical slice。
+- playable build 目标：默认 5 分钟 vertical slice。
 - 默认类型：经营/模拟/规则驱动类优先。
 
 输出 Artifact：
 
 | Artifact | 类型建议 | 说明 |
 | --- | --- | --- |
-| `demo_contract.json` | `text.structured` | GDD 约束、variant、baseline、玩法能力 |
-| `demo_clarification_report.json` | `report.clarification` | 缺失/冲突/高风险问题 |
-| `demo_task_graph.json` | `text.structured` | 玩法、UI、资产、验证节点图 |
-| `demo_build_ir.json` | `text.structured` | engine-neutral build actions |
-| `demo_handoff.json` | `bundle.demo_handoff` | 可转 Workflow bundle 的最终交接物 |
+| `game_build_contract.json` | `text.structured` | GDD 约束、variant、baseline、玩法能力 |
+| `game_build_clarification_report.json` | `report.clarification` | 缺失/冲突/高风险问题 |
+| `game_build_graph.json` | `text.structured` | 玩法、UI、资产、验证节点图 |
+| `game_build_ir.json` | `text.structured` | engine-neutral build actions |
+| `game_build_handoff.json` | `bundle.game_build_handoff` | 可转 Workflow bundle 的最终交接物 |
 
 第一阶段不做：
 
@@ -160,7 +160,7 @@ GDD / Design Doc
 
 ## 7. 数据模型草案
 
-### 7.1 DemoContract
+### 7.1 GameBuildContract
 
 核心字段：
 
@@ -185,7 +185,7 @@ GDD / Design Doc
 }
 ```
 
-### 7.2 DemoTaskGraph
+### 7.2 GameBuildGraph
 
 核心字段：
 
@@ -213,7 +213,7 @@ GDD / Design Doc
 }
 ```
 
-### 7.3 DemoBuildIR
+### 7.3 GameBuildIR
 
 核心字段：
 
@@ -241,7 +241,7 @@ GDD / Design Doc
 
 ### 8.1 Workflow
 
-新增一类 example bundle：`examples/demo_compiler_plan_smoke.json`。
+新增一类 example bundle：`examples/game_build_compiler_plan_smoke.json`。
 
 建议 Workflow：
 
@@ -258,16 +258,16 @@ step_contract
 
 ### 8.2 Artifact
 
-所有 Demo Compiler 产物都必须进入 Artifact Store，并携带 lineage：
+所有 Game Build Compiler 产物都必须进入 Artifact Store，并携带 lineage：
 
-- `demo_clarification_report` 来源于 `demo_contract`
-- `demo_task_graph` 来源于 `demo_contract` + `demo_clarification_report`
-- `demo_build_ir` 来源于 `demo_task_graph`
-- `demo_handoff` 来源于 `demo_build_ir` + review verdict
+- `game_build_clarification_report` 来源于 `game_build_contract`
+- `game_build_graph` 来源于 `game_build_contract` + `game_build_clarification_report`
+- `game_build_ir` 来源于 `game_build_graph`
+- `game_build_handoff` 来源于 `game_build_ir` + review verdict
 
 ### 8.3 Review
 
-新增 review scope：`demo_plan_quality`。
+新增 review scope：`game_build_plan_quality`。
 
 rubric 维度：
 
@@ -280,19 +280,19 @@ rubric 维度：
 
 ### 8.4 EngineAdapter
 
-第一阶段只把 `DemoHandoff` lower 成计划，不直接交付引擎。
+第一阶段只把 `GameBuildHandoff` lower 成计划，不直接交付引擎。
 
 第二阶段再做：
 
 ```text
-DemoHandoff
+GameBuildHandoff
   -> ForgeUE Workflow bundle
   -> generate assets
   -> review/select
   -> export via EngineAdapter
 ```
 
-Unreal / Godot 的分叉点必须在 EngineAdapter 或 adapter-specific lowering，不应出现在 `DemoContract` 和 `DemoTaskGraph`。
+Unreal / Godot 的分叉点必须在 EngineAdapter 或 adapter-specific lowering，不应出现在 `GameBuildContract` 和 `GameBuildGraph`。
 
 ## 9. 实施路线
 
@@ -300,23 +300,23 @@ Unreal / Godot 的分叉点必须在 EngineAdapter 或 adapter-specific lowering
 
 交付：
 
-- 新增 `docs/contracts/demo-compiler/spec.md`
-- 新增 demo compiler schema 草案
+- 新增 `docs/contracts/game-build-compiler/spec.md`
+- 新增 Game Build Compiler schema 草案
 - 新增一个 GDD fixture
 - 新增 schema validation tests
 
 验收：
 
-- GDD fixture 可生成或校验 `demo_contract`、`demo_task_graph`、`demo_handoff` 示例。
+- GDD fixture 可生成或校验 `game_build_contract`、`game_build_graph`、`game_build_handoff` 示例。
 - 示例不包含 UE-only 路径。
 
 ### Phase B: Workflow smoke
 
 交付：
 
-- 新增 `examples/demo_compiler_plan_smoke.json`
+- 新增 `examples/game_build_compiler_plan_smoke.json`
 - 复用 `generate_structured` + `review` + `validate`
-- 输出 5 个 Demo Compiler Artifact
+- 输出 5 个 Game Build Compiler Artifact
 
 验收：
 
@@ -328,7 +328,7 @@ Unreal / Godot 的分叉点必须在 EngineAdapter 或 adapter-specific lowering
 交付：
 
 - 固定一个经营/模拟类 GDD。
-- 产出可审查 Demo Plan。
+- 产出可审查 Game Build Plan。
 - 产出资产请求清单和引擎交付计划。
 
 验收：
@@ -340,12 +340,12 @@ Unreal / Godot 的分叉点必须在 EngineAdapter 或 adapter-specific lowering
 
 交付：
 
-- `DemoHandoff -> Workflow bundle` 转换器。
+- `GameBuildHandoff -> Workflow bundle` 转换器。
 - Unreal / Godot adapter-specific lowering 草案。
 
 验收：
 
-- 能把 demo plan 的资产请求进入 ForgeUE 现有生成、review、export 流程。
+- 能把 Game Build Plan 的资产请求进入 ForgeUE 现有生成、review、export 流程。
 
 ## 10. 风险与约束
 
@@ -353,7 +353,7 @@ Unreal / Godot 的分叉点必须在 EngineAdapter 或 adapter-specific lowering
 | --- | --- |
 | AGENT_UE5 代码过度 UE/Monopoly 耦合 | 只迁移契约和流程语义，不复制 hardcoded stage 实现 |
 | 第一阶段承诺过大 | 第一阶段只做 plan/handoff，不宣称 playable demo |
-| Demo Compiler 与 Workflow 重叠 | Demo Compiler 只做上游编译，Workflow 仍是执行真源 |
+| Game Build Compiler 与 Workflow 重叠 | Game Build Compiler 只做上游编译，Workflow 仍是执行真源 |
 | Godot 交付能力弱于 UE | 先保持 engine-neutral handoff，Godot L3/L4 后续按 adapter 能力演进 |
 | LLM 输出不稳定 | 所有输出走 schema validation + review + artifact lineage |
 
@@ -361,8 +361,8 @@ Unreal / Godot 的分叉点必须在 EngineAdapter 或 adapter-specific lowering
 
 这份迁移设计进入 implementation plan 前，需要 msc 确认三点：
 
-1. ForgeUE 新增 `demo_compiler` 上层子系统是正确方向。
-2. 第一阶段只做 `GDD -> Demo Plan / Task Graph / Handoff`，不直接承诺 playable demo。
+1. ForgeUE 新增 `game_build_compiler` 上层子系统是正确方向。
+2. 第一阶段只做 `GDD -> Game Build Plan / Game Build Graph / Game Build Handoff`，不直接承诺 playable demo。
 3. AGENT_UE5 只作为设计编译参考源，不作为 ForgeUE runtime 依赖。
 
 确认后再进入 `superpowers:writing-plans`，拆 Phase A 的实施计划。
