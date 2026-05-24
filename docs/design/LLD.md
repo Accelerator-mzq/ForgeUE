@@ -1686,7 +1686,7 @@ def topological_ops(plan: UEImportPlan) -> list[UEImportOperation]
 
 ## 15. Run Comparison(`src/framework/comparison/`)
 
-> 新增于 2026-04-25(OpenSpec change `add-run-comparison-baseline-regression`)。**只读消费**已落盘的两个 Run 目录,逐项对比并产出结构化报告。**不**进入 Run 生命周期,**不**调用 `runtime` / `providers` / `review_engine` / `ue_bridge` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`。
+> 新增于 2026-04-25(OpenSpec change `add-run-comparison-baseline-regression`)。**只读消费**已落盘的两个 Run 目录,逐项对比并产出结构化报告。**不**进入 Run 生命周期,**不**调用 `runtime` / `providers` / `review_engine` / `ue_bridge` / `engine_bridge.unreal.contract` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`。
 
 ### 15.1 公共类型(Pydantic v2)
 
@@ -1758,7 +1758,7 @@ CLI 默认 `output_dir = ./demo_artifacts/<YYYY-MM-DD>/comparison/<safe-baseline
 | `loader` | 读 `run_summary.json` + `_artifacts.json` + 按需 recompute payload byte hash;构造 `RunSnapshot` | 不调 `ArtifactRepository.put` / `load_run_metadata`,不写文件 |
 | `diff_engine` | 纯函数 `compare()`,artifact / verdict / metric / step / run 五层 diff;artifact_id 字典序;sparse summary_counts | 无 I/O,无网络,无对 snapshot mutation,**不**重新调 judge / hash |
 | `reporter` | `render_json` / `render_markdown` 纯渲染;`write_reports` 唯一 I/O 边界(UTF-8 + LF) | 不重 diff,不重 hash;Markdown ASCII-only(`_ascii_safe` / `_line_safe` / `_escape_cell`)守门 Windows GBK |
-| `cli` | argparse → loader → compare → reporter 编排;exit code 映射;stdout / stderr 走 `_console_safe`(ASCII + 可见 `\\r` / `\\n`) | **直接** import / call `framework.runtime` / `providers` / `review_engine` / `ue_bridge` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`;不直接调 `ArtifactRepository.put` / payload backend 写路径 |
+| `cli` | argparse → loader → compare → reporter 编排;exit code 映射;stdout / stderr 走 `_console_safe`(ASCII + 可见 `\\r` / `\\n`) | **直接** import / call `framework.runtime` / `providers` / `review_engine` / `ue_bridge` / `engine_bridge.unreal.contract` / `workflows` / `observability` / `server` / `schemas` / `pricing_probe`;不直接调 `ArtifactRepository.put` / payload backend 写路径 |
 
 ### 15.4 Exit code 契约(对应 runtime-core delta spec)
 
@@ -1773,7 +1773,7 @@ CLI 默认 `output_dir = ./demo_artifacts/<YYYY-MM-DD>/comparison/<safe-baseline
 
 ### 15.5 Import-fence 与 transitive carve-out
 
-CLI / loader 的 import-fence 一致禁止 9 个执行链路前缀(runtime / providers / review_engine / ue_bridge / workflows / observability / server / schemas / pricing_probe)。**允许**的 transitive:`framework.artifact_store.{repository, payload_backends}` —— 这是 `framework.artifact_store.hashing` 触发包级 `__init__.py` eager-import 的副产品,**不**代表 CLI / loader 可调写路径。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"` 与未来 change `lazy-artifact-store-package-exports`。
+CLI / loader 的 import-fence 一致禁止 10 个执行链路前缀(runtime / providers / review_engine / ue_bridge / engine_bridge.unreal.contract / workflows / observability / server / schemas / pricing_probe)。`framework.ue_bridge` 仍保留在清单中,因为它是同一个 Unreal execution contract 的 legacy compatibility alias。**允许**的 transitive:`framework.artifact_store.{repository, payload_backends}` —— 这是 `framework.artifact_store.hashing` 触发包级 `__init__.py` eager-import 的副产品,**不**代表 CLI / loader 可调写路径。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"` 与未来 change `lazy-artifact-store-package-exports`。
 
 ### 15.6 真源
 

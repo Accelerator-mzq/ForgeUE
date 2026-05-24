@@ -809,6 +809,7 @@ _FORBIDDEN_FRAMEWORK_MODULES_CLI: tuple[str, ...] = (
     "framework.providers",
     "framework.review_engine",
     "framework.ue_bridge",
+    "framework.engine_bridge.unreal.contract",
     "framework.workflows",
     "framework.observability",
     "framework.server",

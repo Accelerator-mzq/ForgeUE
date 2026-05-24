@@ -788,6 +788,7 @@ _FORBIDDEN_FRAMEWORK_MODULES_REPORTER: tuple[str, ...] = (
     "framework.providers",
     "framework.review_engine",
     "framework.ue_bridge",
+    "framework.engine_bridge.unreal.contract",
     "framework.workflows",
     "framework.observability",
     "framework.server",

@@ -508,6 +508,7 @@ _FORBIDDEN_FRAMEWORK_MODULES = (
     "framework.providers",
     "framework.review_engine",
     "framework.ue_bridge",
+    "framework.engine_bridge.unreal.contract",
     "framework.artifact_store",
     "framework.workflows",
     "framework.observability",
