@@ -1,18 +1,18 @@
-# Unreal Bridge Package Rename Implementation Plan
+# Unreal Bridge 包路径重命名实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给执行 agent:** 必须使用 `superpowers:subagent-driven-development`(推荐)或 `superpowers:executing-plans` 按任务执行本计划。步骤使用 checkbox(`- [ ]`)语法跟踪。
 
-**Goal:** Move the Unreal manifest-only contract implementation under `framework.engine_bridge.unreal.contract` while keeping `framework.ue_bridge` as a compatibility alias for one cycle.
+**目标:** 将 Unreal manifest-only 文件契约主实现迁到 `framework.engine_bridge.unreal.contract`,同时保留 `framework.ue_bridge` 作为一个兼容周期的 alias。
 
-**Architecture:** The new package becomes the canonical implementation used by production code and new tests. The old `framework.ue_bridge` package remains as thin re-export modules, so historical imports keep working without behavior changes. Godot4 stays independent from Unreal contract modules.
+**架构:** 新包成为生产代码和新增测试使用的主实现。旧 `framework.ue_bridge` 包保留为轻量 re-export modules,确保历史 import 继续工作且行为不变。Godot4 继续独立于 Unreal contract modules。
 
-**Tech Stack:** Python 3.13, Pydantic models already in `framework.core.ue`, pytest, existing docs five-pack and contracts.
+**技术栈:** Python 3.13,既有 `framework.core.ue` Pydantic models,pytest,现有 docs 五件套与 contracts。
 
 ---
 
-## File Structure
+## 文件结构
 
-Create canonical Unreal contract package:
+新增 Unreal contract 主实现 package:
 
 ```text
 src/framework/engine_bridge/unreal/contract/
@@ -26,7 +26,7 @@ src/framework/engine_bridge/unreal/contract/
     project.py
 ```
 
-Keep compatibility modules:
+保留兼容模块:
 
 ```text
 src/framework/ue_bridge/
@@ -40,14 +40,14 @@ src/framework/ue_bridge/
     project.py
 ```
 
-Modify production imports:
+修改生产 import:
 
 ```text
 src/framework/engine_bridge/unreal/adapter.py
 src/framework/runtime/executors/export.py
 ```
 
-Modify tests:
+修改测试:
 
 ```text
 tests/unit/test_unreal_contract_package.py
@@ -61,7 +61,7 @@ tests/unit/test_run_comparison_diff_engine.py
 tests/unit/test_run_comparison_reporter.py
 ```
 
-Modify docs:
+修改文档:
 
 ```text
 CHANGELOG.md
@@ -79,14 +79,14 @@ docs/backlog/archived.md
 
 ---
 
-### Task 1: Add Package Boundary Tests
+### 任务 1: 添加包边界测试
 
-**Files:**
-- Create: `tests/unit/test_unreal_contract_package.py`
+**涉及文件:**
+- 新增: `tests/unit/test_unreal_contract_package.py`
 
-- [ ] **Step 1: Write failing tests for the new canonical package and compatibility alias**
+- [ ] **步骤 1: 为新主实现 package 和兼容 alias 编写失败测试**
 
-Create `tests/unit/test_unreal_contract_package.py`:
+创建 `tests/unit/test_unreal_contract_package.py`:
 
 ```python
 from __future__ import annotations
@@ -170,17 +170,17 @@ def test_godot4_adapter_does_not_import_unreal_contracts():
     assert "framework.ue_bridge" not in source
 ```
 
-- [ ] **Step 2: Run the new tests and confirm they fail before migration**
+- [ ] **步骤 2: 运行新增测试,确认迁移前失败**
 
-Run:
+运行:
 
 ```bash
 python -m pytest tests/unit/test_unreal_contract_package.py -q
 ```
 
-Expected: fail with `ModuleNotFoundError: No module named 'framework.engine_bridge.unreal.contract'`.
+预期: 失败,错误包含 `ModuleNotFoundError: No module named 'framework.engine_bridge.unreal.contract'`。
 
-- [ ] **Step 3: Commit the failing tests**
+- [ ] **步骤 3: 提交失败测试**
 
 ```bash
 git add tests/unit/test_unreal_contract_package.py
@@ -189,20 +189,20 @@ git commit -m "test: add unreal contract package boundary fences"
 
 ---
 
-### Task 2: Create Canonical Unreal Contract Package
+### 任务 2: 创建 Unreal contract 主实现 package
 
-**Files:**
-- Create: `src/framework/engine_bridge/unreal/contract/__init__.py`
-- Create: `src/framework/engine_bridge/unreal/contract/evidence.py`
-- Create: `src/framework/engine_bridge/unreal/contract/import_plan_builder.py`
-- Create: `src/framework/engine_bridge/unreal/contract/manifest_builder.py`
-- Create: `src/framework/engine_bridge/unreal/contract/permission_policy.py`
-- Create: `src/framework/engine_bridge/unreal/contract/inspect/__init__.py`
-- Create: `src/framework/engine_bridge/unreal/contract/inspect/project.py`
+**涉及文件:**
+- 新增: `src/framework/engine_bridge/unreal/contract/__init__.py`
+- 新增: `src/framework/engine_bridge/unreal/contract/evidence.py`
+- 新增: `src/framework/engine_bridge/unreal/contract/import_plan_builder.py`
+- 新增: `src/framework/engine_bridge/unreal/contract/manifest_builder.py`
+- 新增: `src/framework/engine_bridge/unreal/contract/permission_policy.py`
+- 新增: `src/framework/engine_bridge/unreal/contract/inspect/__init__.py`
+- 新增: `src/framework/engine_bridge/unreal/contract/inspect/project.py`
 
-- [ ] **Step 1: Copy existing implementation files to the new package**
+- [ ] **步骤 1: 将现有实现文件复制到新 package**
 
-Run:
+运行:
 
 ```powershell
 New-Item -ItemType Directory -Force -Path src/framework/engine_bridge/unreal/contract/inspect
@@ -213,12 +213,12 @@ Copy-Item src/framework/ue_bridge/permission_policy.py src/framework/engine_brid
 Copy-Item src/framework/ue_bridge/inspect/project.py src/framework/engine_bridge/unreal/contract/inspect/project.py
 ```
 
-- [ ] **Step 2: Replace new package `__init__.py`**
+- [ ] **步骤 2: 替换新 package 的 `__init__.py`**
 
-Write `src/framework/engine_bridge/unreal/contract/__init__.py`:
+写入 `src/framework/engine_bridge/unreal/contract/__init__.py`:
 
 ```python
-"""Unreal contract package used by framework.engine_bridge.unreal.
+"""framework.engine_bridge.unreal 使用的 Unreal contract package。
 
 中文注释:这里是 Unreal manifest-only 文件契约的主实现路径;
 `framework.ue_bridge` 仅保留为兼容 alias。
@@ -242,12 +242,12 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 3: Replace new inspect package `__init__.py`**
+- [ ] **步骤 3: 替换新 inspect package 的 `__init__.py`**
 
-Write `src/framework/engine_bridge/unreal/contract/inspect/__init__.py`:
+写入 `src/framework/engine_bridge/unreal/contract/inspect/__init__.py`:
 
 ```python
-"""Read-only Unreal project inspection helpers."""
+"""只读 Unreal project inspection helpers。"""
 
 from framework.engine_bridge.unreal.contract.inspect.project import (
     PathStatus,
@@ -268,9 +268,9 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 4: Update internal import in new `permission_policy.py`**
+- [ ] **步骤 4: 更新新 `permission_policy.py` 内部 import**
 
-In `src/framework/engine_bridge/unreal/contract/permission_policy.py`, replace the local import in `permission_mask_for_manifest`:
+在 `src/framework/engine_bridge/unreal/contract/permission_policy.py` 中,替换 `permission_mask_for_manifest` 里的局部 import:
 
 ```python
 from framework.engine_bridge.unreal.contract.import_plan_builder import (
@@ -278,19 +278,19 @@ from framework.engine_bridge.unreal.contract.import_plan_builder import (
 )
 ```
 
-The function body stays the same.
+函数体保持不变。
 
-- [ ] **Step 5: Run new package tests**
+- [ ] **步骤 5: 运行新 package 测试**
 
-Run:
+运行:
 
 ```bash
 python -m pytest tests/unit/test_unreal_contract_package.py::test_unreal_contract_new_public_surface_imports -q
 ```
 
-Expected: pass for the new package import test; compatibility alias tests still fail until Task 3.
+预期: 新 package import 测试通过;兼容 alias 测试在任务 3 前仍会失败。
 
-- [ ] **Step 6: Commit canonical package creation**
+- [ ] **步骤 6: 提交主实现 package 创建**
 
 ```bash
 git add src/framework/engine_bridge/unreal/contract tests/unit/test_unreal_contract_package.py
@@ -299,21 +299,21 @@ git commit -m "refactor: add unreal contract package"
 
 ---
 
-### Task 3: Convert `framework.ue_bridge` to Compatibility Shims
+### 任务 3: 将 `framework.ue_bridge` 转为兼容 shims
 
-**Files:**
-- Modify: `src/framework/ue_bridge/__init__.py`
-- Modify: `src/framework/ue_bridge/evidence.py`
-- Modify: `src/framework/ue_bridge/import_plan_builder.py`
-- Modify: `src/framework/ue_bridge/manifest_builder.py`
-- Modify: `src/framework/ue_bridge/permission_policy.py`
-- Modify: `src/framework/ue_bridge/inspect/__init__.py`
-- Modify: `src/framework/ue_bridge/inspect/project.py`
+**涉及文件:**
+- 修改: `src/framework/ue_bridge/__init__.py`
+- 修改: `src/framework/ue_bridge/evidence.py`
+- 修改: `src/framework/ue_bridge/import_plan_builder.py`
+- 修改: `src/framework/ue_bridge/manifest_builder.py`
+- 修改: `src/framework/ue_bridge/permission_policy.py`
+- 修改: `src/framework/ue_bridge/inspect/__init__.py`
+- 修改: `src/framework/ue_bridge/inspect/project.py`
 
-- [ ] **Step 1: Replace `src/framework/ue_bridge/__init__.py`**
+- [ ] **步骤 1: 替换 `src/framework/ue_bridge/__init__.py`**
 
 ```python
-"""Compatibility alias for framework.engine_bridge.unreal.contract.
+"""framework.engine_bridge.unreal.contract 的兼容 alias。
 
 中文注释:旧 `framework.ue_bridge` import 在一个兼容周期内保留;
 新代码应使用 `framework.engine_bridge.unreal.contract`。
@@ -338,10 +338,10 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 2: Replace legacy `evidence.py`**
+- [ ] **步骤 2: 替换 legacy `evidence.py`**
 
 ```python
-"""Compatibility alias for Unreal contract evidence helpers."""
+"""Unreal contract evidence helpers 的兼容 alias。"""
 
 from framework.engine_bridge.unreal.contract.evidence import (
     EvidenceWriter,
@@ -352,10 +352,10 @@ from framework.engine_bridge.unreal.contract.evidence import (
 __all__ = ["EvidenceWriter", "load_evidence", "new_evidence_id"]
 ```
 
-- [ ] **Step 3: Replace legacy `import_plan_builder.py`**
+- [ ] **步骤 3: 替换 legacy `import_plan_builder.py`**
 
 ```python
-"""Compatibility alias for Unreal contract import plan builder."""
+"""Unreal contract import plan builder 的兼容 alias。"""
 
 from framework.engine_bridge.unreal.contract.import_plan_builder import (
     _DERIVED_OP_KIND,
@@ -372,10 +372,10 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 4: Replace legacy `manifest_builder.py`**
+- [ ] **步骤 4: 替换 legacy `manifest_builder.py`**
 
 ```python
-"""Compatibility alias for Unreal contract manifest builder."""
+"""Unreal contract manifest builder 的兼容 alias。"""
 
 from framework.engine_bridge.unreal.contract.manifest_builder import (
     _KIND_MAP,
@@ -402,10 +402,10 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 5: Replace legacy `permission_policy.py`**
+- [ ] **步骤 5: 替换 legacy `permission_policy.py`**
 
 ```python
-"""Compatibility alias for Unreal contract permission policy."""
+"""Unreal contract permission policy 的兼容 alias。"""
 
 from framework.engine_bridge.unreal.contract.permission_policy import (
     _OP_ALLOW_ATTR,
@@ -420,12 +420,12 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 6: Replace legacy inspect modules**
+- [ ] **步骤 6: 替换 legacy inspect modules**
 
-Write `src/framework/ue_bridge/inspect/__init__.py`:
+写入 `src/framework/ue_bridge/inspect/__init__.py`:
 
 ```python
-"""Compatibility alias for Unreal contract inspection helpers."""
+"""Unreal contract inspection helpers 的兼容 alias。"""
 
 from framework.engine_bridge.unreal.contract.inspect import (
     PathStatus,
@@ -446,10 +446,10 @@ __all__ = [
 ]
 ```
 
-Write `src/framework/ue_bridge/inspect/project.py`:
+写入 `src/framework/ue_bridge/inspect/project.py`:
 
 ```python
-"""Compatibility alias for Unreal contract project inspection."""
+"""Unreal contract project inspection 的兼容 alias。"""
 
 from framework.engine_bridge.unreal.contract.inspect.project import (
     PathStatus,
@@ -470,17 +470,17 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 7: Run compatibility tests**
+- [ ] **步骤 7: 运行兼容性测试**
 
-Run:
+运行:
 
 ```bash
 python -m pytest tests/unit/test_unreal_contract_package.py::test_legacy_ue_bridge_reexports_match_new_contract tests/unit/test_ue_bridge.py -q
 ```
 
-Expected: pass.
+预期: 通过。
 
-- [ ] **Step 8: Commit compatibility shims**
+- [ ] **步骤 8: 提交兼容 shims**
 
 ```bash
 git add src/framework/ue_bridge tests/unit/test_unreal_contract_package.py
@@ -489,18 +489,18 @@ git commit -m "refactor: keep ue_bridge compatibility aliases"
 
 ---
 
-### Task 4: Migrate Production Imports and Core Tests
+### 任务 4: 迁移生产 import 和核心测试
 
-**Files:**
-- Modify: `src/framework/engine_bridge/unreal/adapter.py`
-- Modify: `src/framework/runtime/executors/export.py`
-- Modify: `tests/unit/test_ue_bridge.py`
-- Modify: `tests/unit/test_export_video_path_split.py`
-- Modify: `tests/integration/test_p4_ue_manifest_only.py`
+**涉及文件:**
+- 修改: `src/framework/engine_bridge/unreal/adapter.py`
+- 修改: `src/framework/runtime/executors/export.py`
+- 修改: `tests/unit/test_ue_bridge.py`
+- 修改: `tests/unit/test_export_video_path_split.py`
+- 修改: `tests/integration/test_p4_ue_manifest_only.py`
 
-- [ ] **Step 1: Update `UnrealAdapter` imports**
+- [ ] **步骤 1: 更新 `UnrealAdapter` imports**
 
-Replace top-level imports in `src/framework/engine_bridge/unreal/adapter.py`:
+替换 `src/framework/engine_bridge/unreal/adapter.py` 的 top-level imports:
 
 ```python
 from framework.engine_bridge.unreal.contract.evidence import EvidenceWriter, new_evidence_id
@@ -510,13 +510,13 @@ from framework.engine_bridge.unreal.contract.manifest_builder import build_manif
 from framework.engine_bridge.unreal.contract.permission_policy import is_op_allowed
 ```
 
-Replace the local import in the drop loop:
+替换 drop loop 中的局部 import:
 
 ```python
 from framework.engine_bridge.unreal.contract.manifest_builder import derive_drop_target
 ```
 
-Replace the local import in `_is_importable`:
+替换 `_is_importable` 中的局部 import:
 
 ```python
 from framework.engine_bridge.unreal.contract.manifest_builder import (
@@ -524,15 +524,15 @@ from framework.engine_bridge.unreal.contract.manifest_builder import (
 )
 ```
 
-- [ ] **Step 2: Update `ExportExecutor._is_importable`**
+- [ ] **步骤 2: 更新 `ExportExecutor._is_importable`**
 
-In `src/framework/runtime/executors/export.py`, replace:
+在 `src/framework/runtime/executors/export.py` 中,替换:
 
 ```python
 from framework.ue_bridge.manifest_builder import is_manifest_importable
 ```
 
-with:
+为:
 
 ```python
 from framework.engine_bridge.unreal.contract.manifest_builder import (
@@ -540,15 +540,15 @@ from framework.engine_bridge.unreal.contract.manifest_builder import (
 )
 ```
 
-Update the nearby comment:
+同步更新附近注释:
 
 ```python
 # 兼容既有 Unreal contract;实际过滤规则仍由 manifest_builder 单一真源决定。
 ```
 
-- [ ] **Step 3: Update core Unreal contract tests to use new path**
+- [ ] **步骤 3: 更新核心 Unreal contract 测试,改用新路径**
 
-In `tests/unit/test_ue_bridge.py`, replace imports from `framework.ue_bridge` with:
+在 `tests/unit/test_ue_bridge.py` 中,将来自 `framework.ue_bridge` 的 imports 替换为:
 
 ```python
 from framework.engine_bridge.unreal.contract import (
@@ -568,7 +568,7 @@ from framework.engine_bridge.unreal.contract.inspect import (
 from framework.engine_bridge.unreal.contract.manifest_builder import ManifestBuildError
 ```
 
-Replace late imports:
+替换 late imports:
 
 ```python
 from framework.engine_bridge.unreal.contract.import_plan_builder import _IMPORT_OP_KIND  # noqa: E402
@@ -579,9 +579,9 @@ from framework.engine_bridge.unreal.contract.manifest_builder import (  # noqa: 
 )
 ```
 
-- [ ] **Step 4: Update video path split tests**
+- [ ] **步骤 4: 更新 video path split 测试**
 
-In `tests/unit/test_export_video_path_split.py`, replace imports:
+在 `tests/unit/test_export_video_path_split.py` 中,替换 imports:
 
 ```python
 from framework.engine_bridge.unreal.contract.manifest_builder import is_manifest_importable
@@ -589,9 +589,9 @@ from framework.engine_bridge.unreal.contract.manifest_builder import derive_drop
 from framework.engine_bridge.unreal.contract.manifest_builder import build_manifest  # noqa: E402
 ```
 
-- [ ] **Step 5: Update P4 integration imports**
+- [ ] **步骤 5: 更新 P4 integration imports**
 
-In `tests/integration/test_p4_ue_manifest_only.py`, replace imports:
+在 `tests/integration/test_p4_ue_manifest_only.py` 中,替换 imports:
 
 ```python
 from framework.engine_bridge.unreal.contract import (
@@ -607,17 +607,17 @@ from framework.engine_bridge.unreal.contract.inspect import (
 )
 ```
 
-- [ ] **Step 6: Run production import tests**
+- [ ] **步骤 6: 运行生产 import 测试**
 
-Run:
+运行:
 
 ```bash
 python -m pytest tests/unit/test_unreal_contract_package.py tests/unit/test_ue_bridge.py tests/unit/test_export_video_path_split.py tests/integration/test_p4_ue_manifest_only.py -q
 ```
 
-Expected: pass.
+预期: 通过。
 
-- [ ] **Step 7: Commit production import migration**
+- [ ] **步骤 7: 提交生产 import 迁移**
 
 ```bash
 git add src/framework/engine_bridge/unreal/adapter.py src/framework/runtime/executors/export.py tests/unit/test_unreal_contract_package.py tests/unit/test_ue_bridge.py tests/unit/test_export_video_path_split.py tests/integration/test_p4_ue_manifest_only.py
@@ -626,19 +626,19 @@ git commit -m "refactor: use unreal contract package in runtime"
 
 ---
 
-### Task 5: Update Run Comparison Import Fences
+### 任务 5: 更新 Run Comparison import fences
 
-**Files:**
-- Modify: `tests/unit/test_run_comparison_cli.py`
-- Modify: `tests/unit/test_run_comparison_loader.py`
-- Modify: `tests/unit/test_run_comparison_models.py`
-- Modify: `tests/unit/test_run_comparison_diff_engine.py`
-- Modify: `tests/unit/test_run_comparison_reporter.py`
-- Modify: `docs/design/LLD.md`
+**涉及文件:**
+- 修改: `tests/unit/test_run_comparison_cli.py`
+- 修改: `tests/unit/test_run_comparison_loader.py`
+- 修改: `tests/unit/test_run_comparison_models.py`
+- 修改: `tests/unit/test_run_comparison_diff_engine.py`
+- 修改: `tests/unit/test_run_comparison_reporter.py`
+- 修改: `docs/design/LLD.md`
 
-- [ ] **Step 1: Update forbidden module tuples in five test files**
+- [ ] **步骤 1: 更新 5 个测试文件中的 forbidden module tuples**
 
-In each run-comparison test file, keep `framework.ue_bridge` and add the new canonical execution-layer prefix immediately after it:
+在每个 run-comparison 测试文件中,保留 `framework.ue_bridge`,并在它后面立即加入新的执行层主路径 prefix:
 
 ```python
 _FORBIDDEN_FRAMEWORK_MODULES_LOADER = (
@@ -659,34 +659,34 @@ _FORBIDDEN_FRAMEWORK_MODULES_LOADER = (
 )
 ```
 
-Use the existing tuple variable name in each file; only add the new string.
+沿用每个文件已有的 tuple 变量名;只新增这个字符串。
 
-- [ ] **Step 2: Update LLD import-fence prose**
+- [ ] **步骤 2: 更新 LLD import-fence 文案**
 
-In `docs/design/LLD.md`, update the run comparison import-fence paragraph to include:
+在 `docs/design/LLD.md` 中,更新 run comparison import-fence 段落,包含:
 
 ```text
 runtime / providers / review_engine / ue_bridge / engine_bridge.unreal.contract /
 workflows / observability / server / schemas / pricing_probe
 ```
 
-Also add this sentence in the same paragraph:
+并在同一段补充这句话:
 
 ```text
-`framework.ue_bridge` remains listed because it is a legacy compatibility alias for the same Unreal execution contract.
+`framework.ue_bridge` 仍保留在清单中,因为它是同一个 Unreal execution contract 的 legacy compatibility alias。
 ```
 
-- [ ] **Step 3: Run run-comparison fence tests**
+- [ ] **步骤 3: 运行 run-comparison fence 测试**
 
-Run:
+运行:
 
 ```bash
 python -m pytest tests/unit/test_run_comparison_cli.py tests/unit/test_run_comparison_loader.py tests/unit/test_run_comparison_models.py tests/unit/test_run_comparison_diff_engine.py tests/unit/test_run_comparison_reporter.py -q
 ```
 
-Expected: pass.
+预期: 通过。
 
-- [ ] **Step 4: Commit import fence updates**
+- [ ] **步骤 4: 提交 import fence 更新**
 
 ```bash
 git add tests/unit/test_run_comparison_cli.py tests/unit/test_run_comparison_loader.py tests/unit/test_run_comparison_models.py tests/unit/test_run_comparison_diff_engine.py tests/unit/test_run_comparison_reporter.py docs/design/LLD.md
@@ -695,58 +695,58 @@ git commit -m "test: fence unreal contract from comparison imports"
 
 ---
 
-### Task 6: Update Authoritative Docs and Close Backlog Entry
+### 任务 6: 更新权威文档并结账 backlog 条目
 
-**Files:**
-- Modify: `CHANGELOG.md`
-- Modify: `docs/requirements/SRS.md`
-- Modify: `docs/design/HLD.md`
-- Modify: `docs/design/LLD.md`
-- Modify: `docs/testing/test_spec.md`
-- Modify: `docs/acceptance/acceptance_report.md`
-- Modify: `docs/contracts/artifact-contract/spec.md`
-- Modify: `docs/contracts/engine-export-bridge/spec.md`
-- Modify: `docs/contracts/ue-export-bridge/spec.md`
-- Modify: `docs/backlog/active.md`
-- Modify: `docs/backlog/archived.md`
+**涉及文件:**
+- 修改: `CHANGELOG.md`
+- 修改: `docs/requirements/SRS.md`
+- 修改: `docs/design/HLD.md`
+- 修改: `docs/design/LLD.md`
+- 修改: `docs/testing/test_spec.md`
+- 修改: `docs/acceptance/acceptance_report.md`
+- 修改: `docs/contracts/artifact-contract/spec.md`
+- 修改: `docs/contracts/engine-export-bridge/spec.md`
+- 修改: `docs/contracts/ue-export-bridge/spec.md`
+- 修改: `docs/backlog/active.md`
+- 修改: `docs/backlog/archived.md`
 
-- [ ] **Step 1: Update current docs to name the canonical package**
+- [ ] **步骤 1: 更新当前文档,明确 canonical package 名称**
 
-Use this wording in HLD, LLD, and contracts where the current path is described:
+在 HLD、LLD 和 contracts 描述当前路径的位置使用这段文案:
 
 ```text
-Current Unreal contract implementation lives under
-`src/framework/engine_bridge/unreal/contract/`.
-`src/framework/ue_bridge/` is retained as a legacy compatibility alias for one cycle.
+当前 Unreal contract 主实现位于
+`src/framework/engine_bridge/unreal/contract/`。
+`src/framework/ue_bridge/` 保留为一个兼容周期的 legacy compatibility alias。
 ```
 
-In SRS terms, keep the concept name "Unreal 文件契约", but replace implementation path references with:
+在 SRS 中保留概念名 "Unreal 文件契约",但将实现路径引用替换为:
 
 ```text
 `framework.engine_bridge.unreal.contract`
 ```
 
-- [ ] **Step 2: Update test specification**
+- [ ] **步骤 2: 更新测试规格**
 
-In `docs/testing/test_spec.md`, update the Unreal contract row to:
+在 `docs/testing/test_spec.md` 中,将 Unreal contract 行更新为:
 
 ```text
 `test_ue_bridge.py` | `engine_bridge/unreal/contract/*` + `engine_bridge/unreal/adapter.py` | FR-ENGINE-003, FR-UE-001 ~ FR-UE-008 | L1,L2 | Unreal manifest-only contract、legacy `framework.ue_bridge` alias、ManifestBuilder modality 映射、PlanBuilder depends_on、Permission Phase C 默认拒绝、inspect_project / asset_exists、validate_manifest 重复路径、evidence 原子追加
 ```
 
-Add `test_unreal_contract_package.py` to the Engine Bridge / Godot 4 area as the package-boundary fence.
+将 `test_unreal_contract_package.py` 加入 Engine Bridge / Godot 4 区域,作为 package-boundary fence。
 
-- [ ] **Step 3: Update CHANGELOG**
+- [ ] **步骤 3: 更新 CHANGELOG**
 
-Add one bullet under the current Unreleased section:
+在当前 Unreleased section 下新增一条:
 
 ```markdown
-- **FOR-31 Unreal contract package rename**: moved the canonical Unreal manifest-only contract implementation to `framework.engine_bridge.unreal.contract`; retained `framework.ue_bridge` as a compatibility alias for one cycle; updated runtime imports, run-comparison import fences, docs, and backlog/Linear tracking without changing Unreal or Godot import behavior.
+- **FOR-31 Unreal contract package rename**: Unreal manifest-only 文件契约主实现迁到 `framework.engine_bridge.unreal.contract`;`framework.ue_bridge` 保留为一个兼容周期的 compatibility alias;同步更新 runtime imports、run-comparison import fences、docs 和 backlog/Linear tracking,不改变 Unreal 或 Godot import 行为。
 ```
 
-- [ ] **Step 4: Archive LR-0143**
+- [ ] **步骤 4: 归档 LR-0143**
 
-In `docs/backlog/active.md`:
+在 `docs/backlog/active.md` 中:
 
 ```markdown
 > 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
@@ -756,30 +756,30 @@ In `docs/backlog/active.md`:
 (无)
 ```
 
-Remove the `LR-0143` line from active.
+从 active 中移除 `LR-0143` 条目。
 
-In `docs/backlog/archived.md`, add a new tombstone near other LR entries:
+在 `docs/backlog/archived.md` 中,靠近其他 LR 条目新增 tombstone:
 
 ```markdown
 ### `LR-0143` **unreal-bridge-package-rename Unreal 文件契约包路径命名清理**
 
 - **completed_on**: 2026-05-24
 - **Linear**: `FOR-31`
-- **summary**: Canonical Unreal manifest-only contract implementation moved to `framework.engine_bridge.unreal.contract`; `framework.ue_bridge` remains a compatibility alias for one cycle.
-- **verification**: focused Unreal contract tests, run-comparison import fences, Godot4 adapter tests, and full `python -m pytest -q`.
+- **summary**: Unreal manifest-only 文件契约主实现迁到 `framework.engine_bridge.unreal.contract`;`framework.ue_bridge` 保留为一个兼容周期的 compatibility alias。
+- **verification**: 聚焦 Unreal contract tests、run-comparison import fences、Godot4 adapter tests,以及全量 `python -m pytest -q`。
 ```
 
-- [ ] **Step 5: Run docs/backlog grep checks**
+- [ ] **步骤 5: 运行 docs/backlog grep 检查**
 
-Run:
+运行:
 
 ```bash
 rg -n "src/framework/ue_bridge/|framework\\.ue_bridge|ue_bridge" docs/requirements/SRS.md docs/design/HLD.md docs/design/LLD.md docs/testing/test_spec.md docs/acceptance/acceptance_report.md docs/contracts CHANGELOG.md docs/backlog
 ```
 
-Expected: only current-doc references that explicitly call `framework.ue_bridge` a legacy compatibility alias, plus archive-free paths in changelog history.
+预期: 只剩当前文档中明确说明 `framework.ue_bridge` 是 legacy compatibility alias 的引用,以及 CHANGELOG 历史中的路径引用。
 
-- [ ] **Step 6: Commit docs and backlog updates**
+- [ ] **步骤 6: 提交文档和 backlog 更新**
 
 ```bash
 git add CHANGELOG.md docs/requirements/SRS.md docs/design/HLD.md docs/design/LLD.md docs/testing/test_spec.md docs/acceptance/acceptance_report.md docs/contracts/artifact-contract/spec.md docs/contracts/engine-export-bridge/spec.md docs/contracts/ue-export-bridge/spec.md docs/backlog/active.md docs/backlog/archived.md
@@ -788,47 +788,47 @@ git commit -m "docs: sync unreal contract package rename"
 
 ---
 
-### Task 7: Final Verification and Evidence
+### 任务 7: 最终验证与证据
 
-**Files:**
-- Create: `demo_artifacts/2026-05-24/adhoc/for31_unreal_contract_rename/verification.md`
+**涉及文件:**
+- 新增: `demo_artifacts/2026-05-24/adhoc/for31_unreal_contract_rename/verification.md`
 - Linear: `FOR-31`
 
-- [ ] **Step 1: Run focused verification**
+- [ ] **步骤 1: 运行聚焦验证**
 
-Run:
+运行:
 
 ```bash
 python -m pytest tests/unit/test_unreal_contract_package.py tests/unit/test_ue_bridge.py tests/unit/test_export_video_path_split.py tests/unit/test_engine_adapter_registry.py tests/unit/test_godot4_adapter.py tests/integration/test_p4_ue_manifest_only.py -q
 ```
 
-Expected: pass.
+预期: 通过。
 
-- [ ] **Step 2: Run run-comparison fence verification**
+- [ ] **步骤 2: 运行 run-comparison fence 验证**
 
-Run:
+运行:
 
 ```bash
 python -m pytest tests/unit/test_run_comparison_cli.py tests/unit/test_run_comparison_loader.py tests/unit/test_run_comparison_models.py tests/unit/test_run_comparison_diff_engine.py tests/unit/test_run_comparison_reporter.py -q
 ```
 
-Expected: pass.
+预期: 通过。
 
-- [ ] **Step 3: Run full verification**
+- [ ] **步骤 3: 运行全量验证**
 
-Run:
+运行:
 
 ```bash
 python -m pytest -q
 ```
 
-Expected: pass. Record exact pass/skip counts in evidence.
+预期: 通过。将精确 pass/skip 计数记录到 evidence。
 
-- [ ] **Step 4: Run L2 smoke checks when local engines are available**
+- [ ] **步骤 4: 本机 engine 可用时运行 L2 smoke 检查**
 
-Use existing local paths proven on 2026-05-24.
+使用 2026-05-24 已验证过的本机路径。
 
-UE commandlet command template:
+UE commandlet 命令模板:
 
 ```powershell
 $runId = "for31_unreal_contract_rename_" + (Get-Date -Format "yyyyMMdd_HHmmss")
@@ -839,78 +839,78 @@ $env:FORGEUE_RUN_FOLDER = "D:/UnrealProjects/ForgeUEDemo/Content/Generated/$runI
   -stdout -unattended -nopause
 ```
 
-Godot4 command path:
+Godot4 命令路径:
 
 ```powershell
 $env:GODOT4_EXE = "E:/Godot/Godot_v4.6.2/Godot_v4.6.2-stable_win64_console.exe"
 ```
 
-Run the same minimal Godot4 L2 fixture pattern used by `demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`.
+运行与 `demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md` 相同的 minimal Godot4 L2 fixture pattern。
 
-If either engine command cannot run, record the exact failure reason and do not claim that L2 passed for this change.
+如果任一 engine 命令无法运行,记录精确失败原因,不要宣称本变更的 L2 已通过。
 
-- [ ] **Step 5: Write verification evidence**
+- [ ] **步骤 5: 写入验证证据**
 
-Create `demo_artifacts/2026-05-24/adhoc/for31_unreal_contract_rename/verification.md` with:
+创建 `demo_artifacts/2026-05-24/adhoc/for31_unreal_contract_rename/verification.md`,内容为:
 
 ```markdown
-# FOR-31 Verification Evidence
+# FOR-31 验证证据
 
 日期: 2026-05-24
 
-## Scope
+## 范围
 
-- Canonical package: `framework.engine_bridge.unreal.contract`
+- 主实现 package: `framework.engine_bridge.unreal.contract`
 - Legacy alias: `framework.ue_bridge`
 - Linear: `FOR-31`
 
-## Commands
+## 命令
 
 | command | result |
 | --- | --- |
-| Focused Unreal/Godot contract pytest command from Step 1 | Copy the exact pytest summary line from terminal output. |
-| Run-comparison fence pytest command from Step 2 | Copy the exact pytest summary line from terminal output. |
-| `python -m pytest -q` | Copy the exact pytest summary line from terminal output. |
+| 步骤 1 的 Focused Unreal/Godot contract pytest command | 从终端输出复制精确 pytest summary line。 |
+| 步骤 2 的 Run-comparison fence pytest command | 从终端输出复制精确 pytest summary line。 |
+| `python -m pytest -q` | 从终端输出复制精确 pytest summary line。 |
 
 ## L2
 
-- UE commandlet: record `passed`, `not run`, or `failed`, followed by the concrete command log path or failure message.
-- Godot4 headless: record `passed`, `not run`, or `failed`, followed by the concrete command log path or failure message.
+- UE commandlet: 记录 `passed`、`not run` 或 `failed`,并附具体 command log path 或失败消息。
+- Godot4 headless: 记录 `passed`、`not run` 或 `failed`,并附具体 command log path 或失败消息。
 
-## Notes
+## 备注
 
-- `framework.ue_bridge` remains as compatibility alias.
-- `Godot4Adapter` has no Unreal contract dependency.
+- `framework.ue_bridge` 保持为 compatibility alias。
+- `Godot4Adapter` 不依赖 Unreal contract。
 ```
 
-- [ ] **Step 6: Update Linear**
+- [ ] **步骤 6: 更新 Linear**
 
-Use Linear MCP:
+使用 Linear MCP:
 
 ```text
 Issue: FOR-31
 Comment body:
-FOR-31 implementation completed locally.
+FOR-31 本地实现已完成。
 
 Evidence:
-- Focused pytest: copy the exact summary line from verification evidence.
-- Full pytest: copy the exact summary line from verification evidence.
+- Focused pytest: 从 verification evidence 复制精确 summary line。
+- Full pytest: 从 verification evidence 复制精确 summary line。
 - Verification file: demo_artifacts/2026-05-24/adhoc/for31_unreal_contract_rename/verification.md
-- L2 status: copy the exact UE and Godot4 status lines from verification evidence.
+- L2 status: 从 verification evidence 复制精确 UE 和 Godot4 status lines。
 
 Backlog:
-- LR-0143 moved from docs/backlog/active.md to docs/backlog/archived.md.
+- LR-0143 已从 docs/backlog/active.md 移到 docs/backlog/archived.md。
 ```
 
-Set state only after merge/push policy is satisfied by the branch workflow.
+只有在分支工作流满足 merge/push policy 后,才更新状态。
 
-- [ ] **Step 7: Confirm final tracked state**
+- [ ] **步骤 7: 确认最终 tracked state**
 
-Do not add ignored `demo_artifacts` files to git. Commit only tracked docs/code/test changes:
+不要把 ignored `demo_artifacts` 文件加入 git。只提交 tracked docs/code/test 变更:
 
 ```bash
 git status --short --ignored=matching
 git log --oneline --max-count=8
 ```
 
-Expected: no uncommitted tracked files. Evidence remains ignored under `demo_artifacts`.
+预期: 没有 uncommitted tracked files。Evidence 保持 ignored,位于 `demo_artifacts` 下。
