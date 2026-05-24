@@ -10,21 +10,21 @@ from framework.core.artifact import ArtifactType, ProducerRef
 from framework.core.enums import ArtifactRole, PayloadKind
 from framework.core.policies import PermissionPolicy
 from framework.core.ue import Evidence, UEOutputTarget
-from framework.ue_bridge import (
+from framework.engine_bridge.unreal.contract import (
     EvidenceWriter,
     build_import_plan,
     build_manifest,
     is_op_allowed,
     permission_mask_for_manifest,
 )
-from framework.ue_bridge.evidence import load_evidence, new_evidence_id
-from framework.ue_bridge.inspect import (
+from framework.engine_bridge.unreal.contract.evidence import load_evidence, new_evidence_id
+from framework.engine_bridge.unreal.contract.inspect import (
     inspect_asset_exists,
     inspect_content_path,
     inspect_project,
     validate_manifest,
 )
-from framework.ue_bridge.manifest_builder import ManifestBuildError
+from framework.engine_bridge.unreal.contract.manifest_builder import ManifestBuildError
 
 
 # ---- fixtures ---------------------------------------------------------------
@@ -355,8 +355,8 @@ def test_evidence_writer_appends_atomically(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-from framework.ue_bridge.import_plan_builder import _IMPORT_OP_KIND  # noqa: E402
-from framework.ue_bridge.manifest_builder import (  # noqa: E402
+from framework.engine_bridge.unreal.contract.import_plan_builder import _IMPORT_OP_KIND  # noqa: E402
+from framework.engine_bridge.unreal.contract.manifest_builder import (  # noqa: E402
     _KIND_MAP,
     _PREFIX_BY_KIND,
     _default_import_options,

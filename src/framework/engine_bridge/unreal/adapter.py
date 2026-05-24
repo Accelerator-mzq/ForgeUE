@@ -19,11 +19,11 @@ from framework.core.review import Verdict
 from framework.core.ue import Evidence
 from framework.engine_bridge.core import EngineTarget
 from framework.runtime.executors.base import ExecutorResult, StepContext
-from framework.ue_bridge.evidence import EvidenceWriter, new_evidence_id
-from framework.ue_bridge.import_plan_builder import build_import_plan
-from framework.ue_bridge.inspect import inspect_project, validate_manifest
-from framework.ue_bridge.manifest_builder import build_manifest
-from framework.ue_bridge.permission_policy import is_op_allowed
+from framework.engine_bridge.unreal.contract.evidence import EvidenceWriter, new_evidence_id
+from framework.engine_bridge.unreal.contract.import_plan_builder import build_import_plan
+from framework.engine_bridge.unreal.contract.inspect import inspect_project, validate_manifest
+from framework.engine_bridge.unreal.contract.manifest_builder import build_manifest
+from framework.engine_bridge.unreal.contract.permission_policy import is_op_allowed
 
 
 class UnrealAdapter:
@@ -82,7 +82,7 @@ class UnrealAdapter:
             # drop loop 用 derive_drop_target — D12 路径分流(video → Movies / 非
             # video → Generated)+ UE naming for video / raw basename for non-video
             # 沿 design D1 + D10 + round 1 codex F1+F2 修订
-            from framework.ue_bridge.manifest_builder import derive_drop_target
+            from framework.engine_bridge.unreal.contract.manifest_builder import derive_drop_target
             for art in importable:
                 src_fs = self._resolve_source_path(ctx, art)
                 if src_fs is None:
@@ -213,7 +213,7 @@ class UnrealAdapter:
         # 收敛到 _KIND_MAP 单一真源(沿 design D10 + round 1 codex F1 修订);
         # 旧 modality-only whitelist 与 manifest_builder shape-aware filter 不一致,
         # 导致 unsupported shape(如 video.webm)在新 derive_drop_target 路径下 crash export
-        from framework.ue_bridge.manifest_builder import is_manifest_importable
+        from framework.engine_bridge.unreal.contract.manifest_builder import is_manifest_importable
         return is_manifest_importable(art)
 
     @staticmethod

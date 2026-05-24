@@ -36,7 +36,9 @@ class ExportExecutor(StepExecutor):
 
     @staticmethod
     def _is_importable(art) -> bool:
-        # 兼容既有 UE contract；实际过滤规则仍由 manifest_builder 单一真源决定。
-        from framework.ue_bridge.manifest_builder import is_manifest_importable
+        # 兼容既有 Unreal contract;实际过滤规则仍由 manifest_builder 单一真源决定。
+        from framework.engine_bridge.unreal.contract.manifest_builder import (
+            is_manifest_importable,
+        )
 
         return is_manifest_importable(art)
