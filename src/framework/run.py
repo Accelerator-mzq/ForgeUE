@@ -43,6 +43,7 @@ from framework.runtime.executors.generate_structured import GenerateStructuredEx
 from framework.runtime.executors.mock_executors import register_mock_executors
 from framework.runtime.executors.validate import SchemaValidateExecutor
 from framework.runtime.orchestrator import DryRunFailed, Orchestrator
+from framework.schemas.game_build_compiler import register_builtin_schemas as register_game_build_compiler_schemas
 from framework.schemas.image_spec import register_builtin_schemas as register_image_spec_schema
 from framework.schemas.mesh_spec import register_builtin_schemas as register_mesh_spec_schema
 from framework.schemas.registry import get_schema_registry
@@ -66,6 +67,7 @@ def _build_orchestrator(
     register_image_spec_schema()
     register_mesh_spec_schema()
     register_ue_api_answer_schema()
+    register_game_build_compiler_schemas()
     schema_registry = get_schema_registry()
 
     router = CapabilityRouter()

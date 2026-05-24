@@ -338,7 +338,7 @@ python -m pytest -v -k p3           # 关键字过滤
 | **2** | `pip install -e ".[llm]"` + `python -c "import litellm, instructor"` | 开源包装好，版本 ≥ pyproject 声明 |
 | **3** | `python -m framework.run --task examples/character_extract.json --run-id r1 --live-llm` | `.env` 密钥 + LiteLLM 真实调用 OK |
 | **4** | `python -m framework.run --task examples/ue_export_pipeline.json --run-id r2 --live-llm`（改 `engine_target.project_root` 或 legacy `ue_target.project_root` 到临时目录）| 全链 + 产 Unreal manifest + evidence |
-| **5** | `python -m framework.run --task examples/godot4_export_smoke.json --run-id r_godot`（真实导入前设置 `GODOT4_EXE` 或 `engine_target.executable_path`）| Godot 4 bundle shape + headless import 交付路径 |
+| **5** | `python -m framework.run --task examples/godot4_export_smoke.json --run-id r_godot`（真实导入前设置 `GODOT4_EXE` 或 `engine_target.executable_path`）| Godot 4 bundle shape + headless import 交付路径;本机 Godot 4.6.2 L2 evidence 见 `demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md` |
 | **6** | ComfyUI agent CLI live smoke:默认 `lifecycle=none` 时先确保 ComfyUI server running(本机推荐 `python -m factory_v3 serve` 作为启停 helper),再跑 `examples/comfy_local_smoke*.json`;也可设 `ensure_running` / `ensure_release` / `self_managed_session` 由框架托管 | 真实 image / mesh / audio / video 产物;ForgeUE 生成仍走 `python -m comfyui_api run`(manifest 名,不再 inline `workflow_graph`;不再用 `--comfy-url`)|
 | **7** | 空白 UE 5.x 工程 → 跑档 4 → UE Python Console `exec(open('engine_scripts/unreal/run_import.py').read())` | `Content Browser` 出资产 + `evidence.json` 完整追溯 |
 
@@ -389,7 +389,7 @@ ForgeUE_codex 采用 Superpowers-first 作为 AI 主工作流。非平凡需求�
 | 入口 | 用途 |
 |---|---|
 | [`docs/ai_workflow/validation_matrix.md`](docs/ai_workflow/validation_matrix.md) | Level 0 / 1 / 2 验证命令矩阵(不硬编码测试总数) |
-| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:9 个 capability contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`) |
+| [`docs/contracts/`](docs/contracts/) | 当前行为契约层:10 个 contract(`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance` / `game-build-compiler`) |
 | [`docs/archive/forge_changes/`](docs/archive/forge_changes/) | 历史 forge change evidence 归档,只读参考 |
 | [`docs/backlog/active.md`](docs/backlog/active.md) | Backlog —— 项目当前待办集合 |
 | [`.agents/skills/document-release/SKILL.md`](.agents/skills/document-release/SKILL.md) | 项目级文档发布 / 归档 / backlog 同步 skill |

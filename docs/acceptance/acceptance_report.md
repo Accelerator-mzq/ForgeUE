@@ -48,7 +48,7 @@
 | --- | --- | --- |
 | L0 自动化 | `pytest -q` 全绿 | 用例数以本地命令实测为准;Engine Bridge / Godot 4 docs release 以 focused suite 与 example smoke 的既有通过记录为证据 |
 | L1 CLI 离线冒烟 | `python -m framework.run --task examples/mock_linear.json` | 不抛异常,有产物落盘 |
-| L2 Live LLM smoke | `python -m framework.run --task <bundle> --live-llm` | 需 API key |
+| L2 Live / 外部运行时 smoke | `python -m framework.run --task <bundle> --live-llm` 或目标引擎真实进程 smoke | 需 API key 或本机目标运行时 |
 | L3 UE 真机冒烟 | UE commandlet `UnrealEditor-Cmd.exe -ExecutePythonScript=engine_scripts/unreal/a1_run.py`(0 GUI 依赖)或 GUI Python Console `exec(run_import.py)` | 需 UE 装机 + 空项目 + PythonScriptPlugin |
 | L4 文档评审 | 人工审阅 SRS/HLD/LLD/test_spec | 一致、无漂移 |
 
@@ -65,7 +65,7 @@
 | P2 | standalone_review | `integration/test_p2_standalone_review.py` | ✅ `examples/review_3_images.json` | — | ✅ |
 | P3 | production + 内嵌 review | `integration/test_p3_production_pipeline.py` | ✅ `examples/image_pipeline.json` | — | ✅ |
 | P4 | Engine Bridge + Unreal adapter manifest_only | `integration/test_p4_ue_manifest_only.py`(stub unreal) | ✅ `examples/ue_export_pipeline.json` | ✅ UE 5.7.4 真机(2026-04-23 commandlet) | ✅ |
-| P4-Godot | Godot 4 headless import MVP | `test_engine_target.py` / `test_engine_adapter_registry.py` / `test_godot4_adapter.py` + `test_example_bundles_smoke.py` | ✅ `examples/godot4_export_smoke.json` | ⏳ 真实 Godot 4 L2 smoke 待配置 `GODOT4_EXE` 或 `engine_target.executable_path` 后执行 | ⏳ |
+| P4-Godot | Godot 4 headless import MVP | `test_engine_target.py` / `test_engine_adapter_registry.py` / `test_godot4_adapter.py` + `test_example_bundles_smoke.py` | ✅ `examples/godot4_export_smoke.json` | ✅ Godot 4.6.2 headless import L2(2026-05-24,`demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`) | ✅ |
 
 ### 3.2 L 层能力
 
@@ -172,7 +172,7 @@
 | FR-ENGINE-001 EngineTarget + legacy ue_target 兼容 | `tests/unit/test_engine_target.py` | ✅ |
 | FR-ENGINE-002 EngineAdapterRegistry + ExportExecutor dispatch | `tests/unit/test_engine_adapter_registry.py` | ✅ |
 | FR-ENGINE-003 Unreal adapter 保持 manifest_only | `tests/integration/test_p4_ue_manifest_only.py` + `tests/unit/test_ue_bridge.py` | ✅ |
-| FR-ENGINE-004 Godot 4 headless import MVP | `tests/unit/test_godot4_adapter.py` + `tests/integration/test_example_bundles_smoke.py::test_godot4_export_smoke_bundle_loads` | ✅ L0/L1 自动化通过;⏳ L2 真 Godot 4 smoke 待本机配置 `GODOT4_EXE` |
+| FR-ENGINE-004 Godot 4 headless import MVP | `tests/unit/test_godot4_adapter.py` + `tests/integration/test_example_bundles_smoke.py::test_godot4_export_smoke_bundle_loads` + Godot 4.6.2 headless import evidence | ✅ L0/L1 自动化通过;✅ L2 真 Godot 4 smoke 通过(2026-05-24,`demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`) |
 
 已验证事实:Engine Bridge focused suite 上一轮为 `34 passed`;Task 6 example smoke 为 `59 passed`。本报告不把这些数字作为全量测试总数。
 
@@ -739,6 +739,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | --- | --- |
 | L0 pytest 全量 | ✅ **1179 通过 / 3 skipped / 0 失败**(2026-05-20 实测;forge change `executor-async-rewrite` TBD-010 closed;~41s;累计 baseline 549 → 848 → 1144 → 1184 → 1294 → 1414 → 1136 retire-protocol-layer → 1179 executor-async-rewrite net +43 fence)|
 | L1 CLI 离线冒烟 | ✅ 5 份 examples bundle 全部可跑 |
+| L2 Godot 4 真机 | ✅ Godot 4.6.2 headless import 通过(2026-05-24;`godot_command.log` returncode 0,`evidence.json` 写 `godot_import: success`) |
 | L3 UE 真机 | ✅ UE 5.7.4 commandlet 通过(2026-04-23,见 §6.1) |
 | L4 文档评审 | ⏳ 本五件套本轮交付后待用户评审 |
 
@@ -803,6 +804,7 @@ v5 打脸:同 key 同请求这次返 ConnectError 而非"配额超限",solo prob
 | v1.15 | 2026-05-23 | FOR-22 + FOR-23:关闭 LR-0111 / LR-0114。`DryRunPass` 现在校验显式声明的 provider `api_key_env`,缺 key 时阻断 Run;`Orchestrator` Step 异常失败路径 emit `step_failed` ProgressEvent,并携带异常类型。回归测试:`test_dry_run_pass.py` 新增缺 key / 有 key fence,`test_orchestrator.py` 新增 `step_failed` event fence。 | ForgeUE Team |
 | v1.16 | 2026-05-23 | FOR-26 MiniMax music direct follow-on:`MiniMaxMusicWorker` 直连 MiniMax `music_generation`,在未设置通用 `FORGEUE_REMOTE_AUDIO_URL` 且存在 `MINIMAX_KEY` 时注入 `GenerateAudioExecutor`;新增 `audio_minimax` alias + `examples/minimax_music_smoke.json`;L1 离线 fence 覆盖 native payload、URL 下载、临时签名 URL metadata 去 query、hex response、provider error、timeout 和 run 注入优先级。 | ForgeUE Team |
 | v1.17 | 2026-05-23 | MiniMax image direct follow-on:`MiniMaxImageAdapter` 直连 MiniMax `image_generation`,在 live 路径注册于 LiteLLM 之前;新增 `minimax/image-01` virtual model + `image_minimax` alias + `examples/minimax_image_smoke.json`;L1 离线 fence 覆盖 native payload、n fan-out、subject_reference passthrough、base_resp error、missing image_base64 和 alias 解析。 | ForgeUE Team |
+| v1.18 | 2026-05-24 | Godot 4 headless import L2 evidence 补登记:本机 Godot 4.6.2 console exe 执行 `--headless --path <ForgeGodotDemo> --import` returncode 0;`Godot4Adapter` metrics `engine=godot4, staged=1, skipped=0`;`.import` 与 `.godot/imported/` 产物 fresh 验证通过;`evidence.json` 写 `godot_import: success`。状态同步 P4-Godot 与 FR-ENGINE-004 为 ✅。Evidence:`demo_artifacts/2026-05-24/adhoc/godot4_headless/engine_bridge_godot4_l2_20260524_091408/godot4_headless_validation.md`。 | ForgeUE Team |
 
 ### 9.3 签收区
 

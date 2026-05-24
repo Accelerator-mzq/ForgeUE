@@ -46,6 +46,7 @@ acceptance_report   对应 SRS + test_spec 状态
 | --- | --- |
 | [`ai_workflow/validation_matrix.md`](ai_workflow/validation_matrix.md) | Level 0/1/2 验证命令矩阵 |
 | [`contracts/engine-export-bridge/spec.md`](contracts/engine-export-bridge/spec.md) | Engine Bridge / Godot 4 / Unreal adapter 分发契约 |
+| [`contracts/game-build-compiler/spec.md`](contracts/game-build-compiler/spec.md) | Game Build Compiler Phase A 契约:GDD-to-game-build planning schema、engine-neutral Build IR 与 handoff 边界 |
 | [`contracts/ue-export-bridge/spec.md`](contracts/ue-export-bridge/spec.md) | Unreal adapter 下游 UE 文件契约 |
 | [`backlog/`](backlog/) | Backlog —— 项目当前待办集合 |
 | [`api_des/`](api_des/) | 五家 provider 的 API 契约参考(GLM / Qwen / Qwen-Image(-Edit) / HunYuan) |
