@@ -1,20 +1,15 @@
-"""UE Bridge — manifest-only boundary between framework and UE (§E).
+"""framework.engine_bridge.unreal.contract 的兼容 alias。
 
-Public surface:
-- manifest_builder.build_manifest(...)          → UEAssetManifest
-- import_plan_builder.build_import_plan(...)    → UEImportPlan
-- permission_policy.is_op_allowed(...)          → bool
-- inspect.inspect_project / inspect_content_path / inspect_asset_exists
-- evidence.EvidenceWriter / Evidence Artifact helpers
-
-UE Editor scripting lives in top-level `ue_scripts/` (runs inside UE 5.x).
+中文注释:旧 `framework.ue_bridge` import 在一个兼容周期内保留;
+新代码应使用 `framework.engine_bridge.unreal.contract`。
 """
 
-from framework.ue_bridge.evidence import EvidenceWriter, load_evidence
-from framework.ue_bridge.import_plan_builder import build_import_plan
-from framework.ue_bridge.manifest_builder import build_manifest
-from framework.ue_bridge.permission_policy import (
+from framework.engine_bridge.unreal.contract import (
+    EvidenceWriter,
+    build_import_plan,
+    build_manifest,
     is_op_allowed,
+    load_evidence,
     permission_mask_for_manifest,
 )
 
