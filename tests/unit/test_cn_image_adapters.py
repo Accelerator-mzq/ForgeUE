@@ -580,7 +580,7 @@ class TestHunyuanMeshUrlExtraction:
     def test_ranking_buckets_match_detectable_formats(self):
         """Structural fence: the URL ranking buckets must stay aligned
         with what `_detect_mesh_format()` can verify via magic bytes,
-        intersected with what `ue_scripts/domain_mesh.py` accepts for
+        intersected with what `engine_scripts/unreal/domain_mesh.py` accepts for
         import. If any of these sets drifts, downstream artifacts will be
         mislabeled — this test fails loudly so whoever adds an extension
         also updates detection + UE handler in the same change.

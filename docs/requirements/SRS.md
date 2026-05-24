@@ -240,7 +240,7 @@ ForgeUE **不做**:
 
 | 编号 | 需求 |
 | --- | --- |
-| FR-UE-001 | Unreal adapter 下游 Unreal 文件契约主实现位于 `framework.engine_bridge.unreal.contract`,支持双模:`manifest_only`(MVP 默认)和 `bridge_execute`(后置,未启用);`src/framework/ue_bridge/` / `framework.ue_bridge` 是 FOR-32 人工删除清单中的 legacy path,不再作为当前契约入口;新入口为 `engine_target(engine="unreal")`,旧 `ue_target` 为 legacy input |
+| FR-UE-001 | Unreal adapter 下游 Unreal 文件契约主实现位于 `framework.engine_bridge.unreal.contract`,支持双模:`manifest_only`(MVP 默认)和 `bridge_execute`(后置,未启用);FOR-32 后旧 `src/framework/ue_bridge/` / `framework.ue_bridge` compatibility alias 已由用户删除,不再作为当前契约入口;新入口为 `engine_target(engine="unreal")`,旧 `ue_target` 为 legacy input |
 | FR-UE-002 | `manifest_only` 模式下,Unreal adapter 应产出 `UEAssetManifest` + `UEImportPlan` + `Evidence` 到 `<UE项目>/Content/Generated/<run_id>/`;框架不直接调 UE API |
 | FR-UE-003 | UE 侧应通过 `engine_scripts/unreal/run_import.py` 在 UE Python Console 执行导入,支持贴图(`import_texture`)、静态网格(`import_static_mesh`)、音频(`import_audio`) |
 | FR-UE-004 | Manifest 应通过 `target_object_path` / `target_package_path` 声明 UE 资产位置,遵循 `asset_naming_policy`(gdd_mandated / house_rules / gdd_preferred_then_house_rules) |

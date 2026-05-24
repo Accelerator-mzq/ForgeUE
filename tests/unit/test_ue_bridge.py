@@ -466,7 +466,7 @@ def test_video_artifact_with_mp4_shape_produces_ms_prefixed_ue_name(tmp_path):
 
 def test_import_plan_builder_maps_file_media_source_to_import_file_media_source_op(tmp_path):
     """D1 + D12:import_plan_builder._IMPORT_OP_KIND["file_media_source"] ==
-    "import_file_media_source"(ue_scripts/run_import.py _OP_HANDLERS dispatch
+    "import_file_media_source"(engine_scripts/unreal/run_import.py _OP_HANDLERS dispatch
     到 domain_video.import_video_entry)。"""
     assert _IMPORT_OP_KIND["file_media_source"] == "import_file_media_source"
 

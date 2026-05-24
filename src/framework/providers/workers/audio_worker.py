@@ -20,7 +20,7 @@ ComfyAgentWorker 是 `ComfyWorker` ABC 子类,通过 capability dispatch 路由 
 UE bridge `manifest_builder._KIND_MAP[("audio", "waveform")] = "sound_wave"`
 唯一映射对齐;实际编码格式 flac/mp3/wav 保留在 `Artifact.metadata.format`)。
 
-UE 导入侧 `ue_scripts/domain_audio.import_audio_entry` 已就绪
+UE 导入侧 `engine_scripts/unreal/domain_audio.import_audio_entry` 已就绪
 (SRS FR-UE-003 P4 真机验证 2026-04-23)。
 """
 from __future__ import annotations

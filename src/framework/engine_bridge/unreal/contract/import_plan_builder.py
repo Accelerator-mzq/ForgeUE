@@ -28,7 +28,7 @@ _IMPORT_OP_KIND: dict[str, str] = {
     "static_mesh": "import_static_mesh",
     # OpenSpec change comfy-agent-cli-video-adoption Phase 3 D1:
     # file_media_source asset_kind → import_file_media_source operation kind;
-    # ue_scripts/run_import.py _OP_HANDLERS dispatch 到 domain_video.import_video_entry
+    # engine_scripts/unreal/run_import.py _OP_HANDLERS dispatch 到 domain_video.import_video_entry
     "file_media_source": "import_file_media_source",
     # material / sound_cue → derived ops handled separately
 }

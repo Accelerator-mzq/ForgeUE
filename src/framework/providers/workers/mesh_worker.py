@@ -10,7 +10,7 @@
   ResultFile3Ds 下载。认证走 TC3-HMAC-SHA256（Tencent Cloud 标准签名）。
 
 生成结果包成 `MeshCandidate`，`GenerateMeshExecutor` 再落成 file-backed
-`mesh.gltf` Artifact。UE 导入侧 `ue_scripts/domain_mesh.py` 已就绪。
+`mesh.gltf` Artifact。UE 导入侧 `engine_scripts/unreal/domain_mesh.py` 已就绪。
 """
 from __future__ import annotations
 
@@ -1057,7 +1057,7 @@ def _rank_hunyuan_3d_urls(resp: dict) -> list[str]:
     Explicitly EXCLUDED extensions (never enter any bucket — if only these
     URLs exist, the caller sees an empty list):
       - `.usd` / `.usdz` — neither magic-detected nor supported by
-        `mesh_spec.MeshFormat` or `ue_scripts/domain_mesh`. Earlier the
+        `mesh_spec.MeshFormat` or `engine_scripts/unreal/domain_mesh`. Earlier the
         catch-all `other_hits` bucket would accept them and the worker's
         fallback format-detection then mislabeled the bytes as GLB —
         producing a .glb artifact with USD content. Now they're dropped

@@ -178,7 +178,7 @@
 
 ### 4.8 FR-UE Unreal Adapter / Unreal 文件契约
 
-当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。`src/framework/ue_bridge/` / `framework.ue_bridge` 是 FOR-32 人工删除清单中的 legacy path,不再作为当前契约入口。
+当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。FOR-32 后旧 `src/framework/ue_bridge/` / `framework.ue_bridge` compatibility alias 已由用户删除,不再作为当前契约入口。
 
 | 编号 | 验收手段 | 状态 |
 | --- | --- | --- |
