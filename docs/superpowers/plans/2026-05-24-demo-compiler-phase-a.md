@@ -1,75 +1,75 @@
-# Demo Compiler Phase A Implementation Plan
+# Demo Compiler Phase A 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **给 agentic workers:** 必需子技能:使用 `superpowers:subagent-driven-development`(推荐)或 `superpowers:executing-plans` 按任务逐项实施本计划。步骤使用 checkbox(`- [ ]`)语法追踪。
 
-**Goal:** Add the contract-only Demo Compiler foundation so ForgeUE can model AGENT_UE5-derived GDD-to-demo planning artifacts without binding them to Unreal or Godot implementation details.
+**目标:** 新增 contract-only 的 Demo Compiler 基础,让 ForgeUE 能表达从 AGENT_UE5 泛化而来的 GDD-to-demo planning artifact,但不绑定 Unreal 或 Godot 的实现细节。
 
-**Architecture:** Add a small `framework.schemas.demo_compiler` Pydantic schema module and a `docs/contracts/demo-compiler/spec.md` behavior contract. Phase A does not add a new executor or a new example workflow; it makes `DemoContract`, `DemoTaskGraph`, `DemoBuildIR`, and `DemoHandoff` validate as first-class structured outputs that later phases can feed into ForgeUE Workflow and EngineAdapter.
+**架构:** 新增一个小型 `framework.schemas.demo_compiler` Pydantic schema 模块和 `docs/contracts/demo-compiler/spec.md` 行为契约。Phase A 不新增 executor,也不新增 example workflow;它只让 `DemoContract`、`DemoTaskGraph`、`DemoBuildIR`、`DemoHandoff` 成为可校验的一等结构化输出,供后续阶段接入 ForgeUE Workflow 与 EngineAdapter。
 
-**Tech Stack:** Python 3.12, Pydantic v2, pytest, Markdown contracts, existing ForgeUE schema registry.
+**技术栈:** Python 3.12、Pydantic v2、pytest、Markdown contracts、现有 ForgeUE schema registry。
 
 ---
 
-## Scope Check
+## 范围检查
 
-This plan implements only Phase A from [the migration design](/D:/ClaudeProject/ForgeUE_codex/docs/superpowers/specs/2026-05-24-agent-ue5-to-forgeue-migration-design.md:297): contract, schemas, fixtures, schema tests, and docs indexing. It does not implement `examples/demo_compiler_plan_smoke.json`, new executors, source-code generation, Unreal lowering, Godot lowering, or playable demo production.
+本计划只实施[迁移设计](/D:/ClaudeProject/ForgeUE_codex/docs/superpowers/specs/2026-05-24-agent-ue5-to-forgeue-migration-design.md:297)中的 Phase A:contract、schemas、fixtures、schema tests 和 docs indexing。不实施 `examples/demo_compiler_plan_smoke.json`、新 executor、源码生成、Unreal lowering、Godot lowering 或 playable demo 生产。
 
-## File Structure
+## 文件结构
 
-- Create `src/framework/schemas/demo_compiler.py`
-  - Owns Demo Compiler Pydantic models and `register_builtin_schemas()`.
-  - Keeps schema names under `demo.*`.
-  - Rejects engine-specific concrete output paths inside `DemoBuildIR`.
+- 新增 `src/framework/schemas/demo_compiler.py`
+  - 承载 Demo Compiler Pydantic models 和 `register_builtin_schemas()`。
+  - 将 schema 名称保持在 `demo.*` 命名空间下。
+  - 在 `DemoBuildIR` 中拒绝 engine-specific concrete output path。
 
-- Modify `src/framework/run.py`
-  - Registers Demo Compiler schemas in the CLI orchestrator path.
+- 修改 `src/framework/run.py`
+  - 在 CLI orchestrator 路径中注册 Demo Compiler schemas。
 
-- Create `tests/unit/test_demo_compiler_schemas.py`
-  - Covers model validation, graph edge closure, engine-neutral Build IR guard, and registry wiring.
+- 新增 `tests/unit/test_demo_compiler_schemas.py`
+  - 覆盖 model validation、graph edge closure、engine-neutral Build IR guard 和 registry wiring。
 
-- Create `tests/fixtures/demo_compiler/shop_management_gdd.md`
-  - Minimal GDD fixture for a rules-driven shop management vertical slice.
+- 新增 `tests/fixtures/demo_compiler/shop_management_gdd.md`
+  - 为规则驱动的 shop management vertical slice 提供最小 GDD fixture。
 
-- Create `tests/fixtures/demo_compiler/demo_contract.example.json`
-  - Valid `DemoContract` fixture.
+- 新增 `tests/fixtures/demo_compiler/demo_contract.example.json`
+  - 合法的 `DemoContract` fixture。
 
-- Create `tests/fixtures/demo_compiler/demo_task_graph.example.json`
-  - Valid `DemoTaskGraph` fixture.
+- 新增 `tests/fixtures/demo_compiler/demo_task_graph.example.json`
+  - 合法的 `DemoTaskGraph` fixture。
 
-- Create `tests/fixtures/demo_compiler/demo_build_ir.example.json`
-  - Valid engine-neutral `DemoBuildIR` fixture.
+- 新增 `tests/fixtures/demo_compiler/demo_build_ir.example.json`
+  - 合法且 engine-neutral 的 `DemoBuildIR` fixture。
 
-- Create `tests/fixtures/demo_compiler/demo_handoff.example.json`
-  - Valid `DemoHandoff` fixture.
+- 新增 `tests/fixtures/demo_compiler/demo_handoff.example.json`
+  - 合法的 `DemoHandoff` fixture。
 
-- Create `tests/unit/test_demo_compiler_fixtures.py`
-  - Loads fixture JSON with UTF-8 and validates with Pydantic models.
-  - Fences fixture engine-neutrality by rejecting UE/Godot concrete file paths.
+- 新增 `tests/unit/test_demo_compiler_fixtures.py`
+  - 使用 UTF-8 加载 fixture JSON,并用 Pydantic models 校验。
+  - 通过拒绝 UE/Godot concrete file path 来守住 fixture 的 engine-neutral 边界。
 
-- Create `docs/contracts/demo-compiler/spec.md`
-  - Defines current behavior and Phase A requirements.
+- 新增 `docs/contracts/demo-compiler/spec.md`
+  - 定义当前行为和 Phase A requirements。
 
-- Create `tests/unit/test_demo_compiler_contract_doc.py`
-  - Fences the contract doc has the schema names, engine-neutral boundary, and Phase A non-goals.
+- 新增 `tests/unit/test_demo_compiler_contract_doc.py`
+  - 守住 contract doc 必须包含 schema names、engine-neutral boundary 和 Phase A non-goals。
 
-- Modify `docs/INDEX.md`
-  - Adds Demo Compiler contract to auxiliary resources.
+- 修改 `docs/INDEX.md`
+  - 将 Demo Compiler contract 加入辅助资源。
 
-- Modify `docs/testing/test_spec.md`
-  - Adds Demo Compiler schema tests to the unit-test matrix.
+- 修改 `docs/testing/test_spec.md`
+  - 将 Demo Compiler schema tests 加入 unit-test matrix。
 
-- Modify `CHANGELOG.md`
-  - Adds one `[Unreleased]` Changed bullet for Demo Compiler Phase A.
+- 修改 `CHANGELOG.md`
+  - 在 `[Unreleased]` 的 Changed 下新增一条 Demo Compiler Phase A 记录。
 
-## Task 1: Demo Compiler Schema Models
+## 任务 1:Demo Compiler Schema 模型
 
-**Files:**
-- Create: `tests/unit/test_demo_compiler_schemas.py`
-- Create: `src/framework/schemas/demo_compiler.py`
+**文件:**
+- 新增: `tests/unit/test_demo_compiler_schemas.py`
+- 新增: `src/framework/schemas/demo_compiler.py`
 
-- [ ] **Step 1: Write the failing schema tests**
+- [ ] **步骤 1:编写会失败的 schema tests**
 
-Create `tests/unit/test_demo_compiler_schemas.py` with this content:
+用以下内容创建 `tests/unit/test_demo_compiler_schemas.py`:
 
 ```python
 from __future__ import annotations
@@ -251,19 +251,19 @@ def test_register_builtin_schemas_adds_demo_schema_refs():
     }.issubset(names)
 ```
 
-- [ ] **Step 2: Run the failing schema tests**
+- [ ] **步骤 2:运行会失败的 schema tests**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_schemas.py -q
 ```
 
-Expected: FAIL with `ModuleNotFoundError: No module named 'framework.schemas.demo_compiler'`.
+预期:FAIL,错误包含 `ModuleNotFoundError: No module named 'framework.schemas.demo_compiler'`。
 
-- [ ] **Step 3: Implement the minimal schema module**
+- [ ] **步骤 3:实现最小 schema 模块**
 
-Create `src/framework/schemas/demo_compiler.py` with this content:
+用以下内容创建 `src/framework/schemas/demo_compiler.py`:
 
 ```python
 """Demo Compiler structured schemas.
@@ -499,36 +499,36 @@ def register_builtin_schemas() -> None:
     reg.register("demo.handoff", DemoHandoff)
 ```
 
-- [ ] **Step 4: Run the schema tests**
+- [ ] **步骤 4:运行 schema tests**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_schemas.py -q
 ```
 
-Expected: PASS.
+预期:PASS。
 
-- [ ] **Step 5: Commit schema models**
+- [ ] **步骤 5:提交 schema models**
 
-Run:
+执行:
 
 ```bash
 git add src/framework/schemas/demo_compiler.py tests/unit/test_demo_compiler_schemas.py
 git commit -m "feat: add demo compiler schemas"
 ```
 
-Expected: commit created.
+预期:commit 创建成功。
 
-## Task 2: CLI Schema Registry Wiring
+## 任务 2:CLI Schema Registry 接线
 
-**Files:**
-- Modify: `tests/unit/test_demo_compiler_schemas.py`
-- Modify: `src/framework/run.py`
+**文件:**
+- 修改: `tests/unit/test_demo_compiler_schemas.py`
+- 修改: `src/framework/run.py`
 
-- [ ] **Step 1: Add failing CLI registration test**
+- [ ] **步骤 1:添加会失败的 CLI 注册测试**
 
-Append this test to `tests/unit/test_demo_compiler_schemas.py`:
+向 `tests/unit/test_demo_compiler_schemas.py` 追加这个测试:
 
 ```python
 def test_cli_orchestrator_registers_demo_compiler_schemas(tmp_path):
@@ -541,66 +541,66 @@ def test_cli_orchestrator_registers_demo_compiler_schemas(tmp_path):
     assert "demo.build_ir" in names
 ```
 
-- [ ] **Step 2: Run the focused test to see it fail**
+- [ ] **步骤 2:运行聚焦测试,确认失败**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_schemas.py::test_cli_orchestrator_registers_demo_compiler_schemas -q
 ```
 
-Expected: FAIL because `_build_orchestrator()` has not registered the demo schemas.
+预期:FAIL,因为 `_build_orchestrator()` 尚未注册 demo schemas。
 
-- [ ] **Step 3: Register Demo Compiler schemas in CLI setup**
+- [ ] **步骤 3:在 CLI setup 中注册 Demo Compiler schemas**
 
-Modify `src/framework/run.py`.
+修改 `src/framework/run.py`。
 
-Add this import near the other schema imports:
+在其他 schema imports 附近新增这个 import:
 
 ```python
 from framework.schemas.demo_compiler import register_builtin_schemas as register_demo_compiler_schemas
 ```
 
-Add this call in `_build_orchestrator()` after the existing schema registration calls:
+在 `_build_orchestrator()` 现有 schema registration 调用之后新增这个调用:
 
 ```python
     register_demo_compiler_schemas()
 ```
 
-- [ ] **Step 4: Run the focused test**
+- [ ] **步骤 4:运行聚焦测试**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_schemas.py::test_cli_orchestrator_registers_demo_compiler_schemas -q
 ```
 
-Expected: PASS.
+预期:PASS。
 
-- [ ] **Step 5: Commit CLI registration**
+- [ ] **步骤 5:提交 CLI registration**
 
-Run:
+执行:
 
 ```bash
 git add src/framework/run.py tests/unit/test_demo_compiler_schemas.py
 git commit -m "feat: register demo compiler schemas"
 ```
 
-Expected: commit created.
+预期:commit 创建成功。
 
-## Task 3: Demo Compiler Fixtures
+## 任务 3:Demo Compiler fixture 示例
 
-**Files:**
-- Create: `tests/fixtures/demo_compiler/shop_management_gdd.md`
-- Create: `tests/fixtures/demo_compiler/demo_contract.example.json`
-- Create: `tests/fixtures/demo_compiler/demo_task_graph.example.json`
-- Create: `tests/fixtures/demo_compiler/demo_build_ir.example.json`
-- Create: `tests/fixtures/demo_compiler/demo_handoff.example.json`
-- Create: `tests/unit/test_demo_compiler_fixtures.py`
+**文件:**
+- 新增: `tests/fixtures/demo_compiler/shop_management_gdd.md`
+- 新增: `tests/fixtures/demo_compiler/demo_contract.example.json`
+- 新增: `tests/fixtures/demo_compiler/demo_task_graph.example.json`
+- 新增: `tests/fixtures/demo_compiler/demo_build_ir.example.json`
+- 新增: `tests/fixtures/demo_compiler/demo_handoff.example.json`
+- 新增: `tests/unit/test_demo_compiler_fixtures.py`
 
-- [ ] **Step 1: Write failing fixture tests**
+- [ ] **步骤 1:编写会失败的 fixture tests**
 
-Create `tests/unit/test_demo_compiler_fixtures.py` with this content:
+用以下内容创建 `tests/unit/test_demo_compiler_fixtures.py`:
 
 ```python
 from __future__ import annotations
@@ -654,19 +654,19 @@ def test_demo_compiler_fixtures_stay_engine_neutral():
         assert fragment not in combined
 ```
 
-- [ ] **Step 2: Run the fixture tests to see them fail**
+- [ ] **步骤 2:运行 fixture tests,确认失败**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_fixtures.py -q
 ```
 
-Expected: FAIL with `FileNotFoundError` for `tests/fixtures/demo_compiler/shop_management_gdd.md`.
+预期:FAIL,错误为 `tests/fixtures/demo_compiler/shop_management_gdd.md` 的 `FileNotFoundError`。
 
-- [ ] **Step 3: Create the GDD fixture**
+- [ ] **步骤 3:创建 GDD fixture**
 
-Create `tests/fixtures/demo_compiler/shop_management_gdd.md` with this content:
+用以下内容创建 `tests/fixtures/demo_compiler/shop_management_gdd.md`:
 
 ```markdown
 # Shop Management Demo GDD
@@ -702,9 +702,9 @@ The player receives customer orders, picks ingredients from shelves, prepares on
 - Visual style may be low-poly or painterly if UI text stays readable.
 ```
 
-- [ ] **Step 4: Create the DemoContract fixture**
+- [ ] **步骤 4:创建 DemoContract fixture**
 
-Create `tests/fixtures/demo_compiler/demo_contract.example.json` with this content:
+用以下内容创建 `tests/fixtures/demo_compiler/demo_contract.example.json`:
 
 ```json
 {
@@ -768,9 +768,9 @@ Create `tests/fixtures/demo_compiler/demo_contract.example.json` with this conte
 }
 ```
 
-- [ ] **Step 5: Create the DemoTaskGraph fixture**
+- [ ] **步骤 5:创建 DemoTaskGraph fixture**
 
-Create `tests/fixtures/demo_compiler/demo_task_graph.example.json` with this content:
+用以下内容创建 `tests/fixtures/demo_compiler/demo_task_graph.example.json`:
 
 ```json
 {
@@ -838,9 +838,9 @@ Create `tests/fixtures/demo_compiler/demo_task_graph.example.json` with this con
 }
 ```
 
-- [ ] **Step 6: Create the DemoBuildIR fixture**
+- [ ] **步骤 6:创建 DemoBuildIR fixture**
 
-Create `tests/fixtures/demo_compiler/demo_build_ir.example.json` with this content:
+用以下内容创建 `tests/fixtures/demo_compiler/demo_build_ir.example.json`:
 
 ```json
 {
@@ -892,9 +892,9 @@ Create `tests/fixtures/demo_compiler/demo_build_ir.example.json` with this conte
 }
 ```
 
-- [ ] **Step 7: Create the DemoHandoff fixture**
+- [ ] **步骤 7:创建 DemoHandoff fixture**
 
-Create `tests/fixtures/demo_compiler/demo_handoff.example.json` with this content:
+用以下内容创建 `tests/fixtures/demo_compiler/demo_handoff.example.json`:
 
 ```json
 {
@@ -938,36 +938,36 @@ Create `tests/fixtures/demo_compiler/demo_handoff.example.json` with this conten
 }
 ```
 
-- [ ] **Step 8: Run fixture tests**
+- [ ] **步骤 8:运行 fixture tests**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_fixtures.py -q
 ```
 
-Expected: PASS.
+预期:PASS。
 
-- [ ] **Step 9: Commit fixtures**
+- [ ] **步骤 9:提交 fixtures**
 
-Run:
+执行:
 
 ```bash
 git add tests/fixtures/demo_compiler tests/unit/test_demo_compiler_fixtures.py
 git commit -m "test: add demo compiler fixtures"
 ```
 
-Expected: commit created.
+预期:commit 创建成功。
 
-## Task 4: Demo Compiler Contract Document
+## 任务 4:Demo Compiler contract 文档
 
-**Files:**
-- Create: `tests/unit/test_demo_compiler_contract_doc.py`
-- Create: `docs/contracts/demo-compiler/spec.md`
+**文件:**
+- 新增: `tests/unit/test_demo_compiler_contract_doc.py`
+- 新增: `docs/contracts/demo-compiler/spec.md`
 
-- [ ] **Step 1: Write the failing contract doc fence**
+- [ ] **步骤 1:编写会失败的 contract doc fence**
 
-Create `tests/unit/test_demo_compiler_contract_doc.py` with this content:
+用以下内容创建 `tests/unit/test_demo_compiler_contract_doc.py`:
 
 ```python
 from __future__ import annotations
@@ -997,19 +997,19 @@ def test_demo_compiler_contract_doc_lists_schema_refs():
         assert schema_ref in text
 ```
 
-- [ ] **Step 2: Run the contract doc fence to see it fail**
+- [ ] **步骤 2:运行 contract doc fence,确认失败**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_contract_doc.py -q
 ```
 
-Expected: FAIL with `FileNotFoundError` for `docs/contracts/demo-compiler/spec.md`.
+预期:FAIL,错误为 `docs/contracts/demo-compiler/spec.md` 的 `FileNotFoundError`。
 
-- [ ] **Step 3: Create the contract document**
+- [ ] **步骤 3:创建 contract document**
 
-Create `docs/contracts/demo-compiler/spec.md` with this content:
+用以下内容创建 `docs/contracts/demo-compiler/spec.md`:
 
 ```markdown
 # demo-compiler
@@ -1098,159 +1098,159 @@ The system SHALL keep fixture examples under `tests/fixtures/demo_compiler/`, an
 - Full regression: `python -m pytest -q`
 ```
 
-- [ ] **Step 4: Run the contract doc fence**
+- [ ] **步骤 4:运行 contract doc fence**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_contract_doc.py -q
 ```
 
-Expected: PASS.
+预期:PASS。
 
-- [ ] **Step 5: Commit contract doc**
+- [ ] **步骤 5:提交 contract doc**
 
-Run:
+执行:
 
 ```bash
 git add docs/contracts/demo-compiler/spec.md tests/unit/test_demo_compiler_contract_doc.py
 git commit -m "docs: add demo compiler contract"
 ```
 
-Expected: commit created.
+预期:commit 创建成功。
 
-## Task 5: Documentation Index and Release Notes
+## 任务 5:文档索引与 Release Notes
 
-**Files:**
-- Modify: `docs/INDEX.md`
-- Modify: `docs/testing/test_spec.md`
-- Modify: `CHANGELOG.md`
+**文件:**
+- 修改: `docs/INDEX.md`
+- 修改: `docs/testing/test_spec.md`
+- 修改: `CHANGELOG.md`
 
-- [ ] **Step 1: Update docs index**
+- [ ] **步骤 1:更新 docs index**
 
-In `docs/INDEX.md`, add this row in the "辅助资源" table near the other contract rows:
+在 `docs/INDEX.md` 的“辅助资源”表中,靠近其他 contract rows 的位置新增这一行:
 
 ```markdown
 | [`contracts/demo-compiler/spec.md`](contracts/demo-compiler/spec.md) | Demo Compiler Phase A 契约:GDD-to-demo planning schema、engine-neutral Build IR 与 handoff 边界 |
 ```
 
-- [ ] **Step 2: Update test spec**
+- [ ] **步骤 2:更新 test spec**
 
-In `docs/testing/test_spec.md` §3.1 "核心对象与 Schema", add this row after `test_engine_target.py`:
+在 `docs/testing/test_spec.md` §3.1 “核心对象与 Schema”中,在 `test_engine_target.py` 后新增这一行:
 
 ```markdown
 | `test_demo_compiler_schemas.py` / `test_demo_compiler_fixtures.py` / `test_demo_compiler_contract_doc.py` | `schemas/demo_compiler.py` + `docs/contracts/demo-compiler/spec.md` | Demo Compiler Phase A | L1,L2 | DemoContract / DemoTaskGraph / DemoBuildIR / DemoHandoff schema refs、graph edge closure、engine-neutral path fence、fixture validation、contract doc fence |
 ```
 
-- [ ] **Step 3: Update changelog**
+- [ ] **步骤 3:更新 changelog**
 
-In `CHANGELOG.md` under `## [Unreleased]` -> `### Changed`, add this bullet near the Engine Bridge bullets:
+在 `CHANGELOG.md` 的 `## [Unreleased]` -> `### Changed` 下,靠近 Engine Bridge bullets 的位置新增这一条:
 
 ```markdown
 - **Demo Compiler Phase A design contract**:新增 AGENT_UE5 Design Compiler 迁移的 contract-only 基础,以 `demo.contract` / `demo.clarification_report` / `demo.task_graph` / `demo.build_ir` / `demo.handoff` 五个 schema refs 表达 engine-neutral GDD-to-demo planning artifact;第一阶段不生成 UE/Godot 工程文件,只为后续 Workflow smoke 和 EngineAdapter lowering 留边界。
 ```
 
-- [ ] **Step 4: Run documentation and focused tests**
+- [ ] **步骤 4:运行文档检查与聚焦测试**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_schemas.py tests/unit/test_demo_compiler_fixtures.py tests/unit/test_demo_compiler_contract_doc.py -q
 ```
 
-Expected: PASS.
+预期:PASS。
 
-Run:
+执行:
 
 ```bash
 git diff --check
 ```
 
-Expected: exit 0.
+预期:exit 0。
 
-- [ ] **Step 5: Commit docs sync**
+- [ ] **步骤 5:提交 docs sync**
 
-Run:
+执行:
 
 ```bash
 git add docs/INDEX.md docs/testing/test_spec.md CHANGELOG.md
 git commit -m "docs: index demo compiler phase a"
 ```
 
-Expected: commit created.
+预期:commit 创建成功。
 
-## Task 6: Final Verification
+## 任务 6:最终验证
 
-**Files:**
-- No new files.
+**文件:**
+- 不新增文件。
 
-- [ ] **Step 1: Run focused Demo Compiler suite**
+- [ ] **步骤 1:运行聚焦 Demo Compiler suite**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/unit/test_demo_compiler_schemas.py tests/unit/test_demo_compiler_fixtures.py tests/unit/test_demo_compiler_contract_doc.py -q
 ```
 
-Expected: all tests pass.
+预期:全部测试通过。
 
-- [ ] **Step 2: Run example bundle smoke**
+- [ ] **步骤 2:运行 example bundle smoke**
 
-Run:
+执行:
 
 ```bash
 python -m pytest tests/integration/test_example_bundles_smoke.py -q
 ```
 
-Expected: all tests pass. This confirms schema registration did not break existing example loading or dry-run behavior.
+预期:全部测试通过。这能确认 schema registration 没有破坏现有 example loading 或 dry-run 行为。
 
-- [ ] **Step 3: Run full regression if time allows**
+- [ ] **步骤 3:时间允许时运行完整回归**
 
-Run:
+执行:
 
 ```bash
 python -m pytest -q
 ```
 
-Expected: all tests pass. If runtime is too long for the current session, record the focused suite and example smoke as completed, and state that full regression was not run.
+预期:全部测试通过。如果当前会话运行时间过长,记录聚焦 suite 与 example smoke 已完成,并明确说明完整回归未运行。
 
-- [ ] **Step 4: Check repository status**
+- [ ] **步骤 4:检查 repository status**
 
-Run:
+执行:
 
 ```bash
 git status --short --branch
 ```
 
-Expected: clean working tree on the implementation branch.
+预期:implementation branch 上 working tree 干净。
 
-- [ ] **Step 5: Prepare final evidence**
+- [ ] **步骤 5:准备最终证据**
 
-Collect these evidence points for the final response:
+为最终回复收集这些证据点:
 
-- Plan file path.
-- Commit hashes from Tasks 1 to 5.
-- Focused pytest output.
-- Example smoke output.
-- Full regression output or explicit note that it was not run.
+- Plan 文件路径。
+- 任务 1 到任务 5 的 commit hashes。
+- 聚焦 pytest 输出。
+- Example smoke 输出。
+- 完整回归输出,或明确说明未运行。
 
-## Self-Review Checklist
+## 自检清单
 
-- Spec coverage:
-  - `DemoContract`: Task 1, Task 3.
-  - `DemoClarificationReport`: Task 1, Task 4.
-  - `DemoTaskGraph`: Task 1, Task 3.
-  - `DemoBuildIR`: Task 1, Task 3, Task 4.
-  - `DemoHandoff`: Task 1, Task 3.
-  - Engine-neutral boundary: Task 1, Task 3, Task 4.
-  - Contract doc: Task 4.
-  - Test spec and changelog: Task 5.
+- 规格覆盖:
+  - `DemoContract`:任务 1、任务 3。
+  - `DemoClarificationReport`:任务 1、任务 4。
+  - `DemoTaskGraph`:任务 1、任务 3。
+  - `DemoBuildIR`:任务 1、任务 3、任务 4。
+  - `DemoHandoff`:任务 1、任务 3。
+  - Engine-neutral boundary:任务 1、任务 3、任务 4。
+  - Contract doc:任务 4。
+  - Test spec 与 changelog:任务 5。
 
-- Placeholder scan:
-  - The plan contains no unresolved implementation blanks.
-  - Every code-modifying step includes concrete code.
+- 空白扫描:
+  - 本计划不包含未解决的实现空白。
+  - 每个涉及代码修改的步骤都包含具体代码。
 
-- Type consistency:
-  - Schema refs are consistently `demo.contract`, `demo.clarification_report`, `demo.task_graph`, `demo.build_ir`, and `demo.handoff`.
-  - Graph edge fields are consistently `from_node` and `to_node`.
-  - Build IR path validation error consistently contains `engine-specific concrete path`.
+- 类型一致性:
+  - Schema refs 始终为 `demo.contract`、`demo.clarification_report`、`demo.task_graph`、`demo.build_ir` 和 `demo.handoff`。
+  - Graph edge 字段始终为 `from_node` 和 `to_node`。
+  - Build IR path validation error 始终包含 `engine-specific concrete path`。
