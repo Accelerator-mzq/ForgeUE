@@ -2,7 +2,7 @@
 
 ## Purpose
 
-UE Export Bridge is now the Unreal adapter contract under the generic Engine Export Bridge. ForgeUE's runtime dispatches export through `EngineAdapter`; when `engine_target.engine == "unreal"` (or legacy `ue_target` is present), `UnrealAdapter` emits three files — `UEAssetManifest`, `UEImportPlan`, `Evidence` — into `<UE project>/Content/Generated/<run_id>/`, and a thin UE-side Python agent (`ue_scripts/run_import.py`) executes the import plan under a strict permission policy. This separation is fixed by ADR-001: no ForgeUE-authored UE plugin, ever.
+UE Export Bridge is now the Unreal adapter contract under the generic Engine Export Bridge. ForgeUE's runtime dispatches export through `EngineAdapter`; when `engine_target.engine == "unreal"` (or legacy `ue_target` is present), `UnrealAdapter` emits three files — `UEAssetManifest`, `UEImportPlan`, `Evidence` — into `<UE project>/Content/Generated/<run_id>/`, and a thin UE-side Python agent (`engine_scripts/unreal/run_import.py`) executes the import plan under a strict permission policy. This separation is fixed by ADR-001: no ForgeUE-authored UE plugin, ever.
 
 ## Source Documents
 
@@ -11,15 +11,15 @@ UE Export Bridge is now the Unreal adapter contract under the generic Engine Exp
 - `docs/acceptance/acceptance_report.md` §6.1 (A1 real-hardware acceptance on UE 5.7.4, 2026-04-23 commandlet path)
 - Source: `src/framework/engine_bridge/unreal/adapter.py`
 - Source: `src/framework/engine_bridge/unreal/contract/manifest_builder.py`, `import_plan_builder.py`, `permission_policy.py`, `evidence.py`
-- Source: `src/framework/engine_bridge/unreal/contract/inspect/`;`src/framework/ue_bridge/` is a one-cycle legacy compatibility alias
+- Source: `src/framework/engine_bridge/unreal/contract/inspect/`;`src/framework/ue_bridge/` is a FOR-32 manual-delete legacy path
 - Source: `src/framework/core/ue.py` (UEOutputTarget, UEAssetManifest, UEImportPlan, Evidence schemas)
-- Source: `ue_scripts/run_import.py`, `a1_run.py`, `manifest_reader.py`, `domain_texture.py`, `domain_mesh.py`, `domain_audio.py`, `domain_material.py`, `evidence_writer.py`
+- Source: `engine_scripts/unreal/run_import.py`, `a1_run.py`, `manifest_reader.py`, `domain_texture.py`, `domain_mesh.py`, `domain_audio.py`, `domain_material.py`, `evidence_writer.py`
 
 ## Current Behavior
 
-`engine_target(engine="unreal")` is the new Task-level entry for Unreal delivery. Legacy `UEOutputTarget` remains accepted as `ue_target` and is converted by `EngineTarget.from_ue_target(...)`, so existing bundles keep working. Current Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`;`src/framework/ue_bridge/` / `framework.ue_bridge` 保留为一个兼容周期的 legacy compatibility alias。Two Unreal import modes exist: `manifest_only` (the MVP default) and `bridge_execute` (future bridge_execute reserved follow-on, not enabled in the current `framework.engine_bridge.unreal.contract` manifest_only implementation). In `manifest_only` mode `UnrealAdapter` writes three files per Run to `<project_root>/Content/Generated/<run_id>/`: a declarative manifest listing each asset with `target_object_path`, `target_package_path`, `asset_naming_policy` (one of `gdd_mandated` / `house_rules` / `gdd_preferred_then_house_rules`), and `depends_on`; an import plan with the topologically ordered operations; and a seeded `Evidence` file.
+`engine_target(engine="unreal")` is the new Task-level entry for Unreal delivery. Legacy `UEOutputTarget` remains accepted as `ue_target` and is converted by `EngineTarget.from_ue_target(...)`, so existing bundles keep working. Current Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`;`src/framework/ue_bridge/` / `framework.ue_bridge` 是 FOR-32 人工删除清单中的 legacy path,不再作为当前契约入口。Two Unreal import modes exist: `manifest_only` (the MVP default) and `bridge_execute` (future bridge_execute reserved follow-on, not enabled in the current `framework.engine_bridge.unreal.contract` manifest_only implementation). In `manifest_only` mode `UnrealAdapter` writes three files per Run to `<project_root>/Content/Generated/<run_id>/`: a declarative manifest listing each asset with `target_object_path`, `target_package_path`, `asset_naming_policy` (one of `gdd_mandated` / `house_rules` / `gdd_preferred_then_house_rules`), and `depends_on`; an import plan with the topologically ordered operations; and a seeded `Evidence` file.
 
-The UE-side agent is intentionally minimal: `ue_scripts/` is a standalone Python package whose only third-party dependency is `import unreal`. `run_import.py` (or `a1_run.py` for commandlet execution) reads the three files via `manifest_reader.discover_bundle()`, topologically sorts operations via `manifest_reader.topological_ops()`, and dispatches each operation to `domain_texture.import_texture_entry`, `domain_mesh.import_static_mesh_entry`, or `domain_audio.import_audio_entry`. Every operation produces an Evidence record that is atomically appended to `evidence.json` via `evidence_writer.append()`.
+The UE-side agent is intentionally minimal: `engine_scripts/unreal/` is a standalone Python package whose only third-party dependency is `import unreal`. `run_import.py` (or `a1_run.py` for commandlet execution) reads the three files via `manifest_reader.discover_bundle()`, topologically sorts operations via `manifest_reader.topological_ops()`, and dispatches each operation to `domain_texture.import_texture_entry`, `domain_mesh.import_static_mesh_entry`, or `domain_audio.import_audio_entry`. Every operation produces an Evidence record that is atomically appended to `evidence.json` via `evidence_writer.append()`.
 
 `PermissionPolicy` has five tiers: `create_folder`, `import_texture`, `import_audio`, `import_static_mesh` default to allow; `create_material`, `create_sound_cue` default to deny and require an explicit allow flag; modification of existing assets, blueprints, maps, configs, and any deletion are permanently forbidden. The framework-side `permission_policy.py` validates manifest entries up-front; the UE side re-checks at execution time.
 ## Requirements
@@ -45,13 +45,13 @@ The system SHALL write `UEAssetManifest`, `UEImportPlan`, and `Evidence` to `<pr
 
 ## Requirement: UE-side agent supports three domains
 
-The system SHALL support `import_texture`, `import_static_mesh`, `import_audio`, and `import_video` via the corresponding `ue_scripts/domain_*.py` entry points. (Title preserved as historical name; the post-Phase 3 video-adoption authoritative list is **four** domains.)
+The system SHALL support `import_texture`, `import_static_mesh`, `import_audio`, and `import_video` via the corresponding `engine_scripts/unreal/domain_*.py` entry points. (Title preserved as historical name; the post-Phase 3 video-adoption authoritative list is **four** domains.)
 
-## Scenario: ue_scripts/run_import.py dispatches import_texture / import_static_mesh / import_audio / import_video operations to their domain handlers via _OP_HANDLERS
+## Scenario: engine_scripts/unreal/run_import.py dispatches import_texture / import_static_mesh / import_audio / import_video operations to their domain handlers via _OP_HANDLERS
 
-- GIVEN `ue_scripts/run_import.py` declaring `_OP_HANDLERS = {"import_texture": domain_texture.import_texture_entry, "import_audio": domain_audio.import_audio_entry, "import_static_mesh": domain_mesh.import_static_mesh_entry, "import_file_media_source": domain_video.import_video_entry}` (exactly four keys, matching the four domain modules `domain_texture.py` / `domain_audio.py` / `domain_mesh.py` / `domain_video.py`); the additional handler key `"import_file_media_source"` matches the operation kind generated by `ImportPlanBuilder` for `UEAssetEntry.asset_kind == "file_media_source"` entries
+- GIVEN `engine_scripts/unreal/run_import.py` declaring `_OP_HANDLERS = {"import_texture": domain_texture.import_texture_entry, "import_audio": domain_audio.import_audio_entry, "import_static_mesh": domain_mesh.import_static_mesh_entry, "import_file_media_source": domain_video.import_video_entry}` (exactly four keys, matching the four domain modules `domain_texture.py` / `domain_audio.py` / `domain_mesh.py` / `domain_video.py`); the additional handler key `"import_file_media_source"` matches the operation kind generated by `ImportPlanBuilder` for `UEAssetEntry.asset_kind == "file_media_source"` entries
 - WHEN `run_import.run(run_folder=...)` walks the topologically-sorted operations and dispatches each one
-- THEN each operation whose `kind` matches one of the four handler keys is dispatched to the corresponding `domain_*.import_*_entry` function with the entry dict + `project_root`; operation kinds outside the handler dict (such as the reserved `create_material`) take the explicit "no UE-side handler" branch and append a `status="skipped"` Evidence record with an explanatory `error`; `tests/integration/test_p4_ue_manifest_only.py::test_p4_ue_scripts_run_import_with_stub_unreal` exercises the texture / mesh / audio paths through a stubbed `unreal` module to verify the dispatch + Evidence-append round-trip; `tests/integration/test_p4_ue_manifest_only.py::test_p4_ue_scripts_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video` extends this for the video path
+- THEN each operation whose `kind` matches one of the four handler keys is dispatched to the corresponding `domain_*.import_*_entry` function with the entry dict + `project_root`; operation kinds outside the handler dict (such as the reserved `create_material`) take the explicit "no UE-side handler" branch and append a `status="skipped"` Evidence record with an explanatory `error`; `tests/integration/test_p4_ue_manifest_only.py::test_p4_engine_scripts_unreal_run_import_with_stub_unreal` exercises the texture / mesh / audio paths through a stubbed `unreal` module to verify the dispatch + Evidence-append round-trip; `tests/integration/test_p4_ue_manifest_only.py::test_p4_engine_scripts_unreal_run_import_with_stub_unreal_dispatches_file_media_source_to_domain_video` extends this for the video path
 
 ## Requirement: Naming policy declared per asset
 
@@ -67,10 +67,10 @@ The system SHALL declare `asset_naming_policy` per asset as one of `gdd_mandated
 
 The system SHALL encode import-side dependencies via `depends_on` on each manifest entry; the UE side SHALL execute in topologically sorted order.
 
-## Scenario: ImportPlanBuilder records depends_on edges between operations, and ue_scripts.manifest_reader.topological_ops returns a UE-side execution order honouring those edges
+## Scenario: ImportPlanBuilder records depends_on edges between operations, and engine_scripts/unreal/manifest_reader.py topological_ops returns a UE-side execution order honouring those edges
 
 - GIVEN a `UEAssetManifest` whose import naturally depends on a `create_folder` operation preceding the asset imports (and, when present, intra-plan dependencies between asset entries)
-- WHEN `import_plan_builder.build_import_plan(...)` (`src/framework/engine_bridge/unreal/contract/import_plan_builder.py`) constructs `UEImportPlan` operations and records their `depends_on` edges (e.g. each `import_texture` / `import_static_mesh` / `import_audio` op carries `depends_on=[folder_op_id]`), and `ue_scripts/run_import.py:53` calls `manifest_reader.topological_ops(bundle.plan)` to flatten the plan into UE-side execution order
+- WHEN `import_plan_builder.build_import_plan(...)` (`src/framework/engine_bridge/unreal/contract/import_plan_builder.py`) constructs `UEImportPlan` operations and records their `depends_on` edges (e.g. each `import_texture` / `import_static_mesh` / `import_audio` op carries `depends_on=[folder_op_id]`), and `engine_scripts/unreal/run_import.py` calls `manifest_reader.topological_ops(bundle.plan)` to flatten the plan into UE-side execution order
 - THEN the returned operation sequence respects every recorded `depends_on` edge: an operation never appears before any operation it depends on, the `create_folder` op precedes all import ops that name it as a parent, and `tests/unit/test_ue_bridge.py::test_plan_builder_adds_create_folder_and_dependencies` (line 149) fences the edge construction; the UE-side dispatch loop then invokes the domain handlers in this topologically valid order
 
 ## Requirement: Evidence is append-only and atomic
@@ -79,7 +79,7 @@ The system SHALL append one Evidence record per UE-side operation via `evidence_
 
 ## Scenario: Successful UE-side import appends one Evidence record per operation via tmp + rename atomic write
 
-- GIVEN a UE-side import session running through `ue_scripts/run_import.py` against a topologically-sorted plan with N executable operations (mix of `create_folder`, `import_texture`, `import_static_mesh`, `import_audio`); `evidence.json` was seeded by the framework's `EvidenceWriter._write_all` (`src/framework/engine_bridge/unreal/contract/evidence.py`) and is read by the UE-side `ue_scripts/evidence_writer.append` (`ue_scripts/evidence_writer.py:19-27`)
+- GIVEN a UE-side import session running through `engine_scripts/unreal/run_import.py` against a topologically-sorted plan with N executable operations (mix of `create_folder`, `import_texture`, `import_static_mesh`, `import_audio`); `evidence.json` was seeded by the framework's `EvidenceWriter._write_all` (`src/framework/engine_bridge/unreal/contract/evidence.py`) and is read by the UE-side `engine_scripts/unreal/evidence_writer.append`
 - WHEN each operation completes (`success`, `skipped`, or `failed`) and `run_import.run()` calls `evidence_writer.append(bundle.evidence_path, evidence_writer.make_record(...))` per the loop at lines 55-94
 - THEN every call reads the current `evidence.json` content, appends one record, writes the merged list to a sibling `evidence.json.tmp` via `tmp.write_text(...)`, then commits via `tmp.replace(p)` — so the final `evidence.json` carries exactly one new record per operation in the order operations completed; `tests/unit/test_ue_bridge.py::test_evidence_writer_appends_atomically` (line 260) fences the append + atomic-rename contract on the framework-side writer (the UE-side writer mirrors the same tmp + rename mechanism)
 
@@ -111,20 +111,20 @@ The video import default-allow SHALL be carried by a new `PermissionPolicy.allow
 
 The system SHALL NOT (a) decide what assets should look like, (b) generate assets itself, (c) modify existing key assets, (d) bypass Verdicts, (e) change GameMode or default maps, or (f) operate across project boundaries.
 
-## Scenario: ExportExecutor + ue_scripts/domain_*.py pass the source artifact's filename to UE's AssetImportTask without transcoding or rewriting bytes
+## Scenario: ExportExecutor + engine_scripts/unreal/domain_*.py pass the source artifact's filename to UE's AssetImportTask without transcoding or rewriting bytes
 
-- GIVEN an upstream artifact (e.g. a generated PNG texture) backed by an on-disk file at a path the framework knows; `ExportExecutor` builds the manifest with that artifact's `source_uri` pointing at the existing file path; `ue_scripts/domain_texture.import_texture_entry` (and the peer `domain_mesh` / `domain_audio` modules) construct an `unreal.AssetImportTask` whose `filename` is set to that same source path
+- GIVEN an upstream artifact (e.g. a generated PNG texture) backed by an on-disk file at a path the framework knows; `ExportExecutor` builds the manifest with that artifact's `source_uri` pointing at the existing file path; `engine_scripts/unreal/domain_texture.import_texture_entry` (and the peer `domain_mesh` / `domain_audio` modules) construct an `unreal.AssetImportTask` whose `filename` is set to that same source path
 - WHEN the export Step + UE-side dispatch run end-to-end
-- THEN neither `ExportExecutor` nor any `ue_scripts/domain_*.py` module reads-then-rewrites the source artifact's bytes, transcodes the format, or substitutes a different file before handing it to UE; `unreal.AssetImportTask.filename` references the original source file so UE imports from that path; `tests/integration/test_p4_ue_manifest_only.py::test_p4_ue_scripts_run_import_with_stub_unreal` (line 398-528) substitutes a stub `unreal` module and asserts the framework / UE-script side passes the source filename to `AssetImportTask` unchanged. This Scenario asserts the framework + UE-script side's no-transform behaviour and does NOT claim byte-for-byte equality of the resulting `.uasset` UE writes inside its content directory (which is governed by UE's importer internals and outside ForgeUE's surface)
+- THEN neither `ExportExecutor` nor any `engine_scripts/unreal/domain_*.py` module reads-then-rewrites the source artifact's bytes, transcodes the format, or substitutes a different file before handing it to UE; `unreal.AssetImportTask.filename` references the original source file so UE imports from that path; `tests/integration/test_p4_ue_manifest_only.py::test_p4_engine_scripts_unreal_run_import_with_stub_unreal` substitutes a stub `unreal` module and asserts the framework / UE-script side passes the source filename to `AssetImportTask` unchanged. This Scenario asserts the framework + UE-script side's no-transform behaviour and does NOT claim byte-for-byte equality of the resulting `.uasset` UE writes inside its content directory (which is governed by UE's importer internals and outside ForgeUE's surface)
 
 ## Requirement: Hardware smoke acceptance
 
-The system SHALL provide a live-bundle hardware-smoke path (`examples/ue_export_pipeline_live.json` + `ue_scripts/a1_run.py`) executable via a UE commandlet with zero GUI interaction.
+The system SHALL provide a live-bundle hardware-smoke path (`examples/ue_export_pipeline_live.json` + `engine_scripts/unreal/a1_run.py`) executable via a UE commandlet with zero GUI interaction.
 
-## Scenario: ue_scripts/a1_run.py provides a UE 5.x commandlet entry point exercised offline by test_p4_ue_scripts_run_import_with_stub_unreal and on real hardware by the 2026-04-23 a1_demo run
+## Scenario: engine_scripts/unreal/a1_run.py provides a UE 5.x commandlet entry point exercised offline by test_p4_engine_scripts_unreal_run_import_with_stub_unreal and on real hardware by the 2026-04-23 a1_demo run
 
-- GIVEN `ue_scripts/a1_run.py:1-34` declaring a commandlet / Console-reachable entry point (`exec(open(...).read())` from UE Python Console, or `UnrealEditor-Cmd.exe <project>.uproject -ExecutePythonScript="<repo>/ue_scripts/a1_run.py"` from the shell) that sets `FORGEUE_RUN_FOLDER`, prepends `ue_scripts/` to `sys.path`, imports `run_import`, and calls `run_import.run()`; `examples/ue_export_pipeline_live.json` is the matching live bundle
-- WHEN the offline fence `tests/integration/test_p4_ue_manifest_only.py::test_p4_ue_scripts_run_import_with_stub_unreal` (line 398) exercises the same `run_import.run()` against a stubbed `unreal` module, AND the manual A1 hardware smoke is exercised on a UE 5.x install (the historical 2026-04-23 a1_demo run executed `framework.run --task examples/ue_export_pipeline_live.json --live-llm --run-id a1_demo` followed by the commandlet invocation against UE 5.7.4)
+- GIVEN `engine_scripts/unreal/a1_run.py` declaring a commandlet / Console-reachable entry point (`exec(open(...).read())` from UE Python Console, or `UnrealEditor-Cmd.exe <project>.uproject -ExecutePythonScript="<repo>/engine_scripts/unreal/a1_run.py"` from the shell) that sets `FORGEUE_RUN_FOLDER`, prepends `engine_scripts/unreal/` to `sys.path`, imports `run_import`, and calls `run_import.run()`; `examples/ue_export_pipeline_live.json` is the matching live bundle
+- WHEN the offline fence `tests/integration/test_p4_ue_manifest_only.py::test_p4_engine_scripts_unreal_run_import_with_stub_unreal` exercises the same `run_import.run()` against a stubbed `unreal` module, AND the manual A1 hardware smoke is exercised on a UE 5.x install (the historical 2026-04-23 a1_demo run executed `framework.run --task examples/ue_export_pipeline_live.json --live-llm --run-id a1_demo` followed by the commandlet invocation against UE 5.7.4)
 - THEN the framework + UE-script side delivers a GUI-free entry point that the offline fence verifies structurally (handlers dispatch + Evidence appends correctly) and the hardware smoke verifies operationally (real `unreal` module imports the run-folder assets); `docs/acceptance/acceptance_report.md` §6.1 documents the 2026-04-23 a1_demo run as the historical evidence point. This Scenario asserts the entry-point existence + offline/hardware test alignment and does NOT claim that any arbitrary host machine necessarily succeeds — UE install correctness, project configuration, and PythonScriptPlugin enablement remain the human operator's responsibility
 
 ## Requirement: ExportExecutor _is_importable accepts video modality (round-2 F1 修订)
@@ -234,7 +234,7 @@ The top-of-file docstring SHALL be updated to add `video.mp4 → file_media_sour
 
 ## Requirement: domain_video.import_video_entry assumes mp4 already at source_uri, derives file_path from source_uri (single source of truth), and creates FileMediaSource .uasset
 
-The system SHALL provide `ue_scripts/domain_video.py` with one entry point `import_video_entry(entry: dict, project_root: str) -> dict` that the UE-side `run_import.py` dispatcher invokes for `file_media_source` operations. The function SHALL:
+The system SHALL provide `engine_scripts/unreal/domain_video.py` with one entry point `import_video_entry(entry: dict, project_root: str) -> dict` that the UE-side `run_import.py` dispatcher invokes for `file_media_source` operations. The function SHALL:
 
 - Read the source mp4 file path from `entry["source_uri"]` (POSIX path relative to project_root, per existing `manifest_builder.build_manifest` source_uri convention) — note: post-D12-fix this path is `Content/Movies/<run_id>/MS_<base>.mp4`, set by `ExportExecutor` drop loop via `manifest_builder.derive_drop_target`
 - **NOT** copy the mp4 file — the framework `ExportExecutor.execute` drop loop already wrote the mp4 to its final D12-compliant location `<project_root>/Content/Movies/<run_id>/MS_<base>.mp4` per the new "ExportExecutor drop loop applies D12 path split" Requirement;`shutil.copy2` SHALL be removed from `domain_video.import_video_entry`
@@ -277,9 +277,9 @@ The system SHALL provide `ue_scripts/domain_video.py` with one entry point `impo
 
 ## Scenario: domain_video does not import framework modules
 
-**Given** the `ue_scripts/domain_video.py` source file
-**When** static analysis or `tests/unit/test_ue_scripts_no_framework_import.py::test_domain_video_does_not_import_framework` (or equivalent existing fence covering `domain_*.py` import sweep) inspects the imports
-**Then** no `import framework` or `from framework` line exists; only `import unreal` + standard library imports; this preserves the NFR-PORT-003 invariant that `ue_scripts/` is framework-decoupled
+**Given** the `engine_scripts/unreal/domain_video.py` source file
+**When** static analysis or `tests/unit/test_unreal_engine_scripts_path.py::test_engine_scripts_unreal_do_not_import_framework_package` (or equivalent existing fence covering `domain_*.py` import sweep) inspects the imports
+**Then** no `import framework` or `from framework` line exists; only `import unreal` + standard library imports; this preserves the NFR-PORT-003 invariant that `engine_scripts/unreal/` is framework-decoupled
 
 ## Requirement: `manifest_builder.is_manifest_importable` is the single source of truth for import filter
 
@@ -354,7 +354,7 @@ class Evidence(BaseModel):
 
 - `skip_reason` defaults to `None` for backward compatibility — old evidence.json fixtures (without the field) load via Pydantic with `skip_reason=None` and behave identically under the F-D filter (no permission_denied match, not pre-filtered).
 - `ExportExecutor.execute` SHALL emit Evidence with `skip_reason="permission_denied"` exactly when `is_op_allowed(self._permission, op)` returns False (`src/framework/runtime/executors/export.py:151-158` permission-mask emit path).
-- `evidence_writer.make_record` (UE-side helper at `ue_scripts/evidence_writer.py`) SHALL accept an optional `skip_reason: str | None = None` keyword argument; when `run_import.py` writes "no UE-side handler" skipped evidence (current `ue_scripts/run_import.py:89-92`), it SHALL pass `skip_reason="no_handler"`.
+- `evidence_writer.make_record` (UE-side helper at `engine_scripts/unreal/evidence_writer.py`) SHALL accept an optional `skip_reason: str | None = None` keyword argument; when `run_import.py` writes "no UE-side handler" skipped evidence (current `engine_scripts/unreal/run_import.py`), it SHALL pass `skip_reason="no_handler"`.
 - The enum is closed at `Literal["permission_denied", "no_handler"]` — adding new values requires extending the Literal type and the F-D filter logic together.
 
 ## Scenario: Evidence Pydantic load with old evidence.json (no skip_reason field) yields skip_reason=None
@@ -377,10 +377,10 @@ class Evidence(BaseModel):
 
 ## Requirement: run_import.py filters only PermissionPolicy-denied skipped evidence
 
-The system SHALL ensure `ue_scripts/run_import.py` pre-scan filter (current L67-73) only skips operations whose evidence record carries `skip_reason="permission_denied"`:
+The system SHALL ensure `engine_scripts/unreal/run_import.py` pre-scan filter only skips operations whose evidence record carries `skip_reason="permission_denied"`:
 
 ```python
-# ue_scripts/run_import.py (after this change)
+# engine_scripts/unreal/run_import.py (after this change)
 pre_skipped_op_ids: set[str] = set()
 try:
     with open(bundle.evidence_path, "r", encoding="utf-8") as _f:
@@ -403,7 +403,7 @@ This SHALL preserve the original intent (honour framework-side `PermissionPolicy
 
 ## Invariants
 
-- `ue_scripts/` MUST NOT `import framework.*`; its only third-party dependency is `import unreal` (NFR-PORT-003).
+- `engine_scripts/unreal/` MUST NOT `import framework.*`; its only third-party dependency is `import unreal` (NFR-PORT-003).
 - ADR-001 forbids ForgeUE from authoring its own UE plugin; ADR-008 clarifies that enabling Epic-maintained plugins (e.g. `PythonScriptPlugin`) does not violate ADR-001.
 - This contract is downstream of `engine-export-bridge`; runtime export enters here only through `UnrealAdapter(engine="unreal")`.
 - `engine_target(engine="unreal")` is the preferred Task input; `ue_target` is legacy compatibility input.
@@ -414,7 +414,7 @@ This SHALL preserve the original intent (honour framework-side `PermissionPolicy
 
 - Unit: `tests/unit/test_ue_bridge.py`
 - Integration: `tests/integration/test_p4_ue_manifest_only.py` (uses a `sys.modules`-injected `unreal` stub to exercise the UE-side path)
-- Real-hardware acceptance (Level 3): UE 5.x + `examples/ue_export_pipeline_live.json` + commandlet (`UnrealEditor-Cmd.exe <project>.uproject -ExecutePythonScript="<repo>/ue_scripts/a1_run.py"`) or GUI Python Console (`exec(open('ue_scripts/run_import.py').read())`)
+- Real-hardware acceptance (Level 3): UE 5.x + `examples/ue_export_pipeline_live.json` + commandlet (`UnrealEditor-Cmd.exe <project>.uproject -ExecutePythonScript="<repo>/engine_scripts/unreal/a1_run.py"`) or GUI Python Console (`exec(open('engine_scripts/unreal/run_import.py').read())`)
 - Test totals: see `python -m pytest -q` actual output.
 
 ## Non-Goals

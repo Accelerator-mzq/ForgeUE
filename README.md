@@ -109,7 +109,7 @@ Task ──▶ Run ──▶ Workflow ──▶ Step[*]
 | **P1** `basic_llm` 模式 | LiteLLM 接入 · Instructor 结构化抽取 · CapabilityRouter · RetryPolicy · Secrets | `examples/character_extract.json` |
 | **P2** `standalone_review` 模式 | 5 维 rubric scoring · single_judge / chief_judge · ReviewReport + Verdict 分离 · Select step | `examples/review_3_images.json` |
 | **P3** `production` + 内嵌 review | ComfyUI 外挂 worker · `generate(image)` · `risk_level` 调度 · revise 回环 + `revision_hint` · FailureModeMap | `examples/image_pipeline.json` |
-| **P4** Engine Bridge + Unreal adapter `manifest_only` | `EngineTarget` · `EngineAdapterRegistry` · `UnrealAdapter` · `UEAssetManifest` · `UEImportPlan` · `EvidenceWriter` · `ue_scripts/*` | `examples/ue_export_pipeline.json` |
+| **P4** Engine Bridge + Unreal adapter `manifest_only` | `EngineTarget` · `EngineAdapterRegistry` · `UnrealAdapter` · `UEAssetManifest` · `UEImportPlan` · `EvidenceWriter` · `engine_scripts/unreal/*` | `examples/ue_export_pipeline.json` |
 | **P4-Godot** Godot 4 `headless_import` MVP | `Godot4Adapter` · staging · `godot_manifest.json` · `godot_import_plan.json` · `EngineEvidence` | `examples/godot4_export_smoke.json` |
 
 ---
@@ -130,12 +130,12 @@ D:\ClaudeProject\ForgeUE_claude\
 │   ├── schemas/                 # Pydantic 业务 schema（UECharacter / ImageSpec）注册
 │   ├── engine_bridge/           # EngineTarget / EngineAdapter / UnrealAdapter / Godot4Adapter
 │   │   └── unreal/contract/     # Unreal manifest-only 文件契约主实现
-│   ├── ue_bridge/               # legacy compatibility alias: 一个周期内 re-export Unreal contract
+│   ├── ue_bridge/               # FOR-32 人工删除清单中的 legacy path,不作为当前入口
 │   ├── workflows/               # load_task_bundle
 │   ├── observability/           # OTel tracing + secrets 管理
 │   └── run.py                   # CLI 入口
 │
-├── ue_scripts/                  # UE 5.x 编辑器内 Python（不依赖 framework 包）
+├── engine_scripts/unreal/       # UE 5.x 编辑器内 Python（不依赖 framework 包）
 │   ├── manifest_reader.py       # 读 manifest + plan，拓扑排序
 │   ├── domain_texture.py        # 贴图导入域
 │   ├── domain_mesh.py           # 静态网格导入域
@@ -278,16 +278,16 @@ ExportExecutor
 
 | Adapter | engine | import_mode | 交付方式 |
 |---|---|---|---|
-| `UnrealAdapter` | `unreal` | `manifest_only` | 产出 `manifest.json + import_plan.json + evidence.json`，`ue_scripts/run_import.py` 在 UE 侧导入 |
+| `UnrealAdapter` | `unreal` | `manifest_only` | 产出 `manifest.json + import_plan.json + evidence.json`，`engine_scripts/unreal/run_import.py` 在 UE 侧导入 |
 | `Godot4Adapter` | `godot4` | `headless_import` | stage 到 `<project_root>/<asset_root>/<run_id>/`，写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`，调用 Godot `--headless --path <project_root> --import` |
 
 Godot 4.x 第一阶段支持 `image/png`、`image/jpg`、`image/jpeg`、`audio/wav`、`audio/mp3`、`mesh/glb`；`video/mp4` 先写 `skipped` evidence，不自动映射为 runtime asset。Godot 可执行文件解析顺序为 `engine_target.executable_path` → `GODOT4_EXE` → fail-fast。
 
-Unreal adapter 继续使用旧 UE 文件契约：
+Unreal adapter 继续使用 Unreal manifest-only 文件契约：
 
 manifest_only  ← MVP 默认
   框架 → 产出 manifest.json + import_plan.json + evidence.json 到 <UE>/Content/Generated/<run_id>/
-  UE   → 独立 Python 脚本（ue_scripts/run_import.py）读 manifest 逐项导入
+  UE   → 独立 Python 脚本（engine_scripts/unreal/run_import.py）读 manifest 逐项导入
 
 bridge_execute ← 后置（Phase G 扩展）
   框架直调 UE Python Editor API · MVP 未启用
@@ -340,7 +340,7 @@ python -m pytest -v -k p3           # 关键字过滤
 | **4** | `python -m framework.run --task examples/ue_export_pipeline.json --run-id r2 --live-llm`（改 `engine_target.project_root` 或 legacy `ue_target.project_root` 到临时目录）| 全链 + 产 Unreal manifest + evidence |
 | **5** | `python -m framework.run --task examples/godot4_export_smoke.json --run-id r_godot`（真实导入前设置 `GODOT4_EXE` 或 `engine_target.executable_path`）| Godot 4 bundle shape + headless import 交付路径 |
 | **6** | ComfyUI agent CLI live smoke:默认 `lifecycle=none` 时先确保 ComfyUI server running(本机推荐 `python -m factory_v3 serve` 作为启停 helper),再跑 `examples/comfy_local_smoke*.json`;也可设 `ensure_running` / `ensure_release` / `self_managed_session` 由框架托管 | 真实 image / mesh / audio / video 产物;ForgeUE 生成仍走 `python -m comfyui_api run`(manifest 名,不再 inline `workflow_graph`;不再用 `--comfy-url`)|
-| **7** | 空白 UE 5.x 工程 → 跑档 4 → UE Python Console `exec(open('ue_scripts/run_import.py').read())` | `Content Browser` 出资产 + `evidence.json` 完整追溯 |
+| **7** | 空白 UE 5.x 工程 → 跑档 4 → UE Python Console `exec(open('engine_scripts/unreal/run_import.py').read())` | `Content Browser` 出资产 + `evidence.json` 完整追溯 |
 
 当前文档入口见 [`docs/INDEX.md`](docs/INDEX.md)；历史 plan_v1 已归档到 [`docs/archive/claude_unified_architecture_plan_v1.md`](docs/archive/claude_unified_architecture_plan_v1.md)。
 

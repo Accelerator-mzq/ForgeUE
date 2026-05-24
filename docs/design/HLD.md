@@ -99,7 +99,7 @@
 │  可观测 (src/framework/observability/)                                   │
 │  EventBus (loop-aware) / ProgressEvent / Compactor / Secrets / OTel │
 ├────────────────────────────────────────────────────────────────────┤
-│  UE 端代理 (ue_scripts/) — 独立 Python 包,仅依赖 import unreal      │
+│  UE 端代理 (engine_scripts/unreal/) — 独立 Python 包,仅依赖 import unreal │
 │  run_import / manifest_reader / domain_* / evidence_writer          │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -129,7 +129,7 @@
 │  framework.run          │   import_plan.json          │  Python Console:     │
 │  + Artifact Store       │   evidence.json  (seeded)   │  exec(run_import.py) │
 │  + WS Server (可选)     │   texture.png/glb/wav       │                      │
-│                         │                             │  ue_scripts/*.py     │
+│                         │                             │  engine_scripts/unreal/*.py │
 │                         │  (UE 侧 append 新的)         │  + import unreal     │
 │                         │ ◀───── evidence.json  ──── │                      │
 └─────────────────────────┘                             └──────────────────────┘
@@ -178,11 +178,11 @@
 | Review Engine | `src/framework/review_engine/` | `ChiefJudge.ajudge_with_panel` | 评审与决策 |
 | Artifact Store | `src/framework/artifact_store/` | `Repository.put / get` | Artifact 持久化 |
 | Engine Bridge | `src/framework/engine_bridge/` | `EngineAdapter.export` / `EngineAdapterRegistry.resolve` | 具体引擎导出分发 |
-| Unreal contract | `src/framework/engine_bridge/unreal/contract/` | `ManifestBuilder` / `ImportPlanBuilder` | Unreal adapter 下游文件契约构建;`src/framework/ue_bridge/` 为 legacy compatibility alias |
+| Unreal contract | `src/framework/engine_bridge/unreal/contract/` | `ManifestBuilder` / `ImportPlanBuilder` | Unreal adapter 下游文件契约构建;`src/framework/ue_bridge/` 为 FOR-32 人工删除清单 legacy path |
 | Observability | `src/framework/observability/` | `EventBus.publish` / `compact_messages` | 事件 + 追踪 + 密钥 |
 | Server | `src/framework/server/` | `/ws/run` / `/ws/step` | WS 进度推送 |
 | Pricing Probe | `src/framework/pricing_probe/` | CLI `--apply` | 定价自动化 |
-| UE Scripts | `ue_scripts/` | `run_import.run()` | UE 内导入 |
+| UE Scripts | `engine_scripts/unreal/` | `run_import.run()` | UE 内导入 |
 
 ### 3.2 依赖方向
 
@@ -208,7 +208,7 @@ server ──► runtime ──► providers ──► core
 
 pricing_probe: 独立工具链,只读 config/models.yaml + 写入 (--apply)
 
-ue_scripts/: 完全独立,不 import framework.*;仅依赖 import unreal
+engine_scripts/unreal/: 完全独立,不 import framework.*;仅依赖 import unreal
 ```
 
 单向依赖,无循环。
@@ -409,7 +409,7 @@ task.engine_target or legacy task.ue_target
 
 | Adapter | engine | 交付模式 | 责任 |
 | --- | --- | --- | --- |
-| `UnrealAdapter` | `unreal` | `manifest_only` | 调用 `framework.engine_bridge.unreal.contract` 构建 manifest / plan / evidence;`framework.ue_bridge` 仅作为 legacy compatibility alias |
+| `UnrealAdapter` | `unreal` | `manifest_only` | 调用 `framework.engine_bridge.unreal.contract` 构建 manifest / plan / evidence;`framework.ue_bridge` 仅作为 FOR-32 人工删除清单 legacy prefix |
 | `Godot4Adapter` | `godot4` | `headless_import` | stage 支持的文件型 Artifact,写 Godot manifest / plan / evidence,调用 Godot headless import 并验证 fresh `.import` / `.godot/imported` |
 
 ### 7.2 Unreal adapter 双模并存
@@ -648,7 +648,7 @@ payload: { status, elapsed_s?, progress?, cost_usd?, ... }
 | WebSocket | JSON over WS | `src/framework/server/ws_server.py` |
 | HTTPS(Provider) | 各 provider REST | `src/framework/providers/*` |
 | Engine export | JSON / 资产文件 / headless command | `src/framework/engine_bridge/*` |
-| File(Unreal 契约) | JSON / 资产文件 | `src/framework/engine_bridge/unreal/contract/*` + `ue_scripts/*`;`src/framework/ue_bridge/*` 为兼容 alias |
+| File(Unreal 契约) | JSON / 资产文件 | `src/framework/engine_bridge/unreal/contract/*` + `engine_scripts/unreal/*`;`src/framework/ue_bridge/*` 为 FOR-32 人工删除清单 legacy path |
 | YAML / JSON 配置 | 文件读 | `config/models.yaml` / `examples/*.json` |
 
 详细字段见 LLD §9 与 SRS §5。

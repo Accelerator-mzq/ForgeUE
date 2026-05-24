@@ -1,29 +1,16 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 1 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
 > 另有 9 项 legacy requirements 待办(不计入上面待办计数)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (1)
+## Future Work (0)
 
-### `LR-0144` **unreal-legacy-path-cleanup Unreal legacy 路径命名收敛**
-
-- **source**: FOR-31 review follow-on
-- **Linear**: `FOR-32`
-- **summary**: FOR-31 后 `src/framework/ue_bridge/` 仍作为 one-cycle compatibility alias 保留,`ue_scripts/` 仍作为 UE Python 进程内独立脚本层保留;单开 follow-on 评估并实施 Unreal legacy 路径命名收敛。
-- **acceptance**:
-  - 明确 `framework.ue_bridge` alias 的退场策略:保留 / deprecate warning / 移除;若移除,同步 imports / tests / docs。
-  - 明确 `ue_scripts/` 是否迁到更显式路径(例如 `engine_scripts/unreal/` 或 `src/framework/engine_bridge/unreal/scripts/`),并同步 commandlet / docs / tests / evidence 路径。
-  - UE Python 侧脚本仍不得 `import framework.*`,保持 `import unreal` + stdlib 的最小依赖边界。
-  - UE manifest_only 自动化通过,真实 UE commandlet smoke 通过。
-  - 如路径迁移影响 Godot4,需证明 Godot4 L2 不回归;否则明确无影响。
-- **priority**: medium
-- **related change**: FOR-31
-- **triggered_by**: 用户 2026-05-24 命名洁癖 follow-on 要求
+(无)
 
 ## Out of Scope (0)
 
