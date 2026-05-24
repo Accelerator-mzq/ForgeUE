@@ -8,9 +8,9 @@
 ### `LR-0144` **unreal-legacy-path-cleanup Unreal legacy 路径命名收敛**
 
 - **new_status**: completed
-- **reason**: 当前 UE-side 脚本入口迁到 `engine_scripts/unreal/`;当前契约和测试不再依赖 `framework.ue_bridge`;旧路径按项目纪律列入人工删除清单。
+- **reason**: 当前 UE-side 脚本入口迁到 `engine_scripts/unreal/`;当前契约和测试不再依赖 `framework.ue_bridge`;旧路径已由用户按 FOR-32 人工删除清单物理删除。
 - **evidence**: `engine_scripts/unreal/`, `tests/unit/test_unreal_engine_scripts_path.py`, `tests/unit/test_unreal_contract_package.py`, `tests/integration/test_p4_ue_manifest_only.py`, `demo_artifacts/2026-05-24/adhoc/for32_unreal_legacy_path_cleanup/verification.md`
-- **manual_delete_list**: `src/framework/ue_bridge/`, `ue_scripts/`
+- **deleted_by_user_after_merge**: `src/framework/ue_bridge/`, `ue_scripts/`
 - **archived_by**: FOR-32 unreal-legacy-path-cleanup 2026-05-24
 
 ## 2026-05-24 FOR-31 completion

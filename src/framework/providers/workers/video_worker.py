@@ -21,7 +21,7 @@ ComfyAgentWorker 是 `ComfyWorker` ABC 子类,通过 capability dispatch 路由 
 ("video", "mp4")] = "file_media_source"` 唯一映射对齐;实际编码格式始终 mp4 —
 round-2 F2 + round-3 PF3 sweep mp4-only,webm follow-on `comfy-video-webm-adoption`)。
 
-UE 导入侧 `ue_scripts/domain_video.import_video_entry` 沿 D12 `Content/Movies/<run_id>/`
+UE 导入侧 `engine_scripts/unreal/domain_video.import_video_entry` 沿 D12 `Content/Movies/<run_id>/`
 路径分流 + `unreal.FileMediaSourceFactory` 创建 `.uasset`(P4 真机 commandlet 验证待
 `tasks.md` §11b)。
 

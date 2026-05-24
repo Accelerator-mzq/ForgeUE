@@ -1350,7 +1350,7 @@ class EngineAdapter(Protocol):
 **UnrealAdapter(`engine_bridge/unreal/adapter.py`)**
 
 - `engine = "unreal"`。
-- adapter 边界接收 `EngineTarget`,内部 `target.to_ue_target()` 后复用 `framework.engine_bridge.unreal.contract` manifest-only 逻辑;`framework.ue_bridge` 是 FOR-32 人工删除清单中的 legacy prefix,新代码不得依赖它。
+- adapter 边界接收 `EngineTarget`,内部 `target.to_ue_target()` 后复用 `framework.engine_bridge.unreal.contract` manifest-only 逻辑;`framework.ue_bridge` 是 FOR-32 后已删除的 retired legacy prefix,新代码不得依赖它。
 - 保留 Verdict.reject 硬停、bare approve filter、D12 video path split、PermissionPolicy skipped evidence、manifest / plan / bundle Artifact 产出。
 
 **Godot4Adapter(`engine_bridge/godot4/adapter.py`)**
@@ -1365,7 +1365,7 @@ class EngineAdapter(Protocol):
 
 ### 9.2 Unreal 文件契约(`src/framework/engine_bridge/unreal/contract/`)
 
-当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。`src/framework/ue_bridge/` / `framework.ue_bridge` 是 FOR-32 人工删除清单中的 legacy path,不再作为当前契约入口。
+当前 Unreal contract 主实现位于 `src/framework/engine_bridge/unreal/contract/` / `framework.engine_bridge.unreal.contract`。FOR-32 后旧 `src/framework/ue_bridge/` / `framework.ue_bridge` compatibility alias 已由用户删除,不再作为当前契约入口。
 
 ### 9.2.1 ManifestBuilder(`manifest_builder.py`)
 
@@ -1775,7 +1775,7 @@ CLI 默认 `output_dir = ./demo_artifacts/<YYYY-MM-DD>/comparison/<safe-baseline
 
 ### 15.5 Import-fence 与 transitive carve-out
 
-CLI / loader 的 import-fence 一致禁止 10 个执行链路前缀(runtime / providers / review_engine / ue_bridge legacy prefix / engine_bridge.unreal.contract / workflows / observability / server / schemas / pricing_probe)。`framework.ue_bridge` 仍保留在清单中,因为旧目录尚待用户按 FOR-32 人工删除清单处理。**允许**的 transitive:`framework.artifact_store.{repository, payload_backends}` —— 这是 `framework.artifact_store.hashing` 触发包级 `__init__.py` eager-import 的副产品,**不**代表 CLI / loader 可调写路径。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"` 与未来 change `lazy-artifact-store-package-exports`。
+CLI / loader 的 import-fence 一致禁止 10 个执行链路前缀(runtime / providers / review_engine / ue_bridge retired prefix / engine_bridge.unreal.contract / workflows / observability / server / schemas / pricing_probe)。`framework.ue_bridge` 已删除,仍在 forbidden list 中防止 retired alias 被重新引入到 run-comparison 只读链路。**允许**的 transitive:`framework.artifact_store.{repository, payload_backends}` —— 这是 `framework.artifact_store.hashing` 触发包级 `__init__.py` eager-import 的副产品,**不**代表 CLI / loader 可调写路径。详见 `openspec/changes/add-run-comparison-baseline-regression/tasks.md §"Deferred Follow-ups"` 与未来 change `lazy-artifact-store-package-exports`。
 
 ### 15.6 真源
 
