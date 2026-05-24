@@ -1,7 +1,8 @@
 """framework.engine_bridge.unreal 使用的 Unreal contract package。
 
-中文注释:这里是 Unreal manifest-only 文件契约的主实现路径;
-`framework.ue_bridge` 仅保留为兼容 alias。
+中文注释:这里是 Unreal manifest-only 文件契约的主实现路径。
+旧 `framework.ue_bridge` 目录仅作为 FOR-32 人工删除清单中的 legacy path 保留,
+新代码不得依赖它。
 """
 
 from framework.engine_bridge.unreal.contract.evidence import EvidenceWriter, load_evidence
