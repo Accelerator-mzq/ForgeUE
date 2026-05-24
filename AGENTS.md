@@ -2,7 +2,7 @@
 
 > 本文件与 `CLAUDE.md` 内容保持同步。CLAUDE.md 面向 Claude Code,AGENTS.md 面向其他 AI 编码代理(Codex CLI / Cursor / Aider / 通义灵码等)。修改项目约定时,两份一起改。
 
-项目:多引擎内容交付多模型框架。Game Build Compiler Phase A 提供 engine-neutral GDD-to-game-build planning contract;核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现;Unreal 是默认 adapter,Godot 4.x 通过 headless import adapter 支持。基础设施层(LiteLLM / Instructor / httpx)直接用,多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,引擎交付边界与运行时工程化全自研。
+项目:多引擎内容交付多模型框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现;Unreal 是默认 adapter,Godot 4.x 通过 headless import adapter 支持。基础设施层(LiteLLM / Instructor / httpx)直接用,多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,引擎交付边界与运行时工程化全自研。
 
 **ComfyUI 项目级配置主入口**:`config/models.yaml` 里的 `providers.comfy_api.subprocess`。
 `FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` /
@@ -17,13 +17,6 @@
 - Godot 4 adapter 第一阶段是 `headless_import`:stage 到 `<project_root>/<asset_root>/<run_id>/`,写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`,再执行 `[godot_exe, "--headless", "--path", project_root, "--import"]`。
 - Godot 4 真导入必须配置 `engine_target.executable_path` 或 `GODOT4_EXE`;解析顺序为 `engine_target.executable_path` → `GODOT4_EXE` → `RuntimeError`。
 - Godot 4 MVP 支持 `image/png` / `image/jpg` / `image/jpeg` / `audio/wav` / `audio/mp3` / `mesh/glb`;`video/mp4` 先写 skipped evidence,不自动映射为 Godot runtime asset。
-
-## Game Build Compiler 快查
-
-- Phase A 是 contract-only planning 层:`game_build.contract` / `game_build.clarification_report` / `game_build.graph` / `game_build.build_ir` / `game_build.handoff`。
-- `GameBuildIR` 保持 engine-neutral,禁止 `Source/` / `/Game/` / `Content/` / `res://` / `.uasset` / `.umap` / `.h` / `.cpp` / `.gd` / `.tscn` 这类具体引擎路径。
-- 当前不新增 executor,不生成 workflow bundle,不写 UE/Godot 工程文件,不承诺 playable demo;后续 lowering 仍走 Workflow / EngineAdapter 边界。
-- 权威契约见 `docs/contracts/game-build-compiler/spec.md`;框架级状态见 README、SRS、HLD、LLD 与 acceptance_report。
 
 ## ComfyUI 接入快查(详见 CLAUDE.md `## ComfyUI 接入` 完整版)
 
@@ -208,7 +201,7 @@ DAG 模式下的 `retry_same_step` 曾因 `if next_id == current: break` 被静�
 ### 与 docs 五件套的关系
 
 - `docs/` 五件套仍是长期权威(需求 / 设计 / 测试 / 验收)。
-- `docs/contracts/` 是从原 forge specs 迁移来的精简当前行为契约层,10 个 contract:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance` / `game-build-compiler`。
+- `docs/contracts/` 是从原 forge specs 迁移来的精简当前行为契约层,9 个 capability:`runtime-core` / `artifact-contract` / `workflow-orchestrator` / `review-engine` / `provider-routing` / `engine-export-bridge` / `ue-export-bridge` / `probe-and-validation` / `examples-and-acceptance`。
 - `docs/archive/forge_changes/` 是历史 forge change evidence,只读参考,不作为新变更入口。
 - **禁止**把 docs 整篇搬入 contracts,只做契约抽取。
 

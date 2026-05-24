@@ -1,6 +1,6 @@
 # ForgeUE — Claude 项目上下文
 
-项目:多引擎内容交付多模型框架。Game Build Compiler Phase A 提供 engine-neutral GDD-to-game-build planning contract;核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现;Unreal 是默认 adapter,Godot 4.x 通过 headless import adapter 支持。基础设施层(LiteLLM / Instructor / httpx)直接用,多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,引擎交付边界与运行时工程化全自研。
+项目:多引擎内容交付多模型框架。核心 runtime 负责多模型生成、Artifact 治理、review、workflow execution 与 provider routing。具体引擎交付由 `EngineAdapter` 实现;Unreal 是默认 adapter,Godot 4.x 通过 headless import adapter 支持。基础设施层(LiteLLM / Instructor / httpx)直接用,多模态 worker(ComfyUI / Qwen / Hunyuan / Tripo3D)外挂,引擎交付边界与运行时工程化全自研。
 
 **ComfyUI 项目级配置主入口**:`config/models.yaml` 里的 `providers.comfy_api.subprocess`。
 `FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` /
@@ -15,13 +15,6 @@
 - Godot 4 adapter 第一阶段是 `headless_import`:stage 到 `<project_root>/<asset_root>/<run_id>/`,写 `godot_manifest.json` / `godot_import_plan.json` / `evidence.json`,再执行 `[godot_exe, "--headless", "--path", project_root, "--import"]`。
 - Godot 4 真导入必须配置 `engine_target.executable_path` 或 `GODOT4_EXE`;解析顺序为 `engine_target.executable_path` → `GODOT4_EXE` → `RuntimeError`。
 - Godot 4 MVP 支持 `image/png` / `image/jpg` / `image/jpeg` / `audio/wav` / `audio/mp3` / `mesh/glb`;`video/mp4` 先写 skipped evidence,不自动映射为 Godot runtime asset。
-
-## Game Build Compiler 快查
-
-- Phase A 是 contract-only planning 层:`game_build.contract` / `game_build.clarification_report` / `game_build.graph` / `game_build.build_ir` / `game_build.handoff`。
-- `GameBuildIR` 保持 engine-neutral,禁止 `Source/` / `/Game/` / `Content/` / `res://` / `.uasset` / `.umap` / `.h` / `.cpp` / `.gd` / `.tscn` 这类具体引擎路径。
-- 当前不新增 executor,不生成 workflow bundle,不写 UE/Godot 工程文件,不承诺 playable demo;后续 lowering 仍走 Workflow / EngineAdapter 边界。
-- 权威契约见 `docs/contracts/game-build-compiler/spec.md`;框架级状态见 README、SRS、HLD、LLD 与 acceptance_report。
 
 ## ComfyUI 接入(自 SRS v1.6 + v1.7 + v1.8,forge change `comfy-agent-cli-adoption` + Phase 1 mesh `comfy-agent-cli-mesh-audio-video-adoption` + Phase 2 audio `comfy-agent-cli-audio-adoption` + Phase 3 video `comfy-agent-cli-video-adoption` — TBD-009 全 phase closed)
 
