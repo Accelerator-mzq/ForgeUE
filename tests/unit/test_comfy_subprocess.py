@@ -2384,3 +2384,26 @@ def test_real_patcher_out_of_range_string_maps_to_unsupported(tmp_path):
                 spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
                 num_candidates=1,
             )
+
+
+def test_generate_mesh_path_value_with_non_input_image_key_raises(tmp_path):
+    """v3.3 守门 fence:source_image_filename 是路径(含分隔符)且
+    comfy_image_param_key 不以 'input_image' 开头 → WorkerUnsupportedResponse。
+    上游 auto-upload 只对 input_image* 前缀参数触发(AGENT_API.md §1.3),
+    路径值配非前缀 key 时 upload 不发生,LoadImage 节点拿到绝对路径必然运行期失败,
+    fail-fast 优于晚期晦涩报错。裸文件名 + 任意 key 仍合法(D8 fence 不变,
+    视为已在 ComfyUI input 目录的 legacy 模式)。"""
+    worker = _make_mesh_worker(tmp_path)
+    staged = tmp_path / "comfy" / "forgeue_abc.png"
+    staged.parent.mkdir(parents=True, exist_ok=True)
+    staged.write_bytes(b"<png>")
+    with pytest.raises(WorkerUnsupportedResponse, match="input_image"):
+        worker.generate_mesh(
+            spec={
+                "comfy_workflow": "M/01",
+                "comfy_params": {},
+                "comfy_image_param_key": "image",   # 非 input_image* 前缀
+            },
+            source_image_filename=str(staged),       # 路径值 → 需要 auto-upload
+            num_candidates=1,
+        )

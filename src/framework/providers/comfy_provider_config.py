@@ -15,13 +15,15 @@ _VALID_LIFECYCLES = {"none", "ensure_running", "ensure_release", "self_managed_s
 _MISSING = object()
 
 
+# input_dir 字段已退役(comfy-agent-api-v3-adaptation,2026-06-11):
+# 上游 comfyui_api v3 起对 input_image* 本地路径自动 /upload/image,
+# mesh 路径不再需要 ForgeUE 直写 ComfyUI 自家 input/ 目录。
 @dataclass(frozen=True)
 class ComfyAgentConfig:
     adapter: str
     scripts_dir: str | None
     python_exe: str | None
     default_lifecycle: str
-    input_dir: str | None
     output_root: str | None
 
 
@@ -88,8 +90,6 @@ def resolve_comfy_agent_config(
         python_exe=source_env.get("FORGEUE_COMFY_PYTHON_EXE")
         or provider_cfg.get("python_exe"),
         default_lifecycle=str(lifecycle),
-        input_dir=source_env.get("FORGEUE_COMFY_INPUT_DIR")
-        or provider_cfg.get("input_dir"),
         output_root=source_env.get("FORGEUE_COMFY_OUTPUT_ROOT")
         or provider_cfg.get("output_root"),
     )
