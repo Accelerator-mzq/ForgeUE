@@ -131,6 +131,13 @@ def _make_async_completed(stdout: str, returncode: int = 0, stderr: str = "") ->
     return _AsyncFakeProcess(stdout=stdout, returncode=returncode, stderr=stderr)
 
 
+def _detach_ok_stdout(prompt_id: str = "fake-prompt-1") -> str:
+    """detach submit 段的成功响应(上游 AGENT_API.md §1.8 实测 shape)。"""
+    return json.dumps({
+        "ok": True, "prompt_id": prompt_id, "detached": True, "timeout_hint_s": 300,
+    })
+
+
 def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, *, side_effect=None):
     """返回 asyncio.create_subprocess_exec 的 patch context manager。
 
@@ -159,6 +166,14 @@ def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, 
     else:
         async def _factory(*a, **kw):
             calls.append(a)
+            # detach-wait 协议 dispatch:submit 段返回 canned ok+prompt_id,
+            # cancel 段返回 canned ok;fake_proc 语义 = wait 段响应
+            # (既有测试的失败注入 stdout 因此落在 wait 段,分类共享
+            # _raise_comfy_failure,语义不变)
+            if "--detach" in a:
+                return _AsyncFakeProcess(_detach_ok_stdout())
+            if "cancel" in a:
+                return _AsyncFakeProcess(json.dumps({"ok": True, "interrupted": True}))
             return fake_proc
 
     class _Ctx:
@@ -473,7 +488,7 @@ def test_subprocess_invocation_passes_workflow_params_lifecycle_timeout(tmp_path
             seed=42,
             timeout_s=120.0,
         )
-    cmd = list(run_mock.call_args)
+    cmd = list(run_mock.call_args_list[0])  # R1: submit cmd(detach-wait change)
     assert "--workflow" in cmd
     assert "GameAssets/01b_singleview_sdxl" in cmd
     assert "--params" in cmd
@@ -481,6 +496,7 @@ def test_subprocess_invocation_passes_workflow_params_lifecycle_timeout(tmp_path
     assert "none" in cmd
     assert "--timeout" in cmd
     assert "120" in cmd
+    assert "--detach" in cmd  # R1: submit 段必须带 --detach
 
 
 def test_subprocess_invocation_passes_task_project_id_as_dash_dash_project(tmp_path):
@@ -494,7 +510,8 @@ def test_subprocess_invocation_passes_task_project_id_as_dash_dash_project(tmp_p
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
         )
-    cmd = list(run_mock.call_args)
+    cmd = list(run_mock.call_args_list[0])  # R1: submit cmd(detach-wait change)
+    assert "--detach" in cmd  # R1: submit 段必须带 --detach
     project_idx = cmd.index("--project")
     assert cmd[project_idx + 1] == "proj_test"
 
@@ -653,11 +670,12 @@ def test_cancel_under_to_thread_does_not_orphan_processes(tmp_path):
             spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
             num_candidates=1,
         )
-    # Verify create_subprocess_exec was called exactly once per candidate.
-    # No persistent server process spawned; subprocess returns immediately.
-    assert run_mock.call_count == 1
-    # Default lifecycle "none" passed in argv — no auto-start ComfyUI server.
-    cmd = list(run_mock.call_args)
+    # R2: detach-wait change → submit+wait 两个子进程 per candidate
+    assert run_mock.call_count == 2
+    # Default lifecycle "none" passed in submit argv — no auto-start ComfyUI server.
+    # R1: submit cmd 在 call_args_list[0]
+    cmd = list(run_mock.call_args_list[0])
+    assert "--detach" in cmd  # R1: submit 段
     lifecycle_idx = cmd.index("--lifecycle")
     assert cmd[lifecycle_idx + 1] == "none"
 
@@ -1234,19 +1252,24 @@ def test_generate_mesh_injects_source_image_filename_into_comfy_params_under_def
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb)
-    captured_argv: list[list[str]] = []
+    # R4: side_effect callable 内顶部插 dispatch,submit cmd 含 --params 供验证
+    submit_argv: list[list[str]] = []
     def _capture_factory1(*args, **kwargs):
-        # create_subprocess_exec 以位置参数方式传入各 argv 项
-        captured_argv.append(list(args))
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in args:
+            submit_argv.append(list(args))  # 记录 submit cmd 供 --params 验证
+            return _make_async_completed(_detach_ok_stdout())
+        if "cancel" in args:
+            return _make_async_completed(json.dumps({"ok": True}))
         return _make_async_completed(_ok_mesh_stdout([str(fake_glb)]))
-    with _patch_create_subprocess_exec(side_effect=_capture_factory1) as run_mock:
+    with _patch_create_subprocess_exec(side_effect=_capture_factory1):
         worker.generate_mesh(
             spec={"comfy_workflow": "M/01", "comfy_params": {"steps": 20}},
             source_image_filename=fake_input.name,
             num_candidates=1,
         )
-    assert len(captured_argv) == 1
-    cmd = captured_argv[0]
+    assert len(submit_argv) == 1
+    cmd = submit_argv[0]
     # --params 后的 JSON 含 input_image = filename(round 5 D10:filename only,不是绝对路径)
     params_idx = cmd.index("--params")
     params_dict = json.loads(cmd[params_idx + 1])
@@ -1262,11 +1285,17 @@ def test_generate_mesh_injects_under_custom_comfy_image_param_key_when_bundle_de
     fake_input.write_bytes(b"<png>")
     fake_glb = tmp_path / "asset.glb"
     _make_glb_file(fake_glb)
-    captured_argv: list[list[str]] = []
+    # R4: side_effect callable 内顶部插 dispatch,submit cmd 含 --params 供验证
+    submit_argv2: list[list[str]] = []
     def _capture_factory2(*args, **kwargs):
-        captured_argv.append(list(args))
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in args:
+            submit_argv2.append(list(args))
+            return _make_async_completed(_detach_ok_stdout())
+        if "cancel" in args:
+            return _make_async_completed(json.dumps({"ok": True}))
         return _make_async_completed(_ok_mesh_stdout([str(fake_glb)]))
-    with _patch_create_subprocess_exec(side_effect=_capture_factory2) as run_mock:
+    with _patch_create_subprocess_exec(side_effect=_capture_factory2):
         worker.generate_mesh(
             spec={
                 "comfy_workflow": "M/01",
@@ -1276,7 +1305,7 @@ def test_generate_mesh_injects_under_custom_comfy_image_param_key_when_bundle_de
             source_image_filename=fake_input.name,
             num_candidates=1,
         )
-    cmd = captured_argv[0]
+    cmd = submit_argv2[0]
     params_idx = cmd.index("--params")
     params_dict = json.loads(cmd[params_idx + 1])
     assert params_dict["image"] == fake_input.name  # custom key
@@ -1387,17 +1416,27 @@ def test_generate_image_per_candidate_seed_overrides_comfy_params_seed(tmp_path)
         _make_png_file(f)
     _fake_procs_image = [_make_async_completed(_ok_stdout([str(f)])) for f in fakes]
     _fake_iter_image = iter(_fake_procs_image)
-    with _patch_create_subprocess_exec(side_effect=lambda *a, **kw: next(_fake_iter_image)) as run_mock:
+    def _image_seed_factory(*a, **kw):
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return _make_async_completed(_detach_ok_stdout())
+        if "cancel" in a:
+            return _make_async_completed(json.dumps({"ok": True}))
+        return next(_fake_iter_image)
+    with _patch_create_subprocess_exec(side_effect=_image_seed_factory) as run_mock:
         worker.generate(
             spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
             num_candidates=3,
             seed=100,  # base seed
         )
-    # 提取每个 create_subprocess_exec 调用的 --params JSON 里的 seed 字段
+    # R2: 每个 candidate submit+wait = 2 次,3 candidates = 6 次;
+    # 从 submit cmd(含 --detach)里提取 --params JSON 的 seed 字段
     seeds_seen: list[int] = []
     for call in run_mock.call_args_list:
         # call 是 tuple-of-args(create_subprocess_exec 的位置参数)
         argv = list(call)
+        if "--params" not in argv:
+            continue  # wait cmd 没有 --params,跳过
         idx = argv.index("--params")
         params = json.loads(argv[idx + 1])
         seeds_seen.append(params["seed"])
@@ -1417,17 +1456,26 @@ def test_generate_mesh_per_candidate_seed_overrides_comfy_params_seed(tmp_path):
         _make_glb_file(f)
     _fake_procs_mesh = [_make_async_completed(_ok_mesh_stdout([str(f)])) for f in fakes]
     _fake_iter_mesh = iter(_fake_procs_mesh)
-    with _patch_create_subprocess_exec(side_effect=lambda *a, **kw: next(_fake_iter_mesh)) as run_mock:
+    def _mesh_seed_factory(*a, **kw):
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return _make_async_completed(_detach_ok_stdout())
+        if "cancel" in a:
+            return _make_async_completed(json.dumps({"ok": True}))
+        return next(_fake_iter_mesh)
+    with _patch_create_subprocess_exec(side_effect=_mesh_seed_factory) as run_mock:
         worker.generate_mesh(
             spec={"comfy_workflow": "x", "comfy_params": {"seed": 42}},  # caller 显式 seed
             source_image_filename="forgeue_test.png",
             num_candidates=3,
             seed=100,  # base seed
         )
+    # R2: 从 submit cmd(含 --params)里提取 seed
     seeds_seen: list[int] = []
     for call in run_mock.call_args_list:
-        # call 是 tuple-of-args(create_subprocess_exec 的位置参数)
         argv = list(call)
+        if "--params" not in argv:
+            continue  # wait cmd 没有 --params,跳过
         idx = argv.index("--params")
         params = json.loads(argv[idx + 1])
         seeds_seen.append(params["seed"])
@@ -1623,11 +1671,13 @@ async def test_comfy_agenerate_uses_create_subprocess_exec(monkeypatch, tmp_path
         "ok": True,
         "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
     }).encode("utf-8")
+    # detach submit 段响应 bytes
+    fake_detach_bytes = _detach_ok_stdout().encode("utf-8")
 
     spawned = {"via": None}
 
     class FakeProcess:
-        """模拟 asyncio.subprocess.Process。"""
+        """模拟 asyncio.subprocess.Process — 用于 wait 段(输出 outputs)。"""
         def __init__(self):
             self.returncode = 0
 
@@ -1643,8 +1693,28 @@ async def test_comfy_agenerate_uses_create_subprocess_exec(monkeypatch, tmp_path
         def kill(self):
             pass
 
+    class FakeDetachProcess:
+        """模拟 submit 段 fake process — 返回 detach ok+prompt_id。"""
+        def __init__(self):
+            self.returncode = 0
+
+        async def communicate(self):
+            return (fake_detach_bytes, b"")
+
+        async def wait(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
     async def _fake_create(*a, **kw):
         spawned["via"] = "create_subprocess_exec"
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return FakeDetachProcess()
         return FakeProcess()
 
     monkeypatch.setattr(_asyncio, "create_subprocess_exec", _fake_create)
@@ -1699,11 +1769,31 @@ async def test_comfy_submit_lock_serializes_concurrent_agenerate(tmp_path):
 
     original_create = asyncio.create_subprocess_exec
 
+    # R4/R5: detach-wait 协议 dispatch(submit 段快速返回,wait 段才是慢 GPU job)
+    # 计数只针对 wait 段(整个 _run_comfy_prompt 在锁内,最大并发仍应为 1)
     async def _counting_create(*a, **kw):
+        if "--detach" in a:
+            # submit 段:快速返回 detach ok(不记 inflight)
+            detach_bytes = _detach_ok_stdout().encode("utf-8")
+            class _DetachProc:
+                def __init__(self): self.returncode = 0
+                async def communicate(self): return (detach_bytes, b"")
+                async def wait(self): return 0
+                def terminate(self): pass
+                def kill(self): pass
+            return _DetachProc()
+        if "cancel" in a:
+            class _CancelProc:
+                def __init__(self): self.returncode = 0
+                async def communicate(self): return (b'{"ok":true}', b"")
+                async def wait(self): return 0
+                def terminate(self): pass
+                def kill(self): pass
+            return _CancelProc()
+        # wait 段:slow,计 inflight
         inflight["now"] += 1
         inflight["max"] = max(inflight["max"], inflight["now"])
         proc = SlowFakeProcess()
-        # 等 communicate 完成后才减计数(模拟 submit→poll 段的持有期)
         original_proc = proc
 
         class WrappedProc:
@@ -1807,7 +1897,26 @@ def test_comfy_submit_lock_safe_across_asyncio_run_loops(tmp_path):
 
         original_create = asyncio.create_subprocess_exec
 
+        # R4/R5: detach-wait 协议 dispatch
+        _detach_bytes_xloop = _detach_ok_stdout().encode("utf-8")
         async def _counting_create(*a, **kw):
+            if "--detach" in a:
+                class _DP:
+                    def __init__(self): self.returncode = 0
+                    async def communicate(self): return (_detach_bytes_xloop, b"")
+                    async def wait(self): return 0
+                    def terminate(self): pass
+                    def kill(self): pass
+                return _DP()
+            if "cancel" in a:
+                class _CP:
+                    def __init__(self): self.returncode = 0
+                    async def communicate(self): return (b'{"ok":true}', b"")
+                    async def wait(self): return 0
+                    def terminate(self): pass
+                    def kill(self): pass
+                return _CP()
+            # wait 段:slow,计 inflight
             inflight["now"] += 1
             inflight["max"] = max(inflight["max"], inflight["now"])
             proc = SlowFakeProcess()
@@ -1892,9 +2001,10 @@ def test_comfy_generate_sync_shim_still_works(tmp_path):
         "ok": True,
         "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
     }).encode("utf-8")
+    fake_detach_bytes_shim = _detach_ok_stdout().encode("utf-8")
 
     class FakeProcess:
-        """模拟 asyncio.subprocess.Process。"""
+        """模拟 asyncio.subprocess.Process — wait 段响应。"""
         def __init__(self):
             self.returncode = 0
 
@@ -1910,12 +2020,35 @@ def test_comfy_generate_sync_shim_still_works(tmp_path):
         def kill(self):
             pass
 
+    class FakeDetachProcess:
+        """模拟 submit 段 fake process。"""
+        def __init__(self):
+            self.returncode = 0
+
+        async def communicate(self):
+            return (fake_detach_bytes_shim, b"")
+
+        async def wait(self):
+            return 0
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
     original_create = asyncio.create_subprocess_exec
 
     async def _wrap_coro(val):
         return val
 
-    asyncio.create_subprocess_exec = lambda *a, **kw: _wrap_coro(FakeProcess())  # type: ignore[assignment]
+    def _shim_factory(*a, **kw):
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return _wrap_coro(FakeDetachProcess())
+        return _wrap_coro(FakeProcess())
+
+    asyncio.create_subprocess_exec = _shim_factory  # type: ignore[assignment]
 
     try:
         result = worker.generate(
@@ -1957,7 +2090,7 @@ async def test_comfy_cancel_aborts_server_side_prompt(monkeypatch, tmp_path):
     # --- spy:记录 _abort_comfy_prompt 被调用次数 ---
     aborted = {"n": 0}
 
-    async def _spy_abort(self):
+    async def _spy_abort(self, prompt_id=None):
         aborted["n"] += 1
 
     monkeypatch.setattr(ComfyAgentWorker, "_abort_comfy_prompt", _spy_abort)
@@ -2118,6 +2251,8 @@ async def test_agenerate_accepts_ensure_running_lifecycle(tmp_path, monkeypatch)
         "outputs": {"images": [str(fake_png)], "glb": [], "audio": [], "video": []},
     }).encode("utf-8")
 
+    _detach_ok_bytes = _detach_ok_stdout().encode("utf-8")
+
     class _FakeProc:
         returncode = 0
         async def communicate(self): return (fake_stdout, b"")
@@ -2125,7 +2260,17 @@ async def test_agenerate_accepts_ensure_running_lifecycle(tmp_path, monkeypatch)
         def terminate(self): pass
         def kill(self): pass
 
+    class _FakeDetachProc:
+        returncode = 0
+        async def communicate(self): return (_detach_ok_bytes, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
     async def _fake_exec(*a, **kw):
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return _FakeDetachProc()
         return _FakeProc()
 
     monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
@@ -2163,6 +2308,8 @@ async def test_agenerate_mesh_accepts_ensure_running_lifecycle(tmp_path, monkeyp
         "outputs": {"glb": [str(fake_glb)], "images": [], "audio": [], "video": []},
     }).encode("utf-8")
 
+    _detach_ok_bytes_mesh = _detach_ok_stdout().encode("utf-8")
+
     class _FakeProc:
         returncode = 0
         async def communicate(self): return (fake_stdout, b"")
@@ -2170,7 +2317,17 @@ async def test_agenerate_mesh_accepts_ensure_running_lifecycle(tmp_path, monkeyp
         def terminate(self): pass
         def kill(self): pass
 
+    class _FakeDetachProcMesh:
+        returncode = 0
+        async def communicate(self): return (_detach_ok_bytes_mesh, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
     async def _fake_exec(*a, **kw):
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return _FakeDetachProcMesh()
         return _FakeProc()
 
     monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
@@ -2224,6 +2381,8 @@ async def test_agenerate_audio_accepts_ensure_running_lifecycle(tmp_path, monkey
         },
     }).encode("utf-8")
 
+    _detach_ok_bytes_audio = _detach_ok_stdout().encode("utf-8")
+
     class _FakeProc:
         returncode = 0
         async def communicate(self): return (fake_stdout, b"")
@@ -2231,7 +2390,17 @@ async def test_agenerate_audio_accepts_ensure_running_lifecycle(tmp_path, monkey
         def terminate(self): pass
         def kill(self): pass
 
+    class _FakeDetachProcAudio:
+        returncode = 0
+        async def communicate(self): return (_detach_ok_bytes_audio, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
     async def _fake_exec(*a, **kw):
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return _FakeDetachProcAudio()
         return _FakeProc()
 
     monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
@@ -2291,6 +2460,8 @@ async def test_agenerate_video_accepts_ensure_running_lifecycle(tmp_path, monkey
         },
     }).encode("utf-8")
 
+    _detach_ok_bytes_video = _detach_ok_stdout().encode("utf-8")
+
     class _FakeProc:
         returncode = 0
         async def communicate(self): return (fake_stdout, b"")
@@ -2298,7 +2469,17 @@ async def test_agenerate_video_accepts_ensure_running_lifecycle(tmp_path, monkey
         def terminate(self): pass
         def kill(self): pass
 
+    class _FakeDetachProcVideo:
+        returncode = 0
+        async def communicate(self): return (_detach_ok_bytes_video, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
     async def _fake_exec(*a, **kw):
+        # R4: detach-wait 协议 dispatch
+        if "--detach" in a:
+            return _FakeDetachProcVideo()
         return _FakeProc()
 
     monkeypatch.setattr(_aio, "create_subprocess_exec", _fake_exec)
@@ -2485,3 +2666,90 @@ async def test_abort_comfy_prompt_without_prompt_id_uses_bare_cancel(tmp_path):
     cmd = list(mock.call_args)
     assert "cancel" in cmd
     assert "--prompt-id" not in cmd
+
+
+# ---------------------------------------------------------------------------
+# detach-wait change Task 3: submit-then-poll 协议 fence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_uses_detach_submit_then_wait_protocol(tmp_path):
+    """协议 fence:第 1 个子进程 = run --detach,第 2 个 = wait --prompt-id --timeout。"""
+    out_png = tmp_path / "out_a.png"
+    _make_png_file(out_png)
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(
+        _make_async_completed(_ok_stdout([str(out_png)]))
+    ) as mock:
+        cands = await worker.agenerate(
+            spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1, timeout_s=120.0)
+    assert mock.call_count == 2, f"应 submit+wait 两个子进程,实际 {mock.call_count}"
+    submit_cmd = list(mock.call_args_list[0])
+    wait_cmd = list(mock.call_args_list[1])
+    assert "run" in submit_cmd and "--detach" in submit_cmd
+    assert "--workflow" in submit_cmd and "GameAssets/x" in submit_cmd
+    assert "wait" in wait_cmd and "--prompt-id" in wait_cmd
+    assert wait_cmd[wait_cmd.index("--prompt-id") + 1] == "fake-prompt-1"
+    assert "--timeout" in wait_cmd
+    assert wait_cmd[wait_cmd.index("--timeout") + 1] == "120"
+    assert len(cands) == 1
+
+
+@pytest.mark.asyncio
+async def test_prompt_id_recorded_in_candidate_metadata(tmp_path):
+    """metadata fence:comfy_prompt_id 透传(spec §6,可追溯性是本 change 核心收益)。"""
+    out_png = tmp_path / "out_b.png"
+    _make_png_file(out_png)
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(
+        _make_async_completed(_ok_stdout([str(out_png)]))
+    ):
+        cands = await worker.agenerate(
+            spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1)
+    assert cands[0].metadata["comfy_prompt_id"] == "fake-prompt-1"
+
+
+@pytest.mark.asyncio
+async def test_detach_response_missing_prompt_id_raises_unsupported(tmp_path):
+    """契约破坏 fence:submit 成功响应缺 prompt_id → WorkerUnsupportedResponse。"""
+    worker = _make_worker(tmp_path)
+    bad_submit = _make_async_completed(json.dumps({"ok": True, "detached": True}))
+    with _patch_create_subprocess_exec(side_effect=[bad_submit]):
+        with pytest.raises(WorkerUnsupportedResponse, match="prompt_id"):
+            await worker.agenerate(
+                spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1)
+
+
+@pytest.mark.asyncio
+async def test_submit_stage_deterministic_error_maps_to_unsupported(tmp_path):
+    """submit 段失败分类 fence:workflow_not_found 在 submit 段就近报
+    WorkerUnsupportedResponse,不 spawn wait 子进程。"""
+    worker = _make_worker(tmp_path)
+    fail_submit = _make_async_completed(
+        json.dumps({"ok": False, "error": "FileNotFoundError: API workflow not found",
+                    "error_code": "workflow_not_found"}),
+        returncode=2,
+    )
+    with _patch_create_subprocess_exec(side_effect=[fail_submit]) as mock:
+        with pytest.raises(WorkerUnsupportedResponse, match="workflow_not_found"):
+            await worker.agenerate(
+                spec={"comfy_workflow": "GameAssets/nope"}, num_candidates=1)
+    assert mock.call_count == 1, "submit 失败不应再 spawn wait"
+
+
+@pytest.mark.asyncio
+async def test_mesh_prompt_id_recorded_in_candidate_metadata(tmp_path):
+    """mesh metadata fence:comfy_prompt_id 透传(mesh capability,detach-wait change Task 3)。"""
+    glb_path = tmp_path / "model.glb"
+    _make_glb_file(glb_path)
+    worker = _make_mesh_worker(tmp_path)
+    with _patch_create_subprocess_exec(
+        _make_async_completed(_ok_mesh_stdout([str(glb_path)]))
+    ):
+        cands = await worker.agenerate_mesh(
+            spec={"comfy_workflow": "GameAssets/mesh_x", "comfy_image_param_key": "input_image"},
+            source_image_filename="stub.png",
+            num_candidates=1,
+        )
+    assert cands[0].metadata["comfy_prompt_id"] == "fake-prompt-1"

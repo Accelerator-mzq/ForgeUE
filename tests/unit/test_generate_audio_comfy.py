@@ -178,15 +178,24 @@ async def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_
     import json
 
     # TBD-010 Task 3: generate_audio 现在走 asyncio.create_subprocess_exec
-    _stdout = json.dumps({
+    # R4 dispatch:submit 返回 prompt_id,wait 返回 outputs
+    _submit_stdout = json.dumps({"ok": True, "prompt_id": "fake-audio-prompt-1"}).encode("utf-8")
+    _wait_stdout = json.dumps({
         "ok": True,
         "outputs": {"audio": [str(fake)], "images": [], "glb": [], "video": []},
     }).encode("utf-8")
     call_count = []
 
-    class _FakeProc:
+    class _FakeSubmitProc:
         returncode = 0
-        async def communicate(self): return (_stdout, b"")
+        async def communicate(self): return (_submit_stdout, b"")
+        async def wait(self): return 0
+        def terminate(self): pass
+        def kill(self): pass
+
+    class _FakeWaitProc:
+        returncode = 0
+        async def communicate(self): return (_wait_stdout, b"")
         async def wait(self): return 0
         def terminate(self): pass
         def kill(self): pass
@@ -194,7 +203,11 @@ async def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_
     _orig = asyncio.create_subprocess_exec
     async def _fake_create(*a, **kw):
         call_count.append(1)
-        return _FakeProc()
+        if "--detach" in a:
+            return _FakeSubmitProc()
+        if "cancel" in a:
+            return _FakeSubmitProc()  # 不预期但 safe
+        return _FakeWaitProc()
     asyncio.create_subprocess_exec = _fake_create  # type: ignore[assignment]
     try:
         # Task 5 RED: executor.execute 已转为 async def,需 await
@@ -203,7 +216,8 @@ async def test_executor_dispatches_comfy_local_audio_to_comfy_worker_branch(tmp_
         asyncio.create_subprocess_exec = _orig  # type: ignore[assignment]
     assert result.metrics["audio_count"] == 1
     assert result.metrics["model"] == "comfy/local-audio"
-    assert len(call_count) == 1
+    # R2: 1 candidate = 1 submit + 1 wait = 2 calls
+    assert len(call_count) == 2
 
 
 async def test_executor_no_audio_worker_path_resolved_raises(tmp_path):

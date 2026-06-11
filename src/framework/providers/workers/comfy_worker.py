@@ -92,6 +92,10 @@ _PROC_GRACE_S: float = 5.0
 # 10 秒足够 comfyui_api cancel 发送 HTTP 请求并退出;超时只 warning 不阻塞 cancel
 _ABORT_TIMEOUT_S: float = 10.0
 
+# detach submit 段(run --detach)的 wall-clock 上限(秒):
+# 覆盖 manifest 校验 + mesh staging PNG 的 input_image auto-upload,无 GPU 等待
+_SUBMIT_TIMEOUT_S: float = 60.0
+
 # Mesh capability(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1):
 # generate_mesh 返回 MeshCandidate(从 mesh_worker module 复用 dataclass,
 # 不扩字段 — provenance 走 metadata dict per design D5)。
@@ -768,6 +772,8 @@ class ComfyAgentWorker(ComfyWorker):
         # Task 4 测试钩子:最近一次 _run_once*_async 创建的子进程(供 cancel 测试断言);
         # 在 __init__ 初始化,避免 agenerate 调用前访问触发 AttributeError
         self._last_proc: asyncio.subprocess.Process | None = None
+        # detach-wait change 测试/探针钩子:最近一次 submit 解析出的 prompt_id
+        self._last_prompt_id: str | None = None
         # OpenSpec change `comfy-agent-cli-path-containment-hardening`(2026-05-04
         # follow-on for G11-F2):the ComfyUI subprocess outputs files anywhere
         # the CLI's `extract_outputs` resolved them — by default under
@@ -901,32 +907,15 @@ class ComfyAgentWorker(ComfyWorker):
     ) -> list[ImageCandidate]:
         """image capability 的一次异步 subprocess 调用 → 1+ ImageCandidate。
 
-        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
-        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
-        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
+        detach-wait 两段式协议(detach-wait change Task 3):
+        委托 _run_comfy_prompt(submit run --detach → wait --prompt-id)。
         """
-        cmd = [
-            str(self.python_exe), "-m", "comfyui_api", "run",
-            "--workflow", comfy_workflow,
-            "--params", json.dumps(params, ensure_ascii=False),
-            "--project", self.project_id,
-            "--lifecycle", "none",
-            "--timeout", str(int(timeout_s)),
-        ]
-        async with _comfy_submit_lock():
-            data, returncode = await self._invoke_comfy_cli_once(
-                cmd=cmd,
-                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
-                cli_timeout_s=timeout_s,
-                context="ComfyAgentWorker",
-            )
-
-        if "outputs" not in data or not isinstance(data["outputs"], dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: stdout JSON missing 'outputs' field or "
-                f"not a dict (got {data.get('outputs')!r})"
-            )
-        outputs = data["outputs"]
+        outputs, returncode, prompt_id = await self._run_comfy_prompt(
+            comfy_workflow=comfy_workflow,
+            params=params,
+            timeout_s=timeout_s,
+            context="ComfyAgentWorker",
+        )
         # OpenSpec change comfy-agent-cli-mesh-audio-video-adoption:capability-aware
         # 三段表守门(design D2 + B4 修订)。原硬编码 image-only 守门替换为表驱动。
         # mesh-mode auxiliary outputs.images 容忍 + INFO log,只 raise rejected key。
@@ -987,6 +976,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "source": "comfy_agent_cli",
                     "comfy_project_id": self.project_id,
                     "comfy_outputs_orig": str(src),
+                    "comfy_prompt_id": prompt_id,
                 },
                 source_path=str(dst),
             ))
@@ -1179,6 +1169,80 @@ class ComfyAgentWorker(ComfyWorker):
             _raise_comfy_failure(data, returncode, context)
         return data, returncode
 
+    async def _run_comfy_prompt(
+        self,
+        *,
+        comfy_workflow: str,
+        params: dict[str, Any],
+        timeout_s: float,
+        context: str,
+    ) -> tuple[dict, int, str]:
+        """detach+wait 两段式协议(detach-wait change,spec §3.2)。
+
+        整段在 _comfy_submit_lock() 内(D2 全程串行,与原阻塞 run 等价):
+        1. submit: run --detach → 立即返回 prompt_id(上游在返回前同步完成
+           manifest 校验 + input_image* auto-upload)
+        2. wait:   wait --prompt-id <id> --timeout N → 收割 outputs
+        cancel 归因集中在本层 except:wait 段被取消带 prompt_id 精确取消,
+        submit 段被取消退回裸 cancel(窄窗口 fallback)。
+        返回 (outputs dict, wait 段 returncode, prompt_id)。
+        """
+        base = [str(self.python_exe), "-m", "comfyui_api"]
+        submit_cmd = base + [
+            "run",
+            "--workflow", comfy_workflow,
+            "--params", json.dumps(params, ensure_ascii=False),
+            "--project", self.project_id,
+            "--lifecycle", "none",
+            "--timeout", str(int(timeout_s)),
+            "--detach",
+        ]
+        async with _comfy_submit_lock():
+            try:
+                sdata, _submit_rc = await self._invoke_comfy_cli_once(
+                    cmd=submit_cmd,
+                    wall_timeout_s=_SUBMIT_TIMEOUT_S,
+                    cli_timeout_s=timeout_s,
+                    context=context,
+                    abort_on_cleanup=False,
+                )
+            except asyncio.CancelledError:
+                # submit 段被取消:prompt 可能已 queue 也可能没有 → 裸 cancel
+                # best-effort(残留边界见 LLD cancel 小节)
+                await self._abort_comfy_prompt(None)
+                raise
+            prompt_id = sdata.get("prompt_id")
+            if not isinstance(prompt_id, str) or not prompt_id:
+                raise WorkerUnsupportedResponse(
+                    f"{context}: run --detach response missing prompt_id "
+                    f"(got {sdata.get('prompt_id')!r}); upstream AGENT_API.md "
+                    f"§1.8 contract requires it — check comfyui_api version"
+                )
+            self._last_prompt_id = prompt_id
+            wait_cmd = base + [
+                "wait",
+                "--prompt-id", prompt_id,
+                "--timeout", str(int(timeout_s)),
+            ]
+            try:
+                wdata, wait_rc = await self._invoke_comfy_cli_once(
+                    cmd=wait_cmd,
+                    wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
+                    cli_timeout_s=timeout_s,
+                    context=context,
+                    abort_on_cleanup=False,
+                )
+            except asyncio.CancelledError:
+                # wait 段被取消:精确取消自己的 prompt(interrupt + queue 删除)
+                await self._abort_comfy_prompt(prompt_id)
+                raise
+            if "outputs" not in wdata or not isinstance(wdata["outputs"], dict):
+                raise WorkerUnsupportedResponse(
+                    f"{context}: stdout JSON missing 'outputs' field or "
+                    f"not a dict (got {wdata.get('outputs')!r})"
+                )
+            return wdata["outputs"], wait_rc, prompt_id
+
     async def agenerate_mesh(
         self,
         *,
@@ -1291,37 +1355,20 @@ class ComfyAgentWorker(ComfyWorker):
     ) -> list[MeshCandidate]:
         """mesh capability 的一次异步 subprocess 调用 → 1+ MeshCandidate。
 
-        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
-        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
-        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
+        detach-wait 两段式协议(detach-wait change Task 3):
+        委托 _run_comfy_prompt(submit run --detach → wait --prompt-id)。
         产物构造走 mesh path:
         - 从 outputs.glb 路径读 GLB bytes 到 MeshCandidate.data
         - 不做 worker 内部 in-tree copy(由 ArtifactRepository.put 自动落 in-tree)
         - GLB magic bytes 校验(b"glTF" prefix)
         - metadata 含 comfy_manifest / comfy_params_snapshot / comfy_capability / ...
         """
-        cmd = [
-            str(self.python_exe), "-m", "comfyui_api", "run",
-            "--workflow", comfy_workflow,
-            "--params", json.dumps(params, ensure_ascii=False),
-            "--project", self.project_id,
-            "--lifecycle", "none",
-            "--timeout", str(int(timeout_s)),
-        ]
-        async with _comfy_submit_lock():
-            data, returncode = await self._invoke_comfy_cli_once(
-                cmd=cmd,
-                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
-                cli_timeout_s=timeout_s,
-                context="ComfyAgentWorker.agenerate_mesh",
-            )
-
-        if "outputs" not in data or not isinstance(data["outputs"], dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_mesh: stdout JSON missing 'outputs' field or "
-                f"not a dict (got {data.get('outputs')!r})"
-            )
-        outputs = data["outputs"]
+        outputs, returncode, prompt_id = await self._run_comfy_prompt(
+            comfy_workflow=comfy_workflow,
+            params=params,
+            timeout_s=timeout_s,
+            context="ComfyAgentWorker.agenerate_mesh",
+        )
         # 三段表守门(mesh-mode:REQUIRED outputs.glb;auxiliary outputs.images 容忍 + INFO log;
         # rejected outputs.audio / video raise)。
         self._validate_outputs(outputs, comfy_workflow=comfy_workflow)
@@ -1367,6 +1414,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_project_id": self.project_id,
                     "source": "comfy_agent_cli",
                     "seed": seed,
+                    "comfy_prompt_id": prompt_id,
                 },
                 source_path=str(src),
             ))
@@ -1468,36 +1516,19 @@ class ComfyAgentWorker(ComfyWorker):
     ) -> list[AudioCandidate]:
         """audio capability 的一次异步 subprocess 调用 → 1+ AudioCandidate。
 
-        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
-        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
-        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
+        detach-wait 两段式协议(detach-wait change Task 3):
+        委托 _run_comfy_prompt(submit run --detach → wait --prompt-id)。
         产物构造走 audio path:
         - 从 outputs.audio 路径读 audio bytes
         - 扩展名 whitelist + magic bytes 二次校验(F5 round-1)
         - 不做 worker 内部 in-tree copy(由 ArtifactRepository.put 自动落 in-tree)
         """
-        cmd = [
-            str(self.python_exe), "-m", "comfyui_api", "run",
-            "--workflow", comfy_workflow,
-            "--params", json.dumps(params, ensure_ascii=False),
-            "--project", self.project_id,
-            "--lifecycle", "none",
-            "--timeout", str(int(timeout_s)),
-        ]
-        async with _comfy_submit_lock():
-            data, returncode = await self._invoke_comfy_cli_once(
-                cmd=cmd,
-                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
-                cli_timeout_s=timeout_s,
-                context="ComfyAgentWorker.agenerate_audio",
-            )
-
-        if "outputs" not in data or not isinstance(data["outputs"], dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_audio: stdout JSON missing 'outputs' field or "
-                f"not a dict (got {data.get('outputs')!r})"
-            )
-        outputs = data["outputs"]
+        outputs, returncode, prompt_id = await self._run_comfy_prompt(
+            comfy_workflow=comfy_workflow,
+            params=params,
+            timeout_s=timeout_s,
+            context="ComfyAgentWorker.agenerate_audio",
+        )
         # 三段表守门(audio-mode:REQUIRED outputs.audio non-empty;无 auxiliary;
         # rejected outputs.images / glb / video raise)
         self._validate_outputs(outputs, comfy_workflow=comfy_workflow)
@@ -1551,6 +1582,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_params_snapshot": params_snapshot,
                     "comfy_capability": "audio",
                     "comfy_original_filename": src.name,
+                    "comfy_prompt_id": prompt_id,
                     "comfy_subprocess_run_metadata": {
                         "exit_code": returncode,
                         "project_id": self.project_id,
@@ -1665,36 +1697,19 @@ class ComfyAgentWorker(ComfyWorker):
     ) -> list[VideoCandidate]:
         """video capability 的一次异步 subprocess 调用 → 1+ VideoCandidate。
 
-        submit→poll 段整体在 async with _comfy_submit_lock(): 内,
-        确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
-        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
+        detach-wait 两段式协议(detach-wait change Task 3):
+        委托 _run_comfy_prompt(submit run --detach → wait --prompt-id)。
         产物构造走 video path:
         - 从 outputs.video 路径读 video bytes
         - 扩展名 whitelist mp4-only + BMFF strict 5-tuple 校验
         - 不做 worker 内部 in-tree copy
         """
-        cmd = [
-            str(self.python_exe), "-m", "comfyui_api", "run",
-            "--workflow", comfy_workflow,
-            "--params", json.dumps(params, ensure_ascii=False),
-            "--project", self.project_id,
-            "--lifecycle", "none",
-            "--timeout", str(int(timeout_s)),
-        ]
-        async with _comfy_submit_lock():
-            data, returncode = await self._invoke_comfy_cli_once(
-                cmd=cmd,
-                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
-                cli_timeout_s=timeout_s,
-                context="ComfyAgentWorker.agenerate_video",
-            )
-
-        if "outputs" not in data or not isinstance(data["outputs"], dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_video: stdout JSON missing 'outputs' field or "
-                f"not a dict (got {data.get('outputs')!r})"
-            )
-        outputs = data["outputs"]
+        outputs, returncode, prompt_id = await self._run_comfy_prompt(
+            comfy_workflow=comfy_workflow,
+            params=params,
+            timeout_s=timeout_s,
+            context="ComfyAgentWorker.agenerate_video",
+        )
         # 三段表守门(video-mode:REQUIRED outputs.video non-empty;无 auxiliary;
         # rejected outputs.images / glb / audio raise)
         self._validate_outputs(outputs, comfy_workflow=comfy_workflow)
@@ -1760,6 +1775,7 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_params_snapshot": params_snapshot,
                     "comfy_capability": "video",
                     "comfy_original_filename": src.name,
+                    "comfy_prompt_id": prompt_id,
                     "comfy_subprocess_run_metadata": {
                         "exit_code": returncode,
                         "project_id": self.project_id,
