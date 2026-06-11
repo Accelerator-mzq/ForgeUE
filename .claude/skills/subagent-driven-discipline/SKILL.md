@@ -7,7 +7,7 @@ metadata:
   author: forgeue (initial seed)
   version: "2.6"
   scenario_subtype_count: 28
-  case_study_count: 5
+  case_study_count: 6
   retrospect_protocol: trigger-type-matrix(4 types × per-type intensity)  # Type 2 parallel retired in retire-parallel-and-worktree-fully (2026-05-06)
   worktree_consent_policy: superpowers-upstream-using-git-worktrees  # retire ForgeUE-level worktree consent gate;沿 upstream Step 0 consent gate
 ---
@@ -438,6 +438,53 @@ git update-ref refs/heads/<wrong-branch> <prior-base-sha>
 
 **Cost vs all-Opus alternative**:实际 $X vs Opus 估 $Y → 节省 ratio
 ```
+
+### Case 6: ForgeUE / comfy-detach-wait-adoption / Task 1-5 + final review(Type 1 3-stage retrospect)
+
+**Date**:2026-06-11
+**Project context**:ComfyAgentWorker 子进程协议切 detach+wait 两段式(先共享 helper 纯重构再协议切换);5 task × 串行 dispatch + final reviewer;plan 含完整 inline code(writing-plans 产出)。
+
+**Subagent dispatch**(~13 dispatch):
+
+| Task | Subagent 配置 | Scenario subtype | Verdict |
+|---|---|---|---|
+| T1 helper 重构 | Sonnet impl + Haiku spec + Sonnet cq | §1.1.3 + §1.2.1 + §1.3.4 | ✅ 全过;cq 1 条 docstring 建议 controller inline |
+| T2 abort 参数化 | Haiku impl + combined Sonnet review | §1.1.1 + Pattern I | ✅ 干净(Haiku 在完整 code 模板下 production-quality,Pattern A/I reinforce)|
+| T3 协议切换 | Sonnet impl(124 tool uses,**经历 context compression**)+ Sonnet spec + Sonnet cq | §1.1.3 + §1.2.3 级 spec | ❌→✅ spec review 抓 2 缺口(见下);cq APPROVED_WITH_CONCERNS(I-1 双重取消边界=旧行为等价非回归,LLD 标注)|
+| T4 cancel-on-timeout | Sonnet impl + combined Sonnet review | §1.1.1(取消时序敏感)| ✅ 干净;review 对 4 条 async fence 做了确定性推演(无 flaky)|
+| T5 探针 | Haiku impl + Haiku spec | §1.1.1 转写 + §1.2.1 | ✅ 干净 |
+| final review | Sonnet | §1.3.3 cross-task | ⚠️ 2 Minor(死默认值 + 死测试代码);**漏报范围**(见下)|
+
+**Real issues caught / failed**:
+
+| Issue | Severity | Caught by | Pattern |
+|---|---|---|---|
+| **T3 implementer 丢失低显著度 plan 枚举项**(模块 docstring 更新 Step 3.3(e) + 测试名 5→6;主体协议代码逐字正确)| Important(controller inline fix `2dc9b0c`)| Sonnet spec reviewer 逐项比对 | **Pattern K new:context compression 后 implementer 丢低显著度 plan item** — 124 tool uses 触发压缩,核心代码(高显著度)无损,辅助性枚举项(docstring/改名)被丢。Mitigation:长 task dispatch prompt 的 Self-Review Checklist 必须逐项列全部 plan 枚举项(不要"按 plan 执行"概括);controller 收 return 后对 plan 枚举项跑 grep 级 cross-verify |
+| **final reviewer 死代码范围漏报**(报 audio/video 两文件 `_make_completed` 死代码,实际 image 文件同样死)| Minor | controller §3.2 cross-verify(grep 三文件 calls 计数)| Pattern 沿 `feedback_verify_external_reviews`:reviewer 范围 claim 必须 controller 独立扩验,不按 claim 范围修 |
+| T1 cq 锁范围扩大观察 + T3 cq 双重取消边界 | advisory | Sonnet cq §1.3.4 | Pattern A reinforce:Sonnet cq 持续产出 runtime 级洞察(Haiku 不可替代)|
+
+**Lesson**:
+- **Pattern K new**(上表);**Pattern A/I reinforce**(Haiku 在 §1.1.1 完整模板下 2/2 干净;combined review 在 <50 LOC task 上 2 次有效)
+- Controller 对 reviewer 修复建议先独立验证再修(本 case final review 死代码范围从 2 文件扩到 3 文件;`abort_on_cleanup` 死默认 flip 前 grep 全部调用方确认)
+
+**Cost vs all-Opus**:~13 dispatch 全 Sonnet/Haiku + Opus controller 编排;质量缺口全部被双阶段 review + controller cross-verify 闭环,零漏出到 merge。
+
+**§6 catalog new row**(Q4):
+
+| Subagent failure mode | Pattern that prevents | Case studies |
+|---|---|---|
+| **Context compression 后 implementer 丢低显著度 plan 枚举项**(长 task 中途压缩;核心代码无损但 docstring 更新/改名类辅助项被丢,自我汇报仍 DONE)| dispatch prompt Self-Review Checklist 逐项列全部 plan 枚举项;controller 收 return 后对枚举项跑 grep 级 cross-verify;>100 tool uses 的 task 考虑拆分 | Case 6 T3 |
+
+**§3.4 Retrospect verdict per task**:
+
+| Task | Q1 | Q2 | Q3 | Q4 | Q5 | Q6 | Decision |
+|---|---|---|---|---|---|---|---|
+| T1 | No | No | Marginal | No | No | No | SKIP |
+| T2 | No | No | No | No | No | No | SKIP |
+| T3 | **Yes** | No | **Yes**(inline fix 2dc9b0c) | **Yes**(Pattern K) | No | No | **Add Case** |
+| T4 | No | No | No | No | No | No | SKIP |
+| T5 | No | No | No | No | No | No | SKIP |
+| final | No | Partial(范围漏报) | **Yes**(7e4df1b) | No | No | No | 并入 Case |
 
 ### Case 5: ForgeUE / centralize-followon-backlog-registry / P2.a-P2.h+P3(Type 1 3-stage retrospect)
 
