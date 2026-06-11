@@ -19,7 +19,6 @@ Fence categories(approximately 16 fences):
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -57,11 +56,6 @@ def _make_audio_worker(tmp_path: Path) -> ComfyAgentWorker:
         artifacts_dir=artifacts_dir,
     )
 
-
-def _make_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(
-        args=["mocked"], returncode=returncode, stdout=stdout, stderr=stderr,
-    )
 
 
 class _AsyncFakeProcess:

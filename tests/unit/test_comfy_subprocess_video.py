@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -61,11 +60,6 @@ def _make_video_worker(tmp_path: Path) -> ComfyAgentWorker:
         artifacts_dir=artifacts_dir,
     )
 
-
-def _make_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(
-        args=["mocked"], returncode=returncode, stdout=stdout, stderr=stderr,
-    )
 
 
 class _AsyncFakeProcess:

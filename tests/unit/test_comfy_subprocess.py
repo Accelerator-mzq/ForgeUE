@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -94,11 +93,6 @@ def _make_worker(tmp_path: Path) -> ComfyAgentWorker:
         artifacts_dir=artifacts_dir,
     )
 
-
-def _make_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(
-        args=["mocked"], returncode=returncode, stdout=stdout, stderr=stderr,
-    )
 
 
 class _AsyncFakeProcess:

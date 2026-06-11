@@ -1100,7 +1100,7 @@ class ComfyAgentWorker(ComfyWorker):
         wall_timeout_s: float,
         cli_timeout_s: float,
         context: str,
-        abort_on_cleanup: bool = True,
+        abort_on_cleanup: bool = False,
     ) -> tuple[dict, int]:
         """一次 comfyui_api CLI 子进程调用的共享低层封装(detach-wait change Task 1)。
 
@@ -1110,8 +1110,10 @@ class ComfyAgentWorker(ComfyWorker):
         (本方法整体在锁内执行,**包括 JSON 解析段** — 解析无 await 点,与原
         锁外解析并发语义等价,但后续在本方法内加异步操作时须留意锁持有范围)
         与 outputs 字段校验(detach submit 响应没有 outputs 字段)。
-        abort_on_cleanup:cleanup 时是否先发 server-side abort(裸 cancel);
-        detach 协议下取消归因上移到 orchestration 层时传 False。
+        abort_on_cleanup:cleanup 时是否先发 server-side abort(裸 cancel)。
+        detach 协议下取消归因在 _run_comfy_prompt except 层,当前所有调用方
+        均传/默认 False;True 仅为非 detach 场景扩展点保留(final review 后
+        默认值与实际调用对齐,避免误导性默认)。
         返回 (stdout JSON dict, returncode)。
         """
         try:
