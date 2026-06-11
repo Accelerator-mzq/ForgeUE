@@ -2313,3 +2313,74 @@ async def test_agenerate_video_accepts_ensure_running_lifecycle(tmp_path, monkey
         timeout_s=30.0,
     )
     assert isinstance(result, list), "agenerate_video 应返回 list[VideoCandidate]"
+
+
+# ---------------------------------------------------------------------------
+# v3.3 error_code 结构化字段优先分类(comfy-agent-api-v3-adaptation 2026-06-11)
+# 上游失败 JSON 自 v3.3 起带 error_code 稳定契约;ForgeUE code 优先分类,
+# code 缺失(旧版 CLI)时退回字符串 marker fallback(round 2 D5 行为不变)。
+# ---------------------------------------------------------------------------
+
+
+def test_error_code_timeout_maps_to_worker_timeout_without_msg_marker(tmp_path):
+    """error_code=timeout 优先于文案:error 串无 'TimeoutError' 也判 WorkerTimeout。"""
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(_make_async_completed(
+            json.dumps({"ok": False, "error": "Prompt 'p' did not complete within 600s",
+                        "error_code": "timeout"}),
+            returncode=2,
+        )):
+        with pytest.raises(WorkerTimeout, match="error_code=timeout"):
+            worker.generate(
+                spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                num_candidates=1,
+            )
+
+
+def test_error_code_missing_required_param_maps_to_unsupported(tmp_path):
+    """error_code 在 deterministic 集 → WorkerUnsupportedResponse(不看文案)。"""
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(_make_async_completed(
+            json.dumps({"ok": False, "error": "opaque message, no marker substrings",
+                        "error_code": "missing_required_param"}),
+            returncode=2,
+        )):
+        with pytest.raises(WorkerUnsupportedResponse, match="error_code=missing_required_param"):
+            worker.generate(
+                spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                num_candidates=1,
+            )
+
+
+def test_error_code_retryable_maps_to_worker_error_even_with_marker_text(tmp_path):
+    """error_code 非 deterministic 集(comfy_unreachable 等)→ WorkerError(可 retry);
+    code 存在时完全接管分类——文案里即使出现 marker 子串也不升级为 Unsupported。"""
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(_make_async_completed(
+            json.dumps({"ok": False,
+                        "error": "transient: Missing required param mentioned in passing",
+                        "error_code": "comfy_unreachable"}),
+            returncode=2,
+        )):
+        with pytest.raises(WorkerError, match="error_code=comfy_unreachable"):
+            worker.generate(
+                spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                num_candidates=1,
+            )
+
+
+def test_real_patcher_out_of_range_string_maps_to_unsupported(tmp_path):
+    """latent bug 修复 fence:patcher 实际串是 `value {N} out of range`(中间有数值),
+    旧 marker 'value out of range' 永匹配不上 → 曾误判 generic WorkerError 走 retry。
+    修正后 marker 'out of range'(无 error_code 的 fallback 路径)正确判 Unsupported。"""
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(_make_async_completed(
+            json.dumps({"ok": False,
+                        "error": "ValueError: Param 'width' value 99999 out of range [256, 2048]"}),
+            returncode=2,
+        )):
+        with pytest.raises(WorkerUnsupportedResponse, match="out of range"):
+            worker.generate(
+                spec={"comfy_workflow": "GameAssets/01b_singleview_sdxl"},
+                num_candidates=1,
+            )
