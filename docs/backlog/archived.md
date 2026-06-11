@@ -3,6 +3,16 @@
 > 项目历史 backlog tombstone —— 迁移自原 `forge/backlog/archived.md`,由 `docs/backlog/README.md` 约定维护。
 > 异常(悬空认领 / 非法 new_status / 重复认领 / 跳过坏块 / 目录名异常)见 active.md `## Warnings`。
 
+## 2026-06-11 comfy-detach-wait-adoption completion
+
+### `2026-06-11-comfy-agent-api-v3-adaptation::comfy-detach-wait-adoption`
+
+- **new_status**: completed
+- **reason**: ComfyAgentWorker 4 条 `_run_once_*_async` 已切 `run --detach` + `wait --prompt-id` 两段式(共享 helper `_invoke_comfy_cli_once` + orchestration `_run_comfy_prompt`,锁全程串行);cancel 升级 `cancel --prompt-id`(interrupt + queue 删除),wait 超时也先 cancel 再 raise(关僵尸 GPU prompt 边界);`prompt_id` 透传 candidate metadata `comfy_prompt_id`。核验修正:上游 `cancel --prompt-id` 的 interrupt 部分仍是全局 `/interrupt`,"精确"只体现在 queue 删除(LLD cancel 小节已按实修订);"更快感知 server 崩溃"收益自 v3 起阻塞/wait 同源 poll fail-fast,已不构成本 change 差异收益。
+- **evidence**: `src/framework/providers/workers/comfy_worker.py`(`_run_comfy_prompt` / `_invoke_comfy_cli_once` / `_abort_comfy_prompt(prompt_id)`)、`probes/provider/probe_comfy_cancel.py`、16 条新 fence(`python -m pytest -q` → `1379 passed, 4 skipped`,2026-06-11 实测)、L2 真机三件套 `docs/archive/forge_changes/2026-06-11-comfy-detach-wait-adoption/notes/{live_smoke_image_detach,live_smoke_video_detach,live_probe_cancel}.md`(cancel 探针 ComfyUI 侧 `execution_interrupted` 实证)、spec `docs/superpowers/specs/2026-06-11-comfy-detach-wait-adoption-design.md`
+- **follow-on(不另立 backlog 项,记录于 spec §8 out-of-scope)**: 只锁 submit 段并发 pipeline / 上游 cancel 条件化 interrupt / 上游 `wait --cancel-on-timeout` flag / chunked 短 wait — 均为有真实需求再启动的上游或并发向延伸
+- **archived_by**: comfy-detach-wait-adoption 2026-06-11
+
 ## 2026-05-24 FOR-32 completion
 
 ### `LR-0144` **unreal-legacy-path-cleanup Unreal legacy 路径命名收敛**

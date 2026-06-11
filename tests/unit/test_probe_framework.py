@@ -564,3 +564,47 @@ def test_probe_comfy_video_no_import_side_effects():
             f"clean-env imports will fail before tests can inspect "
             f"module source. Match pattern: {pattern!r}"
         )
+
+
+# ============================================================================
+# probe_comfy_cancel (detach-wait change Task 5)
+# ============================================================================
+
+
+def test_probe_comfy_cancel_default_skip_without_optin(monkeypatch, capsys):
+    """probe_comfy_cancel.main() returns 0 + skip message when
+    FORGEUE_PROBE_COMFY_CANCEL is not set. 沿 video / audio probe opt-in
+    convention(probes/README.md:付费/GPU 调用默认 skip,显式 opt-in 才跑)。"""
+    monkeypatch.delenv("FORGEUE_PROBE_COMFY_CANCEL", raising=False)
+    from probes.provider import probe_comfy_cancel
+    rc = probe_comfy_cancel.main()
+    out = capsys.readouterr().out
+    assert rc == 0, f"unset FORGEUE_PROBE_COMFY_CANCEL must skip with rc=0, got rc={rc}"
+    assert "[SKIP]" in out
+    assert "FORGEUE_PROBE_COMFY_CANCEL" in out
+
+
+def test_probe_comfy_cancel_no_import_side_effects():
+    """probe_comfy_cancel.py module-level body must not call hydrate_env() /
+    _out_dir() / os.environ[...] at import time(沿 video probe 同款守门)。"""
+    import re
+    probe_path = _REPO_ROOT / "probes" / "provider" / "probe_comfy_cancel.py"
+    src = probe_path.read_text(encoding="utf-8")
+
+    module_body = re.split(r"\ndef\s+\w+|\nasync\s+def\s+\w+", src)[0]
+    active_lines = [
+        line for line in module_body.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    active = "\n".join(active_lines)
+
+    forbidden_patterns = [
+        (r"^\s*_hydrate_env\s*\(\s*\)", "_hydrate_env() at import time"),
+        (r"^\s*_out_dir\s*\(\s*\)", "_out_dir() at import time"),
+        (r"^\s*hydrate_env\s*\(\s*\)", "hydrate_env() at import time"),
+        (r'^\s*API_KEY\s*=\s*os\.environ\[', "API_KEY = os.environ[...] at import"),
+    ]
+    for pattern, desc in forbidden_patterns:
+        assert not re.search(pattern, active, flags=re.MULTILINE), (
+            f"probe_comfy_cancel.py: {desc}. Match pattern: {pattern!r}"
+        )

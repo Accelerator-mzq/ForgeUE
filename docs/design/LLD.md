@@ -848,10 +848,10 @@ class ExternalProcessLifecycle(ABC):
 - `release(mode, reason)`:根据 `(mode, reason)` 决策表决定是否关闭进程;`ensure_running` 不 stop,`ensure_release` 在 run/cascade/cancel/error/close 后 stop,`self_managed_session` 仅 `orchestrator_close` stop;stop 走 `python -m comfyui_api stop`(只关 `.comfyui.pid` 记录的自启进程)
 - `_send_interrupt()`:async `POST /interrupt` server-side abort
 
-**ComfyAgentWorker cancel 已知边界(2026-06-11 标注)**:
+**ComfyAgentWorker cancel 已知边界(2026-06-11 标注;同日 `comfy-detach-wait-adoption` 落地后修订)**:
 
-- `comfyui_api cancel`(不带 `--prompt-id`)是 ComfyUI 全局 `/interrupt`;ComfyUI server 被多 agent / factory_v3 共享时可能中断他方正在执行的 prompt。单机单用户场景(当前部署形态)可接受。
-- 精确取消需 detach 模式先拿 `prompt_id` 再 `cancel --prompt-id`,见 `docs/backlog/active.md` 的 `comfy-detach-wait-adoption` follow-on。
+- detach+wait 协议已落地:worker 持有 `prompt_id`,cancel 走 `cancel --prompt-id <id>`(interrupt + 从 queue 删除该 id),超时路径也先 cancel 再 raise(见 §6.5.1 Cancel 语义)。
+- **残留边界(上游实装核验,修正原"精确取消"表述)**:上游 `cancel --prompt-id` 的 interrupt 部分**仍是全局 `/interrupt`**(cli.py 实证:无条件 POST /interrupt + 针对性 queue delete),"精确"只体现在 queue 删除。多租户共享 ComfyUI 时,若我方 prompt 在排队、别家在跑,interrupt 仍会打断别家——但相比旧裸 cancel 是严格改进(旧行为:打断别家 + 我方排队 prompt 继续跑掉白烧 GPU)。彻底解决需上游 cancel 条件化 interrupt(查 queue_running 再决定),属上游改进不在 ForgeUE scope。单机单用户场景(当前部署形态)中断的必是本方 prompt。
 
 **Orchestrator 集成**:
 
@@ -1073,19 +1073,24 @@ ComfyAgentWorker(*, scripts_dir: Path, run_id: str, project_id: str,
 - `artifacts_dir` is None → `WorkerUnsupportedResponse`(G3 fix);non-existing dir 自动 `mkdir(parents=True, exist_ok=True)`(production 首跑 ok)
 - `default_lifecycle` **不在** `{"none", "ensure_running", "ensure_release", "self_managed_session"}` 集合内 → `WorkerUnsupportedResponse`(D6 lock 已解锁;原 `!= "none"` 替换为集合外才 raise;TBD-010 executor-async-rewrite 2026-05-20)
 
-**`agenerate_image / agenerate_mesh / agenerate_audio / agenerate_video` ASYNC 主面**(自 `executor-async-rewrite` TBD-010):
+**`agenerate_image / agenerate_mesh / agenerate_audio / agenerate_video` ASYNC 主面**(自 `executor-async-rewrite` TBD-010;协议自 `comfy-detach-wait-adoption` 2026-06-11 改两段式):
 - 四个 capability-specific `async def agenerate_*(spec, *, num_candidates, seed, timeout_s)`;内部调 `asyncio.create_subprocess_exec` + `asyncio.wait_for` 替代原 `subprocess.run` 阻塞
-- **per-loop `_comfy_submit_lock`**(asyncio.Lock 单例 per worker-scope):N 次 serial 候选提交顺序化,防并发多 prompt 同时入 ComfyUI 队列导致输出乱序
-- `_run_once_*(spec, seed, i)` → `await asyncio.create_subprocess_exec(python_exe, "-m", "comfyui_api", "run", "--workflow", X, "--params", ..., "--project", project_id, "--lifecycle", lifecycle_val, "--timeout", T)` + `await proc.communicate(timeout=T+30)`
-- 失败模式映射同 7 类(mapping 不变,subprocess 产 stderr 内容相同)
+- **per-loop `_comfy_submit_lock`**(asyncio.Lock 单例 per worker-scope):锁包 submit→wait 整段全程串行(D2 决策,与原阻塞 run 等价),防并发多 prompt 同时入 ComfyUI 队列导致输出乱序 + 保留 cancel 归因不变量
+- `_run_once_*(spec, seed, i)` → `_run_comfy_prompt(comfy_workflow, params, timeout_s, context)` **detach+wait 两段式**(`comfy-detach-wait-adoption`):
+  1. submit: `comfyui_api run --workflow X --params P --project ID --lifecycle none --timeout T --detach` → 立即返回 `prompt_id`(wall-clock 上限 `_SUBMIT_TIMEOUT_S=60s`;上游在返回前同步完成 manifest 校验 + `input_image*` auto-upload);响应缺 `prompt_id` → `WorkerUnsupportedResponse`(契约破坏)
+  2. wait: `comfyui_api wait --prompt-id <id> --timeout T` → 收割 outputs(wall-clock = T + 30s buffer)
+  - 单次子进程的 spawn/communicate/cleanup/decode/JSON 解析/`_raise_comfy_failure` 分类收敛在共享低层 helper `_invoke_comfy_cli_once`(防 4 capability 重复 diff,fence `test_all_four_run_once_methods_route_through_shared_cli_helper` 守门)
+  - `prompt_id` 透传 candidate metadata `comfy_prompt_id`(4 capability 全;可追溯性)+ 测试/探针钩子 `self._last_prompt_id`
+- 失败模式映射不变(`_raise_comfy_failure` code 优先分类复用;submit 段 deterministic 错就近报,wait 段 `prompt_errored`/`comfy_unreachable`/`prompt_lost` → generic WorkerError 可 retry)
 
 **`generate_image / generate_mesh / generate_audio / generate_video` SYNC shim**:
 - 保留 sync 方法名 + signature 适配 `ComfyWorker` ABC;内部 `asyncio.get_event_loop().run_until_complete(self.agenerate_*(...))`(或 `asyncio.run` 当无 running loop)
 - 与 Orchestrator 原生 `await agenerate_*` 路径共存;旧 mock callsite 不需改动
 
-**`_abort_comfy_prompt(prompt_id)` async helper**:
-- cancel 触发时:先 `POST http://127.0.0.1:<port>/interrupt` 发 server-side abort,然后 `proc.terminate()`;双保险防孤儿 prompt 继续在 ComfyUI 队列占用 GPU
-- `prompt_id` 由 `comfyui_api run` stdout JSON 中 `prompt_id` 字段获取(运行中持有)
+**`_abort_comfy_prompt(prompt_id: str | None = None)` async helper**(自 `comfy-detach-wait-adoption` 参数化):
+- 有 `prompt_id` → `comfyui_api cancel --prompt-id <id>`(上游 = 全局 `/interrupt` + 从 queue 删除该 id);无 id(submit 段就被取消的窄窗口)→ 退回裸 `cancel`(全局 `/interrupt`)
+- `prompt_id` 由 `run --detach` 的 submit 响应获取(`_run_comfy_prompt` 持有);best-effort,失败只 warning,`_ABORT_TIMEOUT_S=10s` 守门 + kill 清理
+- 已知边界:双重 `task.cancel()` 期间 abort 自身的 await 点可被二次 CancelledError 截断(与旧 finally-based 实现行为等价,非回归;Task 3 final review I-1 记录)
 
 **`probe_sync(scripts_dir, python_exe, timeout_s=30) classmethod`**(sync shim;DryRunPass async 化后优先用 `aprobe`):
 - SYNC 调 `subprocess.run([python_exe, "-m", "comfyui_api", "status"], ...)` — 保留向后兼容
@@ -1094,11 +1099,12 @@ ComfyAgentWorker(*, scripts_dir: Path, run_id: str, project_id: str,
 - `asyncio.create_subprocess_exec` + `asyncio.wait_for`;DryRunPass.run async 化后 `await ComfyAgentWorker.aprobe(...)` 直接用,无嵌套 asyncio.run 问题
 - scripts_dir 缺失 / module not found / `asyncio.TimeoutError` / 非零 exit → `WorkerUnsupportedResponse` 含 hint
 
-**Cancel 语义(自 executor-async-rewrite TBD-010)**:
+**Cancel 语义(自 executor-async-rewrite TBD-010;归因升级自 comfy-detach-wait-adoption)**:
 - 全部 executor `execute` 均为 `async def`;orchestrator 原生 `await executor.execute(ctx)`,无 `asyncio.to_thread` 包装
-- `CancelledError` 直达 executor 内部;`_agenerate_image_worker / _generate_via_comfy_worker` 等 coroutine 感知 cancel
-- cancel 触发时 `_abort_comfy_prompt` 发 `/interrupt` + `proc.terminate()`;cascade-cancel drain timeout 30s 后明示失败(不再 best-effort silently discard)
-- lifecycle=none 时 ComfyUI server 用户自管,cancel 仅终止 subprocess;lifecycle=ensure_running/ensure_release 时 orchestrator try/finally `_release_lifecycle_bounded` 确保进程被清理
+- `CancelledError` 直达 executor 内部;归因集中在 `_run_comfy_prompt` except 层:wait 段被取消 → `_abort_comfy_prompt(prompt_id)`(带 id 精确取消);submit 段被取消 → 裸 cancel fallback;CLI 子进程清理(terminate→grace→kill)由 `_invoke_comfy_cli_once` finally 负责
+- **cancel-on-timeout(本 change 新行为,关僵尸 GPU prompt 边界)**:wait 段 `WorkerTimeout`(CLI 内部 `error_code=timeout` 或 wall-clock 挂死)同样先 `cancel --prompt-id` 再 raise — 原阻塞模式下 CLI 超时退出后 prompt 继续烧 GPU、retry 再叠一个的边界已关闭(fence ×2 + L2 cancel 探针 `execution_interrupted` 实证)
+- cascade-cancel drain timeout 30s 后明示失败(不再 best-effort silently discard)
+- lifecycle=none 时 ComfyUI server 用户自管,cancel 终止 subprocess + 按上述归因取消 prompt;lifecycle=ensure_running/ensure_release 时 orchestrator try/finally `_release_lifecycle_bounded` 确保进程被清理
 
 **`FakeComfyWorker(ComfyWorker)` v2 schema gate**(同模块):conditional 守门 — 只在 spec 含 `comfy_workflow` 时 enforce schema;legacy `prompt_summary` / `width` / `height` 路径 back-compat 不破坏 ~25 现有 mock callsite。
 

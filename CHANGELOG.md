@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **comfy-detach-wait-adoption(2026-06-11)**:ComfyAgentWorker 子进程协议切 detach+wait 两段式,四项:
+  ① **协议切换**:4 条 `_run_once_*_async` 经共享低层 helper `_invoke_comfy_cli_once`(commit 1 纯重构,防 4 份重复 diff,drift fence 守门)+ orchestration `_run_comfy_prompt` 改 `run --detach`(submit 立即拿 `prompt_id`,wall-clock 60s)→ `wait --prompt-id --timeout N`(收割 outputs);锁全程串行包 submit→wait(与原阻塞 run 等价);`prompt_id` 缺失 → `WorkerUnsupportedResponse` 契约守门;失败分类零新增(`_raise_comfy_failure` 复用,submit 段 deterministic 错就近报)。
+  ② **cancel 归因升级**:`_abort_comfy_prompt(prompt_id)` 参数化 — wait 段被取消发 `cancel --prompt-id`(interrupt + queue 删除),submit 段窄窗口退裸 cancel;**cancel-on-timeout 新行为**:wait 超时(CLI `error_code=timeout` 或 wall-clock 挂死)先 cancel 再 raise `WorkerTimeout`,关掉原阻塞模式"CLI 超时退出后 GPU prompt 继续烧 + retry 叠加"的僵尸边界。核验修正:上游 `cancel --prompt-id` 的 interrupt 仍是全局 `/interrupt`,"精确"只在 queue 删除(LLD cancel 边界按实修订)。
+  ③ **可追溯性**:4 capability candidate metadata 新增 `comfy_prompt_id`;worker 加 `_last_prompt_id` 测试/探针钩子。
+  ④ **L2 真机三件套 + 新探针**:`probes/provider/probe_comfy_cancel.py`(opt-in `FORGEUE_PROBE_COMFY_CANCEL=1`,走 worker 生产路径的 task 取消实证);evidence `docs/archive/forge_changes/2026-06-11-comfy-detach-wait-adoption/notes/`(image ~30s / video teacache ~2min roundtrip + cancel 探针 ComfyUI 侧 `execution_interrupted` 实证)。
+  全量 `python -m pytest -q` → 1379 passed + 4 skipped(基线 1363 + 16 新 fence,2026-06-11 实测);backlog `comfy-detach-wait-adoption` 结账归档。
 - **comfy-agent-api-v3-adaptation(2026-06-11)**:对齐上游 COMFYUI_AGENT_API v3/v3.3 契约,五项:
   ① **mesh auto-upload**:`_generate_via_comfy_worker` 改写 in-tree staging(`<run_dir>/comfy/forgeue_<sha1>.png`,`resolve()` 绝对路径强制——相对 run_dir 在 CLI cwd 下致 auto-upload 不触发 HTTP 400,L2 实测回归 fence 守门),`FORGEUE_COMFY_INPUT_DIR` 配置链全退役(env / models.yaml / `ComfyAgentConfig` / `ProviderSubprocessConfig`;旧 yaml 残留键容忍并忽略);worker 加 `input_image*` 前缀守门(路径值 + 非前缀 key fail-fast,裸文件名 legacy 模式不变)。
   ② **error_code 消费**:上游 v3.3 失败 JSON 带结构化 `error_code`,新共享 helper `_raise_comfy_failure` code 优先分类(timeout → WorkerTimeout;deterministic 集 → WorkerUnsupportedResponse;其余 → WorkerError),code 缺失退回 marker fallback;顺修 marker `"value out of range"` → `"out of range"` latent bug(patcher 实际串永匹配不上,out-of-range 曾被误判 generic 走 retry)。

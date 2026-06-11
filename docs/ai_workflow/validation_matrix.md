@@ -223,7 +223,7 @@ python -m framework.pricing_probe --apply
 
 ### 3.1 ComfyUI agent CLI pipeline(image / mesh / audio / video,真实出图)
 
-ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。默认 `config/models.yaml` `providers.comfy_api.subprocess.default_lifecycle` 仍是 `none`,所以 L2 live smoke 默认由外部确保 ComfyUI server running;也可显式设 `ensure_running` / `ensure_release` / `self_managed_session` 让框架托管 lifecycle。本机启停用 `python -m comfyui_api serve/stop`(v3.3 起自带;`factory_v3 serve/stop` 仍是兼容入口);ForgeUE 生成/探活/取消走 `python -m comfyui_api run/status/cancel`。
+ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。默认 `config/models.yaml` `providers.comfy_api.subprocess.default_lifecycle` 仍是 `none`,所以 L2 live smoke 默认由外部确保 ComfyUI server running;也可显式设 `ensure_running` / `ensure_release` / `self_managed_session` 让框架托管 lifecycle。本机启停用 `python -m comfyui_api serve/stop`(v3.3 起自带;`factory_v3 serve/stop` 仍是兼容入口);ForgeUE 生成走 `run --detach` + `wait --prompt-id`(两段式,自 `comfy-detach-wait-adoption` 2026-06-11),取消走 `cancel --prompt-id`(wait 超时也先 cancel),探活走 `status`。
 
 ```bash
 # 默认手工 smoke(lifecycle=none)前置:确保 ComfyUI server running

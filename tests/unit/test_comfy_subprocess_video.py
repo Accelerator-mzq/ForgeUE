@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,11 +61,6 @@ def _make_video_worker(tmp_path: Path) -> ComfyAgentWorker:
     )
 
 
-def _make_completed(stdout: str, returncode: int = 0, stderr: str = "") -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(
-        args=["mocked"], returncode=returncode, stdout=stdout, stderr=stderr,
-    )
-
 
 class _AsyncFakeProcess:
     """模拟 asyncio.subprocess.Process,供 patch asyncio.create_subprocess_exec 使用。
@@ -96,6 +90,13 @@ def _make_async_completed(stdout: str, returncode: int = 0, stderr: str = "") ->
     return _AsyncFakeProcess(stdout=stdout, returncode=returncode, stderr=stderr)
 
 
+def _detach_ok_stdout(prompt_id: str = "fake-prompt-1") -> str:
+    """detach submit 段的成功响应(上游 AGENT_API.md §1.8 实测 shape)。"""
+    return json.dumps({
+        "ok": True, "prompt_id": prompt_id, "detached": True, "timeout_hint_s": 300,
+    })
+
+
 def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, *, side_effect=None):
     """返回 asyncio.create_subprocess_exec 的 patch context manager。
 
@@ -123,6 +124,14 @@ def _patch_create_subprocess_exec(fake_proc: "_AsyncFakeProcess | None" = None, 
     else:
         async def _factory(*a, **kw):
             calls.append(a)
+            # detach-wait 协议 dispatch:submit 段返回 canned ok+prompt_id,
+            # cancel 段返回 canned ok;fake_proc 语义 = wait 段响应
+            # (既有测试的失败注入 stdout 因此落在 wait 段,分类共享
+            # _raise_comfy_failure,语义不变)
+            if "--detach" in a:
+                return _AsyncFakeProcess(_detach_ok_stdout())
+            if "cancel" in a:
+                return _AsyncFakeProcess(json.dumps({"ok": True, "interrupted": True}))
             return fake_proc
 
     class _Ctx:
@@ -633,14 +642,15 @@ def test_generate_video_runs_subprocess_num_candidates_times_with_per_candidate_
             num_candidates=3,
             seed=42,
         )
-    assert run_mock.call_count == 3, f"应调 3 次 subprocess.run,实际 {run_mock.call_count}"
+    # R2: 每个 candidate submit+wait = 2 次,3 candidates = 6 次
+    assert run_mock.call_count == 6, f"应调 6 次 subprocess(3x submit+wait),实际 {run_mock.call_count}"
     assert len(candidates) == 3
-    # 验证每次调用 seed 是 42 + i(NOT 999 — caller's pre-filled seed 被覆盖)
+    # R2: 从 submit cmd(含 --params)里提取 seed
     seen_seeds = []
     for call in run_mock.call_args_list:
-        # call 是 tuple-of-args(create_subprocess_exec 的位置参数)
         cmd = list(call)
-        # cmd 含 --params <json>;parse JSON 取 seed
+        if "--params" not in cmd:
+            continue  # wait cmd 没有 --params,跳过
         params_idx = cmd.index("--params")
         params = json.loads(cmd[params_idx + 1])
         seen_seeds.append(params["seed"])
@@ -652,10 +662,10 @@ def test_generate_video_runs_subprocess_num_candidates_times_with_per_candidate_
 # ---------------------------------------------------------------------------
 
 
-def test_generate_video_metadata_records_5_comfy_provenance_keys(tmp_path):
-    """D8 + round-3 PF1:VideoCandidate.metadata 含 5 个 comfy_* provenance keys
+def test_generate_video_metadata_records_6_comfy_provenance_keys(tmp_path):
+    """D8 + round-3 PF1:VideoCandidate.metadata 含 6 个 comfy_* provenance keys
     (comfy_manifest / comfy_params_snapshot / comfy_capability="video" /
-    comfy_original_filename / comfy_subprocess_run_metadata)。
+    comfy_original_filename / comfy_prompt_id / comfy_subprocess_run_metadata)。
     """
     worker = _make_video_worker(tmp_path)
     fake_video = tmp_path / "wan21_5sec_00001.mp4"
@@ -675,6 +685,7 @@ def test_generate_video_metadata_records_5_comfy_provenance_keys(tmp_path):
         "comfy_params_snapshot",
         "comfy_capability",
         "comfy_original_filename",
+        "comfy_prompt_id",
         "comfy_subprocess_run_metadata",
     }
     assert cand.metadata["comfy_manifest"] == "Vedio/Wan2.1-T2V-1.3B_native_5sec"
@@ -811,3 +822,24 @@ async def test_dry_run_probes_comfy_when_comfy_local_video_in_routes(tmp_path, m
         assert "comfyui_api" in call_args
         assert "status" in call_args
     assert report.checks.get("comfy.cli_reachable") is True
+
+
+# ---------------------------------------------------------------------------
+# detach-wait change Task 3: video prompt_id metadata fence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_video_prompt_id_recorded_in_candidate_metadata(tmp_path):
+    """video metadata fence:comfy_prompt_id 透传(video capability,detach-wait change Task 3)。"""
+    fake_video = tmp_path / "video.mp4"
+    _make_minimal_mp4(fake_video)
+    worker = _make_video_worker(tmp_path)
+    with _patch_create_subprocess_exec(
+        _make_async_completed(_ok_video_stdout([str(fake_video)]))
+    ):
+        cands = await worker.agenerate_video(
+            spec={"comfy_workflow": "Vedio/x", "comfy_params": {}},
+            num_candidates=1,
+        )
+    assert cands[0].metadata["comfy_prompt_id"] == "fake-prompt-1"
