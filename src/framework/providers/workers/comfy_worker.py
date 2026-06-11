@@ -1214,9 +1214,9 @@ class ComfyAgentWorker(ComfyWorker):
                     context=context,
                     abort_on_cleanup=False,
                 )
-            except asyncio.CancelledError:
-                # submit 段被取消:prompt 可能已 queue 也可能没有 → 裸 cancel
-                # best-effort(残留边界见 LLD cancel 小节)
+            except (WorkerTimeout, asyncio.CancelledError):
+                # submit 段超时 / 被取消:prompt 可能已 queue 也可能没有 →
+                # 裸 cancel best-effort(残留边界见 LLD cancel 小节)
                 await self._abort_comfy_prompt(None)
                 raise
             prompt_id = sdata.get("prompt_id")
@@ -1240,8 +1240,10 @@ class ComfyAgentWorker(ComfyWorker):
                     context=context,
                     abort_on_cleanup=False,
                 )
-            except asyncio.CancelledError:
-                # wait 段被取消:精确取消自己的 prompt(interrupt + queue 删除)
+            except (WorkerTimeout, asyncio.CancelledError):
+                # wait 段超时(CLI 内部 error_code=timeout 或 wall-clock 挂死)
+                # / 被取消:精确取消自己的 prompt(interrupt + queue 删除),
+                # 防僵尸 GPU prompt 继续烧卡 + retry 叠加(spec §4)
                 await self._abort_comfy_prompt(prompt_id)
                 raise
             if "outputs" not in wdata or not isinstance(wdata["outputs"], dict):

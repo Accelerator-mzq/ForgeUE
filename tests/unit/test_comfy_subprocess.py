@@ -21,6 +21,7 @@ Requirement "ComfyUI subprocess failure modes"):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
@@ -123,6 +124,37 @@ class _AsyncFakeProcess:
 
     def kill(self):
         pass
+
+
+class _HangingFakeProcess:
+    """communicate() 挂起的 fake proc:模拟 CLI 子进程挂死 / 长任务执行中。
+    terminate()/kill() 后 communicate()/wait() 返回(模拟真进程被杀)。"""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self._dead = None  # lazy:在首个 await 点创建,绑定当前 loop
+
+    def _ensure_event(self):
+        import asyncio as _aio
+        if self._dead is None:
+            self._dead = _aio.Event()
+        return self._dead
+
+    async def communicate(self):
+        await self._ensure_event().wait()
+        return (b"", b"")
+
+    async def wait(self):
+        await self._ensure_event().wait()
+        return self.returncode
+
+    def terminate(self):
+        self.returncode = -15
+        self._ensure_event().set()
+
+    def kill(self):
+        self.returncode = -9
+        self._ensure_event().set()
 
 
 def _make_async_completed(stdout: str, returncode: int = 0, stderr: str = "") -> _AsyncFakeProcess:
@@ -2753,3 +2785,108 @@ async def test_mesh_prompt_id_recorded_in_candidate_metadata(tmp_path):
             num_candidates=1,
         )
     assert cands[0].metadata["comfy_prompt_id"] == "fake-prompt-1"
+
+
+# ---------------------------------------------------------------------------
+# detach-wait change Task 4: cancel-on-timeout + 取消归因
+# ---------------------------------------------------------------------------
+
+
+def _route_with_cancel_capture(wait_proc_factory, cancel_cmds: list):
+    """side_effect callable 工厂:submit → canned ok;cancel → 记录 cmd;
+    其余(wait 段)→ wait_proc_factory()。"""
+    def _route(*a, **kw):
+        if "--detach" in a:
+            return _make_async_completed(_detach_ok_stdout())
+        if "cancel" in a:
+            cancel_cmds.append(a)
+            return _make_async_completed(json.dumps({"ok": True}))
+        return wait_proc_factory()
+    return _route
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_error_code_cancels_prompt_then_raises_worker_timeout(tmp_path):
+    """spec §4 新行为:wait 返回 error_code=timeout → 先 cancel --prompt-id
+    再 raise WorkerTimeout(关僵尸 GPU prompt 边界 — 原阻塞模式下 CLI 超时
+    退出后 prompt 继续烧 GPU,retry 再叠一个)。"""
+    worker = _make_worker(tmp_path)
+    cancel_cmds: list = []
+    timeout_json = json.dumps({
+        "ok": False, "error": "TimeoutError: Prompt 'x' did not complete within 120s",
+        "error_code": "timeout",
+    })
+    route = _route_with_cancel_capture(
+        lambda: _make_async_completed(timeout_json, returncode=2), cancel_cmds)
+    with _patch_create_subprocess_exec(side_effect=route):
+        with pytest.raises(WorkerTimeout):
+            await worker.agenerate(
+                spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1)
+    assert len(cancel_cmds) == 1, "wait timeout 后应恰好 cancel 1 次"
+    assert "--prompt-id" in cancel_cmds[0] and "fake-prompt-1" in cancel_cmds[0]
+
+
+@pytest.mark.asyncio
+async def test_wait_wallclock_timeout_cancels_prompt_then_raises_worker_timeout(
+    tmp_path, monkeypatch,
+):
+    """wall-clock 超时(wait 子进程挂死)→ terminate 子进程 + cancel --prompt-id
+    + raise WorkerTimeout。"""
+    import framework.providers.workers.comfy_worker as cw
+    monkeypatch.setattr(cw, "_SUBPROC_BUFFER_S", 0.05)
+    worker = _make_worker(tmp_path)
+    cancel_cmds: list = []
+    route = _route_with_cancel_capture(lambda: _HangingFakeProcess(), cancel_cmds)
+    with _patch_create_subprocess_exec(side_effect=route):
+        with pytest.raises(WorkerTimeout):
+            await worker.agenerate(
+                spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1,
+                timeout_s=0.05)
+    assert len(cancel_cmds) == 1
+    assert "--prompt-id" in cancel_cmds[0] and "fake-prompt-1" in cancel_cmds[0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_wait_stage_aborts_with_prompt_id(tmp_path):
+    """CancelledError 落在 wait 段 → cancel --prompt-id(归因升级:原裸 cancel)。"""
+    worker = _make_worker(tmp_path)
+    cancel_cmds: list = []
+    route = _route_with_cancel_capture(lambda: _HangingFakeProcess(), cancel_cmds)
+    with _patch_create_subprocess_exec(side_effect=route):
+        task = asyncio.ensure_future(worker.agenerate(
+            spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1))
+        # 等 task 推进到 wait 段挂起点:_last_prompt_id 出现 = submit 已完成
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            if worker._last_prompt_id is not None:
+                break
+        assert worker._last_prompt_id == "fake-prompt-1", "task 未推进到 wait 段"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert len(cancel_cmds) == 1
+    assert "--prompt-id" in cancel_cmds[0] and "fake-prompt-1" in cancel_cmds[0]
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_submit_stage_falls_back_to_bare_cancel(tmp_path):
+    """CancelledError 落在 submit 段(还没拿到 prompt_id)→ 裸 cancel fallback。"""
+    worker = _make_worker(tmp_path)
+    cancel_cmds: list = []
+
+    def _route(*a, **kw):
+        if "cancel" in a:
+            cancel_cmds.append(a)
+            return _make_async_completed(json.dumps({"ok": True}))
+        # submit 段直接挂死(--detach cmd 也走这里)
+        return _HangingFakeProcess()
+
+    with _patch_create_subprocess_exec(side_effect=_route):
+        task = asyncio.ensure_future(worker.agenerate(
+            spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1))
+        await asyncio.sleep(0.05)   # 让 task 推进到 submit communicate await
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert len(cancel_cmds) == 1
+    assert "--prompt-id" not in cancel_cmds[0]
