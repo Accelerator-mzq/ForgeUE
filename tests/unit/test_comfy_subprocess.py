@@ -2407,3 +2407,49 @@ def test_generate_mesh_path_value_with_non_input_image_key_raises(tmp_path):
             source_image_filename=str(staged),       # 路径值 → 需要 auto-upload
             num_candidates=1,
         )
+
+
+# ---------------------------------------------------------------------------
+# detach-wait change Task 1: 共享 CLI helper 防 drift fence
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_all_four_run_once_methods_route_through_shared_cli_helper(
+    tmp_path, monkeypatch,
+):
+    """防 drift fence(detach-wait change):4 条 _run_once_*_async 的 subprocess
+    块必须共走 _invoke_comfy_cli_once,防止 4 份重复 diff 复发。
+    spy 替换 helper 并短路 raise;每个 capability 调用后断言 helper 被调用。"""
+    contexts: list[str] = []
+
+    async def _spy(self, *, cmd, wall_timeout_s, cli_timeout_s, context, **kw):
+        contexts.append(context)
+        raise WorkerError("spy short-circuit")
+
+    monkeypatch.setattr(ComfyAgentWorker, "_invoke_comfy_cli_once", _spy)
+
+    def _mk(model_id: str) -> ComfyAgentWorker:
+        scripts_dir = tmp_path / f"scripts_{model_id.replace('/', '_')}"
+        (scripts_dir / "comfyui_api").mkdir(parents=True)
+        art = tmp_path / f"art_{model_id.replace('/', '_')}"
+        art.mkdir()
+        return ComfyAgentWorker(
+            scripts_dir=scripts_dir, model_id=model_id, run_id="r",
+            project_id="p", artifacts_dir=art,
+        )
+
+    with pytest.raises(WorkerError):
+        await _mk("comfy/local").agenerate(
+            spec={"comfy_workflow": "GameAssets/x"}, num_candidates=1)
+    with pytest.raises(WorkerError):
+        await _mk("comfy/local-mesh").agenerate_mesh(
+            spec={"comfy_workflow": "GameAssets/x"},
+            source_image_filename="stub.png")
+    with pytest.raises(WorkerError):
+        await _mk("comfy/local-audio").agenerate_audio(
+            spec={"comfy_workflow": "Audio_Workflows/x"})
+    with pytest.raises(WorkerError):
+        await _mk("comfy/local-video").agenerate_video(
+            spec={"comfy_workflow": "Vedio/x"})
+    assert len(contexts) == 4, f"4 条 _run_once 应各调 helper 1 次,实际 {contexts!r}"

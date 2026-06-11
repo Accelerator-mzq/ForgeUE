@@ -903,8 +903,7 @@ class ComfyAgentWorker(ComfyWorker):
 
         submit→poll 段整体在 async with _comfy_submit_lock(): 内,
         确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
-        超时时 raise WorkerTimeout;cleanup 走 terminate → kill。
-        后续 Task 4 会在 finally 前加 _abort_comfy_prompt(server-side /interrupt)。
+        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
         """
         cmd = [
             str(self.python_exe), "-m", "comfyui_api", "run",
@@ -915,71 +914,12 @@ class ComfyAgentWorker(ComfyWorker):
             "--timeout", str(int(timeout_s)),
         ]
         async with _comfy_submit_lock():
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    cwd=str(self.scripts_dir),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
-                self._last_proc = proc
-            except FileNotFoundError as exc:
-                raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker: failed to spawn subprocess "
-                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-                ) from exc
-            try:
-                raw_out, raw_err = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout_s + _SUBPROC_BUFFER_S,
-                )
-            except asyncio.TimeoutError as exc:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker subprocess wall-clock exceeded "
-                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
-                ) from exc
-            finally:
-                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
-                if proc.returncode is None:
-                    await self._abort_comfy_prompt()
-                    proc.terminate()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                    await proc.wait()
-
-        # stdout/stderr 转 UTF-8 文本(沿 G11 R1 fix:errors="replace")
-        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
-        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
-
-        # 把 returncode 绑定到变量,便于像 CompletedProcess 一样复用
-        returncode = proc.returncode
-
-        # Parse stdout JSON; map failures per spec D5 table.
-        stdout = stdout_text
-        if not stdout:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: empty stdout (exit code {returncode}; "
-                f"stderr first 500 chars: {stderr_text[:500]!r})"
+            data, returncode = await self._invoke_comfy_cli_once(
+                cmd=cmd,
+                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
+                cli_timeout_s=timeout_s,
+                context="ComfyAgentWorker",
             )
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: stdout is not valid JSON "
-                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
-            ) from exc
-
-        if not isinstance(data, dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker: stdout JSON is not a dict (got {type(data).__name__})"
-            )
-        if not data.get("ok"):
-            # v3.3:error_code 优先 + marker fallback,共享分类 helper
-            _raise_comfy_failure(data, returncode, "ComfyAgentWorker")
 
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
@@ -1153,6 +1093,88 @@ class ComfyAgentWorker(ComfyWorker):
                 except Exception:  # noqa: BLE001 — cleanup best-effort
                     pass
 
+    async def _invoke_comfy_cli_once(
+        self,
+        *,
+        cmd: list[str],
+        wall_timeout_s: float,
+        cli_timeout_s: float,
+        context: str,
+        abort_on_cleanup: bool = True,
+    ) -> tuple[dict, int]:
+        """一次 comfyui_api CLI 子进程调用的共享低层封装(detach-wait change Task 1)。
+
+        收敛原 4 条 _run_once_*_async 的同构块:spawn → communicate(wall-clock
+        守门)→ cleanup(abort/terminate/kill)→ decode → stdout JSON 解析 →
+        ok=false 走 _raise_comfy_failure 分类。调用方负责持有 _comfy_submit_lock
+        与 outputs 字段校验(detach submit 响应没有 outputs 字段)。
+        abort_on_cleanup:cleanup 时是否先发 server-side abort(裸 cancel);
+        detach 协议下取消归因上移到 orchestration 层时传 False。
+        返回 (stdout JSON dict, returncode)。
+        """
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=str(self.scripts_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            # 测试钩子:保存当前 proc 供 cancel 测试断言终态
+            self._last_proc = proc
+        except FileNotFoundError as exc:
+            raise WorkerUnsupportedResponse(
+                f"{context}: failed to spawn subprocess "
+                f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
+                f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
+            ) from exc
+        try:
+            raw_out, raw_err = await asyncio.wait_for(
+                proc.communicate(), timeout=wall_timeout_s,
+            )
+        except asyncio.TimeoutError as exc:
+            raise WorkerTimeout(
+                f"{context} subprocess wall-clock exceeded "
+                f"{wall_timeout_s}s (CLI internal timeout was {cli_timeout_s}s)"
+            ) from exc
+        finally:
+            if proc.returncode is None:
+                if abort_on_cleanup:
+                    await self._abort_comfy_prompt()
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                await proc.wait()
+
+        # stdout/stderr 转 UTF-8 文本
+        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
+        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
+        returncode = proc.returncode
+
+        # 空 stdout 守门
+        if not stdout_text:
+            raise WorkerUnsupportedResponse(
+                f"{context}: empty stdout (exit code {returncode}; "
+                f"stderr first 500 chars: {stderr_text[:500]!r})"
+            )
+        # JSON 解析守门
+        try:
+            data = json.loads(stdout_text)
+        except json.JSONDecodeError as exc:
+            raise WorkerUnsupportedResponse(
+                f"{context}: stdout is not valid JSON "
+                f"(exit code {returncode}; first 500 chars: {stdout_text[:500]!r})"
+            ) from exc
+        if not isinstance(data, dict):
+            raise WorkerUnsupportedResponse(
+                f"{context}: stdout JSON is not a dict (got {type(data).__name__})"
+            )
+        # ok=false 走共享分类 helper(v3.3 error_code 优先 + marker fallback)
+        if not data.get("ok"):
+            _raise_comfy_failure(data, returncode, context)
+        return data, returncode
+
     async def agenerate_mesh(
         self,
         *,
@@ -1267,6 +1289,7 @@ class ComfyAgentWorker(ComfyWorker):
 
         submit→poll 段整体在 async with _comfy_submit_lock(): 内,
         确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
+        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
         产物构造走 mesh path:
         - 从 outputs.glb 路径读 GLB bytes 到 MeshCandidate.data
         - 不做 worker 内部 in-tree copy(由 ArtifactRepository.put 自动落 in-tree)
@@ -1282,66 +1305,13 @@ class ComfyAgentWorker(ComfyWorker):
             "--timeout", str(int(timeout_s)),
         ]
         async with _comfy_submit_lock():
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    cwd=str(self.scripts_dir),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
-                self._last_proc = proc
-            except FileNotFoundError as exc:
-                raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.agenerate_mesh: failed to spawn subprocess "
-                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-                ) from exc
-            try:
-                raw_out, raw_err = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout_s + _SUBPROC_BUFFER_S,
-                )
-            except asyncio.TimeoutError as exc:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker.agenerate_mesh subprocess wall-clock exceeded "
-                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
-                ) from exc
-            finally:
-                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
-                if proc.returncode is None:
-                    await self._abort_comfy_prompt()
-                    proc.terminate()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                    await proc.wait()
-
-        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
-        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
-        returncode = proc.returncode
-
-        stdout = stdout_text
-        if not stdout:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_mesh: empty stdout (exit code {returncode}; "
-                f"stderr first 500 chars: {stderr_text[:500]!r})"
+            data, returncode = await self._invoke_comfy_cli_once(
+                cmd=cmd,
+                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
+                cli_timeout_s=timeout_s,
+                context="ComfyAgentWorker.agenerate_mesh",
             )
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_mesh: stdout is not valid JSON "
-                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
-            ) from exc
-        if not isinstance(data, dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_mesh: stdout JSON is not a dict (got {type(data).__name__})"
-            )
-        if not data.get("ok"):
-            # v3.3:error_code 优先 + marker fallback,共享分类 helper
-            _raise_comfy_failure(data, returncode, "ComfyAgentWorker.agenerate_mesh")
+
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.agenerate_mesh: stdout JSON missing 'outputs' field or "
@@ -1496,6 +1466,7 @@ class ComfyAgentWorker(ComfyWorker):
 
         submit→poll 段整体在 async with _comfy_submit_lock(): 内,
         确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
+        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
         产物构造走 audio path:
         - 从 outputs.audio 路径读 audio bytes
         - 扩展名 whitelist + magic bytes 二次校验(F5 round-1)
@@ -1510,66 +1481,13 @@ class ComfyAgentWorker(ComfyWorker):
             "--timeout", str(int(timeout_s)),
         ]
         async with _comfy_submit_lock():
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    cwd=str(self.scripts_dir),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
-                self._last_proc = proc
-            except FileNotFoundError as exc:
-                raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.agenerate_audio: failed to spawn subprocess "
-                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-                ) from exc
-            try:
-                raw_out, raw_err = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout_s + _SUBPROC_BUFFER_S,
-                )
-            except asyncio.TimeoutError as exc:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker.agenerate_audio subprocess wall-clock exceeded "
-                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
-                ) from exc
-            finally:
-                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
-                if proc.returncode is None:
-                    await self._abort_comfy_prompt()
-                    proc.terminate()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                    await proc.wait()
-
-        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
-        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
-        returncode = proc.returncode
-
-        stdout = stdout_text
-        if not stdout:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_audio: empty stdout (exit code {returncode}; "
-                f"stderr first 500 chars: {stderr_text[:500]!r})"
+            data, returncode = await self._invoke_comfy_cli_once(
+                cmd=cmd,
+                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
+                cli_timeout_s=timeout_s,
+                context="ComfyAgentWorker.agenerate_audio",
             )
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_audio: stdout is not valid JSON "
-                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
-            ) from exc
-        if not isinstance(data, dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_audio: stdout JSON is not a dict (got {type(data).__name__})"
-            )
-        if not data.get("ok"):
-            # v3.3:error_code 优先 + marker fallback,共享分类 helper
-            _raise_comfy_failure(data, returncode, "ComfyAgentWorker.agenerate_audio")
+
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.agenerate_audio: stdout JSON missing 'outputs' field or "
@@ -1745,6 +1663,7 @@ class ComfyAgentWorker(ComfyWorker):
 
         submit→poll 段整体在 async with _comfy_submit_lock(): 内,
         确保同一 loop 内同时只有 1 个 comfy subprocess 运行。
+        subprocess 块委托 _invoke_comfy_cli_once 共享 helper(detach-wait change Task 1)。
         产物构造走 video path:
         - 从 outputs.video 路径读 video bytes
         - 扩展名 whitelist mp4-only + BMFF strict 5-tuple 校验
@@ -1759,66 +1678,13 @@ class ComfyAgentWorker(ComfyWorker):
             "--timeout", str(int(timeout_s)),
         ]
         async with _comfy_submit_lock():
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    cwd=str(self.scripts_dir),
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                # Task 4 测试钩子:保存当前 proc 供 cancel 后检查 returncode
-                self._last_proc = proc
-            except FileNotFoundError as exc:
-                raise WorkerUnsupportedResponse(
-                    f"ComfyAgentWorker.agenerate_video: failed to spawn subprocess "
-                    f"(python_exe={self.python_exe!r}, scripts_dir={self.scripts_dir!r}): "
-                    f"{exc}; verify FORGEUE_COMFY_SCRIPTS_DIR env var"
-                ) from exc
-            try:
-                raw_out, raw_err = await asyncio.wait_for(
-                    proc.communicate(),
-                    timeout=timeout_s + _SUBPROC_BUFFER_S,
-                )
-            except asyncio.TimeoutError as exc:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker.agenerate_video subprocess wall-clock exceeded "
-                    f"{timeout_s + _SUBPROC_BUFFER_S}s (CLI internal timeout was {timeout_s}s)"
-                ) from exc
-            finally:
-                # Task 4:先 POST /interrupt 停服务端 GPU job,再 terminate CLI 子进程
-                if proc.returncode is None:
-                    await self._abort_comfy_prompt()
-                    proc.terminate()
-                    try:
-                        await asyncio.wait_for(proc.wait(), timeout=_PROC_GRACE_S)
-                    except asyncio.TimeoutError:
-                        proc.kill()
-                    await proc.wait()
-
-        stdout_text = raw_out.decode("utf-8", errors="replace").strip() if raw_out else ""
-        stderr_text = raw_err.decode("utf-8", errors="replace").strip() if raw_err else ""
-        returncode = proc.returncode
-
-        stdout = stdout_text
-        if not stdout:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_video: empty stdout (exit code {returncode}; "
-                f"stderr first 500 chars: {stderr_text[:500]!r})"
+            data, returncode = await self._invoke_comfy_cli_once(
+                cmd=cmd,
+                wall_timeout_s=timeout_s + _SUBPROC_BUFFER_S,
+                cli_timeout_s=timeout_s,
+                context="ComfyAgentWorker.agenerate_video",
             )
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError as exc:
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_video: stdout is not valid JSON "
-                f"(exit code {returncode}; first 500 chars: {stdout[:500]!r})"
-            ) from exc
-        if not isinstance(data, dict):
-            raise WorkerUnsupportedResponse(
-                f"ComfyAgentWorker.agenerate_video: stdout JSON is not a dict (got {type(data).__name__})"
-            )
-        if not data.get("ok"):
-            # v3.3:error_code 优先 + marker fallback,共享分类 helper
-            _raise_comfy_failure(data, returncode, "ComfyAgentWorker.agenerate_video")
+
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.agenerate_video: stdout JSON missing 'outputs' field or "
