@@ -1107,6 +1107,8 @@ class ComfyAgentWorker(ComfyWorker):
         收敛原 4 条 _run_once_*_async 的同构块:spawn → communicate(wall-clock
         守门)→ cleanup(abort/terminate/kill)→ decode → stdout JSON 解析 →
         ok=false 走 _raise_comfy_failure 分类。调用方负责持有 _comfy_submit_lock
+        (本方法整体在锁内执行,**包括 JSON 解析段** — 解析无 await 点,与原
+        锁外解析并发语义等价,但后续在本方法内加异步操作时须留意锁持有范围)
         与 outputs 字段校验(detach submit 响应没有 outputs 字段)。
         abort_on_cleanup:cleanup 时是否先发 server-side abort(裸 cancel);
         detach 协议下取消归因上移到 orchestration 层时传 False。
