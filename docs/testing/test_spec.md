@@ -592,8 +592,8 @@ Codex 独立 review 指出老 offline 测试里的 `VISUAL_A/B/C` / `ORIGINAL_/R
 ### 4 Capability 命令矩阵
 
 **默认手工 smoke 前置(lifecycle=`none`,沿 `CLAUDE.md` ComfyUI 接入段)**:
-- 先确保 ComfyUI server running;本机推荐 `python -m factory_v3 serve` 启服务(detached, ~30-90s 冷启动;用户自管;`python -m factory_v3 stop` 停)
-- `factory_v3 serve/stop` 只是本机 ComfyUI server lifecycle helper;ForgeUE 生成/探活/取消仍走 `python -m comfyui_api run/status/cancel`
+- 先确保 ComfyUI server running;本机推荐 `python -m comfyui_api serve` 启服务(detached, ~30-90s 冷启动;用户自管;`python -m comfyui_api stop` 停;v3.3 起 comfyui_api 自带,`factory_v3 serve/stop` 仍是兼容入口)
+- ForgeUE 生成/探活/取消走 `python -m comfyui_api run/status/cancel`;框架托管 lifecycle(`ComfyLifecycleManager._spawn_serve/_spawn_stop`)同走 `comfyui_api serve/stop`(2026-06-11 迁移,fence `test_spawn_serve_uses_comfyui_api_serve` / `test_spawn_stop_uses_comfyui_api_stop`)
 - 然后 export env + 跑 ForgeUE
 
 **通用 env**:
@@ -606,7 +606,7 @@ export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
 | Capability | Bundle path | 额外 env | 命令 |
 |---|---|---|---|
 | **Image** | `examples/comfy_local_smoke.json` | (无) | `python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>` |
-| **Mesh** | `examples/comfy_local_smoke_mesh.json` | `FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input` | `python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>` |
+| **Mesh** | `examples/comfy_local_smoke_mesh.json` | (无;2026-06-11 起 source image 走上游 v3 auto-upload,`FORGEUE_COMFY_INPUT_DIR` 退役) | `python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>` |
 | **Audio** | `examples/comfy_local_smoke_audio.json` | (无) | `python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id <id>` |
 | **Video** | `examples/comfy_local_smoke_video.json` | (无) | `python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>` |
 
