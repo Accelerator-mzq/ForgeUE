@@ -11,6 +11,8 @@ v1 HTTPComfyWorker (raw HTTP /prompt + /history + /view) 在 commit 292420a 前�
 v2 (comfy-agent-cli-adoption): subprocess.run 同步 subprocess。
 v3 (executor-async-rewrite TBD-010): asyncio.create_subprocess_exec 异步 subprocess
    + comfy-submission 串行锁 + agenerate* async 主面 + generate* sync shim 兼容。
+v4 (comfy-detach-wait-adoption): 阻塞 `run` 换 `run --detach` + `wait --prompt-id`
+   两段式 submit-then-poll;cancel 升级 `cancel --prompt-id` 精确取消。
 
 四个暴露的类:
 - ComfyWorker     : ABC adapter surface(GenerateImageExecutor 使用)
@@ -22,19 +24,22 @@ v3 (executor-async-rewrite TBD-010): asyncio.create_subprocess_exec 异步 subpr
   → 构建 ComfyAgentWorker(scripts_dir=env, run_id, project_id, artifacts_dir=ctx.run_dir)
   → 调用 worker.agenerate(spec={comfy_workflow, comfy_params, comfy_lifecycle},
     num_candidates, seed, timeout_s)
-  → asyncio.create_subprocess_exec(sys.executable, "-m", "comfyui_api", "run",
-    "--workflow", X, "--params", json.dumps(P), "--project", project_id,
-    "--lifecycle", "none", "--timeout", str(timeout_s), cwd=scripts_dir)
-  → 解析 stdout JSON,复制 outputs.images 到 artifacts_dir/comfy/,
-    构建 list[ImageCandidate]
+  → _run_comfy_prompt 两段式(锁内全程串行):
+    1. submit: `comfyui_api run --workflow X --params P --project ID
+       --lifecycle none --timeout N --detach` → 立即返回 prompt_id
+    2. wait:   `comfyui_api wait --prompt-id <id> --timeout N` → 收割 outputs
+  → 解析 wait stdout JSON,复制 outputs.images 到 artifacts_dir/comfy/,
+    构建 list[ImageCandidate](metadata 含 comfy_prompt_id 可追溯)
 
 并发安全:comfy-submission 串行锁(_comfy_submit_lock())确保同一 event loop 内
 同时只有 1 个 comfy subprocess 在运行。per-loop WeakKeyDictionary 防止跨 loop
 RuntimeError(asyncio.Lock 绑定到首次 waiter 的 loop,模块级单一 Lock 跨 loop 会炸)。
 
-Cancel 语义:async 主面下 CancelledError 可以在 await 点到达 _run_once_async*,
-finally 块执行 proc.terminate() + proc.kill() 清理。后续 Task 4 会加 /interrupt
-server-side abort。
+Cancel 语义:async 主面下 CancelledError 在 await 点到达 _run_comfy_prompt,
+归因集中在 except 层 — wait 段被取消发 `cancel --prompt-id <id>`(interrupt +
+从 queue 删除;注意上游 interrupt 部分仍是全局 /interrupt,"精确"只体现在 queue
+删除),submit 段被取消退回裸 cancel(窄窗口 fallback)。CLI 子进程清理
+(terminate → grace → kill)由 _invoke_comfy_cli_once finally 负责。
 """
 from __future__ import annotations
 

@@ -668,7 +668,7 @@ def test_generate_video_runs_subprocess_num_candidates_times_with_per_candidate_
 # ---------------------------------------------------------------------------
 
 
-def test_generate_video_metadata_records_5_comfy_provenance_keys(tmp_path):
+def test_generate_video_metadata_records_6_comfy_provenance_keys(tmp_path):
     """D8 + round-3 PF1:VideoCandidate.metadata 含 6 个 comfy_* provenance keys
     (comfy_manifest / comfy_params_snapshot / comfy_capability="video" /
     comfy_original_filename / comfy_prompt_id / comfy_subprocess_run_metadata)。
