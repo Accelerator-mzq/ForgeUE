@@ -620,7 +620,7 @@ The system SHALL ensure that Level 2 ComfyUI verification(image / mesh / audio /
 The verification mechanism SHALL be **tool-agnostic**(自 `retire-forgeue-protocol-layer-fully` 起,2026-05-10):无 `tools/forgeue_verify.py` wrapper / 无 `_build_plan()` 内部清单。Level 2 验证由 user 手工跑 `python -m pytest` 或 `python -m framework.run` 命令:
 
 - **Image** capability:`python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>`(bundle 含 `provider_policy.models_ref: image_local` 解析至 `comfy/local`)
-- **Mesh** capability:`python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>`(bundle 解析至 `comfy/local-mesh`,需 `FORGEUE_COMFY_INPUT_DIR` env)
+- **Mesh** capability:`python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>`(bundle 解析至 `comfy/local-mesh`;2026-06-11 起 source image 走上游 v3 auto-upload,`FORGEUE_COMFY_INPUT_DIR` 退役)
 - **Audio** capability:`python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id <id>`(bundle 解析至 `comfy/local-audio`)
 - **Video** capability:`python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>`(bundle 解析至 `comfy/local-video`)
 
@@ -636,7 +636,7 @@ User SHALL document the Level 2 verification matrix in `docs/testing/test_spec.m
 
 ## Scenario: Level 2 mesh / audio / video verification dispatches to capability-specific ComfyAgentWorker subprocess
 
-**Given** the corresponding env(mesh: `FORGEUE_COMFY_SCRIPTS_DIR` + `FORGEUE_COMFY_INPUT_DIR`;audio: `FORGEUE_COMFY_SCRIPTS_DIR`;video: `FORGEUE_COMFY_SCRIPTS_DIR`)
+**Given** the corresponding env(mesh / audio / video 均只需 `FORGEUE_COMFY_SCRIPTS_DIR`;2026-06-11 起 mesh 的 `FORGEUE_COMFY_INPUT_DIR` 退役)
 **When** user runs corresponding `python -m framework.run --task examples/comfy_local_smoke_<cap>.json --live-llm`
 **Then** dispatch SHALL reach the capability-specific `ComfyAgentWorker.generate_<cap>()` subprocess
 **And** the bundle SHALL resolve to `comfy/local-<cap>` (mesh / audio / video) virtual model id

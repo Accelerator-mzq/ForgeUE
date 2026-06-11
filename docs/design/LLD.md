@@ -844,9 +844,14 @@ class ExternalProcessLifecycle(ABC):
 
 **`ComfyLifecycleManager(ExternalProcessLifecycle)`**:
 
-- 内部 `_start_comfy_server()`:spawn `python -m factory_v3 serve`(或配置的启动命令) + `_poll_until_ready(timeout=120s)` 轮询 `/system_stats` 确认就绪
-- `release(mode, reason)`:根据 `(mode, reason)` 决策表决定是否关闭进程;`ensure_running` 不 stop,`ensure_release` 在 run/cascade/cancel/error/close 后 stop,`self_managed_session` 仅 `orchestrator_close` stop
+- 内部 `_spawn_serve()`:spawn `python -m comfyui_api serve`(detached;2026-06-11 `comfy-agent-api-v3-adaptation` 自 `factory_v3 serve` 迁移——上游 v3.3 补齐 comfyui_api 自身 serve/stop CLI 入口,ForgeUE 对 factory_v3 零依赖)+ `_wait_ready(timeout=120s)` 轮询 `comfyui_api status` 的 `online` 字段确认就绪
+- `release(mode, reason)`:根据 `(mode, reason)` 决策表决定是否关闭进程;`ensure_running` 不 stop,`ensure_release` 在 run/cascade/cancel/error/close 后 stop,`self_managed_session` 仅 `orchestrator_close` stop;stop 走 `python -m comfyui_api stop`(只关 `.comfyui.pid` 记录的自启进程)
 - `_send_interrupt()`:async `POST /interrupt` server-side abort
+
+**ComfyAgentWorker cancel 已知边界(2026-06-11 标注)**:
+
+- `comfyui_api cancel`(不带 `--prompt-id`)是 ComfyUI 全局 `/interrupt`;ComfyUI server 被多 agent / factory_v3 共享时可能中断他方正在执行的 prompt。单机单用户场景(当前部署形态)可接受。
+- 精确取消需 detach 模式先拿 `prompt_id` 再 `cancel --prompt-id`,见 `docs/backlog/active.md` 的 `comfy-detach-wait-adoption` follow-on。
 
 **Orchestrator 集成**:
 

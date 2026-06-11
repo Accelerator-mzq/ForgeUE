@@ -117,12 +117,13 @@ aliases:
     route = reg.resolve("image_local").preferred[0]
     assert route.provider_name == "comfy_api"
     assert route.provider_kind == "subprocess"
+    # input_dir 已退役(comfy-agent-api-v3-adaptation):yaml 里的同名键被容忍
+    # 但忽略(白名单不报 unknown-field),不进 provider_config
     assert route.provider_config == {
         "adapter": "comfy_agent_cli",
         "scripts_dir": "D:/AI/ComfyUI/scripts",
         "python_exe": "D:/Python/python.exe",
         "default_lifecycle": "ensure_running",
-        "input_dir": "D:/AI/ComfyUI/input",
         "output_root": "D:/AI/ComfyUI",
     }
 

@@ -389,7 +389,7 @@ async def test_spawn_serve_writes_log_when_env_set(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_spawn_stop_self_bounded_on_hang(monkeypatch):
-    """F2 Round 2 fence:_spawn_stop 在 factory_v3 stop 子进程卡死时,
+    """F2 Round 2 fence:_spawn_stop 在 comfyui_api stop 子进程卡死时,
     必须经 _STOP_TIMEOUT_S 超时 → 调 kill 兜底 → 不静默无限阻塞。"""
     import framework.runtime.lifecycle as lc_mod
 
@@ -399,7 +399,7 @@ async def test_spawn_stop_self_bounded_on_hang(monkeypatch):
     kill_called = {"n": 0}
 
     class _HangingStopProc:
-        """wait() 永远不返回(模拟 factory_v3 stop 子进程卡死)。"""
+        """wait() 永远不返回(模拟 comfyui_api stop 子进程卡死)。"""
         returncode = None
 
         async def wait(self):
@@ -447,7 +447,7 @@ async def test_spawn_stop_self_bounded_on_hang(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_spawn_stop_happy_path_no_kill(monkeypatch):
-    """F2 fence pair:_spawn_stop happy path(factory_v3 stop 正常完成)不应调 kill。"""
+    """F2 fence pair:_spawn_stop happy path(comfyui_api stop 正常完成)不应调 kill。"""
     kill_called = {"n": 0}
 
     class _NormalStopProc:
@@ -488,3 +488,40 @@ async def test_spawn_serve_uses_devnull_when_env_unset(monkeypatch):
         "env 未设时 stdout 应保持 DEVNULL"
     assert captured["kwargs"].get("stderr") == asyncio.subprocess.DEVNULL, \
         "env 未设时 stderr 应保持 DEVNULL"
+
+
+# ── comfy-agent-api-v3-adaptation(2026-06-11):serve/stop 迁移 comfyui_api ────
+# 上游 v3.3 给 comfyui_api 补了 serve/stop CLI 子命令(实现 2026-06-11 已自
+# factory_v3 迁入 comfyui_api.serve,factory_v3 入口降为兼容 shim)。
+# ForgeUE 迁移后对 factory_v3 模块零依赖,与 D-ScopeNoFactoryBlender 决策对齐。
+
+@pytest.mark.asyncio
+async def test_spawn_serve_uses_comfyui_api_serve(monkeypatch):
+    """迁移 fence:_spawn_serve 调 `python -m comfyui_api serve`(不再 factory_v3)。"""
+    captured = {}
+
+    async def _capture(*args, **kwargs):
+        captured["args"] = args
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _capture)
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    await mgr._spawn_serve()
+    assert captured["args"][1:4] == ("-m", "comfyui_api", "serve"), \
+        f"_spawn_serve 必须走 comfyui_api serve,实际 argv: {captured['args']}"
+
+
+@pytest.mark.asyncio
+async def test_spawn_stop_uses_comfyui_api_stop(monkeypatch):
+    """迁移 fence:_spawn_stop 调 `python -m comfyui_api stop`(不再 factory_v3)。"""
+    captured = {}
+
+    async def _capture(*args, **kwargs):
+        captured["args"] = args
+        return _FakeProc(returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _capture)
+    mgr = ComfyLifecycleManager(scripts_dir="/fake")
+    await mgr._spawn_stop()
+    assert captured["args"][1:4] == ("-m", "comfyui_api", "stop"), \
+        f"_spawn_stop 必须走 comfyui_api stop,实际 argv: {captured['args']}"

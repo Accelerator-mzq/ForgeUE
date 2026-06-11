@@ -223,16 +223,16 @@ python -m framework.pricing_probe --apply
 
 ### 3.1 ComfyUI agent CLI pipeline(image / mesh / audio / video,真实出图)
 
-ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。默认 `config/models.yaml` `providers.comfy_api.subprocess.default_lifecycle` 仍是 `none`,所以 L2 live smoke 默认由外部确保 ComfyUI server running;也可显式设 `ensure_running` / `ensure_release` / `self_managed_session` 让框架托管 lifecycle。`factory_v3 serve/stop` 只是本机 ComfyUI server lifecycle helper;ForgeUE 生成/探活/取消仍走 `python -m comfyui_api run/status/cancel`。
+ComfyUI 自 v1.6 走 **agent CLI subprocess**(`python -m comfyui_api`),**不再用 HTTP**(`--comfy-url` 已移除)。默认 `config/models.yaml` `providers.comfy_api.subprocess.default_lifecycle` 仍是 `none`,所以 L2 live smoke 默认由外部确保 ComfyUI server running;也可显式设 `ensure_running` / `ensure_release` / `self_managed_session` 让框架托管 lifecycle。本机启停用 `python -m comfyui_api serve/stop`(v3.3 起自带;`factory_v3 serve/stop` 仍是兼容入口);ForgeUE 生成/探活/取消走 `python -m comfyui_api run/status/cancel`。
 
 ```bash
 # 默认手工 smoke(lifecycle=none)前置:确保 ComfyUI server running
-# 本机推荐用 factory_v3 serve/stop 启停服务;若已有常驻 ComfyUI,只要 comfyui_api status online 即可
-python -m factory_v3 serve
+# 本机推荐用 comfyui_api serve/stop 启停服务;若已有常驻 ComfyUI,只要 comfyui_api status online 即可
+python -m comfyui_api serve
 
 # 默认手工 smoke 终端 2:export env + 跑 ForgeUE 四 capability 冒烟
+# (FORGEUE_COMFY_INPUT_DIR 已退役:mesh source image 走上游 v3 auto-upload,2026-06-11)
 export FORGEUE_COMFY_SCRIPTS_DIR=D:/AI/ComfyUI/scripts
-export FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input   # 仅 mesh 需要
 python -m framework.run --task examples/comfy_local_smoke.json       --live-llm --run-id r_comfy_image
 python -m framework.run --task examples/comfy_local_smoke_mesh.json  --live-llm --run-id r_comfy_mesh
 python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id r_comfy_audio
@@ -241,9 +241,8 @@ python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm 
 
 ```powershell
 # PowerShell 等价(内联 env 拆为 $env: 赋值;server 已常驻时可跳过 serve)
-python -m factory_v3 serve
+python -m comfyui_api serve
 $env:FORGEUE_COMFY_SCRIPTS_DIR="D:/AI/ComfyUI/scripts"
-$env:FORGEUE_COMFY_INPUT_DIR="D:/AI/ComfyUI/apps/official-main-git-v092/input"
 python -m framework.run --task examples/comfy_local_smoke.json       --live-llm --run-id r_comfy_image
 python -m framework.run --task examples/comfy_local_smoke_mesh.json  --live-llm --run-id r_comfy_mesh
 python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id r_comfy_audio

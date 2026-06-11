@@ -6,8 +6,9 @@
 
 **ComfyUI 项目级配置主入口**:`config/models.yaml` 里的 `providers.comfy_api.subprocess`。
 `FORGEUE_COMFY_SCRIPTS_DIR` / `FORGEUE_COMFY_PYTHON_EXE` /
-`FORGEUE_COMFY_LIFECYCLE` / `FORGEUE_COMFY_INPUT_DIR` /
-`FORGEUE_COMFY_OUTPUT_ROOT` 仍保留为本机覆盖层。
+`FORGEUE_COMFY_LIFECYCLE` / `FORGEUE_COMFY_OUTPUT_ROOT` 仍保留为本机覆盖层。
+(`FORGEUE_COMFY_INPUT_DIR` 已退役,2026-06-11 `comfy-agent-api-v3-adaptation`:
+上游 v3 对 `input_image*` 本地路径自动 /upload/image,残留 env/yaml 键被容忍并忽略。)
 
 ## Engine Bridge / Godot 4 快查
 
@@ -22,22 +23,22 @@
 
 **4 capability** all closed under TBD-009(SRS v1.8 起):
 - **Image** capability(自 v1.6):`comfy_local` model id + `image_local` alias + ComfyUI manifest 名(NOT inline workflow_graph)
-- **Mesh** capability(自 v1.7 D10):`comfy_local_mesh` + `mesh_local` alias + image-to-mesh DAG;需 `FORGEUE_COMFY_INPUT_DIR`
+- **Mesh** capability(自 v1.7 D10):`comfy_local_mesh` + `mesh_local` alias + image-to-mesh DAG;source image 走 in-tree staging + 上游 v3 `input_image*` auto-upload(2026-06-11 起,无需任何 input 目录配置)
 - **Audio** capability(自 v1.7 Phase 2):`comfy_local_audio` + `audio_local` alias + text-to-audio 单 step;Stable Audio Open 1.0 / ACE-Step manifest;`Audio_Workflows/audio_stable_audio_example` 默认;format whitelist `{flac, mp3, wav}` + magic bytes 二次校验
-- **Video** capability(自 v1.8 Phase 3):`comfy_local_video` + `video_local` alias + text-to-video 单 step;**`Vedio/Wan2.1-T2V-1.3B_native_5sec`** 默认 manifest(D5 上游 `Vedio/` 拼写照实跟随,**不**做翻译;7 分钟 / 6GB VRAM);format **mp4-only**(round-2 F2 + round-3 PF3 sweep,webm follow-on `comfy-video-webm-adoption`)+ **BMFF strict 5-tuple header validation**(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject `box_size==1` largesize + major_brand non-empty);UE bridge `_KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + **D12 packaging path 分流**(mp4 落 `Content/Movies/<run_id>/` packaging 外挂,`.uasset` 落 `Content/Generated/<run_id>/`);5 个 video metadata 顶层字段始终 None(`duration_seconds` / `frame_count` / `width` / `height` / `fps`,留 follow-on `video-metadata-parser`)
+- **Video** capability(自 v1.8 Phase 3):`comfy_local_video` + `video_local` alias + text-to-video 单 step;smoke 默认 manifest 自 2026-06-11 切 **`Vedio/Wan2.1-T2V-1.3B_native_teacache`**(~2 分钟 / 6GB VRAM;`_5sec` ~7 分钟留 export example 与 probe baseline;D5 上游 `Vedio/` 拼写照实跟随,**不**做翻译);format **mp4-only**(round-2 F2 + round-3 PF3 sweep,webm follow-on `comfy-video-webm-adoption`)+ **BMFF strict 5-tuple header validation**(round-2 F4 + round-3 PF2:len + ftyp + box_size in [8,len] reject `box_size==1` largesize + major_brand non-empty);UE bridge `_KIND_MAP[("video","mp4")] = "file_media_source"` + `MS_` prefix + **D12 packaging path 分流**(mp4 落 `Content/Movies/<run_id>/` packaging 外挂,`.uasset` 落 `Content/Generated/<run_id>/`);5 个 video metadata 顶层字段始终 None(`duration_seconds` / `frame_count` / `width` / `height` / `fps`,留 follow-on `video-metadata-parser`)
 
   **D12 责任划分 update**(自 forge change `fix-export-d12-and-skipped-evidence-filter`,2026-05-08):D12 video mp4 路径分流责任**前移到 framework**(`ExportExecutor` drop loop + `manifest_builder.derive_drop_target` 单源 helper);framework 直接落 mp4 到 `Content/Movies/<run_id>/MS_<base>.mp4` final 位置,`domain_video.import_video_entry` 不再 copy(只创建 FileMediaSource `.uasset` + 从 source_uri 派生 `file_path`,加 D12 layout fence + source/target mismatch fence)。Evidence schema 加 `skip_reason: Literal["permission_denied", "no_handler"] | None = None` 字段使 `run_import.py` pre-scan filter 精确仅过滤 framework PermissionPolicy denied 的 skipped(不再误吞 UE-side no-handler skipped)。
 
 **ComfyUI 共享目录新增 ForgeUE 依赖(round-3 PF1 D-Runner-Extension + round-7 R2)**:
 - `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 函数加 `video` collection block(收集 VHS_VideoCombine 节点 legacy `gifs` UI key 装的 video preview dict)— user-authored 修改,ComfyUI 重装时**手工保留**(否则 ForgeUE video L2 evidence 失败);沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式
-- `D:/AI/ComfyUI/scripts/comfyui_api/manifests/Vedio/Wan2.1-T2V-1.3B_native_5sec.json` + `..._native.json`(round-7 R2 补漏):两份 manifest 必须暴露 5 个 VHS_VideoCombine widget default patches `frame_rate=24.0` / `loop_count=0` / `format="video/h264-mp4"` / `pingpong=false` / `save_output=true`;不暴露 → ComfyUI prompt validation HTTP 400(L2 实测)— user-authored,ComfyUI 重装时**手工保留**
+- `D:/AI/ComfyUI/scripts/comfyui_api/manifests/Vedio/Wan2.1-T2V-1.3B_native_5sec.json` + `..._native.json`(round-7 R2 补漏)+ `..._native_teacache.json`(2026-06-11 补,smoke 默认):三份 manifest 必须暴露 5 个 VHS_VideoCombine widget default patches `frame_rate=24.0` / `loop_count=0` / `format="video/h264-mp4"` / `pingpong=false` / `save_output=true`;不暴露 → ComfyUI prompt validation HTTP 400(L2 实测)— user-authored,ComfyUI 重装时**手工保留**
 
-**默认手工 smoke**(lifecycle=`none`;managed lifecycle 见 CLAUDE.md):先确保 ComfyUI server running;本机可用 `python -m factory_v3 serve` / `stop` 启停服务。`factory_v3` 在 ForgeUE 中只作为 ComfyUI server lifecycle helper,生成/探活/取消仍由 `python -m comfyui_api run/status/cancel` 承担。
+**默认手工 smoke**(lifecycle=`none`;managed lifecycle 见 CLAUDE.md):先确保 ComfyUI server running;本机可用 `python -m comfyui_api serve` / `stop` 启停服务(v3.3 起 comfyui_api 自带,`factory_v3 serve/stop` 仍是兼容入口)。ForgeUE 生成/探活/取消由 `python -m comfyui_api run/status/cancel` 承担,框架托管 lifecycle 也走 `comfyui_api serve/stop`(2026-06-11 迁移,对 factory_v3 零依赖)。
 ```bash
 python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>           # image-only
-python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>     # image-to-mesh (需 FORGEUE_COMFY_INPUT_DIR)
+python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>     # image-to-mesh (v3 auto-upload,无需 input 目录配置)
 python -m framework.run --task examples/comfy_local_smoke_audio.json --live-llm --run-id <id>    # text-to-audio (v1.7)
-python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>    # text-to-video (v1.8)
+python -m framework.run --task examples/comfy_local_smoke_video.json --live-llm --run-id <id>    # text-to-video (v1.8,默认 teacache ~2min)
 ```
 
 **probe opt-in**(per probes/ convention):

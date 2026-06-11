@@ -32,7 +32,7 @@ _STATUS_TIMEOUT_S = 30.0
 
 # F2 Round 2 fix:_spawn_stop 自身 wait_for 上限(秒)。
 # 设计 defense-in-depth:即使调用方未通过 _release_lifecycle_bounded(30s 兜底)
-# 而是直接 await manager.release(...),也保证 factory_v3 stop 子进程卡死时不无限阻塞。
+# 而是直接 await manager.release(...),也保证 comfyui_api stop 子进程卡死时不无限阻塞。
 _STOP_TIMEOUT_S = 60.0
 
 # (mode, reason) → 是否执行 stop。
@@ -82,7 +82,9 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
       冷启动期间若被 cancel,_wait_ready 抛出 CancelledError 但 flag 已为 True,
       后续 release 仍可正确执行 stop,不泄漏进程。
     - status() 通过 comfyui_api status 子命令探活;_spawn_serve/_spawn_stop
-      通过 factory_v3 serve/stop 控制进程生命周期。
+      通过 comfyui_api serve/stop 控制进程生命周期(2026-06-11 v3.3 起;此前走
+      factory_v3 serve/stop,上游补齐 comfyui_api CLI 入口后迁移,ForgeUE 对
+      factory_v3 零依赖)。
     """
 
     def __init__(
@@ -92,7 +94,7 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         python_exe: str | None = None,
         poll_interval_s: float = 2.0,
     ) -> None:
-        # ComfyUI scripts 目录(包含 comfyui_api 和 factory_v3 模块)
+        # ComfyUI scripts 目录(包含 comfyui_api 模块)
         self._scripts_dir = Path(scripts_dir)
         # 运行子进程使用的 Python 解释器;None 表示使用当前解释器
         self._python = python_exe or sys.executable
@@ -224,19 +226,19 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
                 self._framework_started = False
 
     async def _spawn_serve(self) -> None:
-        """通过 `python -m factory_v3 serve` 以 detached 方式启动 ComfyUI。
+        """通过 `python -m comfyui_api serve` 以 detached 方式启动 ComfyUI。
 
         fire-and-forget:不等待服务就绪,由 _wait_ready 轮询确认。
 
         Fluid Pause #2(2026-05-20 apply 阶段):若 FORGEUE_COMFY_LIFECYCLE_LOG
-        env 指定,把 stdout/stderr 重定向到该文件用于诊断 factory_v3 serve 冷
+        env 指定,把 stdout/stderr 重定向到该文件用于诊断 comfyui_api serve 冷
         启动失败;否则维持 DEVNULL(默认 detached 行为不变,完全后向兼容)。
         """
         # detached 启动:默认 stdout/stderr 丢 DEVNULL 防缓冲区阻塞。
         # FORGEUE_COMFY_LIFECYCLE_LOG 指定时改为重定向到文件,便于实机诊断。
         # _proc 命名明确表示"有意 detached"的子进程引用,不 await 其完成。
         # GC 时可能产生 ResourceWarning,属预期行为(无实际泄漏);实际进程由
-        # factory_v3 serve 在后台独立运行,由 _spawn_stop 负责关闭。
+        # comfyui_api serve 在后台独立运行,由 _spawn_stop 负责关闭。
         log_path_str = os.environ.get("FORGEUE_COMFY_LIFECYCLE_LOG")
         log_file = None
         stdout_target = asyncio.subprocess.DEVNULL
@@ -245,13 +247,13 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
             log_path = Path(log_path_str)
             log_path.parent.mkdir(parents=True, exist_ok=True)
             # 'ab':追加 + 二进制(subprocess fd 输出无文本转换);parent 关 fd
-            # 后子进程继承的 fd 仍有效,继续写入到 factory_v3 serve 终止
+            # 后子进程继承的 fd 仍有效,继续写入到 comfyui_api serve 终止
             log_file = open(log_path, "ab")
             stdout_target = log_file
             stderr_target = asyncio.subprocess.STDOUT  # 合并到 stdout 同一文件
         try:
             _proc = await asyncio.create_subprocess_exec(
-                self._python, "-m", "factory_v3", "serve",
+                self._python, "-m", "comfyui_api", "serve",
                 cwd=str(self._scripts_dir),
                 stdout=stdout_target,
                 stderr=stderr_target,
@@ -264,7 +266,7 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         del _proc  # 显式释放引用,避免 GC ResourceWarning 在单测日志中噪染
 
     async def _spawn_stop(self) -> None:
-        """通过 `python -m factory_v3 stop` 停止 ComfyUI。等待命令完成。
+        """通过 `python -m comfyui_api stop` 停止 ComfyUI。等待命令完成。
 
         F2 Round 2 fix(defense-in-depth):自身 wait_for(_STOP_TIMEOUT_S=60s)+
         TimeoutError 路径 kill 兜底。原版裸 proc.wait() 完全依赖调用方
@@ -272,7 +274,7 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         await manager.release(...) 不经 bounded helper,会静默无限阻塞。
         """
         proc = await asyncio.create_subprocess_exec(
-            self._python, "-m", "factory_v3", "stop",
+            self._python, "-m", "comfyui_api", "stop",
             cwd=str(self._scripts_dir),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
@@ -280,7 +282,7 @@ class ComfyLifecycleManager(ExternalProcessLifecycle):
         try:
             await asyncio.wait_for(proc.wait(), timeout=_STOP_TIMEOUT_S)
         except asyncio.TimeoutError:
-            # factory_v3 stop 60s 未完成:kill 兜底 + 不 mask 调用方异常
+            # comfyui_api stop 60s 未完成:kill 兜底 + 不 mask 调用方异常
             _logger.warning(
                 "_spawn_stop timed out after %ss; falling back to kill (scripts_dir=%s)",
                 _STOP_TIMEOUT_S, self._scripts_dir,

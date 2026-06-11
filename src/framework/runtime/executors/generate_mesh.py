@@ -118,25 +118,21 @@ class GenerateMeshExecutor(StepExecutor):
                 "are unset; ComfyUI agent CLI location not configured "
                 "(see CLAUDE.md double-terminal setup)"
             )
-        # round 5 D10:source bytes 写到 ComfyUI 自家 input/ 目录(via REQUIRED env
-        # FORGEUE_COMFY_INPUT_DIR),不是 ForgeUE in-tree(round 1-4 假设错 — ComfyUI
-        # LoadImage 节点只读自己 input/ 的 filename,不接绝对路径)。
-        if not config.input_dir:
-            raise MeshWorkerUnsupportedResponse(
-                "FORGEUE_COMFY_INPUT_DIR env var and provider_config.input_dir "
-                "are unset; mesh path requires ComfyUI installation's own "
-                "input/ directory (e.g. "
-                "D:/AI/ComfyUI/apps/official-main-git-v092/input) for "
-                "LoadImage node to resolve source image filename — see "
-                "CLAUDE.md mesh adoption section"
-            )
-        input_dir = Path(config.input_dir)
-        input_dir.mkdir(parents=True, exist_ok=True)
+        # comfy-agent-api-v3-adaptation(2026-06-11):source bytes 写 in-tree
+        # staging 文件(<run_dir>/comfy/forgeue_<sha1>.png,idempotent via sha1,
+        # 同 source bytes → 同 filename → 跨 retry 无重写),以**绝对路径**传给
+        # worker → CLI。上游 v3 起 `comfyui_api run` 对 input_image* 本地路径
+        # 自动 POST /upload/image(AGENT_API.md §1.3),原 round 5 D10 的
+        # FORGEUE_COMFY_INPUT_DIR 直写机制退役(上游 upload 落 ComfyUI 自家
+        # input/,文件名仍 forgeue_<sha1>.png,server 侧语义与旧机制一致)。
+        # resolve() 必须:framework.run 默认 --artifact-root 是相对路径,ctx.run_dir
+        # 因此相对;CLI 子进程 cwd=scripts_dir,相对路径在 CLI 侧 isfile() 判 False
+        # → auto-upload 不触发 → ComfyUI prompt 校验 HTTP 400(L2 实测回归,fence:
+        # test_generate_via_comfy_worker_resolves_relative_run_dir_to_absolute_path)
+        staging_dir = (ctx.run_dir / "comfy").resolve()
+        staging_dir.mkdir(parents=True, exist_ok=True)
         sha1_hex = hashlib.sha1(source_image_bytes).hexdigest()[:16]
-        # round 5 D10:filename 'forgeue_' prefix 避免与 ComfyUI 自家 input 文件冲突;
-        # idempotent via sha1(同 source bytes → 同 filename → 跨 retry 无重写)
-        input_filename = f"forgeue_{sha1_hex}.png"
-        input_path = input_dir / input_filename
+        input_path = staging_dir / f"forgeue_{sha1_hex}.png"
         if not input_path.exists():
             input_path.write_bytes(source_image_bytes)
 
@@ -163,12 +159,12 @@ class GenerateMeshExecutor(StepExecutor):
         last_exc: Exception | None = None
         for attempt in range(attempts):
             try:
-                # round 5 D10:filename only(LoadImage 节点 prefix 自动 ComfyUI input/);
-                # source_image_filename 由 executor 算好,worker 只看 filename
+                # v3 auto-upload:传 in-tree staging 绝对路径,CLI 侧自动上传到
+                # ComfyUI input/ 并替换为节点可用的相对文件名(AGENT_API.md §1.3)
                 # Task 5: 改用 await agenerate_mesh(async),消除 sync generate_mesh 调用
                 return await worker.agenerate_mesh(
                     spec=spec,
-                    source_image_filename=input_filename,
+                    source_image_filename=str(input_path),
                     num_candidates=num,
                     seed=seed,
                     timeout_s=timeout_s,

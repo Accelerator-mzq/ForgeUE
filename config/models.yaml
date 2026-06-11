@@ -113,7 +113,10 @@ providers:
       scripts_dir: "D:/AI/ComfyUI/scripts"
       python_exe: null
       default_lifecycle: none
-      input_dir: "D:/AI/ComfyUI/apps/official-main-git-v092/input"
+      # input_dir 已退役(2026-06-11 comfy-agent-api-v3-adaptation):上游
+      # comfyui_api v3 对 input_image* 本地路径自动 /upload/image,mesh 路径
+      # 不再需要 ForgeUE 直写 ComfyUI 自家 input/ 目录(旧 yaml 残留该键会被
+      # 容忍并忽略)
       output_root: "D:/AI/ComfyUI"
 
   # FOR-26 通用远端 audio worker。真实 endpoint/key 不放 registry,由

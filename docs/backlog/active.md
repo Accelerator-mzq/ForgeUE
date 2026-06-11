@@ -1,16 +1,23 @@
 # Active Backlog
 
 > 项目当前 backlog —— 迁移自原 `forge/backlog/active.md`,由 `docs/backlog/README.md` 约定维护。
-> 待办计 0 项(Future Work + Out of Scope;Non-Goals 不计入)。
+> 待办计 1 项(Future Work + Out of Scope;Non-Goals 不计入)。
 > 另有 9 项 legacy requirements 待办(不计入上面待办计数)。
 
 ## Warnings (0)
 
 (无)
 
-## Future Work (0)
+## Future Work (1)
 
-(无)
+### `2026-06-11-comfy-agent-api-v3-adaptation::comfy-detach-wait-adoption`
+
+- **source change**: 2026-06-11-comfy-agent-api-v3-adaptation
+- **description**: ComfyAgentWorker 4 条 `_run_once_*_async` 改用上游 v3 `run --detach` + `wait --prompt-id` submit-then-poll 模式,并把 cancel 升级为 `cancel --prompt-id` 精确取消。
+- **reason / 触发条件**: 当前裸 `cancel` 是 ComfyUI 全局 /interrupt(LLD 已标注已知边界):ComfyUI server 被多 agent / factory_v3 共享时可能中断他方 prompt;detach 模式 submit 即拿 prompt_id,可精确取消 + 长任务(video 数分钟)期间更快感知 server 崩溃。单机单用户现状下成本 > 收益(需重写 4 条 subprocess 路径 + 一批 fence),**多租户共享 ComfyUI 或需要 run 间精确取消时再启动**。
+- **priority**: low
+- **related change**: 2026-06-11-comfy-agent-api-v3-adaptation(serve/stop 迁移 + error_code 已落地,本条是同方向延伸)
+- **triggered_by**: cancel 多租户边界标注(LLD ComfyAgentWorker cancel 小节,2026-06-11)
 
 ## Out of Scope (0)
 

@@ -68,6 +68,9 @@ _SUBPROCESS_FIELDS = (
     "scripts_dir",
     "python_exe",
     "default_lifecycle",
+    # "input_dir" 已退役(comfy-agent-api-v3-adaptation,2026-06-11:上游 v3
+    # input_image* auto-upload 后不再需要)。保留在白名单仅为容忍旧 yaml 不报
+    # unknown-field 错;值被解析器忽略,不进 ProviderSubprocessConfig。
     "input_dir",
     "output_root",
 )
@@ -129,13 +132,16 @@ class ModelPricing:
 
 @dataclass(frozen=True)
 class ProviderSubprocessConfig:
-    """provider subprocess 运行配置的 registry 内部表示。"""
+    """provider subprocess 运行配置的 registry 内部表示。
+
+    input_dir 字段已退役(comfy-agent-api-v3-adaptation,2026-06-11);
+    yaml 中的同名键被容忍但忽略。
+    """
 
     adapter: str
     scripts_dir: str | None = None
     python_exe: str | None = None
     default_lifecycle: str = "none"
-    input_dir: str | None = None
     output_root: str | None = None
 
     def to_dict(self) -> dict[str, str | None]:
@@ -144,7 +150,6 @@ class ProviderSubprocessConfig:
             "scripts_dir": self.scripts_dir,
             "python_exe": self.python_exe,
             "default_lifecycle": self.default_lifecycle,
-            "input_dir": self.input_dir,
             "output_root": self.output_root,
         }
 
@@ -332,7 +337,6 @@ def _parse_provider_subprocess_config(
         scripts_dir=str(raw["scripts_dir"]) if raw.get("scripts_dir") else None,
         python_exe=str(raw["python_exe"]) if raw.get("python_exe") else None,
         default_lifecycle=str(lifecycle),
-        input_dir=str(raw["input_dir"]) if raw.get("input_dir") else None,
         output_root=str(raw["output_root"]) if raw.get("output_root") else None,
     )
 

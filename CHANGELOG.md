@@ -23,6 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **comfy-agent-api-v3-adaptation(2026-06-11)**:对齐上游 COMFYUI_AGENT_API v3/v3.3 契约,五项:
+  ① **mesh auto-upload**:`_generate_via_comfy_worker` 改写 in-tree staging(`<run_dir>/comfy/forgeue_<sha1>.png`,`resolve()` 绝对路径强制——相对 run_dir 在 CLI cwd 下致 auto-upload 不触发 HTTP 400,L2 实测回归 fence 守门),`FORGEUE_COMFY_INPUT_DIR` 配置链全退役(env / models.yaml / `ComfyAgentConfig` / `ProviderSubprocessConfig`;旧 yaml 残留键容忍并忽略);worker 加 `input_image*` 前缀守门(路径值 + 非前缀 key fail-fast,裸文件名 legacy 模式不变)。
+  ② **error_code 消费**:上游 v3.3 失败 JSON 带结构化 `error_code`,新共享 helper `_raise_comfy_failure` code 优先分类(timeout → WorkerTimeout;deterministic 集 → WorkerUnsupportedResponse;其余 → WorkerError),code 缺失退回 marker fallback;顺修 marker `"value out of range"` → `"out of range"` latent bug(patcher 实际串永匹配不上,out-of-range 曾被误判 generic 走 retry)。
+  ③ **lifecycle 迁移**:`ComfyLifecycleManager._spawn_serve/_spawn_stop` 从 `factory_v3 serve/stop` 迁到 `comfyui_api serve/stop`(上游 v3.3 补齐 CLI 入口,实现同源;ForgeUE 对 factory_v3 零依赖,与 D-ScopeNoFactoryBlender 字面对齐)。
+  ④ **video smoke 切 teacache**:`examples/comfy_local_smoke_video.json` 默认 manifest 切 `Vedio/Wan2.1-T2V-1.3B_native_teacache` + num_frames 33,L2 单次 7min → 2m02s;上游 teacache manifest 补 5 个 VHS widget patches(round-7 R2 同款);`cluster2_l2_video_export.json` 与 probe 留 5sec baseline。
+  ⑤ **cancel 多租户边界标注**(LLD)+ backlog 新增 `comfy-detach-wait-adoption` follow-on。
+  上游侧同步改动(`D:/AI/ComfyUI`,非 git,evidence 落 `docs/archive/forge_changes/2026-06-11-comfy-agent-api-v3-adaptation/notes/`):comfyui_api 加 serve/stop 子命令 + `_error_code`/`_fail_json` 统一错误 envelope + AGENT_API.md v3.3 文档(10 命令 + §5 error_code 契约表)。
+  L2 evidence:video teacache mp4 412KB BMFF 过(2m02s)+ mesh auto-upload GLB 3.6MB glTF 过(无 INPUT_DIR env,上游 /upload/image 痕迹验证)。
+
 - **Engine Bridge + Godot 4 headless import**:新增 `engine_target` 通用交付入口、`EngineTarget` / `EngineEvidence`、`EngineAdapter` protocol 与 `EngineAdapterRegistry`;`ExportExecutor` 改为 wildcard dispatcher,默认注册 `UnrealAdapter` 与 `Godot4Adapter`。Unreal adapter 保留既有 `manifest_only` 文件契约;Godot 4 adapter 第一阶段支持 png/jpg/jpeg/wav/mp3/glb staging、`godot_manifest.json` / `godot_import_plan.json` / `evidence.json`、`GODOT4_EXE` 或 `engine_target.executable_path` 解析与 fresh `.import` / `.godot/imported` evidence 验证;新增 `examples/godot4_export_smoke.json`。
 - **Godot 4 L2 evidence sync**:补登记 2026-05-24 本机 Godot 4.6.2 headless import 通过证据;`godot_command.log` returncode 0,`evidence.json` 记录 `engine=godot4 / kind=godot_import / status=success`;同步 acceptance / test_spec / engine-export-bridge contract / validation matrix 的 pending 状态。
 - **FOR-31 Unreal contract package rename**: Unreal manifest-only 文件契约主实现迁到 `framework.engine_bridge.unreal.contract`;`framework.ue_bridge` 保留为一个兼容周期的 compatibility alias;同步更新 runtime imports、run-comparison import fences、docs 和 backlog/Linear tracking,不改变 Unreal 或 Godot import 行为。

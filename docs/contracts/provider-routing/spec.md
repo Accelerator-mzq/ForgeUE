@@ -88,7 +88,7 @@ Each non-OpenAI protocol family SHALL ship its own adapter / worker module: Dash
 
 - GIVEN a step whose `provider_policy.prepared_routes` contains `ResolvedRoute(model="comfy/local-mesh", ...)`; an upstream image step provides source bytes via the `_resolve_source_image(ctx)` chain
 - WHEN `GenerateMeshExecutor._should_use_comfy_worker_path(ctx)` returns True
-- THEN the executor takes the comfy-worker dispatch branch and calls `_generate_via_comfy_worker(...)` which writes source bytes to `Path(FORGEUE_COMFY_INPUT_DIR) / "forgeue_<sha1>.png"`, constructs `ComfyAgentWorker(model_id="comfy/local-mesh", ...)` inline, and invokes `worker.generate_mesh(...)`
+- THEN the executor takes the comfy-worker dispatch branch and calls `_generate_via_comfy_worker(...)` which stages source bytes in-tree at `(ctx.run_dir / "comfy").resolve() / "forgeue_<sha1>.png"`(2026-06-11 修订:上游 v3 auto-upload,不再写 ComfyUI input/), constructs `ComfyAgentWorker(model_id="comfy/local-mesh", ...)` inline, and invokes `worker.generate_mesh(...)`
 
 ## Scenario: comfy/local-audio routes to ComfyAgentWorker (audio) via executor-side model-id branch (pattern c, audio, NEW for this change)
 
@@ -286,8 +286,8 @@ All three methods share a private helper `_run_subprocess_and_validate(spec, tim
 
 ## Scenario: ComfyAgentWorker (mesh) calls generate_mesh with source_image_filename injected (regression)
 
-**Given** environment variables as above + `FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input`; resolved route `ResolvedRoute(model="comfy/local-mesh", ..., pricing=None)`; an upstream image step has produced source bytes resolved via `_resolve_source_image(ctx)` and written to `D:/AI/ComfyUI/apps/official-main-git-v092/input/forgeue_abc123def456.png`
-**When** `GenerateMeshExecutor._generate_via_comfy_worker` constructs `worker = ComfyAgentWorker(model_id="comfy/local-mesh", ...)` and calls `worker.generate_mesh(spec=..., source_image_filename="forgeue_abc123def456.png", ...)`
+**Given** environment variables as above(2026-06-11 `comfy-agent-api-v3-adaptation` 起 **无需** `FORGEUE_COMFY_INPUT_DIR`); resolved route `ResolvedRoute(model="comfy/local-mesh", ..., pricing=None)`; an upstream image step has produced source bytes resolved via `_resolve_source_image(ctx)` and staged in-tree at `<ctx.run_dir resolved>/comfy/forgeue_abc123def456.png`
+**When** `GenerateMeshExecutor._generate_via_comfy_worker` constructs `worker = ComfyAgentWorker(model_id="comfy/local-mesh", ...)` and calls `worker.generate_mesh(spec=..., source_image_filename="<staging 绝对路径>", ...)`(upstream v3 `comfyui_api run` auto-uploads `input_image*` local paths via POST /upload/image)
 **Then** the worker's `_capability == "mesh"`; validates the GLB header from `outputs.glb` without full-reading the payload and returns `list[MeshCandidate]` with `source_path` pointing at the ComfyUI output file
 
 ## Scenario: ComfyAgentWorker (audio) calls generate_audio with prompt embedded in spec.comfy_params (NEW for this change)
@@ -615,7 +615,7 @@ The `providers.comfy_api` entry from `comfy-agent-cli-adoption` SHALL be reused 
 The system SHALL extend `GenerateMeshExecutor` with two pieces:
 
 1. A helper `_should_use_comfy_worker_path(self, ctx) -> bool` returning True iff any `ctx.step.provider_policy.prepared_routes` route has `model == "comfy/local-mesh"` (R2-F1 codex finding accepted-codex 2026-05-03: `provider_policy` lives at `Step` top level per `task.py:36`, NOT nested under `step.config`; existing `generate_mesh.py:202` uses `pp = ctx.step.provider_policy` and `generate_image.py:254-257` uses the same top-level path).
-2. A new method `_generate_via_comfy_worker(self, *, ctx, spec, source_image_bytes, source_image_artifact_id, num, seed, timeout_s) -> list[MeshCandidate]` that constructs `ComfyAgentWorker(model_id="comfy/local-mesh", ...)` from environment config + `StepContext`, writes `source_image_bytes` to **the ComfyUI installation's `input/` directory** under filename `forgeue_<sha1_hex>.png` (round 5 D10 修订:directory resolved via REQUIRED env var `FORGEUE_COMFY_INPUT_DIR`, e.g. `D:/AI/ComfyUI/apps/<install>/input`; was `<ctx.run_dir>/comfy/input/...` round 1-4 但 ComfyUI LoadImage 节点不接受任意绝对路径,实测必失败), invokes the new public method `worker.generate_mesh(spec=..., source_image_filename="forgeue_<sha1>.png")` (filename only, NOT absolute path), and returns `list[MeshCandidate]`.
+2. A new method `_generate_via_comfy_worker(self, *, ctx, spec, source_image_bytes, source_image_artifact_id, num, seed, timeout_s) -> list[MeshCandidate]` that constructs `ComfyAgentWorker(model_id="comfy/local-mesh", ...)` from environment config + `StepContext`, writes `source_image_bytes` to the **in-tree staging file** `(ctx.run_dir / "comfy").resolve() / "forgeue_<sha1_hex>.png"`(2026-06-11 `comfy-agent-api-v3-adaptation` 修订:上游 v3 `comfyui_api run` 对 `input_image*` 本地路径自动 POST /upload/image,原 round 5 D10 的 REQUIRED `FORGEUE_COMFY_INPUT_DIR` 直写机制退役;`resolve()` 强制——CLI 子进程 cwd=scripts_dir,相对路径在 CLI 侧 isfile 判 False → auto-upload 不触发 → HTTP 400,L2 实测回归), invokes `worker.generate_mesh(spec=..., source_image_filename="<staging 绝对路径>")`, and returns `list[MeshCandidate]`.
 
 The `execute(ctx)` method SHALL call `_resolve_source_image(ctx)` UNCHANGED at the start (before any worker dispatch), then branch:
 
@@ -641,7 +641,7 @@ This is a NEW dispatch mode for `GenerateMeshExecutor` parallel to the executor-
 
 **Given** a step whose `provider_policy.prepared_routes` contains `ResolvedRoute(model="comfy/local-mesh", ...)`; the orchestrator has constructed `GenerateMeshExecutor` with a default `HunyuanTokenhubMeshWorker` injected; an upstream image step has produced a source image artifact resolvable by `_resolve_source_image(ctx)`
 **When** `GenerateMeshExecutor.execute(ctx)` runs and `_should_use_comfy_worker_path(ctx)` returns True (any prepared_route has `model == "comfy/local-mesh"`)
-**Then** the executor calls `_resolve_source_image(ctx)` first (unchanged from the existing path; raises if no upstream image is available — this is the same fail-fast behavior as Hunyuan / Tripo3D mesh paths); then calls `_generate_via_comfy_worker(ctx=ctx, spec=spec, source_image_bytes=source_bytes, source_image_artifact_id=source_image_artifact_id, ...)` which constructs `ComfyAgentWorker(model_id="comfy/local-mesh", ...)` inline and invokes `worker.generate_mesh(spec=..., source_image_filename="forgeue_<sha1>.png", ...)` (round 5 修订:filename only,实际文件已写入 `Path(FORGEUE_COMFY_INPUT_DIR) / "forgeue_<sha1>.png"`,LoadImage 节点会自动 prefix ComfyUI 自家 input/);the constructor-injected `HunyuanTokenhubMeshWorker.generate` is NOT invoked
+**Then** the executor calls `_resolve_source_image(ctx)` first (unchanged from the existing path; raises if no upstream image is available — this is the same fail-fast behavior as Hunyuan / Tripo3D mesh paths); then calls `_generate_via_comfy_worker(ctx=ctx, spec=spec, source_image_bytes=source_bytes, source_image_artifact_id=source_image_artifact_id, ...)` which constructs `ComfyAgentWorker(model_id="comfy/local-mesh", ...)` inline and invokes `worker.generate_mesh(spec=..., source_image_filename="<staging 绝对路径>", ...)`(2026-06-11 修订:in-tree staging + 上游 v3 auto-upload,见下方 staging Requirement);the constructor-injected `HunyuanTokenhubMeshWorker.generate` is NOT invoked
 
 ## Scenario: GenerateMeshExecutor still uses constructor-injected worker for remote hunyuan/mesh-generation routes
 
@@ -649,29 +649,37 @@ This is a NEW dispatch mode for `GenerateMeshExecutor` parallel to the executor-
 **When** `GenerateMeshExecutor._should_use_comfy_worker_path(ctx)` is called
 **Then** the method returns False; the executor takes the existing constructor-injected worker path (calls `self._worker.generate(source_image_bytes=..., spec=..., ...)`); existing remote Hunyuan3D mesh path is unaffected by this change; ADR-007 strict no-silent-retry contract continues to apply unchanged for the remote path (see Requirement "Local ComfyUI mesh worker is NOT a premium API per the per_task_usd boundary" below)
 
-## Requirement: GenerateMeshExecutor writes source image bytes to ComfyUI input/ directory and injects filename into comfy_params
+## Requirement: GenerateMeshExecutor stages source image bytes in-tree and passes absolute path for upstream auto-upload (2026-06-11 `comfy-agent-api-v3-adaptation` 修订)
 
-The system SHALL guarantee that `_generate_via_comfy_worker` writes the upstream `source_image_bytes` to **the ComfyUI installation's `input/` directory** (path resolved via REQUIRED env var `FORGEUE_COMFY_INPUT_DIR`, e.g. `D:/AI/ComfyUI/apps/official-main-git-v092/input`) under filename `forgeue_<sha1_hex>.png` (where `<sha1_hex> = hashlib.sha1(source_image_bytes).hexdigest()[:16]`;`forgeue_` filename prefix avoids collision with ComfyUI's own input files) before invoking the worker subprocess. The **filename only** (NOT absolute path) SHALL be passed to `ComfyAgentWorker.generate_mesh(source_image_filename=...)`, which injects it into a copy of `spec["comfy_params"]` under the key resolved from `spec.get("comfy_image_param_key", "input_image")` (round 5 修订:default `"input_image"` matches `LoadImage` node parameter name; bundles SHALL declare `comfy_image_param_key` explicitly when the selected manifest's image input parameter has a different name). The worker SHALL NOT mutate the caller's `spec["comfy_params"]` in place — it SHALL deep-copy via `dict(spec.get("comfy_params") or {})` before injection so retries see a clean baseline.
+The system SHALL guarantee that `_generate_via_comfy_worker` writes the upstream `source_image_bytes` to the **in-tree staging file** `(ctx.run_dir / "comfy").resolve() / "forgeue_<sha1_hex>.png"` (where `<sha1_hex> = hashlib.sha1(source_image_bytes).hexdigest()[:16]`; idempotent on same bytes) before invoking the worker subprocess. The **resolved absolute path** SHALL be passed to `ComfyAgentWorker.generate_mesh(source_image_filename=...)`, which injects it into a copy of `spec["comfy_params"]` under the key resolved from `spec.get("comfy_image_param_key", "input_image")`. Upstream `comfyui_api run`(v3, AGENT_API.md §1.3)auto-uploads `input_image*` params whose value is an existing local path via POST /upload/image and rewrites the value to the input-dir relative name — ForgeUE no longer writes into the ComfyUI installation's `input/` directory(原 round 5 D10 `FORGEUE_COMFY_INPUT_DIR` 机制退役;残留 env/yaml 键被容忍并忽略). The worker SHALL NOT mutate the caller's `spec["comfy_params"]` in place — it SHALL deep-copy via `dict(spec.get("comfy_params") or {})` before injection so retries see a clean baseline.
 
-If `FORGEUE_COMFY_INPUT_DIR` is unset or empty, `_generate_via_comfy_worker` SHALL raise `MeshWorkerUnsupportedResponse` with a message naming the missing env var and a hint pointing at the typical ComfyUI input/ path.
+`resolve()` is mandatory: the CLI subprocess runs with `cwd=scripts_dir`, so a relative staging path fails the CLI-side `os.path.isfile` check → auto-upload silently does not trigger → ComfyUI prompt validation HTTP 400(L2 实测回归;fence `test_generate_via_comfy_worker_resolves_relative_run_dir_to_absolute_path`).
 
-## Scenario: Source image bytes are written to ComfyUI input/ directory with sha1-derived filename and forgeue_ prefix; injected into comfy_params under default 'input_image' key
+Worker-side guard: when `source_image_filename` contains a path separator(i.e. staging-path mode)AND `comfy_image_param_key` does NOT start with `"input_image"`, `ComfyAgentWorker.agenerate_mesh` SHALL raise `WorkerUnsupportedResponse`(upstream auto-upload only triggers on the `input_image*` prefix; a path value with any other key necessarily fails at runtime — fail-fast wins). Bare-filename values(no separator)remain valid with ANY key — legacy mode meaning "file already in ComfyUI input dir"(D8 custom-key contract preserved).
 
-**Given** env var `FORGEUE_COMFY_INPUT_DIR=D:/AI/ComfyUI/apps/official-main-git-v092/input`; an upstream `_resolve_source_image(ctx)` returning `(source_bytes=b"<png>", source_image_artifact_id="run_X_step_image_1")` where `hashlib.sha1(b"<png>").hexdigest()[:16] == "abc123def456"`; a step `spec` containing `comfy_workflow="3D_Hunyuan/3d_hunyuan3d-v2.1"`, `comfy_params={"seed": 42, "steps": 30}`, `comfy_lifecycle="none"`(no explicit `comfy_image_param_key` → uses default `"input_image"`)
+## Scenario: Source image bytes staged in-tree with sha1-derived filename; absolute path injected under default 'input_image' key
+
+**Given** an upstream `_resolve_source_image(ctx)` returning `(source_bytes=b"<png>", source_image_artifact_id="run_X_step_image_1")` where `hashlib.sha1(b"<png>").hexdigest()[:16] == "abc123def456"`; `ctx.run_dir=Path("artifacts/2026-06-11/run_X")`(relative); a step `spec` containing `comfy_workflow="GameAssets/03_mini_image_to_3d_hunyuan_loadimage"`, `comfy_params={"mesh_seed": 42}`, `comfy_lifecycle="none"`(no explicit `comfy_image_param_key` → uses default `"input_image"`)
 **When** `_generate_via_comfy_worker(ctx, spec, source_image_bytes=source_bytes, source_image_artifact_id=..., num=1, seed=42, timeout_s=600)` is invoked
-**Then** the executor writes `source_bytes` to `D:/AI/ComfyUI/apps/official-main-git-v092/input/forgeue_abc123def456.png` (creating the directory if missing; idempotent on subsequent calls with same bytes); calls `ComfyAgentWorker.generate_mesh(spec=spec, source_image_filename="forgeue_abc123def456.png", num_candidates=1, seed=42, timeout_s=600)`(filename only, NOT absolute path); the worker constructs an enriched params dict `{"seed": 42, "steps": 30, "input_image": "forgeue_abc123def456.png"}`(NOT mutating the caller's `spec["comfy_params"]`); the subprocess argv contains `--params '{"seed":42,"steps":30,"input_image":"forgeue_abc123def456.png"}'` and ComfyUI's `LoadImage` node resolves the filename inside its own input/ directory
+**Then** the executor writes `source_bytes` to `<resolved run_dir>/comfy/forgeue_abc123def456.png`(creating the directory if missing; idempotent); calls `ComfyAgentWorker.generate_mesh(spec=spec, source_image_filename="<该文件绝对路径>", num_candidates=1, seed=42, timeout_s=600)`; the worker constructs an enriched params dict with `"input_image": "<绝对路径>"`(NOT mutating the caller's `spec["comfy_params"]`); upstream CLI auto-uploads the file and ComfyUI's `LoadImage` node receives the rewritten input-dir relative name
 
-## Scenario: Bundle with custom comfy_image_param_key uses the declared key instead of default 'input_image'
+## Scenario: Bundle with custom comfy_image_param_key uses the declared key (bare-filename legacy mode)
 
-**Given** a step `spec` with `comfy_image_param_key: "image"` (some hypothetical mesh manifest using key `image` instead of default `input_image`)
+**Given** a step `spec` with `comfy_image_param_key: "image"`; `source_image_filename="forgeue_<sha1>.png"`(bare filename, file already in ComfyUI input dir)
 **When** `worker.generate_mesh(...)` is invoked
-**Then** the enriched params dict uses key `"image"` (not default `"input_image"`); subprocess argv contains `--params '{...,"image":"forgeue_<sha1>.png"}'`
+**Then** the enriched params dict uses key `"image"` (not default `"input_image"`); subprocess argv contains `--params '{...,"image":"forgeue_<sha1>.png"}'`(bare-filename + 任意 key 合法,视为已在 input 目录)
 
-## Scenario: Missing FORGEUE_COMFY_INPUT_DIR env var raises MeshWorkerUnsupportedResponse
+## Scenario: Path-valued source with non-input_image key raises WorkerUnsupportedResponse (v3.3 守门)
 
-**Given** env var `FORGEUE_COMFY_INPUT_DIR` unset (other `FORGEUE_COMFY_*` vars correctly set);comfy/local-mesh route resolved
+**Given** a step `spec` with `comfy_image_param_key: "image"`; `source_image_filename="D:/.../run_X/comfy/forgeue_<sha1>.png"`(路径值,含分隔符)
+**When** `worker.agenerate_mesh(...)` is invoked
+**Then** the worker raises `WorkerUnsupportedResponse` naming the offending key and explaining the `input_image*` auto-upload prefix contract; no subprocess is spawned; fence `test_generate_mesh_path_value_with_non_input_image_key_raises`
+
+## Scenario: Mesh path succeeds without FORGEUE_COMFY_INPUT_DIR (退役 fence)
+
+**Given** env var `FORGEUE_COMFY_INPUT_DIR` unset AND `provider_config` without `input_dir`;comfy/local-mesh route resolved
 **When** `_generate_via_comfy_worker(ctx, spec, source_image_bytes=..., ...)` is invoked
-**Then** the executor raises `MeshWorkerUnsupportedResponse` with a message naming `FORGEUE_COMFY_INPUT_DIR` and a hint pointing at the typical ComfyUI input/ path; no source image bytes are written; no subprocess is spawned; `FailureModeMap` resolves the failure to `mesh_worker_unsupported_response` → `Decision.abort_or_fallback`
+**Then** the call succeeds(staging + auto-upload path needs no input-dir configuration); fence `test_generate_via_comfy_worker_succeeds_without_input_dir_env`
 
 ## Requirement: Local ComfyUI mesh worker is NOT a premium API per the per_task_usd boundary
 

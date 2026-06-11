@@ -66,9 +66,11 @@ def test_resolve_comfy_agent_config_prefers_spec_then_env_then_yaml():
     )
     assert cfg.scripts_dir == "env/scripts"
     assert cfg.python_exe == "env/python.exe"
-    assert cfg.input_dir == "env/input"
     assert cfg.output_root == "env/root"
     assert cfg.default_lifecycle == "ensure_release"
+    # input_dir 已退役(comfy-agent-api-v3-adaptation):env/yaml 残留值被忽略,
+    # ComfyAgentConfig 不再有该字段
+    assert not hasattr(cfg, "input_dir")
 
 
 def test_resolve_comfy_agent_config_uses_env_lifecycle_when_spec_absent():
@@ -86,7 +88,6 @@ def test_resolve_comfy_agent_config_uses_yaml_when_env_absent():
     cfg = resolve_comfy_agent_config(route=route, spec={}, env={})
     assert cfg.scripts_dir == "yaml/scripts"
     assert cfg.python_exe == "yaml/python.exe"
-    assert cfg.input_dir == "yaml/input"
     assert cfg.output_root == "yaml/root"
     assert cfg.default_lifecycle == "ensure_running"
 

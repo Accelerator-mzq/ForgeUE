@@ -52,7 +52,6 @@ def _comfy_provider_config(tmp_path: Path) -> dict[str, str | None]:
         "scripts_dir": str(tmp_path / "yaml_scripts"),
         "python_exe": None,
         "default_lifecycle": "none",
-        "input_dir": str(tmp_path / "yaml_input"),
         "output_root": str(tmp_path),
     }
 
@@ -178,7 +177,6 @@ def test_should_use_comfy_worker_path_reads_provider_policy_from_step_top_level(
     (Step 顶层)而非 ctx.step.config.provider_policy(后者不存在,会 AttributeError)。
     本 fence 用真实 Step 对象,断言 helper 不抛异常 + 返 True。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, _ = _make_comfy_mesh_ctx(tmp_path, use_comfy_local_mesh_route=True)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     # 直接调 helper:必须返 True 且不抛 AttributeError
@@ -223,98 +221,55 @@ def test_should_use_comfy_worker_path_returns_false_when_no_provider_policy(tmp_
 # ---- _generate_via_comfy_worker (B2 + D7) -----------------------------------
 
 
-async def test_generate_via_comfy_worker_writes_source_bytes_to_comfyui_input_dir_with_forgeue_prefix(tmp_path, monkeypatch):
-    """Round 5 D10 修订:executor 写 source bytes 到 ComfyUI 自家 input/ 目录
-    (via FORGEUE_COMFY_INPUT_DIR env),filename `forgeue_<sha1>.png`(prefix 防与
-    ComfyUI 自家 input 文件冲突);round 1-4 写到 <run_dir>/comfy/input 是错的
-    (LoadImage 节点不接绝对路径)。
-    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
+async def test_generate_via_comfy_worker_writes_staging_png_under_run_dir_and_passes_abs_path(tmp_path, monkeypatch):
+    """comfy-agent-api-v3-adaptation(2026-06-11):executor 写 source bytes 到
+    in-tree staging 文件 <run_dir>/comfy/forgeue_<sha1>.png(idempotent via sha1),
+    并以**绝对路径**传给 worker——上游 v3 起 `comfyui_api run` 对 input_image*
+    本地路径自动 POST /upload/image(AGENT_API.md §1.3),原 round 5 D10 的
+    FORGEUE_COMFY_INPUT_DIR 直写机制退役。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    comfy_input_dir = tmp_path / "comfy_input"
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(comfy_input_dir))
+    monkeypatch.delenv("FORGEUE_COMFY_INPUT_DIR", raising=False)
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     expected_sha1 = hashlib.sha1(src_bytes).hexdigest()[:16]
-    expected_path = comfy_input_dir / f"forgeue_{expected_sha1}.png"
+    expected_path = tmp_path / "comfy" / f"forgeue_{expected_sha1}.png"
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
-        W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
-        await executor._generate_via_comfy_worker(
-            ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
-            source_image_bytes=src_bytes, num=1, seed=42, timeout_s=600,
-        )
-    assert expected_path.exists()
-    assert expected_path.read_bytes() == src_bytes
-
-
-async def test_generate_via_comfy_worker_passes_source_image_filename_to_worker_generate_mesh(tmp_path, monkeypatch):
-    """Round 5 D10:filename only(不是 absolute path)传给 worker.agenerate_mesh。
-    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
-    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))
-    ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
-    executor = GenerateMeshExecutor(worker=FakeMeshWorker())
-    with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
-        # Task 5 GREEN: agenerate_mesh 用 AsyncMock
         W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
         await executor._generate_via_comfy_worker(
             ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
             source_image_bytes=src_bytes, num=1, seed=42, timeout_s=600,
         )
         call_kwargs = W.return_value.agenerate_mesh.call_args.kwargs
-        sha1_hex = hashlib.sha1(src_bytes).hexdigest()[:16]
-        # round 5 D10:source_image_filename(filename only)而非 source_image_path(绝对路径)
-        assert call_kwargs["source_image_filename"] == f"forgeue_{sha1_hex}.png"
+    # staging 文件落 in-tree run_dir(随 artifacts 生命周期管理,不再写 ComfyUI 自家目录)
+    assert expected_path.exists()
+    assert expected_path.read_bytes() == src_bytes
+    # worker 收到的是绝对路径(上游 auto-upload 判定条件:含路径分隔符 + 文件存在)
+    assert call_kwargs["source_image_filename"] == str(expected_path)
 
 
-async def test_generate_via_comfy_worker_raises_when_FORGEUE_COMFY_INPUT_DIR_unset(tmp_path, monkeypatch):
-    """Round 5 D10:FORGEUE_COMFY_INPUT_DIR env unset 时立即 raise
-    MeshWorkerUnsupportedResponse(fail-fast,不静默落 source bytes 到错位置)。
-    Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
+async def test_generate_via_comfy_worker_succeeds_without_input_dir_env(tmp_path, monkeypatch):
+    """退役 fence:FORGEUE_COMFY_INPUT_DIR unset + provider_config 无 input_dir
+    也必须成功(v3 auto-upload 后该配置链整体退役;原 round 5 D10 的 fail-fast
+    守门随之删除)。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
     monkeypatch.delenv("FORGEUE_COMFY_INPUT_DIR", raising=False)
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     route = ctx.step.provider_policy.prepared_routes[0]
-    route.provider_config["input_dir"] = None
-    executor = GenerateMeshExecutor(worker=FakeMeshWorker())
-    with pytest.raises(MeshWorkerUnsupportedResponse, match="FORGEUE_COMFY_INPUT_DIR"):
-        await executor._generate_via_comfy_worker(
-            ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
-            source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
-        )
-
-
-async def test_generate_via_comfy_worker_uses_yaml_input_dir_when_env_absent(tmp_path, monkeypatch):
-    monkeypatch.delenv("FORGEUE_COMFY_SCRIPTS_DIR", raising=False)
-    monkeypatch.delenv("FORGEUE_COMFY_INPUT_DIR", raising=False)
-    yaml_scripts = tmp_path / "yaml_scripts"
-    yaml_input = tmp_path / "yaml_input"
-    yaml_scripts.mkdir()
-    ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
-    route = ctx.step.provider_policy.prepared_routes[0]
-    route.provider_config["scripts_dir"] = str(yaml_scripts)
-    route.provider_config["input_dir"] = str(yaml_input)
-
+    route.provider_config.pop("input_dir", None)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
         W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
-        await executor._generate_via_comfy_worker(
-            ctx=ctx,
-            spec={"comfy_workflow": "M/01", "comfy_params": {}},
-            source_image_bytes=src_bytes,
-            num=1,
-            seed=None,
-            timeout_s=600,
+        results = await executor._generate_via_comfy_worker(
+            ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
+            source_image_bytes=src_bytes, num=1, seed=None, timeout_s=60,
         )
-    assert yaml_input.is_dir()
-    assert W.call_args.kwargs["scripts_dir"] == yaml_scripts
+    assert len(results) == 1
 
 
 async def test_generate_via_comfy_worker_constructs_worker_with_model_id_comfy_local_mesh(tmp_path, monkeypatch):
     """D1:executor 构造 ComfyAgentWorker 时传 model_id='comfy/local-mesh'。
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
@@ -353,7 +308,6 @@ async def test_generate_via_comfy_worker_wraps_worker_timeout_to_mesh_worker_tim
     """D9:WorkerTimeout → MeshWorkerTimeout(让 retry loop catch + FailureModeMap 路由)。
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
@@ -372,7 +326,6 @@ async def test_generate_via_comfy_worker_wraps_worker_unsupported_response_to_me
     """D9:WorkerUnsupportedResponse → MeshWorkerUnsupportedResponse(不 retry)。
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
@@ -392,7 +345,6 @@ async def test_generate_via_comfy_worker_wraps_generic_worker_error_to_mesh_work
     """D9:WorkerError → MeshWorkerError(不 retry)。
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
@@ -414,7 +366,6 @@ async def test_local_comfy_mesh_executor_calls_worker_max_attempts_times_on_time
     第一次 timeout 后 retry,第二次成功 → call_count == 2。
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     successful_cands = [_fake_mesh_candidate()]
@@ -440,7 +391,6 @@ async def test_local_comfy_mesh_executor_does_not_retry_on_worker_unsupported_re
     """R2-F2:UnsupportedResponse 是 deterministic,不 retry。
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
@@ -459,7 +409,6 @@ async def test_local_comfy_mesh_executor_raises_after_all_retries_exhausted(tmp_
     (传给 FailureModeMap → mesh_worker_timeout → abort_or_fallback)。
     Task 5 GREEN: _generate_via_comfy_worker 已转 async,测试改为 async def + await。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
     executor = GenerateMeshExecutor(worker=FakeMeshWorker())
     with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
@@ -504,7 +453,6 @@ async def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_b
     """End-to-end:execute() 检测 comfy/local-mesh route → _generate_via_comfy_worker
     (NOT 现有 self._worker.generate)→ 持久化为 in-tree GLB Artifact。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))  # round 5 D10
     ctx, repo, src_bytes = _make_comfy_mesh_ctx(tmp_path, num_candidates=1)
 
     # injected worker:不应被调用(comfy 分支接管)
@@ -529,7 +477,6 @@ async def test_executor_execute_dispatches_comfy_local_mesh_via_internal_retry_b
 async def test_executor_persists_mesh_candidate_source_path_without_using_data(tmp_path, monkeypatch):
     """FOR-13:MeshCandidate.source_path 优先落盘,cand.data 只保留校验头/兼容信息。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))
     ctx, repo, _ = _make_comfy_mesh_ctx(tmp_path, num_candidates=1)
     source = tmp_path / "source_mesh.glb"
     source.write_bytes(b"glTF\x02\x00\x00\x00real-mesh-payload")
@@ -573,7 +520,6 @@ async def test_executor_dispatches_comfy_local_mesh_records_provider_as_comfy_ag
     == "comfy_agent_cli",NOT injected worker name(框架 self._worker.name 注入的
     HunyuanMeshWorker / FakeMeshWorker 名会污染 audit / comparison report)。"""
     monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
-    monkeypatch.setenv("FORGEUE_COMFY_INPUT_DIR", str(tmp_path / "comfy_input"))
     ctx, repo, src_bytes = _make_comfy_mesh_ctx(tmp_path, num_candidates=1)
 
     # injected worker:其 name 是 "injected_test_worker",但本 change 后该字段
@@ -623,3 +569,28 @@ async def test_executor_remote_hunyuan_path_records_provider_as_worker_name(tmp_
         f"got {art.producer.provider!r}"
     )
     assert result.metrics["worker"] == fake_worker.name
+
+
+async def test_generate_via_comfy_worker_resolves_relative_run_dir_to_absolute_path(tmp_path, monkeypatch):
+    """L2 实测回归 fence(2026-06-11):framework.run 默认 --artifact-root 是相对路径
+    (artifacts/<today>),ctx.run_dir 因此相对;CLI 子进程 cwd=scripts_dir,相对路径在
+    CLI 侧 os.path.isfile() 判 False → auto-upload 不触发 → 原值透传 LoadImage →
+    ComfyUI prompt 校验 HTTP 400(error_code=unknown → generic mesh_worker_error)。
+    executor 必须把 staging 路径 resolve() 成绝对路径再传 worker。"""
+    monkeypatch.setenv("FORGEUE_COMFY_SCRIPTS_DIR", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    ctx, _, src_bytes = _make_comfy_mesh_ctx(tmp_path)
+    # 模拟 orchestrator 注入相对 run_dir(默认 --artifact-root artifacts/<today>)
+    rel_run_dir = Path("rel_artifacts") / "run_x"
+    object.__setattr__(ctx, "run_dir", rel_run_dir) if hasattr(type(ctx), "__dataclass_fields__") else setattr(ctx, "run_dir", rel_run_dir)
+    executor = GenerateMeshExecutor(worker=FakeMeshWorker())
+    with patch("framework.runtime.executors.generate_mesh.ComfyAgentWorker") as W:
+        W.return_value.agenerate_mesh = AsyncMock(return_value=[_fake_mesh_candidate()])
+        await executor._generate_via_comfy_worker(
+            ctx=ctx, spec={"comfy_workflow": "M/01", "comfy_params": {}},
+            source_image_bytes=src_bytes, num=1, seed=42, timeout_s=600,
+        )
+        passed = Path(W.return_value.agenerate_mesh.call_args.kwargs["source_image_filename"])
+    assert passed.is_absolute(), \
+        f"staging 路径必须 resolve 成绝对路径(CLI cwd=scripts_dir,相对路径必坏): {passed}"
+    assert passed.is_file()

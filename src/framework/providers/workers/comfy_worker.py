@@ -553,11 +553,56 @@ def _make_minimal_mp4() -> bytes:
 
 
 # Failure-mode discriminators (round 2 spec D5 + round 3 P2 sync probe).
+# v3.3(2026-06-11)起为 fallback:上游失败 JSON 带 error_code 结构化字段时
+# code 优先(_raise_comfy_failure),marker 只兜旧版 CLI 无 code 的场景。
+# "out of range" 修正:patcher 实际串是 `value {N} out of range`(中间含数值),
+# 旧 marker "value out of range" 永匹配不上(latent bug,本次随 v3.3 适配修复,
+# fence: test_real_patcher_out_of_range_string_maps_to_unsupported)。
 _UNSUPPORTED_ERROR_MARKERS = (
     "Missing required param",
-    "value out of range",
+    "out of range",
     "value_not_in_list",
 )
+
+# error_code → WorkerUnsupportedResponse 的 deterministic 集合
+# (retry 无意义:参数错 / manifest 错 / 模型未装 / 输入文件缺 / prompt 校验错)。
+# code 清单契约见上游 AGENT_API.md §5(v3.3)。
+_ERROR_CODE_UNSUPPORTED = frozenset({
+    "missing_required_param", "param_out_of_range", "value_not_in_list",
+    "workflow_not_found", "input_image_not_found", "invalid_arguments",
+    "comfy_rejected",
+})
+
+
+def _raise_comfy_failure(data: dict, returncode: int | None, context: str) -> None:
+    """ok=false 统一分类:error_code 结构化字段优先,error 文案 marker fallback。
+
+    上游 comfyui_api v3.3(2026-06-11)起失败 JSON 带 error_code 稳定契约;
+    code 存在时完全接管分类(timeout → WorkerTimeout / deterministic 集 →
+    WorkerUnsupportedResponse / 其余 → WorkerError 可 retry)。code 缺失
+    (旧版 CLI)时退回字符串 marker 分类,行为与 round 2 spec D5 一致。
+    """
+    error_msg = str(data.get("error", ""))
+    error_code = data.get("error_code")
+    if isinstance(error_code, str) and error_code:
+        if error_code == "timeout":
+            raise WorkerTimeout(
+                f"{context}: comfyui_api timeout (error_code=timeout): {error_msg}")
+        if error_code in _ERROR_CODE_UNSUPPORTED:
+            raise WorkerUnsupportedResponse(
+                f"{context}: deterministic error (error_code={error_code}): {error_msg}")
+        raise WorkerError(
+            f"{context}: comfyui_api returned ok=false "
+            f"(exit {returncode}, error_code={error_code}, error: {error_msg})")
+    if "TimeoutError" in error_msg:
+        raise WorkerTimeout(f"{context}: ComfyUI reported TimeoutError: {error_msg}")
+    for marker in _UNSUPPORTED_ERROR_MARKERS:
+        if marker in error_msg:
+            raise WorkerUnsupportedResponse(
+                f"{context}: deterministic param error: {error_msg}")
+    raise WorkerError(
+        f"{context}: comfyui_api returned ok=false "
+        f"(exit {returncode}, error: {error_msg})")
 
 
 class ComfyAgentWorker(ComfyWorker):
@@ -933,20 +978,8 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyAgentWorker: stdout JSON is not a dict (got {type(data).__name__})"
             )
         if not data.get("ok"):
-            error_msg = str(data.get("error", ""))
-            if "TimeoutError" in error_msg:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker: ComfyUI reported TimeoutError: {error_msg}"
-                )
-            for marker in _UNSUPPORTED_ERROR_MARKERS:
-                if marker in error_msg:
-                    raise WorkerUnsupportedResponse(
-                        f"ComfyAgentWorker: deterministic param error: {error_msg}"
-                    )
-            raise WorkerError(
-                f"ComfyAgentWorker: comfyui_api returned ok=false "
-                f"(exit {returncode}, error: {error_msg})"
-            )
+            # v3.3:error_code 优先 + marker fallback,共享分类 helper
+            _raise_comfy_failure(data, returncode, "ComfyAgentWorker")
 
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
@@ -1167,6 +1200,19 @@ class ComfyAgentWorker(ComfyWorker):
                 f"合法值为 {sorted(self._VALID_LIFECYCLES)}。"
             )
         image_param_key = spec.get("comfy_image_param_key") or "input_image"
+        # v3.3 守门:source_image_filename 是路径(含分隔符,executor in-tree staging
+        # 绝对路径)时,上游 auto-upload 只对 input_image* 前缀参数触发(AGENT_API.md
+        # §1.3);非前缀 key 配路径值 upload 不发生,LoadImage 拿到绝对路径必然运行期
+        # 失败 → fail-fast。裸文件名 + 任意 key 仍合法(视为已在 ComfyUI input 目录)。
+        _is_path_value = ("/" in source_image_filename) or ("\\" in source_image_filename)
+        if _is_path_value and not image_param_key.startswith("input_image"):
+            raise WorkerUnsupportedResponse(
+                "ComfyAgentWorker.agenerate_mesh: spec.comfy_image_param_key="
+                f"{image_param_key!r} 不以 'input_image' 开头,而 source_image_filename "
+                f"是本地路径({source_image_filename!r});comfyui_api v3 的 input_image* "
+                "本地路径自动上传只对该前缀参数生效 — 改用 input_image* 前缀 key,或传"
+                "已在 ComfyUI input 目录内的裸文件名"
+            )
         per_call_timeout = float(timeout_s) if timeout_s else 600.0
         results: list[MeshCandidate] = []
         for i in range(max(1, num_candidates)):
@@ -1294,20 +1340,8 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyAgentWorker.agenerate_mesh: stdout JSON is not a dict (got {type(data).__name__})"
             )
         if not data.get("ok"):
-            error_msg = str(data.get("error", ""))
-            if "TimeoutError" in error_msg:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker.agenerate_mesh: ComfyUI reported TimeoutError: {error_msg}"
-                )
-            for marker in _UNSUPPORTED_ERROR_MARKERS:
-                if marker in error_msg:
-                    raise WorkerUnsupportedResponse(
-                        f"ComfyAgentWorker.agenerate_mesh: deterministic param error: {error_msg}"
-                    )
-            raise WorkerError(
-                f"ComfyAgentWorker.agenerate_mesh: comfyui_api returned ok=false "
-                f"(exit {returncode}, error: {error_msg})"
-            )
+            # v3.3:error_code 优先 + marker fallback,共享分类 helper
+            _raise_comfy_failure(data, returncode, "ComfyAgentWorker.agenerate_mesh")
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.agenerate_mesh: stdout JSON missing 'outputs' field or "
@@ -1352,9 +1386,9 @@ class ComfyAgentWorker(ComfyWorker):
                     "comfy_params_snapshot": params_snapshot,
                     "comfy_capability": "mesh",
                     "comfy_original_filename": src.name,
-                    # round 5 D10:input 文件在 ComfyUI 自家 input/ 目录(by FORGEUE_COMFY_INPUT_DIR);
-                    # 本 worker 不知道 dir 绝对路径(由 executor 传 filename only),所以 metadata 里
-                    # 只记 filename;executor 会另外补 comfy_input_dir(round 5 D10 修订)。
+                    # v3.3(comfy-agent-api-v3-adaptation):值为 executor in-tree staging
+                    # 绝对路径(<run_dir>/comfy/forgeue_<sha1>.png),CLI 侧 auto-upload 到
+                    # ComfyUI input/;legacy 裸文件名模式(已在 input 目录)也原样记录。
                     "comfy_input_filename": source_image_filename,
                     "comfy_project_id": self.project_id,
                     "source": "comfy_agent_cli",
@@ -1534,20 +1568,8 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyAgentWorker.agenerate_audio: stdout JSON is not a dict (got {type(data).__name__})"
             )
         if not data.get("ok"):
-            error_msg = str(data.get("error", ""))
-            if "TimeoutError" in error_msg:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker.agenerate_audio: ComfyUI reported TimeoutError: {error_msg}"
-                )
-            for marker in _UNSUPPORTED_ERROR_MARKERS:
-                if marker in error_msg:
-                    raise WorkerUnsupportedResponse(
-                        f"ComfyAgentWorker.agenerate_audio: deterministic param error: {error_msg}"
-                    )
-            raise WorkerError(
-                f"ComfyAgentWorker.agenerate_audio: comfyui_api returned ok=false "
-                f"(exit {returncode}, error: {error_msg})"
-            )
+            # v3.3:error_code 优先 + marker fallback,共享分类 helper
+            _raise_comfy_failure(data, returncode, "ComfyAgentWorker.agenerate_audio")
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.agenerate_audio: stdout JSON missing 'outputs' field or "
@@ -1795,20 +1817,8 @@ class ComfyAgentWorker(ComfyWorker):
                 f"ComfyAgentWorker.agenerate_video: stdout JSON is not a dict (got {type(data).__name__})"
             )
         if not data.get("ok"):
-            error_msg = str(data.get("error", ""))
-            if "TimeoutError" in error_msg:
-                raise WorkerTimeout(
-                    f"ComfyAgentWorker.agenerate_video: ComfyUI reported TimeoutError: {error_msg}"
-                )
-            for marker in _UNSUPPORTED_ERROR_MARKERS:
-                if marker in error_msg:
-                    raise WorkerUnsupportedResponse(
-                        f"ComfyAgentWorker.agenerate_video: deterministic param error: {error_msg}"
-                    )
-            raise WorkerError(
-                f"ComfyAgentWorker.agenerate_video: comfyui_api returned ok=false "
-                f"(exit {returncode}, error: {error_msg})"
-            )
+            # v3.3:error_code 优先 + marker fallback,共享分类 helper
+            _raise_comfy_failure(data, returncode, "ComfyAgentWorker.agenerate_video")
         if "outputs" not in data or not isinstance(data["outputs"], dict):
             raise WorkerUnsupportedResponse(
                 f"ComfyAgentWorker.agenerate_video: stdout JSON missing 'outputs' field or "
@@ -1951,7 +1961,7 @@ class ComfyAgentWorker(ComfyWorker):
         except asyncio.TimeoutError as exc:
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
-                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir)"
+                f"start ComfyUI via `python -m comfyui_api serve` then retry"
             ) from exc
         finally:
             # probe 子进程 cleanup:沿 _run_once_* —— 未退出则 terminate → kill,
@@ -1967,7 +1977,7 @@ class ComfyAgentWorker(ComfyWorker):
             stderr_str = (stderr_b or b"").decode("utf-8", errors="replace")
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status returned exit {proc.returncode}; "
-                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir) "
+                f"start ComfyUI via `python -m comfyui_api serve` then retry "
                 f"(stderr first 500 chars: {stderr_str[:500]!r})"
             )
 
