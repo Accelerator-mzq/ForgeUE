@@ -1064,18 +1064,20 @@ class ComfyAgentWorker(ComfyWorker):
                 f"writes outputs to a non-default directory."
             )
 
-    async def _abort_comfy_prompt(self) -> None:
-        """cancel 路径 best-effort:POST /interrupt 停服务端正在跑的 prompt。
-
-        comfyui_api cancel(无 --prompt-id)即 POST http://127.0.0.1:8188/interrupt。
-        在 Task 3 的 comfy-submission 锁内调用 → 中断的必是本 worker 的 prompt。
-        失败只 warning,不抛(主路径已在 cancel 流程中,abort 仅 best-effort)。
-        等待超时 _ABORT_TIMEOUT_S 秒后放弃,不阻塞后续 terminate。
+    async def _abort_comfy_prompt(self, prompt_id: str | None = None) -> None:
+        """cancel 路径 best-effort:有 prompt_id 时 `cancel --prompt-id <id>`
+        (interrupt + 从 queue 删除;注意上游 interrupt 部分仍是全局 /interrupt,
+        "精确"只体现在 queue 删除 — detach-wait change 核验结论,LLD 已标注),
+        无 id 退回裸 cancel(submit 段被取消的窄窗口 fallback)。
+        失败只 warning,不抛;_ABORT_TIMEOUT_S 守门 + kill 清理。
         """
         ap = None
+        cancel_cmd = [str(self.python_exe), "-m", "comfyui_api", "cancel"]
+        if prompt_id:
+            cancel_cmd += ["--prompt-id", prompt_id]
         try:
             ap = await asyncio.create_subprocess_exec(
-                str(self.python_exe), "-m", "comfyui_api", "cancel",
+                *cancel_cmd,
                 cwd=str(self.scripts_dir),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,

@@ -2453,3 +2453,35 @@ async def test_all_four_run_once_methods_route_through_shared_cli_helper(
         await _mk("comfy/local-video").agenerate_video(
             spec={"comfy_workflow": "Vedio/x"})
     assert len(contexts) == 4, f"4 条 _run_once 应各调 helper 1 次,实际 {contexts!r}"
+
+
+# ---------------------------------------------------------------------------
+# detach-wait change Task 2: _abort_comfy_prompt(prompt_id) 参数化
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_abort_comfy_prompt_with_prompt_id_appends_cli_flag(tmp_path):
+    """detach-wait change:有 prompt_id 时 cancel cmd 必须带 --prompt-id <id>
+    (interrupt + 从 queue 删除;上游 AGENT_API.md §1.6)。"""
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(_make_async_completed("{}")) as mock:
+        await worker._abort_comfy_prompt("abc-123")
+    cmd = list(mock.call_args)
+    assert "cancel" in cmd
+    assert "--prompt-id" in cmd
+    assert "abc-123" in cmd
+    # --prompt-id 紧跟 id 值(argparse 位置约定)
+    assert cmd[cmd.index("--prompt-id") + 1] == "abc-123"
+
+
+@pytest.mark.asyncio
+async def test_abort_comfy_prompt_without_prompt_id_uses_bare_cancel(tmp_path):
+    """无 prompt_id(submit 段被取消的窄窗口)退回裸 cancel(全局 /interrupt;
+    残留边界见 LLD cancel 小节)。"""
+    worker = _make_worker(tmp_path)
+    with _patch_create_subprocess_exec(_make_async_completed("{}")) as mock:
+        await worker._abort_comfy_prompt()
+    cmd = list(mock.call_args)
+    assert "cancel" in cmd
+    assert "--prompt-id" not in cmd
