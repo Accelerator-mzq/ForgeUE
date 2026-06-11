@@ -98,7 +98,10 @@ _PROC_GRACE_S: float = 5.0
 _ABORT_TIMEOUT_S: float = 10.0
 
 # detach submit 段(run --detach)的 wall-clock 上限(秒):
-# 覆盖 manifest 校验 + mesh staging PNG 的 input_image auto-upload,无 GPU 等待
+# 覆盖 manifest 校验 + mesh staging PNG 的 input_image auto-upload,无 GPU 等待。
+# 超时不发 server abort(prompt 若未 enqueue 则无事可清;若恰已 enqueue 将继续
+# 执行,后续 retry 可能带来重复 prompt — detach 模式 enqueue 即返回,60s 已极宽裕,
+# 实际风险极低,Task 3 code review M-1 记录此降级语义)
 _SUBMIT_TIMEOUT_S: float = 60.0
 
 # Mesh capability(OpenSpec change comfy-agent-cli-mesh-audio-video-adoption Phase 1):
