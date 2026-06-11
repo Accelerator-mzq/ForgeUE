@@ -47,13 +47,13 @@
         "seed": 5042,
         "worker_timeout_s": 1800,
         "spec": {
-          "comfy_workflow": "Vedio/Wan2.1-T2V-1.3B_native_5sec",
+          "comfy_workflow": "Vedio/Wan2.1-T2V-1.3B_native_teacache",
           "comfy_params": {
             "positive_prompt": "uplifting space scene, cinematic camera dolly forward, ethereal lighting",
             "negative_prompt": "blurry, low quality, distorted, watermark, worst quality, jpeg artifacts",
             "width": 832,
             "height": 480,
-            "num_frames": 81,
+            "num_frames": 33,
             "seed": 5042,
             "steps": 25
           },
