@@ -1951,7 +1951,7 @@ class ComfyAgentWorker(ComfyWorker):
         except asyncio.TimeoutError as exc:
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status probe timed out ({timeout_s}s); "
-                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir)"
+                f"start ComfyUI via `python -m comfyui_api serve` then retry"
             ) from exc
         finally:
             # probe 子进程 cleanup:沿 _run_once_* —— 未退出则 terminate → kill,
@@ -1967,7 +1967,7 @@ class ComfyAgentWorker(ComfyWorker):
             stderr_str = (stderr_b or b"").decode("utf-8", errors="replace")
             raise WorkerUnsupportedResponse(
                 f"ComfyUI agent CLI status returned exit {proc.returncode}; "
-                f"start ComfyUI via `python -m factory_v3 serve` then retry (note: `comfyui_api` CLI does NOT have a `serve` subcommand; use sister CLI `factory_v3 serve` from same scripts/ dir) "
+                f"start ComfyUI via `python -m comfyui_api serve` then retry "
                 f"(stderr first 500 chars: {stderr_str[:500]!r})"
             )
 

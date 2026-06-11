@@ -67,7 +67,7 @@ from framework.runtime.transition_engine import TransitionEngine
 _CASCADE_DRAIN_TIMEOUT_S: float = 30.0
 
 # lifecycle release 超时上限(秒)。
-# _spawn_stop 通过 factory_v3 stop 子命令停止 ComfyUI;
+# _spawn_stop 通过 comfyui_api stop 子命令停止 ComfyUI;
 # 正常情况下几秒完成,设为 30s 给含外部进程通信足够时间。
 # 超时后 _release_lifecycle_bounded 记录失败留痕,不遮蔽调用方原始异常。
 _RELEASE_TIMEOUT_S: float = 30.0
