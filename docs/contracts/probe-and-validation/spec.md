@@ -613,6 +613,29 @@ The system SHALL provide a `probes/provider/probe_comfy_video.py` script that ex
 **When** Python imports the module (`importlib.import_module("probes.provider.probe_comfy_video")` without invoking `main()`)
 **Then** no env var is read or written, no directory is created, no network / subprocess call is made; the existing `tests/unit/test_probe_framework.py::test_glm_probes_have_no_import_side_effects` fence (or equivalent) covers `probe_comfy_video.py` with the same import-only invariant
 
+## Requirement: probe_comfy_cancel.py SHALL validate the ComfyUI cancel-on-timeout path via worker production route (自 `comfy-detach-wait-adoption` 2026-06-11)
+
+The system SHALL provide a `probes/provider/probe_comfy_cancel.py` script that validates the cancel-on-timeout production path against a real ComfyUI installation, gated behind opt-in env var `FORGEUE_PROBE_COMFY_CANCEL=1`. The probe SHALL:
+
+- Default to skip when `FORGEUE_PROBE_COMFY_CANCEL` is unset, `"0"`, or any value other than `"1"` (per the probe-and-validation "Opt-in gate on paid calls" Requirement; the probe fires a real GPU subprocess so the gate prevents accidental triggering in CI sweeps)
+- When opted in, exercise the worker **production route** (`agenerate_video` asyncio task):spawn the task, poll `worker._last_prompt_id` until a prompt_id is observed, sleep 8 seconds, call `task.cancel()`, then call `comfyui_api status --prompt-id <id>` to verify the server-side cancel was applied; emit `[OK]` / `[FAIL]` / `[SKIP]` ASCII markers (no emoji per the existing "ASCII output markers" Requirement)
+- Have NO module-level side effects (no `hydrate_env()` / `Path.mkdir()` / `os.environ[...]` at import time per the "Module-level side-effect ban" Requirement); all initialization deferred to `main()`
+- Output to `demo_artifacts/<YYYY-MM-DD>/probes/provider/probe_comfy_cancel/<HHMMSS>/` per the `probes._output.probe_output_dir(tier="provider", name="probe_comfy_cancel")` helper
+- Be runnable via dotted path: `python -m probes.provider.probe_comfy_cancel`
+- Exit code: 0 = success or skip; 1 = real failure
+
+## Scenario: probe_comfy_cancel.py defaults to skip without FORGEUE_PROBE_COMFY_CANCEL
+
+**Given** `FORGEUE_PROBE_COMFY_CANCEL` env var is unset
+**When** `python -m probes.provider.probe_comfy_cancel` runs
+**Then** the probe prints `[SKIP] FORGEUE_PROBE_COMFY_CANCEL=1 not set; pass to opt-in to real ComfyUI cancel probe` and exits with code 0; no subprocess to ComfyUI is spawned; `tests/unit/test_probe_framework.py::test_probe_comfy_cancel_default_skip_without_optin` fences this
+
+## Scenario: probe_comfy_cancel.py module-level imports have no side effects
+
+**Given** the `probes/provider/probe_comfy_cancel.py` source file
+**When** Python imports the module (`importlib.import_module("probes.provider.probe_comfy_cancel")` without invoking `main()`)
+**Then** no env var is read or written, no directory is created, no network / subprocess call is made; the existing `tests/unit/test_probe_framework.py::test_probe_comfy_cancel_no_import_side_effects` fence covers `probe_comfy_cancel.py` with the same import-only invariant
+
 ## Requirement: Level 2 ComfyUI verification SHALL dispatch via `comfy/local*` virtual model ids to the ComfyAgentWorker subprocess path (NOT the deprecated HTTP path)
 
 The system SHALL ensure that Level 2 ComfyUI verification(image / mesh / audio / video capability)dispatches via bundles whose `provider_policy.models_ref` resolves to `comfy/local*` virtual model ids(`comfy/local` for image / `comfy/local-mesh` for mesh / `comfy/local-audio` for audio / `comfy/local-video` for video),so that the dispatch chain reaches the `ComfyAgentWorker` subprocess CLI path(`python -m comfyui_api ...`)defined in `src/framework/providers/comfy_agent_worker.py`. Level 2 verification commands MUST NOT pass the deprecated `--comfy-url` flag(silently ignored by `framework.run` and falls back to `FakeComfyWorker`),and MUST NOT use bundles whose only ComfyUI route is via the wildcard `LiteLLMAdapter` fallback(silently routed to `FakeComfyWorker` when no `comfy/local*` route is declared,producing false-positive PASS without exercising real ComfyUI subprocess).

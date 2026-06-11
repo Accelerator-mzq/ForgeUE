@@ -33,7 +33,7 @@
 - `D:/AI/ComfyUI/scripts/comfyui_api/runner.py::extract_outputs` 函数加 `video` collection block(收集 VHS_VideoCombine 节点 legacy `gifs` UI key 装的 video preview dict)— user-authored 修改,ComfyUI 重装时**手工保留**(否则 ForgeUE video L2 evidence 失败);沿 Phase 1 round 5 D10 mini-LoadImage user-authored 模式
 - `D:/AI/ComfyUI/scripts/comfyui_api/manifests/Vedio/Wan2.1-T2V-1.3B_native_5sec.json` + `..._native.json`(round-7 R2 补漏)+ `..._native_teacache.json`(2026-06-11 补,smoke 默认):三份 manifest 必须暴露 5 个 VHS_VideoCombine widget default patches `frame_rate=24.0` / `loop_count=0` / `format="video/h264-mp4"` / `pingpong=false` / `save_output=true`;不暴露 → ComfyUI prompt validation HTTP 400(L2 实测)— user-authored,ComfyUI 重装时**手工保留**
 
-**默认手工 smoke**(lifecycle=`none`;managed lifecycle 见 CLAUDE.md):先确保 ComfyUI server running;本机可用 `python -m comfyui_api serve` / `stop` 启停服务(v3.3 起 comfyui_api 自带,`factory_v3 serve/stop` 仍是兼容入口)。ForgeUE 生成/探活/取消由 `python -m comfyui_api run/status/cancel` 承担,框架托管 lifecycle 也走 `comfyui_api serve/stop`(2026-06-11 迁移,对 factory_v3 零依赖)。
+**默认手工 smoke**(lifecycle=`none`;managed lifecycle 见 CLAUDE.md):先确保 ComfyUI server running;本机可用 `python -m comfyui_api serve` / `stop` 启停服务(v3.3 起 comfyui_api 自带,`factory_v3 serve/stop` 仍是兼容入口)。ForgeUE 生成走 detach+wait 两段式(自 `comfy-detach-wait-adoption` 2026-06-11):`comfyui_api run --detach` 拿 `prompt_id` → `wait --prompt-id` 收割;取消走 `cancel --prompt-id`,wait 超时也先 cancel 再 raise;探活走 `status`。框架托管 lifecycle 也走 `comfyui_api serve/stop`(2026-06-11 迁移,对 factory_v3 零依赖)。
 ```bash
 python -m framework.run --task examples/comfy_local_smoke.json --live-llm --run-id <id>           # image-only
 python -m framework.run --task examples/comfy_local_smoke_mesh.json --live-llm --run-id <id>     # image-to-mesh (v3 auto-upload,无需 input 目录配置)
